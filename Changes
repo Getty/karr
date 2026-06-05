@@ -1,3 +1,5 @@
+{{$NEXT}}
+
 0.301     2026-06-04 22:35:33Z
 
     - karr-foundation: stream agent output to the terminal when interactive
