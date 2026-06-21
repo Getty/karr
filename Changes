@@ -1,3 +1,5 @@
+{{$NEXT}}
+
 0.302     2026-06-21 23:04:42Z
 
     - `karr board` now renders a compact, Markdown-flavoured plaintext board

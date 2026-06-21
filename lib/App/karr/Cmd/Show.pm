@@ -1,7 +1,7 @@
 # ABSTRACT: Show full details of a task
 
 package App::karr::Cmd::Show;
-our $VERSION = '0.302';
+our $VERSION = '0.303';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

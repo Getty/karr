@@ -1,7 +1,7 @@
 # ABSTRACT: Lock management via Git refs
 
 package App::karr::Lock;
-our $VERSION = '0.302';
+our $VERSION = '0.303';
 use strict;
 use warnings;
 

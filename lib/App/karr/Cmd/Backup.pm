@@ -1,7 +1,7 @@
 # ABSTRACT: Export the ref-backed karr board as YAML
 
 package App::karr::Cmd::Backup;
-our $VERSION = '0.302';
+our $VERSION = '0.303';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
