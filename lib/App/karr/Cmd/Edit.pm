@@ -177,8 +177,8 @@ sub execute {
     }
 
     if ($self->release) {
-      $task->claimed_by(undef);
-      $task->claimed_at(undef);
+      $task->clear_claimed_by;
+      $task->clear_claimed_at;
     }
 
     if ($self->block) {
@@ -186,7 +186,7 @@ sub execute {
     }
 
     if ($self->unblock) {
-      $task->blocked(undef);
+      $task->clear_blocked;
     }
 
     $self->save_task($task);

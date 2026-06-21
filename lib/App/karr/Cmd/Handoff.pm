@@ -130,8 +130,8 @@ sub execute {
 
   # Release claim if requested
   if ($self->release) {
-    $task->claimed_by(undef);
-    $task->claimed_at(undef);
+    $task->clear_claimed_by;
+    $task->clear_claimed_at;
   }
 
   $self->save_task($task);

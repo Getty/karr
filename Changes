@@ -1,5 +1,13 @@
 {{$NEXT}}
 
+    - Fix releasing a claim or unblocking a task leaving a null `claimed_by`,
+      `claimed_at`, or `blocked` field behind. Clearing now uses real Moo
+      clearers so the predicate drops and the field is omitted from the task
+      file, instead of being written as an explicit null that reloaded as
+      "still set" — which made `handoff` reject released tasks and `pick`
+      treat them as claimed. Explicit nulls in already-written or external
+      task files are normalized to "unset" on load.
+
 0.301     2026-06-04 22:35:33Z
 
     - karr-foundation: stream agent output to the terminal when interactive
