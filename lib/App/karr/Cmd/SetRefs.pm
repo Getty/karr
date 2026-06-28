@@ -1,7 +1,7 @@
 # ABSTRACT: Store helper payloads in a Git ref
 
 package App::karr::Cmd::SetRefs;
-our $VERSION = '0.303';
+our $VERSION = '0.304';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
