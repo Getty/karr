@@ -48,6 +48,37 @@ sub parse_ids {
     return split /,/, $id_str;
 }
 
+# Reject surplus positional arguments before a command does any work, matching
+# kanban-md's cobra Args validators (ExactArgs/RangeArgs/MaximumNArgs) which
+# refuse extra positionals ahead of RunE. The comma list stays the one and only
+# batch syntax; there is no space-separated id batch.
+#
+# MooX::Cmd hands execute() the raw argv and echoes parsed option flags *and*
+# their values back into it (e.g. `move 1 --next --claim tester` arrives as
+# [1, --next, --claim, tester]). Positionals always precede options on the
+# command line, so the positional count is the leading run of non-dash tokens;
+# stopping at the first option flag ignores both the flags and their echoed
+# values.
+sub check_positional_args {
+    my ($self, $args_ref, $max) = @_;
+
+    my @positional;
+    for my $arg (@$args_ref) {
+        last if $arg =~ /^-/;
+        push @positional, $arg;
+    }
+    return if @positional <= $max;
+
+    my @extra   = @positional[$max .. $#positional];
+    my %config  = $self->_options_config;
+    my $usage   = $config{usage_string};
+
+    die sprintf "unexpected extra argument%s: %s\n%s",
+        (@extra == 1 ? '' : 's'),
+        join(', ', map { "'$_'" } @extra),
+        ($usage ? "$usage\n" : '');
+}
+
 sub activity_log {
     my ($self, $git) = @_;
     $git //= $self->git;

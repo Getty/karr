@@ -1,5 +1,12 @@
 {{$NEXT}}
 
+    - Surplus positional arguments are now rejected before a command does any
+      work ("unexpected extra argument: '99'" plus the usage line, non-zero
+      exit) instead of being silently dropped — `karr archive 4 99` used to
+      archive task 4 and swallow the 99 without a trace, so batch-looking
+      invocations quietly did less than asked. Matching kanban-md, the comma
+      list (`karr archive 4,5,6`) stays the one batch syntax; show/archive/
+      delete/edit/handoff/create accept one positional, move accepts two.
     - Fix `karr list --status archived` (and `--status done`) returning
       nothing: the default done/archived exclusion ran before the explicit
       `--status` filter, so terminal statuses could never be requested and

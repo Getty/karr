@@ -68,6 +68,8 @@ option claim => (
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  $self->check_positional_args($args_ref, 2);
+
   $self->sync_before;
 
   my $id_str = $args_ref->[0] or die "Usage: karr move ID[,ID,...] [STATUS]\n";

@@ -137,6 +137,8 @@ sub _select_tasks {
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  $self->check_positional_args($args_ref, 1);
+
   my @tasks = $self->_select_tasks($args_ref->[0]);
 
   unless (@tasks) {

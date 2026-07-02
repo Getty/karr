@@ -34,6 +34,8 @@ L<App::karr::Cmd::Delete>, L<App::karr::Cmd::Board>
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  $self->check_positional_args($args_ref, 1);
+
   $self->sync_before;
 
   my $id_str = $args_ref->[0] or die "Usage: karr archive ID[,ID,...]\n";

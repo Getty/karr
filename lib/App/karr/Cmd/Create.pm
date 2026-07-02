@@ -111,6 +111,8 @@ option body => (
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  $self->check_positional_args($args_ref, 1);
+
   $self->sync_before;
 
   my $title = $self->title // $args_ref->[0]
