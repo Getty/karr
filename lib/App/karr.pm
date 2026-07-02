@@ -163,6 +163,13 @@ option dir => (
   predicate => 1,
 );
 
+# Forwarded to the default board view so bare `karr --done` behaves like
+# `karr board --done`.
+option done => (
+  is => 'ro',
+  doc => 'Include the Done section in the default board view',
+);
+
 my @COMMANDS = (
   [ init      => 'Initialize a new karr board' ],
   [ create    => 'Create a new task' ],
@@ -234,6 +241,7 @@ sub execute {
     require App::karr::Cmd::Board;
     App::karr::Cmd::Board->new(
       board_dir => $self->board_dir,
+      done      => $self->done,
     )->execute($args_ref, $chain_ref);
   };
   if ($@) {

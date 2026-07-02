@@ -1,5 +1,13 @@
 {{$NEXT}}
 
+    - `karr board` (and bare `karr`) no longer lists done tasks by default —
+      on a living board the Done section grows forever and drowns the open
+      work. The footer instead notes how many were hidden ("10 tasks (5 done
+      hidden)"), and the new `--done` flag restores the full listing. Applies
+      to the default, `--tags`, and `--json` renderings (JSON keeps the done
+      column and its real count but empties its task list unless `--done` is
+      given); `--compact` still shows every status. This deliberately deviates
+      from kanban-md, whose board always renders done tasks.
     - Fix the `updated` timestamp never being bumped when a task is mutated
       through the ref-backed store: move, edit, pick, handoff, and archive all
       left `updated` at its previous value, so `karr show` (most recently
