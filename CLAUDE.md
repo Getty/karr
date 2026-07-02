@@ -59,8 +59,9 @@ The Go implementation at `../kanban-md/` is the feature reference. Key docs:
 ### Board state (refs-first)
 
 Canonical state lives in `refs/karr/*`. The `tasks/` directory is a materialized
-view generated on demand (C<karr materialize>), not the source of truth, and is
-always in F<.gitignore> — never committed.
+view, not the source of truth, and is always in F<.gitignore> — never committed.
+There is no `karr materialize` CLI command (yet); materializing is internal API
+(`BoardStore->materialize_to`, used by tests and `serialize_from` round-trips).
 
 ## Commands (current / planned)
 
