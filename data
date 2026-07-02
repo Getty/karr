@@ -1,0 +1,42 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T02:20:58Z
+id: 8
+priority: high
+started: 2026-07-02
+status: done
+tags:
+- bug
+- boardstore
+- task
+- timestamps
+title: "save_task never bumps 'updated' â\x80\x94 ref-backed mutations keep stale
+  timestamp"
+updated: 2026-07-02T02:20:58Z
+---
+
+REPRO (real board, this repo)
+  Task 4 was moved to in-progress + claimed at ~02:17Z, but:
+  karr show 4 => Created: 2026-07-02T02:03:51Z / Updated: 2026-07-02T02:03:51Z (unchanged)
+
+ROOT CAUSE
+The updated timestamp is only bumped inside Task::save (Task.pm:148). All
+ref-backed mutations (Move, Edit, Pick, Handoff, and now Archive after the
+task-4 fix) persist via BoardStore::save_task, which never touches updated.
+grep confirms: no Cmd and not BoardStore set updated.
+
+IMPACT
+- karr show (no ID) / --last N sort by updated => wrong "most recent" answers
+- karr list --sort updated => meaningless
+- Foundation.pm:437 orders by updated => affected
+
+FIX DIRECTION
+Bump updated centrally in BoardStore::save_task (mirror of Task::save:148),
+so every mutating Cmd gets it for free. Check kanban-md reference semantics
+(does move/edit update the timestamp there? presumably yes).
+
+Pre-existing, NOT a regression of the task-4 fix. Found while verifying task 4.
+Seen on repo VERSION 0.304.
+Design nach Parity-Check: kanban-md bumpt Updated in JEDEM mutierenden cmd (move/handoff/pick/archive/edit/delete). karr-Fix: Bump zentral in BoardStore::save_task statt pro Cmd (kann nicht vergessen werden, beobachtbares Verhalten identisch). Dabei Bump aus Task::save (Task.pm:148) entfernen — sonst verfaelscht materialize_to die View-Timestamps (Flipside desselben Bugs). serialize_from (restore) muss Original-Timestamps erhalten -> preserve-Pfad. Foundation.pm:585 mutiert und soll bumpen.
+Fixed and committed on main as 61e6f40: central bump in BoardStore::save_task (only when ref exists), Task::save bumps no more (materialize verbatim), serialize_from preserves via git->save_task_ref. Regression tests t/39 (4 subtests). Suite 37 files / 206 tests PASS. E2E verified on temp board: create keeps created==updated, move/edit bump, show-without-ID picks latest, restore roundtrip preserves stamps.
