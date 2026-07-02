@@ -352,4 +352,68 @@ subtest '--dir <existing, non-git dir> list (root-form): clean error, no silent 
     unlike( $rv->{stdout}, qr/A-Only Seed Task/, 'stdout shows nothing from board A' );
 };
 
+# ------------------------------------------------------------- ticket #15:
+# bare `karr --dir PATH` (root-form, NO subcommand, space-separated value)
+# dies "Unknown command: PATH" (exit 2) instead of rendering that board.
+#
+# ROOT CAUSE: the unknown-command guard in App::karr::execute (added for
+# ticket #5, see t/41-cli-error-exits.t) does a raw
+# `grep { !/^-/ } @$args_ref` over the leftover argv MooX::Cmd hands to
+# execute() when nothing dispatched. That grep cannot tell a genuine leftover
+# bare word (an actual unknown subcommand) apart from the already-parsed
+# --dir value MooX::Cmd echoes back as a bare token in space form -- so
+# `karr --dir /path/to/B` trips the guard on "/path/to/B" itself, even though
+# --dir was successfully parsed and nothing is actually unrecognised.
+# `karr --dir=/path/to/B` (equals form) never echoes a bare token, so it
+# already works and must not regress.
+#
+# The fix (not part of this test -- lib/ changes are the karr-worker's job)
+# is to run the guard's leftover-argv check through
+# $self->positional_args($args_ref) (the same option-aware extractor from
+# ticket #13, usable here because ticket #14 registered `dir` with
+# `format => 's'` in App::karr's own _options_data via
+# Role::BoardDiscovery) instead of the raw grep, so an option's own value
+# token is correctly skipped rather than misread as a positional.
+#
+# Reuses boards A and B from the ticket #14 setup above; cwd is always A,
+# per this file's established convention, and boards are told apart by
+# their seeded task titles/board names, never by task count (state on both
+# accumulates across this whole file).
+
+subtest '--dir B (root-form, no subcommand, space form): renders board B, not "Unknown command" (RED, ticket #15)' => sub {
+    my $rv = _run_karr( $A, '--dir', $B );
+
+    # Probed today: exit 2, stderr "Unknown command: $B" -- the space-form
+    # --dir value gets misread as an unknown bare subcommand by the guard's
+    # raw grep, so the board is never rendered at all.
+    is( $rv->{exit}, 0, '--dir B (space form, no subcommand) exits 0' ) or diag $rv->{stderr};
+    like( $rv->{stdout}, qr/^# Board B$/m, 'stdout renders board B\'s own name/header' );
+    like( $rv->{stdout}, qr/B-Only Seed Task/, 'stdout shows B\'s seed task' );
+    unlike( $rv->{stdout}, qr/A-Only Seed Task/, 'stdout does NOT show A\'s seed task' );
+};
+
+subtest '--dir=B (root-form, no subcommand, equals form): renders board B (GREEN pin, must survive the #15 fix)' => sub {
+    my $rv = _run_karr( $A, "--dir=$B" );
+
+    is( $rv->{exit}, 0, '--dir=B (equals form, no subcommand) exits 0' ) or diag $rv->{stderr};
+    like( $rv->{stdout}, qr/^# Board B$/m, 'stdout renders board B\'s own name/header' );
+    like( $rv->{stdout}, qr/B-Only Seed Task/, 'stdout shows B\'s seed task' );
+    unlike( $rv->{stdout}, qr/A-Only Seed Task/, 'stdout does NOT show A\'s seed task' );
+};
+
+subtest '--dir B definitiv-kein-kommando (root-form + a real unknown subcommand): names the unknown command, not the --dir path (RED, ticket #15)' => sub {
+    my $rv = _run_karr( $A, '--dir', $B, 'definitiv-kein-kommando' );
+
+    # Probed today: exit 2, stderr "Unknown command: $B" -- the raw grep
+    # picks up the --dir value as the "unknown" token (it's the first
+    # non-dash word in the leftover argv) before it ever reaches the actual
+    # unrecognised subcommand, so the diagnostic misnames the -dir path
+    # instead of the real offending word.
+    isnt( $rv->{exit}, 0, '--dir B definitiv-kein-kommando exits non-zero' );
+    like( $rv->{stderr}, qr/\Qdefinitiv-kein-kommando\E/,
+        'stderr names the actual unrecognised subcommand' );
+    unlike( $rv->{stderr}, qr/\Q$B\E/,
+        'stderr does NOT name the --dir path instead (RED today)' );
+};
+
 done_testing;

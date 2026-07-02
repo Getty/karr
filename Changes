@@ -4,9 +4,10 @@
       commands always operated on the board of the current directory, so
       `karr --dir /other/repo create "X"` quietly wrote to — and synced —
       whatever board the caller happened to be standing in. `--dir` is now a
-      real option on every board command (`karr list --dir PATH` and the
-      root form `karr --dir PATH list` both work), seeding repository
-      discovery before any store or sync activity; init, backup, restore,
+      real option on every board command (`karr list --dir PATH`, the root
+      form `karr --dir PATH list`, and bare `karr --dir PATH` for the board
+      summary all work), seeding repository discovery before any store or
+      sync activity; init, backup, restore,
       and destroy, which previously hardcoded the current directory, honor
       it too. A `--dir` that does not lead to a Git repository fails loudly
       instead of falling back to the current directory.
