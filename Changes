@@ -1,5 +1,17 @@
 {{$NEXT}}
 
+    - An unknown subcommand (`karr definitely-not-a-command`) now fails loudly
+      with "Unknown command: ..." on STDERR and a non-zero exit instead of
+      silently printing the board summary with exit 0 — a typo like
+      `karr agent-name` (for `agentname`) used to look like success. Bare
+      `karr` (with or without options like `--done`) still renders the board.
+    - `karr archive` with IDs that do not exist now exits non-zero, matching
+      the die-based behaviour of every other id-taking command (show, move,
+      edit, delete, handoff already did this). In a comma-separated batch
+      (`karr archive 5,99`) the existing tasks are still archived and the
+      missing ones reported — partial success is kept, the exit code reports
+      the failure (kanban-md parity). Re-archiving an already-archived task
+      remains a successful no-op.
     - `karr board` (and bare `karr`) no longer lists done tasks by default —
       on a living board the Done section grows forever and drowns the open
       work. The footer instead notes how many were hidden ("10 tasks (5 done

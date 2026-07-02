@@ -40,12 +40,14 @@ sub execute {
 
   my @ids = $self->parse_ids($id_str);
   my @results;
+  my $not_found = 0;
 
   for my $id (@ids) {
     my $task = $self->find_task($id);
     unless ($task) {
       push @results, { id => $id + 0, error => "not found" };
       warn "Task $id not found\n" unless $self->json;
+      $not_found++;
       next;
     }
 
@@ -80,6 +82,12 @@ sub execute {
   if ($self->json) {
     $self->print_json(@results == 1 ? $results[0] : \@results);
   }
+
+  # Existing ids are already committed above; a missing id in the batch still
+  # makes the whole command report failure via a non-zero exit, matching the
+  # die-based not-found behaviour of the other id-taking commands (kanban-md
+  # parity: partial success committed, overall exit non-zero).
+  exit 1 if $not_found;
 }
 
 1;

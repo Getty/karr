@@ -236,6 +236,18 @@ around options_short_usage => sub { $_[1]->_print_help($_[2]) };
 
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
+
+  # A leftover bare-word positional here means MooX::Cmd could not dispatch it
+  # to any App::karr::Cmd::* subcommand: it is an unknown command, not a request
+  # for the default board view. MooX::Cmd also echoes already-parsed option
+  # flags (e.g. `--done`) back into $args_ref, so ignore anything starting with
+  # a dash; bare `karr` and `karr --done` legitimately fall through to the board
+  # summary below.
+  my ($unknown) = grep { !/^-/ } @$args_ref;
+  if (defined $unknown) {
+    die "Unknown command: $unknown\nRun 'karr --help' to see the available commands.\n";
+  }
+
   # Default action: show board summary
   eval {
     require App::karr::Cmd::Board;
