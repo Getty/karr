@@ -1,0 +1,29 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T02:11:42Z
+id: 5
+priority: medium
+started: 2026-07-02
+status: done
+tags:
+- bug
+- cli
+- dispatch
+title: 'CLI: unknown subcommand silently prints board summary with exit 0'
+updated: 2026-07-02T02:11:42Z
+---
+
+REPRO
+  karr definitely-not-a-command; echo $?
+  => prints the board summary (same as bare `karr`), exit code 0
+
+EXPECTED
+  Error message "unknown command: definitely-not-a-command" (or usage) on STDERR, non-zero exit.
+
+NOTES
+  MooX::Cmd dispatch appears to treat unknown subcommands as "no subcommand" and
+  falls through to the default board output. Dangerous for agent workflows:
+  typos like `karr agent-name` (vs correct `karr agentname`) look like success.
+  Seen on repo VERSION 0.304.
+Fixed in a21a081: unknown subcommand dies with 'Unknown command: X' on STDERR, non-zero exit; bare karr/--done unaffected. Pinned in t/41.
