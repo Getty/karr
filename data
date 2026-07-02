@@ -1,0 +1,28 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T12:44:09Z
+id: 13
+priority: low
+started: 2026-07-02
+status: done
+tags:
+- bug
+- cli
+- parsing
+title: 'CLI: options before positionals break arg parsing (archive --json 1 crashes)'
+updated: 2026-07-02T12:44:09Z
+---
+
+OBSERVED (while probing for task #11)
+  karr archive --json 1     => crash ($args_ref->[0] is "--json", parse_ids chokes)
+  karr handoff --claim X 1  => $args_ref->[0] becomes "--claim"
+
+All command SYNOPSes document ID-before-options, so this is low priority, but
+the failure mode is an opaque crash instead of a usage error. Investigate how
+MooX::Cmd/MooX::Options order positionals vs options in $args_ref and reject
+or handle gracefully.
+
+Repo VERSION 0.304.
+Design-Entscheid nach Sondierung: MooX::Options-Introspektion (_options_data) verraet pro Option format=s (konsumiert Wert) vs Flag. Damit statt Reject die volle cobra-Paritaet: zentraler Positional-Extraktor in BoardAccess (walk argv, Dash-Token mit format=s ohne '=' schluckt Folgetoken), die sieben #11-Kommandos lesen Positionals nur noch daraus; check_positional_args zaehlt echte Positionals statt Leading-Run. archive --json 1 / handoff --claim X 1 werden damit legal. Config/SetRefs/GetRefs (eigene Arg-Formen) bleiben unangetastet — Follow-up falls noetig. Prioritaet damit de facto medium.
+Fixed in 5904c71: positional_args extractor in Role::BoardAccess (subtracts option tokens via _options_data; =-form, short aliases -a/-t/-y, flag-shaped values covered), seven Cmds read positionals from it, check_positional_args counts real positionals (closes silent-drop hole archive 1 --json 99). Residual documented: abbreviated value-options (--cl tester) reject cleanly instead of resolving. Pinned in t/45 (12 subtests). Suite 43 files / 259 tests PASS. E2E verified. NOTE: worker incident during probing (real board polluted via silently-ignored --dir) fully remediated and verified; root cause filed as task #14 (high).
