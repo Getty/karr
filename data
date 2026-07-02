@@ -1,0 +1,32 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T02:20:41Z
+id: 6
+priority: medium
+started: 2026-07-02
+status: done
+tags:
+- bug
+- archive
+- cli
+- exit-codes
+title: 'archive: ''Task N not found'' prints but exits 0 (show exits 255)'
+updated: 2026-07-02T02:20:41Z
+---
+
+REPRO
+  karr archive 99   # nonexistent ID
+  => STDOUT: "Task 99 not found", exit 0
+  karr show 99
+  => "Task 99 not found", exit 255
+
+EXPECTED
+Consistent behavior: not-found should be non-zero exit (and arguably STDERR) everywhere.
+Agent workflows checking $? treat archive of a nonexistent task as success.
+
+SCOPE
+Audit all Cmds taking IDs (move, edit, delete, handoff, ...) for the same pattern.
+Related in spirit: task #5 (unknown subcommand exits 0).
+Found while verifying the fix for task #4, VERSION 0.304.
+Fixed in a21a081: archive exits 1 when any requested ID is missing; comma-batch keeps partial success (kanban-md parity); already-archived stays exit 0. Pinned in t/41. NOTE: space-separated extra args are still silently dropped — filed as task #11.
