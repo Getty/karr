@@ -1,5 +1,14 @@
 {{$NEXT}}
 
+    - Fix `karr archive` dying with an opaque Path::Tiny error ("paths require
+      defined, positive-length parts") on ref-backed tasks — the normal case
+      since boards moved to `refs/karr/*`. Archive was the only mutating
+      command still calling `$task->save` (which needs an on-disk `file_path`)
+      instead of persisting through the board store like move/edit/pick/
+      handoff do. `Task::save` without a directory argument now croaks with a
+      clear message when the task has no `file_path`, instead of the
+      Path::Tiny error.
+
 0.303     2026-06-28 02:07:23Z
 
     - Docker: build Alien::FFI against the system libffi (apt libffi-dev) instead

@@ -63,7 +63,7 @@ sub execute {
 
     my $old_status = $task->status;
     $task->status('archived');
-    $task->save;
+    $self->save_task($task);
 
     push @results, {
       id          => $task->id,

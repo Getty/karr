@@ -7,6 +7,7 @@ use YAML::XS qw( Load Dump );
 use Path::Tiny;
 use Time::Piece;
 use JSON::MaybeXS qw( encode_json );
+use Carp qw( croak );
 
 =head1 SYNOPSIS
 
@@ -142,6 +143,8 @@ sub from_file {
 
 sub save {
   my ($self, $dir) = @_;
+  croak "Task has no file_path; ref-backed tasks must be persisted via BoardStore/save_task"
+    if !$dir && !$self->has_file_path;
   $self->updated(gmtime->datetime . 'Z');
   my $file = $dir ? path($dir)->child($self->filename) : path($self->file_path);
   $file->spew_utf8($self->to_markdown);
