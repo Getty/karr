@@ -1,0 +1,37 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T12:44:01Z
+id: 12
+priority: high
+started: 2026-07-02
+status: done
+tags:
+- bug
+- delete
+- cmd
+- git-backend
+title: "delete: crashes on ref-backed tasks â\x80\x94 file_path->remove on undef (cannot
+  delete at all)"
+updated: 2026-07-02T12:44:01Z
+---
+
+REPRO (fresh temp board)
+  karr create "T1"
+  karr delete 1 --yes
+  => Cant call method "remove" on an undefined value at Cmd/Delete.pm line 75
+
+ROOT CAUSE
+Cmd/Delete.pm:75 calls $task->file_path->remove. Ref-backed tasks (find_task)
+never have file_path set — only Task::write/from_file set it. Same family as
+task #4 (archive used $task->save). delete currently cannot delete ANY task on
+a refs-first board.
+
+FIX DIRECTION
+Persist the deletion through the store like everything else:
+BoardStore::delete_task($id) already exists (deletes refs/karr/tasks/ID/data)
+and is what serialize_from uses. The file_path unlink belongs, if anywhere,
+behind a has_file_path guard for materialized views.
+
+Found by karr-test-writer while probing for task #11. Repo VERSION 0.304.
+Fixed in 4218164: delete persists via BoardAccess->delete_task (store/ref level) instead of file_path unlink. Pinned in t/44. Suite 42 files / 247 tests PASS. E2E verified: ref removed, neighbors untouched, interactive n-path preserves.
