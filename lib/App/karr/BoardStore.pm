@@ -6,6 +6,7 @@ use Moo;
 use File::Temp qw( tempdir );
 use Path::Tiny qw( path );
 use YAML::XS qw( DumpFile LoadFile );
+use Time::Piece;
 use App::karr::Config;
 
 has git => (
@@ -148,6 +149,12 @@ sub find_task {
 
 sub save_task {
     my ( $self, $task ) = @_;
+    # Bump `updated` centrally on every mutation of an existing task, so
+    # move/edit/pick/handoff/archive get a fresh timestamp for free. A brand
+    # new task keeps its own `updated` (== created); the restore/import path in
+    # serialize_from bypasses this via git->save_task_ref to preserve stamps.
+    my $ref = "refs/karr/tasks/" . $task->id . "/data";
+    $task->updated( gmtime->datetime . 'Z' ) if $self->git->ref_exists($ref);
     return $self->git->save_task_ref($task);
 }
 
@@ -202,7 +209,9 @@ sub serialize_from {
         require App::karr::Task;
         for my $file ( $tasks_dir->children(qr/\.md$/) ) {
             my $task = App::karr::Task->from_file($file);
-            $self->save_task($task);
+            # Restore/import path: persist verbatim so the original `updated`
+            # timestamps survive, even when overwriting pre-existing refs.
+            $self->git->save_task_ref($task);
             $seen{ $task->id } = 1;
         }
     }

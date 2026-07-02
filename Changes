@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - Fix the `updated` timestamp never being bumped when a task is mutated
+      through the ref-backed store: move, edit, pick, handoff, and archive all
+      left `updated` at its previous value, so `karr show` (most recently
+      updated), `karr show --last N`, and `karr list --sort updated` gave
+      wrong answers. The bump now happens centrally in the board store
+      whenever an existing task ref is saved — matching kanban-md, which
+      stamps `Updated` in every mutating command. Creating a task keeps
+      `updated` equal to `created`, restore/import paths preserve the
+      original timestamps verbatim, and materializing the on-disk view no
+      longer rewrites `updated` to the current time (it copies the ref values
+      unchanged).
     - Fix `karr archive` dying with an opaque Path::Tiny error ("paths require
       defined, positive-length parts") on ref-backed tasks — the normal case
       since boards moved to `refs/karr/*`. Archive was the only mutating
