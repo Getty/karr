@@ -1,0 +1,47 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T02:03:51Z
+id: 4
+priority: high
+started: 2026-07-02
+status: done
+tags:
+- bug
+- archive
+- cmd
+- git-backend
+title: 'archive: $task->save dies on ref-backed tasks (Path::Tiny undef file_path)'
+updated: 2026-07-02T02:03:51Z
+---
+
+REPRO
+  karr archive <ID>   # on a board where tasks live in refs/karr/tasks/*, not on-disk files
+
+  => Path::Tiny paths require defined, positive-length parts at App/karr/Task.pm line 122 (sub save)
+The task IS moved to archived only if you fall back to `karr move <ID> archived`, which works.
+
+ROOT CAUSE
+Cmd/Archive.pm line 66 calls `$task->save;` directly (no $dir arg).
+Task::save then hits the else branch: `path($self->file_path)`. For ref-backed
+tasks, file_path is never set (from_file is not used; tasks come from the git
+ref via find_task), so file_path is undef -> path(undef) dies in Path::Tiny.
+
+Archive.pm is the ONLY Cmd that calls `$task->save`. Every other mutating Cmd
+(Move, Edit, Pick, Handoff, Create) goes through the BoardAccess role method
+`$self->save_task($task)`, which persists via BoardStore/Git (the ref backend)
+and does not touch file_path. That is why `karr move ID archived` succeeds but
+`karr archive ID` fails.
+
+FIX (one line)
+Cmd/Archive.pm:66  ->  replace `$task->save;` with `$self->save_task($task);`
+(mirrors Move.pm:120 etc.)
+
+FOLLOW-UP (optional hardening)
+Task::save at Task.pm:143-149 blindly does path($self->file_path) when no $dir is
+given. Consider die-with-clear-message or predicate guard (has_file_path) so a
+missing file_path never surfaces as an opaque Path::Tiny error.
+
+Seen on repo VERSION 0.304 (CPAN released 0.303).
+2026-07-02 02:21 Fixed: Cmd/Archive.pm now persists via save_task (BoardAccess) like all other mutating Cmds; Task::save croaks clearly when no dir and no file_path. Regression test t/38-archive-ref-backed.t (was red with the exact Path::Tiny error, now green). Full suite: 36 files / 202 tests PASS. Verified end-to-end on a temp board: archive works, idempotent re-archive works, status persists in refs/karr/tasks/*. Follow-up bugs found during verification filed as tasks 6, 7, 8. Changes entry added under {{$NEXT}}. Uncommitted in working tree pending maintainer review.
+Committed on main as df1e913 (fix + regression test + Changes entry). Not pushed yet.
