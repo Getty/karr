@@ -74,7 +74,7 @@ sub execute {
       }
     }
 
-    $task->file_path->remove;
+    $self->delete_task($task->id);
     push @results, { id => $task->id, title => $task->title, deleted => \1 };
     printf "Deleted task %d: %s\n", $task->id, $task->title unless $self->json;
   }

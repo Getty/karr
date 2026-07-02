@@ -1,5 +1,12 @@
 {{$NEXT}}
 
+    - Fix `karr delete` crashing on every ref-backed task ("Can't call method
+      \"remove\" on an undefined value") — it tried to unlink the task's
+      on-disk file, which tasks loaded from `refs/karr/*` never have, and
+      which would only have removed the materialized view anyway, never the
+      canonical ref. Deletion now goes through the board store and removes
+      the task ref itself, like every other mutating command. On a refs-first
+      board, delete previously could not delete anything at all.
     - Surplus positional arguments are now rejected before a command does any
       work ("unexpected extra argument: '99'" plus the usage line, non-zero
       exit) instead of being silently dropped — `karr archive 4 99` used to
