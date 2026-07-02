@@ -1,0 +1,26 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T02:52:01Z
+id: 9
+priority: low
+started: 2026-07-02
+status: done
+tags:
+- docs
+- cli
+title: 'docs: CLAUDE.md references ''karr materialize'' but no such subcommand exists'
+updated: 2026-07-02T02:52:01Z
+---
+
+CLAUDE.md ("Board state (refs-first)") says the tasks/ directory is "generated
+on demand (C<karr materialize>)", but lib/App/karr/Cmd/ has no Materialize.pm —
+BoardStore::materialize_to is internal API only (used by tests; CLI surface
+missing or the doc is stale).
+
+Because of task #5 (unknown subcommand falls through to board output, exit 0),
+`karr materialize` even LOOKS like it works. Decide: implement the command or
+fix the doc.
+
+Found while verifying task #8, VERSION 0.304.
+Fixed in c4164c4: CLAUDE.md corrected — materializing is internal API (BoardStore->materialize_to), no CLI command. Implementing 'karr materialize' stays a separate feature decision if ever wanted.
