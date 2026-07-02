@@ -1,0 +1,33 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T03:44:50Z
+id: 11
+priority: medium
+started: 2026-07-02
+status: done
+tags:
+- bug
+- cli
+- parity
+title: 'CLI: extra positional args silently ignored (archive 4 99 drops the 99)'
+updated: 2026-07-02T03:44:50Z
+---
+
+REPRO (temp board)
+  karr archive 4 99   # only 4 processed, 99 silently dropped, exit 0
+  karr archive 4,99   # comma form works: 4 archived, 99 warned, exit 1
+  karr show 1 2       # shows 1, the 2 is silently dropped
+
+Batch commands take ONE comma-separated positional; everything after it is
+ignored without any diagnostic. kanban-md accepts space-separated ID lists
+(cobra runBatch over args) — an agent typing `karr archive 4 5 6` believes
+all three are archived when only 4 was.
+
+FIX DIRECTION: either accept space-separated IDs like the reference (join
+remaining positionals) or reject extra args loudly. Same family as task #5
+(silent CLI misbehavior).
+
+Found while verifying tasks #5/#6. Seen on repo VERSION 0.304.
+Design nach Parity-Check: kanban-md nimmt ebenfalls NUR eine Komma-Liste (archive/delete/edit/handoff: cobra.ExactArgs(1), move: RangeArgs(1,2), show: ExactArgs(1), create: MaximumNArgs(1)) und lehnt ueberzaehlige Positionals laut ab. karr-Fix: Arg-Anzahl pro Cmd durchsetzen (die mit Meldung, non-zero Exit), Komma-Liste bleibt die Batch-Syntax. Kein space-separiertes Batch-Feature. Scope: ID-Kommandos show/archive/delete/edit/handoff/move + create; uebrige Cmds nur proben, ggf. Follow-up.
+Fixed in 789767f: shared check_positional_args in Role::BoardAccess enforces arg contracts before sync_before (zero side effects on rejection); show/archive/delete/edit/handoff/create max 1 positional, move max 2; comma list stays the batch syntax (Go parity). Pinned in t/43 (13 subtests). Suite 41 files / 241 tests PASS. E2E verified. Probing uncovered tasks #12 (delete crash on ref-backed, HIGH) and #13 (options before positionals).
