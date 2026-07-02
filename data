@@ -1,0 +1,38 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T14:17:06Z
+id: 14
+priority: high
+started: 2026-07-02
+status: done
+tags:
+- bug
+- cli
+- discovery
+title: "global --dir option is silently ignored â\x80\x94 commands always operate
+  on cwd board"
+updated: 2026-07-02T14:17:06Z
+---
+
+OBSERVED (by karr-worker during task #13, causing accidental writes to the
+REAL dogfood board that had to be restored from dangling commits)
+
+  karr --dir /some/other/repo list   # documented as overriding discovery
+  => silently uses the board of the CURRENT directory instead
+
+App/karr.pm documents: "The global --dir option overrides" board discovery,
+and an option dir => (...) exists at the root command. But discovery
+(BoardDiscovery role / Git->new(dir => ".")) never receives it — several Cmds
+hardcode dir => "." (e.g. Cmd/Restore.pm:64).
+
+IMPACT: high — a caller believing they target an isolated board mutates
+whatever board the cwd belongs to, and sync_after pushes that to its remote.
+Exactly this polluted the dogfood board during #13 (remediated).
+
+FIX DIRECTION: thread the root dir option through to BoardDiscovery/Git in
+all Cmds, or reject --dir loudly as unimplemented until it works.
+
+Repo VERSION 0.304.
+Analyse: BoardDiscovery::_build_git_root honoriert dir bereits (has_dir-Check) — aber nur App::karr (Root) deklariert option dir; dispatchte Cmds haben das Attribut nicht (Discovery faellt still auf cwd zurueck), Init/Backup/Restore/Destroy hardcoden Git->new(dir=>'.'). Design: option dir wandert als Rollen-Option in BoardDiscovery (Muster: Role/Output definiert bereits option compact/json), Root-Deklaration entfaellt (Konflikt), Init/Backup/Restore/Destroy honorieren dir ebenfalls. Beide Formen muessen funktionieren oder LAUT scheitern: karr CMD --dir X (Cmd-Option) und karr --dir X CMD (Root-Form, via MooX::Cmd command_chain an den Cmd reichen). Nie wieder still cwd. Ungueltiges --dir (kein Repo) -> sauberer Fehler.
+Fixed in 524be05: option dir lives in Role::BoardDiscovery (every composing Cmd gets it), _effective_dir adopts the root form via MooX::Cmd command_chain inside the lazy git_root builder (before store/sync materialize); Init/Backup/Restore/Destroy de-hardcoded to go through discovery. Invalid --dir croaks, never falls back to cwd. Pinned in t/46 (12 subtests). Suite 44 files / 283 tests PASS. E2E: incident case verified — target board written, cwd board byte-identical. Residual filed as task #15 (bare root space form, fails loud).
