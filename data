@@ -1,0 +1,30 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T02:20:49Z
+id: 7
+priority: medium
+started: 2026-07-02
+status: done
+tags:
+- bug
+- list
+- archive
+title: "list: --status archived returns nothing â\x80\x94 archived tasks unlistable"
+updated: 2026-07-02T02:20:49Z
+---
+
+REPRO (temp board)
+  karr create "T1" && karr archive 1
+  karr list --status archived           # => empty
+  karr list --status archived --json    # => []
+  karr show 1                           # => works, Status: archived
+
+Default list excluding archived is correct, but an explicit --status archived
+filter should surface them — otherwise archived tasks are invisible except via
+show with a known ID. Likely load_tasks/list filters archived before applying
+--status. Check kanban-md reference for parity (--all flag or status filter
+semantics).
+
+Found while verifying the fix for task #4, VERSION 0.304.
+Fixed in b96d1df: terminal-status exclusion in List::_filter now only applies without explicit --status (Go parity). --status archived/done works incl. --tag/--sort/--json combos. Pinned in t/42.
