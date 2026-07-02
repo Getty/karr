@@ -1,5 +1,13 @@
 {{$NEXT}}
 
+    - Fix `karr list --status archived` (and `--status done`) returning
+      nothing: the default done/archived exclusion ran before the explicit
+      `--status` filter, so terminal statuses could never be requested and
+      archived tasks were unreachable except via `karr show ID`. The default
+      exclusion now applies only when no `--status` filter is given
+      (kanban-md parity), so plain `karr list` is unchanged while an explicit
+      filter surfaces done/archived tasks — including combined with `--tag`,
+      `--sort`, and `--json`.
     - An unknown subcommand (`karr definitely-not-a-command`) now fails loudly
       with "Unknown command: ..." on STDERR and a non-zero exit instead of
       silently printing the board summary with exit 0 — a typo like

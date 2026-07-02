@@ -154,8 +154,11 @@ sub _filter {
   my ($self, $tasks) = @_;
   my @filtered = @$tasks;
 
-  # Exclude archived by default
-  @filtered = grep { !App::karr::Config->is_terminal_status($_->status) } @filtered;
+  # Exclude terminal statuses (done/archived) by default, but let an explicit
+  # --status request surface them.
+  unless ($self->status) {
+    @filtered = grep { !App::karr::Config->is_terminal_status($_->status) } @filtered;
+  }
 
   if ($self->status) {
     my %statuses = map { $_ => 1 } split /,/, $self->status;
