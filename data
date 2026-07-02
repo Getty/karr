@@ -1,0 +1,35 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T14:52:05Z
+id: 15
+priority: low
+started: 2026-07-02
+status: done
+tags:
+- bug
+- cli
+- dispatch
+title: 'root: bare ''karr --dir PATH'' (space form, no subcommand) dies ''Unknown
+  command: PATH'''
+updated: 2026-07-02T14:52:05Z
+---
+
+REPRO
+  karr --dir /path/to/repo          # no subcommand, space-separated value
+  => dies "Unknown command: /path/to/repo" (exit 2)
+  karr --dir=/path/to/repo          # equals form
+  => works, renders that board
+
+ROOT CAUSE
+The unknown-command guard in App::karr::execute (from task #5) greps raw
+$args_ref for non-dash tokens; MooX::Cmd echoes the parsed --dir value back
+as a bare token. The positional_args extractor from task #13 already solves
+exactly this (dir has format=s in _options_data via Role::BoardDiscovery since
+task #14) — the root guard just predates it.
+
+FIX DIRECTION: one-liner — use $self->positional_args($args_ref) in the guard
+instead of the raw grep. Fails loud today (not silently wrong), hence low.
+
+Found while fixing task #14. Repo VERSION 0.304.
+Fixed in 9b428f6: root guard uses positional_args instead of raw non-dash grep; bare 'karr --dir PATH' renders the target board, unknown-command errors name the command. Pinned in t/46 (subtests 25-27). Suite 44 files / 286 tests PASS. E2E verified.
