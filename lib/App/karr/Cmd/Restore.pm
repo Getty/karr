@@ -9,8 +9,9 @@ use MooX::Options (
 );
 use Path::Tiny;
 use YAML::XS qw( Load );
-use App::karr::Git;
-use App::karr::BoardStore;
+use App::karr::Role::BoardDiscovery;
+
+with 'App::karr::Role::BoardDiscovery';
 
 =head1 SYNOPSIS
 
@@ -61,11 +62,10 @@ sub execute {
   die "Ref restore is destructive and replaces all refs/karr/*. Re-run with --yes.\n"
     unless $self->yes;
 
-  my $git = App::karr::Git->new( dir => '.' );
-  die "Not a git repository. karr requires Git.\n" unless $git->is_repo;
-
-  my $root = $git->repo_root;
-  $git = App::karr::Git->new( dir => $root->stringify );
+  # store/git honour --dir (both call forms) and die loudly if the target is
+  # not a Git repository, instead of hardcoding the current directory.
+  my $store = $self->store;
+  my $git   = $self->git;
   $git->pull if $git->has_remote;
 
   my $payload = $self->_load_payload;
@@ -77,7 +77,6 @@ sub execute {
   die "Backup payload must contain a refs hash\n"
     unless ref $snapshot->{refs} eq 'HASH';
 
-  my $store = App::karr::BoardStore->new( git => $git );
   $store->restore_snapshot($snapshot);
   $git->push if $git->has_remote;
 

@@ -141,8 +141,14 @@ CLI.
 =head1 BOARD DISCOVERY
 
 Most commands automatically search upward from the current directory for a Git
-repository that contains C<refs/karr/*>. The global C<--dir> option overrides
-the starting directory used for that repository discovery.
+repository that contains C<refs/karr/*>. The C<--dir> option overrides the
+starting directory used for that repository discovery and is accepted in either
+position: before the subcommand (C<karr --dir PATH list>) or on the subcommand
+itself (C<karr list --dir PATH>). Both forms behave identically. The upward walk
+still applies from the given path, so C<--dir> names any directory inside the
+target repository, not necessarily its root. If no Git repository is found from
+the given path, the command fails loudly rather than falling back to the current
+directory.
 
 =head1 DEFAULT BEHAVIOUR
 
@@ -156,12 +162,9 @@ L<App::karr::Config>, L<App::karr::Cmd::Init>, L<App::karr::Cmd::Skill>
 
 =cut
 
-option dir => (
-  is => 'ro',
-  format => 's',
-  doc => 'Path used as the starting point for Git repository discovery',
-  predicate => 1,
-);
+# The --dir option is provided by App::karr::Role::BoardDiscovery (composed via
+# BoardAccess), so it is a single, shared declaration usable both here on the
+# root (`karr --dir PATH CMD`) and on every subcommand (`karr CMD --dir PATH`).
 
 # Forwarded to the default board view so bare `karr --done` behaves like
 # `karr board --done`.
@@ -248,13 +251,18 @@ sub execute {
     die "Unknown command: $unknown\nRun 'karr --help' to see the available commands.\n";
   }
 
-  # Default action: show board summary
+  # Default action: show board summary. The default Board is constructed
+  # directly (not dispatched by MooX::Cmd), so it has no command_chain to adopt
+  # --dir from; forward the root's own --dir explicitly so bare
+  # `karr --dir PATH` targets PATH rather than silently falling back to cwd.
   eval {
     require App::karr::Cmd::Board;
-    App::karr::Cmd::Board->new(
+    my %board_args = (
       board_dir => $self->board_dir,
       done      => $self->done,
-    )->execute($args_ref, $chain_ref);
+    );
+    $board_args{dir} = $self->dir if $self->has_dir;
+    App::karr::Cmd::Board->new(%board_args)->execute($args_ref, $chain_ref);
   };
   if ($@) {
     if ($@ =~ /No karr board found/) {

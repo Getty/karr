@@ -9,8 +9,9 @@ use MooX::Options (
 );
 use Path::Tiny;
 use App::karr::Config;
-use App::karr::Git;
-use App::karr::BoardStore;
+use App::karr::Role::BoardDiscovery;
+
+with 'App::karr::Role::BoardDiscovery';
 
 =head1 SYNOPSIS
 
@@ -68,11 +69,11 @@ option claude_skill => (
 
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
-  my $git = App::karr::Git->new( dir => '.' );
-  die "Not a git repository. karr requires Git.\n" unless $git->is_repo;
 
-  my $root = $git->repo_root;
-  my $store = App::karr::BoardStore->new( git => App::karr::Git->new( dir => $root->stringify ) );
+  # git_root honours --dir (both call forms) and dies loudly if the target is
+  # not a Git repository, instead of hardcoding the current directory.
+  my $root  = $self->git_root;
+  my $store = $self->store;
   die "Board already exists in refs/karr/\n" if $store->board_exists;
 
   my $overrides = { version => 1 };

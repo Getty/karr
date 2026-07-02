@@ -9,8 +9,9 @@ use MooX::Options (
 );
 use Path::Tiny;
 use YAML::XS qw( Dump );
-use App::karr::Git;
-use App::karr::BoardStore;
+use App::karr::Role::BoardDiscovery;
+
+with 'App::karr::Role::BoardDiscovery';
 
 =head1 SYNOPSIS
 
@@ -49,14 +50,12 @@ option output => (
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
-  my $git = App::karr::Git->new( dir => '.' );
-  die "Not a git repository. karr requires Git.\n" unless $git->is_repo;
-
-  my $root = $git->repo_root;
-  $git = App::karr::Git->new( dir => $root->stringify );
+  # store/git honour --dir (both call forms) and die loudly if the target is
+  # not a Git repository, instead of hardcoding the current directory.
+  my $store = $self->store;
+  my $git   = $self->git;
   $git->pull if $git->has_remote;
 
-  my $store = App::karr::BoardStore->new( git => $git );
   die "No karr board found. Run 'karr init' to create one.\n"
     unless $store->board_exists;
 

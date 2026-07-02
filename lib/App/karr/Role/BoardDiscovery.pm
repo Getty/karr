@@ -3,6 +3,7 @@
 package App::karr::Role::BoardDiscovery;
 our $VERSION = '0.304';
 use Moo::Role;
+use MooX::Options;
 use Path::Tiny;
 use Carp qw( croak );
 
@@ -12,6 +13,8 @@ This role provides the minimal interface for discovering the board's Git
 repository and BoardStore. It provides:
 
 =over 4
+
+=item * C<dir> — CLI option overriding the directory discovery starts from
 
 =item * C<git_root> — path to the Git repository (walks up from C<dir> or CWD)
 
@@ -27,6 +30,18 @@ Commands that need the sync lifecycle should also compose
 L<App::karr::Role::SyncLifecycle>.
 
 =cut
+
+# The board-discovery seed. Available on every command that composes this role
+# (directly or via BoardAccess), so both `karr CMD --dir PATH` and, via the
+# MooX::Cmd command_chain, the root form `karr --dir PATH CMD` resolve the same
+# board. format=s also registers dir in _options_data, so positional_args never
+# mistakes `--dir PATH` (or its value) for a positional argument.
+option dir => (
+  is        => 'ro',
+  format    => 's',
+  doc       => 'Path used as the starting point for Git repository discovery',
+  predicate => 1,
+);
 
 has git_root => (
     is  => 'lazy',
@@ -60,12 +75,33 @@ has role => (
     builder => sub { $ENV{KARR_ROLE} || 'user' },
 );
 
+# The effective --dir for this command. A command's own --dir (the
+# `karr CMD --dir PATH` form) always wins. Otherwise, when MooX::Cmd dispatched
+# us as a subcommand, the root form `karr --dir PATH CMD` leaves --dir on an
+# ancestor in the command_chain rather than on this Cmd instance, so adopt it
+# from there. Consulted from the lazy _build_git_root builder, so the value is
+# picked up before git_root/store are ever built -- including from
+# SyncLifecycle's sync_before, which triggers store.
+sub _effective_dir {
+    my ($self) = @_;
+    return $self->dir if $self->has_dir;
+
+    if ( $self->can('command_chain') && ( my $chain = $self->command_chain ) ) {
+        for my $cmd (@$chain) {
+            next if $cmd == $self;
+            return $cmd->dir if $cmd->can('has_dir') && $cmd->has_dir;
+        }
+    }
+    return undef;
+}
+
 sub _build_git_root {
     my ($self) = @_;
     require App::karr::Git;
 
-    my $start = $self->can('has_dir') && $self->has_dir
-        ? path( $self->dir )->absolute
+    my $dir = $self->_effective_dir;
+    my $start = defined $dir
+        ? path($dir)->absolute
         : path('.')->absolute;
 
     while (1) {
