@@ -1,0 +1,36 @@
+---
+class: standard
+completed: 2026-07-02
+created: 2026-07-02T03:04:14Z
+id: 10
+priority: medium
+started: 2026-07-02
+status: done
+tags:
+- feature
+- board
+- cli
+title: 'board: hide done tasks by default, add --done to show them'
+updated: 2026-07-02T03:04:14Z
+---
+
+REQUEST (maintainer)
+Bare `karr` (and `karr board`) currently always renders every done task; on a
+living board the Done section grows forever and drowns the actual open work.
+
+SPEC
+- Default `karr` / `karr board`: do NOT list tasks in status `done` (section
+  omitted like the empty-archived case, Board.pm:144ff). Instead give a compact
+  hint so the info is not silently lost, e.g. footer "5 tasks (4 done hidden)".
+- New Board option `--done`: render the Done section as today.
+- Must work identically for bare `karr --done` (routes via App::karr::execute
+  -> Cmd::Board->new, App/karr.pm:230-237 — option needs plumbing) and
+  `karr board --done`.
+- Applies to all board output modes consistently (incl. --json/--tags if
+  present); `karr list` is untouched (already excludes done by default).
+- Empty done => no hint, output as today.
+
+PARITY NOTE: deliberate deviation from kanban-md (Go board always shows done,
+cmd/board.go only excludes archived). Maintainer decision on 2026-07-02.
+Scope-Klarstellung: --compact bleibt unveraendert (eine Zeile pro Status mit Count+IDs, kein Wachstumsproblem — Counts dort gewollt). Hiding gilt fuer Default-Rendering, --tags und --json; --done schaltet ueberall frei. Soll gepinnt in t/37 (erweitert) + t/40 (neu, CLI-Plumbing bare karr --done via IPC::Open3).
+Implemented and committed on main as 0eb982c: Done section hidden by default in karr/karr board (default, --tags, --json; JSON keeps done column+count, empties tasks), footer hint '(N done hidden)', new --done flag incl. bare-karr plumbing, --compact unchanged. Tests t/37 extended + t/40 new (CLI plumbing). Suite 38 files / 212 tests PASS. E2E verified on the real board.
