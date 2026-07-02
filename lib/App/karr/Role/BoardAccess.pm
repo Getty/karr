@@ -48,25 +48,67 @@ sub parse_ids {
     return split /,/, $id_str;
 }
 
+# Extract the real positional arguments from the argv MooX::Cmd echoes back
+# into execute(). Because MooX::Options runs with protect_argv (its default),
+# the array handed to execute() still holds every original token in order:
+# recognised option flags, the values they consumed, and --opt=value forms
+# included (e.g. `move --claim tester 1 in-progress` arrives verbatim as
+# [--claim, tester, 1, in-progress]). This gives cobra-style freedom to place
+# flags before, between, or after positionals -- we just have to subtract the
+# option tokens back out.
+#
+# We do that by walking the argv against the command's own %{_options_data}:
+# a dash token is an option; if that option takes a value (has a 'format') and
+# is given in space form (no inline '='), it also swallows the following token
+# as its value -- even a flag-shaped value like `--append-body --weird`.
+# Everything not eaten as an option or an option value is a positional, in
+# order. Option-name matching mirrors how the token reaches us: leading dashes
+# stripped, '-' folded to '_' to hit the underscore keys in _options_data, plus
+# a reverse map of short aliases (e.g. -a => append_body, -t => timestamp).
+# An unrecognised dash token is treated defensively as non-consuming: a genuine
+# typo would already have been rejected upstream by MooX::Options, so the only
+# accepted-but-unmatched shape here is a Getopt::Long abbreviation, and karr's
+# abbreviatable flags (e.g. --jso for --json) consume nothing anyway.
+sub positional_args {
+    my ($self, $args_ref) = @_;
+
+    my %options_data = $self->_options_data;
+    my %by_name;
+    for my $name (keys %options_data) {
+        $by_name{$name} = $options_data{$name};
+        my $short = $options_data{$name}{short};
+        next unless defined $short;
+        $by_name{$_} = $options_data{$name} for split /\|/, $short;
+    }
+
+    my @positional;
+    my @args = @$args_ref;
+    while (@args) {
+        my $arg = shift @args;
+        if ($arg =~ /^-/) {
+            (my $name = $arg) =~ s/^-+//;        # drop leading dashes
+            my $has_inline = $name =~ s/=.*//s;  # --opt=value carries its value
+            $name =~ tr/-/_/;                    # match underscore keys
+            my $data = $by_name{$name};
+            shift @args if $data && $data->{format} && !$has_inline && @args;
+            next;
+        }
+        push @positional, $arg;
+    }
+    return @positional;
+}
+
 # Reject surplus positional arguments before a command does any work, matching
 # kanban-md's cobra Args validators (ExactArgs/RangeArgs/MaximumNArgs) which
 # refuse extra positionals ahead of RunE. The comma list stays the one and only
-# batch syntax; there is no space-separated id batch.
-#
-# MooX::Cmd hands execute() the raw argv and echoes parsed option flags *and*
-# their values back into it (e.g. `move 1 --next --claim tester` arrives as
-# [1, --next, --claim, tester]). Positionals always precede options on the
-# command line, so the positional count is the leading run of non-dash tokens;
-# stopping at the first option flag ignores both the flags and their echoed
-# values.
+# batch syntax; there is no space-separated id batch. Counting is done against
+# positional_args (the real positionals with option tokens subtracted out), not
+# a leading run of non-dash tokens, so `archive 1 --json 99` correctly rejects
+# the trailing "99" instead of silently dropping it.
 sub check_positional_args {
     my ($self, $args_ref, $max) = @_;
 
-    my @positional;
-    for my $arg (@$args_ref) {
-        last if $arg =~ /^-/;
-        push @positional, $arg;
-    }
+    my @positional = $self->positional_args($args_ref);
     return if @positional <= $max;
 
     my @extra   = @positional[$max .. $#positional];

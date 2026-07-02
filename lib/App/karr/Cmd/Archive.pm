@@ -38,7 +38,8 @@ sub execute {
 
   $self->sync_before;
 
-  my $id_str = $args_ref->[0] or die "Usage: karr archive ID[,ID,...]\n";
+  my @pos = $self->positional_args($args_ref);
+  my $id_str = $pos[0] or die "Usage: karr archive ID[,ID,...]\n";
 
   my @ids = $self->parse_ids($id_str);
   my @results;

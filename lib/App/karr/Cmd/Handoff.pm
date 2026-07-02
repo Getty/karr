@@ -91,7 +91,8 @@ sub execute {
 
   $self->sync_before;
 
-  my $id = $args_ref->[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";
+  my @pos = $self->positional_args($args_ref);
+  my $id = $pos[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";
 
   my $ec = $self->store->effective_config;
 

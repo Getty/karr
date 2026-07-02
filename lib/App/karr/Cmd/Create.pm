@@ -115,7 +115,8 @@ sub execute {
 
   $self->sync_before;
 
-  my $title = $self->title // $args_ref->[0]
+  my @pos = $self->positional_args($args_ref);
+  my $title = $self->title // $pos[0]
     or die "Title is required. Use --title or pass as argument.\n";
 
   my $ec = $self->store->effective_config;

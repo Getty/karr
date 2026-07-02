@@ -139,7 +139,8 @@ sub execute {
 
   $self->check_positional_args($args_ref, 1);
 
-  my @tasks = $self->_select_tasks($args_ref->[0]);
+  my @pos = $self->positional_args($args_ref);
+  my @tasks = $self->_select_tasks($pos[0]);
 
   unless (@tasks) {
     print "No tasks found.\n" unless $self->json;

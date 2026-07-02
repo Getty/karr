@@ -72,9 +72,10 @@ sub execute {
 
   $self->sync_before;
 
-  my $id_str = $args_ref->[0] or die "Usage: karr move ID[,ID,...] [STATUS]\n";
+  my @pos = $self->positional_args($args_ref);
+  my $id_str = $pos[0] or die "Usage: karr move ID[,ID,...] [STATUS]\n";
   my @ids = $self->parse_ids($id_str);
-  my $new_status = $args_ref->[1];
+  my $new_status = $pos[1];
 
   my $ec = $self->store->effective_config;
   my @statuses = $self->store->all_status_names;

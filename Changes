@@ -1,5 +1,15 @@
 {{$NEXT}}
 
+    - Options may now be placed before, between, or after positional
+      arguments (`karr archive --json 1`, `karr handoff --claim tester 1`,
+      `karr edit --title New 3`), matching how the kanban-md CLI behaves.
+      Previously the raw option token was read as the task id, giving opaque
+      errors like "Task --claim not found" — and `karr show --last N` crashed
+      outright. The real positionals are now extracted from argv using each
+      command's own option metadata (value-taking options swallow their
+      value, `--opt=value` and short aliases like `-a` included), which also
+      closes a hole in the surplus-argument guard: `karr archive 1 --json 99`
+      used to silently drop the 99 while still archiving task 1.
     - Fix `karr delete` crashing on every ref-backed task ("Can't call method
       \"remove\" on an undefined value") — it tried to unlink the task's
       on-disk file, which tasks loaded from `refs/karr/*` never have, and
