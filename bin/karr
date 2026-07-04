@@ -9,6 +9,7 @@ use App::karr;
 if (@ARGV) {
     $ARGV[0] = 'setrefs' if $ARGV[0] eq 'set-refs';
     $ARGV[0] = 'getrefs' if $ARGV[0] eq 'get-refs';
+    $ARGV[0] = 'agentname' if $ARGV[0] eq 'agent-name';
 }
 
 App::karr->new_with_cmd;

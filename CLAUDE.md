@@ -79,7 +79,7 @@ There is no `karr materialize` CLI command (yet); materializing is internal API
 | `archive` | implemented | `archive` |
 | `handoff` | implemented | `handoff` |
 | `metrics` | TODO | `metrics` |
-| `log` | TODO | `log` |
+| `log` | implemented | `log` |
 | `config` | implemented | `config` |
 | `context` | implemented | `context` |
 | `agent-name` | implemented | `agent-name` |

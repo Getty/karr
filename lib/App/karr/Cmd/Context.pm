@@ -151,6 +151,12 @@ sub execute {
 
 sub _render_markdown {
   my ($self, $board_name, $total, $active, $blocked, $overdue, $sections) = @_;
+  # The "kanban-md" spelling in these BEGIN/END markers (and the matching
+  # regex in _write_to_file below) is an intentional interop contract: karr
+  # and kanban-md maintain the same context block inside a shared host file
+  # (e.g. AGENTS.md) by matching identical sentinels, so switching tools
+  # updates the same block and leaves no orphaned markers. Do NOT rename to
+  # "karr".
   my $md = "<!-- BEGIN kanban-md context -->\n";
   $md .= "## Board: $board_name\n\n";
   $md .= "**$total tasks** | $active active | $blocked blocked | $overdue overdue\n\n";

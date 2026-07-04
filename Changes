@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Fix `karr agent-name` (the dashed spelling used throughout the docs)
+      not running: it never reached the AgentName command and errored with
+      "Unknown command" instead of printing a generated name. The dashed form
+      is now aliased to the command like `set-refs`/`get-refs` already were.
+      `karr --help` also now lists the `log` and `agent-name` commands, which
+      were missing from its command summary.
     - Fix the karr-foundation board sweep silently skipping real boards whose
       refs had been packed (`git gc` / `git pack-refs`) or that live in a git
       worktree. Board detection tested for the loose file
