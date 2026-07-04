@@ -262,7 +262,6 @@ sub execute {
   eval {
     require App::karr::Cmd::Board;
     my %board_args = (
-      board_dir => $self->board_dir,
       done      => $self->done,
     );
     $board_args{dir} = $self->dir if $self->has_dir;

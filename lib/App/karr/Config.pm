@@ -74,14 +74,6 @@ sub priorities {
   return @{ $self->data->{priorities} // [qw(low medium high critical)] };
 }
 
-sub next_id {
-  my ($self) = @_;
-  my $id = $self->data->{next_id} // 1;
-  $self->data->{next_id} = $id + 1;
-  $self->save;
-  return $id;
-}
-
 sub claim_timeout {
   my ($self) = @_;
   return $self->data->{claim_timeout} // '1h';

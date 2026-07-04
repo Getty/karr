@@ -1,5 +1,13 @@
 {{$NEXT}}
 
+    - Internal dead-code cleanup, no user-visible behavior change: remove the
+      unused `Config->next_id` method (ids are allocated from the next-id ref
+      via `BoardStore->allocate_next_id`), the dead `board_dir` attribute and
+      its lone passthrough, and the unused `BoardStore->temp_board_dir`; and
+      simplify `karr pick`, whose locking path was gated on an `is_repo` check
+      that is always true by the time it runs (a board lives in refs/karr/*,
+      reachable only inside a Git repo), so the lock/log path is now
+      unconditional.
     - Fix `karr agent-name` (the dashed spelling used throughout the docs)
       not running: it never reached the AgentName command and errored with
       "Unknown command" instead of printing a generated name. The dashed form

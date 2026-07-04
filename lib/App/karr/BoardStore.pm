@@ -3,7 +3,6 @@
 package App::karr::BoardStore;
 our $VERSION = '0.304';
 use Moo;
-use File::Temp qw( tempdir );
 use Path::Tiny qw( path );
 use YAML::XS qw( DumpFile LoadFile );
 use Time::Piece;
@@ -244,12 +243,6 @@ sub restore_snapshot {
         $self->git->write_ref( $ref, $refs->{$ref} );
     }
     return 1;
-}
-
-sub temp_board_dir {
-    my ($self) = @_;
-    my $dir = path( tempdir( CLEANUP => 1 ) );
-    return $self->materialize_to($dir);
 }
 
 sub _merge_hashes {
