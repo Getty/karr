@@ -260,13 +260,28 @@ sub _discover_repos {
       # .karr file takes precedence; also detect karr-init'd repos
       if ( $child->child('.karr')->exists ) {
         push @repos, $child;
-      } elsif ( $child->child('.git/refs/karr/config')->exists ) {
+      } elsif ( $self->_is_karr_board_root( $child ) ) {
         push @repos, $child;
       }
     }
   }
 
   return @repos;
+}
+
+# True when $dir is *itself* the root of a karr-init'd repo — resolves via
+# libgit2 so packed refs (git gc / pack-refs) and worktree gitdir indirection
+# are handled, unlike a bare .git/refs/karr/config file check. libgit2's
+# open_ext walks up to find an enclosing .git, so a plain directory nested
+# inside a karr repo would spuriously match; guard by confirming the resolved
+# repo root is $dir, not an ancestor.
+sub _is_karr_board_root {
+  my ( $self, $dir ) = @_;
+  my $git = App::karr::Git->new( dir => "$dir" );
+  return 0 unless $git->is_repo;
+  my $root = $git->repo_root or return 0;
+  return 0 unless $root->realpath eq path( $dir )->realpath;
+  return $git->ref_exists('refs/karr/config');
 }
 
 # ---------------------------------------------------------------------------
@@ -276,9 +291,11 @@ sub _discover_repos {
 sub _process_repo {
   my ( $self, $repo ) = @_;
 
-  # Check if repo has karr board (either .karr file or karr refs)
+  # Check if repo has karr board (either .karr file or karr refs). Resolve the
+  # ref via libgit2 so packed refs and worktrees are handled — $repo is an
+  # already-known repo root here, so open_ext's walk-up cannot false-match.
   my $has_karr = $repo->child('.karr')->exists
-              || $repo->child('.git/refs/karr/config')->exists;
+              || App::karr::Git->new( dir => "$repo" )->ref_exists('refs/karr/config');
   unless ( $has_karr ) {
     $self->_say_verbose("skip $repo — no karr board");
     return;

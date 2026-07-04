@@ -1,5 +1,14 @@
 {{$NEXT}}
 
+    - Fix the karr-foundation board sweep silently skipping real boards whose
+      refs had been packed (`git gc` / `git pack-refs`) or that live in a git
+      worktree. Board detection tested for the loose file
+      `.git/refs/karr/config`, which disappears once refs are packed and never
+      exists under a worktree's gitdir indirection, so those boards were
+      dropped from the scan. Detection now resolves `refs/karr/config` through
+      libgit2; the scan-directory sweep additionally confirms the resolved
+      repository root is the scanned child itself, so a plain directory nested
+      inside a karr repo is not mistaken for a board.
     - Fix the documented global `--dir` option being silently ignored:
       commands always operated on the board of the current directory, so
       `karr --dir /other/repo create "X"` quietly wrote to — and synced —
