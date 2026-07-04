@@ -60,7 +60,13 @@ my %WRITABLE = map { $_ => 1 } qw(
 
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
-  my $action = $args_ref->[0] // 'show';
+  my @pos    = $self->positional_args($args_ref);
+  my $action = $pos[0] // 'show';
+
+  # Action-dependent arity: show=1, get KEY=2, set KEY VALUE=3 positionals
+  # (the action itself is a positional). Reject surplus before any work/sync.
+  my %arity = ( show => 1, get => 2, set => 3 );
+  $self->check_positional_args($args_ref, $arity{$action}) if $arity{$action};
 
   $self->sync_before if $action eq 'set';
 
@@ -69,11 +75,11 @@ sub execute {
   if ($action eq 'show') {
     $self->_show_all($config);
   } elsif ($action eq 'get') {
-    my $key = $args_ref->[1] or die "Usage: karr config get KEY\n";
+    my $key = $pos[1] or die "Usage: karr config get KEY\n";
     $self->_get_key($config, $key);
   } elsif ($action eq 'set') {
-    my $key = $args_ref->[1] or die "Usage: karr config set KEY VALUE\n";
-    my $val = $args_ref->[2] // die "Usage: karr config set KEY VALUE\n";
+    my $key = $pos[1] or die "Usage: karr config set KEY VALUE\n";
+    my $val = $pos[2] // die "Usage: karr config set KEY VALUE\n";
     $self->_set_key($config, $key, $val);
     $self->sync_after;
   } else {

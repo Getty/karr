@@ -1,5 +1,13 @@
 {{$NEXT}}
 
+    - `karr config` and `karr skill` now accept options placed before the
+      action (`karr config --json show`, `karr skill --json install`) instead
+      of misreading the leading flag as the action ("Unknown action: --json").
+      Both commands read their action (and config's key/value) through the same
+      option-aware positional parsing the id-taking commands already use, now
+      extracted into a shared `App::karr::Role::CliArgs`. Surplus positionals
+      are rejected too: `karr skill` takes exactly the action, and `karr config`
+      enforces its per-action arity (`config get KEY extra` is rejected).
     - Internal dead-code cleanup, no user-visible behavior change: remove the
       unused `Config->next_id` method (ids are allocated from the next-id ref
       via `BoardStore->allocate_next_id`), the dead `board_dir` attribute and

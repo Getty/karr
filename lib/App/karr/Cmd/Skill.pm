@@ -8,9 +8,10 @@ use MooX::Options (
   usage_string => 'USAGE: karr skill [install|check|update|show] [--agent NAME] [--global] [--force]',
 );
 use App::karr::Role::Output;
+use App::karr::Role::CliArgs;
 use Path::Tiny;
 
-with 'App::karr::Role::Output';
+with 'App::karr::Role::Output', 'App::karr::Role::CliArgs';
 
 =head1 SYNOPSIS
 
@@ -87,7 +88,9 @@ my %AGENTS = (
 
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
-  my $action = $args_ref->[0] // 'install';
+  my @pos    = $self->positional_args($args_ref);
+  my $action = $pos[0] // 'install';
+  $self->check_positional_args($args_ref, 1);   # only the action is a positional
 
   if ($action eq 'install') {
     $self->_install;
