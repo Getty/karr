@@ -28,6 +28,11 @@
       state, cooldown backoff, attempt counters) and `Foundation::Overview`
       (the read-only dashboard) — with `Foundation` staying the orchestrator
       and delegating, so every existing call site keeps working unchanged.
+    - `karr backup`, `karr restore` and `karr destroy` now run through the
+      shared sync lifecycle instead of hand-rolled pull/push calls, so the
+      most destructive commands get the same 3x pull/push retry and
+      push-on-crash insurance as every other mutating command (backup is
+      read-only and takes only the retrying pull — it never pushes).
     - `karr config` and `karr skill` now accept options placed before the
       action (`karr config --json show`, `karr skill --json install`) instead
       of misreading the leading flag as the action ("Unknown action: --json").

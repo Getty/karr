@@ -8,8 +8,10 @@ use MooX::Options (
   usage_string => 'USAGE: karr destroy --yes',
 );
 use App::karr::Role::BoardDiscovery;
+use App::karr::Role::SyncLifecycle;
 
 with 'App::karr::Role::BoardDiscovery';
+with 'App::karr::Role::SyncLifecycle';
 
 =head1 SYNOPSIS
 
@@ -53,17 +55,21 @@ sub execute {
   die "Board destroy is destructive and deletes refs/karr/*. Re-run with --yes.\n"
     unless $self->yes;
 
-  # store/git honour --dir (both call forms) and die loudly if the target is
+  # store honours --dir (both call forms) and dies loudly if the target is
   # not a Git repository, instead of hardcoding the current directory.
   my $store = $self->store;
-  my $git   = $self->git;
-  $git->pull if $git->has_remote;
+
+  # Destroy deletes refs/karr/*: run the full sync lifecycle so the pull (which
+  # may bring a remote-only board into view before we decide it is missing) and
+  # the pruning push both retry, and the guard insures the push on a crash.
+  $self->sync_before;
 
   die "No karr board found. Run 'karr init' to create one.\n"
     unless $store->board_exists;
 
   $store->delete_all_karr_refs;
-  $git->push if $git->has_remote;
+
+  $self->sync_after;
 
   print STDERR "Deleted refs/karr/*\n";
 }

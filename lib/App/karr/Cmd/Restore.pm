@@ -10,8 +10,10 @@ use MooX::Options (
 use Path::Tiny;
 use YAML::XS qw( Load );
 use App::karr::Role::BoardDiscovery;
+use App::karr::Role::SyncLifecycle;
 
 with 'App::karr::Role::BoardDiscovery';
+with 'App::karr::Role::SyncLifecycle';
 
 =head1 SYNOPSIS
 
@@ -62,11 +64,13 @@ sub execute {
   die "Ref restore is destructive and replaces all refs/karr/*. Re-run with --yes.\n"
     unless $self->yes;
 
-  # store/git honour --dir (both call forms) and die loudly if the target is
+  # store honours --dir (both call forms) and dies loudly if the target is
   # not a Git repository, instead of hardcoding the current directory.
   my $store = $self->store;
-  my $git   = $self->git;
-  $git->pull if $git->has_remote;
+
+  # Restore rewrites refs/karr/*: run the full sync lifecycle so the pull and
+  # the mirror-back push both retry, and the guard insures the push on a crash.
+  $self->sync_before;
 
   my $payload = $self->_load_payload;
   my $snapshot = eval { Load($payload) };
@@ -78,7 +82,8 @@ sub execute {
     unless ref $snapshot->{refs} eq 'HASH';
 
   $store->restore_snapshot($snapshot);
-  $git->push if $git->has_remote;
+
+  $self->sync_after;
 
   print STDERR "Restored refs/karr/* from snapshot\n";
 }
