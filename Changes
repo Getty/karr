@@ -21,6 +21,13 @@
       results tail) and `Task->to_json_hash` (the frontmatter+body payload of
       show/pick/handoff). The previously untested `--json` paths of
       move/edit/show/pick/handoff are now pinned by tests.
+    - Internal refactor, no user-visible behavior change: the ~900-line
+      karr-foundation module is split along its natural seams into three
+      focused collaborators — `Foundation::Runner` (agent command execution
+      and common-error classification), `Foundation::State` (lock file, JSON
+      state, cooldown backoff, attempt counters) and `Foundation::Overview`
+      (the read-only dashboard) — with `Foundation` staying the orchestrator
+      and delegating, so every existing call site keeps working unchanged.
     - `karr config` and `karr skill` now accept options placed before the
       action (`karr config --json show`, `karr skill --json install`) instead
       of misreading the leading flag as the action ("Unknown action: --json").
