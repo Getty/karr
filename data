@@ -1,0 +1,30 @@
+---
+claimed_at: 2026-07-04T20:54:15Z
+claimed_by: agent-fox
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:12:13Z
+id: 19
+priority: low
+started: 2026-07-04
+status: done
+tags:
+- docs
+- cli
+title: 'help/docs drift: karr log missing from --help, CLAUDE.md table stale, agent-name
+  alias missing'
+updated: 2026-07-02T16:12:13Z
+---
+
+THREE small drifts:
+1. @COMMANDS in App/karr.pm:176-198 lacks "log" — karr log works but is
+   invisible in karr --help.
+2. CLAUDE.md command table says "log | TODO" although Cmd/Log.pm is complete
+   (and "metrics | TODO" is still genuinely open).
+3. bin/karr aliases set-refs/get-refs -> setrefs/getrefs but NOT agent-name ->
+   agentname, while CLAUDE.md/kanban-md parity uses the dashed spelling (this
+   very session tripped over it, see task #5 history).
+Found during architecture sweep. VERSION 0.304.
+Ergaenzung aus der Architektur-Session (Frage 8): Die kanban-md-Sentinels in Cmd/Context.pm sind ABSICHT (Interop: beide Tools pflegen denselben Block, Tool-Wechsel ohne Marker-Leichen) — Kommentar an den Sentinel-Konstanten ergaenzen, damit es nie wieder als Cross-Branding-Leftover gemeldet wird. CONTEXT.md-Eintrag 'Context block' kommt direkt aus der Session.
+Fixed in ef3ad63. (1) bin/karr now aliases agent-name -> agentname, so karr agent-name dispatches (was erroring 'Unknown command'). (2) @COMMANDS lists log ('Show activity log') and shows agent-name dashed. (3) CLAUDE.md table: log now 'implemented' (metrics stays TODO). (4) Cmd/Context.pm kanban-md sentinels get an interop comment. Regression test t/47 (agent-name dispatch red->green + --help listing). Full suite green (293 tests).
+Review passed: Alias, Help-Tabelle, CLAUDE.md, Interop-Kommentar korrekt; Regressionstest t/47.
