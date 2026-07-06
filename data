@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-07-06T19:26:19Z
+claimed_by: mimed-slinks
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:16:33Z
+id: 21
+priority: medium
+started: 2026-07-06
+status: done
+tags:
+- feature
+- cli
+- interop
+title: "feature: karr materialize + import â\x80\x94 CLI surface for the file view
+  (ADR 0001)"
+updated: 2026-07-06T19:26:19Z
+---
+
+Decided in the 2026-07-02 architecture session (docs/adr/0001): the file layer
+is a first-class bridge. Expose it:
+
+- karr materialize [--dir PATH]: write tasks/ + config.yml as a disposable
+  gitignored view of refs (BoardStore::materialize_to — exists, tested).
+- import counterpart (name TBD: karr import? karr materialize --import?):
+  serialize_from — reads a tasks/ dir back into refs, preserving timestamps
+  (pinned t/39). Overwrites refs => needs a --yes style guard like restore.
+
+Also: BoardStore::temp_board_dir is currently caller-free (task #20) — check
+whether the materialize command wants it before deleting.
+CLAUDE.md "Board state (refs-first)" section then gets its karr materialize
+sentence back (was removed in task #9 because the command did not exist).
+Implemented karr materialize + karr import (commit 6cd2d0f on worktree-agent-a67dd6546163201a0). materialize: refs->files view at board root (config.yml + tasks/*.md), read-only, no sync. import: files->refs via serialize_from, --yes guard, full sync cycle, refuses when no tasks/ view (never wipes refs), preserves timestamps. --json always emits array. New t/55-materialize-import.t (8 subtests). Full suite green: 51 files / 325 tests. .gitignore now ignores config.yml too; CLAUDE.md updated.
+Landed on main as 3332116 (amended cherry-pick with Changes entry). Review passed: idiomatic Cmds, anti-wipe guard, always-array JSON approved as collection contract (like list --json). Verified against the real reference at ~/dev/kanban-md: no import/materialize command collision. Follow-ups filed: #29 (.gitignore offer parity), #30 (next-id after bootstrap import).
