@@ -6,6 +6,14 @@ use Moo::Role;
 use MooX::Options;
 use Path::Tiny;
 use Carp qw( croak );
+use App::karr::Role::ExitCodes;
+
+# Every command that composes this role (directly or via BoardAccess) inherits
+# the exit-code contract's option-parse half: an unknown option / bad option
+# value exits 2, not 1. See App::karr::Role::ExitCodes and ADR 0002. The four
+# board-less commands (agent-name, get-refs, set-refs, skill) compose ExitCodes
+# on their own.
+with 'App::karr::Role::ExitCodes';
 
 =head1 DESCRIPTION
 

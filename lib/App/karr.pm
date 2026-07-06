@@ -233,6 +233,11 @@ sub _print_help {
   $out .= "\nRun " . colored("karr <command> --help", 'bold') . " for command-specific options.\n";
 
   if ($code > 0) { warn $out } else { print $out }
+  # Exit-code contract (ADR 0002): a positive code here is a usage/option-parse
+  # error from MooX::Options (unknown option, bad value on the root command), so
+  # normalize it to 2. Help requests (-h/--help) arrive with code 0 -> exit 0.
+  # A negative code means "print, do not exit" and is left untouched.
+  $code = 2 if $code > 0;
   exit $code if $code >= 0;
 }
 

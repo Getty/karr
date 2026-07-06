@@ -9,6 +9,13 @@
       refuses to run when no tasks/ view is present, so it can never silently
       wipe the board. config.yml now joins tasks/ in .gitignore so the whole
       materialized view stays disposable.
+    - CLI exit codes now follow a stable 0/1/2 contract (ADR 0002): 0 success,
+      1 runtime failure (task not found, board missing, Git/sync error, a
+      destructive command refused without --yes), 2 usage error (unknown
+      command, unknown option, invalid option value, surplus or missing
+      positional). Replaces the previous accidental 255/1/2 mix; scripting
+      agents can now distinguish misuse (2) from operation failure (1). The
+      contract is documented in the karr POD under EXIT CODES.
     - Fix the redundant push fired before every syncing command: the SyncGuard
       returned by sync_before was discarded immediately (nobody held it), so
       it pushed before the command body even ran — the doubled "Push attempt"

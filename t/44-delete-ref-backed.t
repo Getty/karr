@@ -173,13 +173,15 @@ subtest '--json variant: deleted flag reported, no crash (RED today, ticket #12)
 
 # ------------------------------------------------ non-regression, re-pinned
 
-subtest 'delete 99 --yes: not-found message and exit 255 (GREEN pin, per t/41)' => sub {
+subtest 'delete 99 --yes: not-found message and exit 1 (GREEN pin, per t/41)' => sub {
     my $repo = _setup_repo();
     _seed_tasks( $repo, 1 );
 
     my $rv = _run_karr( $repo, undef, 'delete', 99, '--yes' );
 
-    is( $rv->{exit}, 255, 'delete 99 --yes exits 255' );
+    # Not found is a runtime failure under the exit-code contract (ADR 0002):
+    # exit 1, not the accidental 255 an uncaught die used to leak.
+    is( $rv->{exit}, 1, 'delete 99 --yes exits 1 (runtime failure)' );
     like( $rv->{stderr}, qr/Task 99 not found/, 'stderr names the missing id' );
 
     ok( _task_ref_exists( $repo, 1 ), 'the existing task (1) is untouched' );

@@ -9,9 +9,12 @@ use MooX::Options (
 );
 use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
+use App::karr::Role::ExitCodes;
 use Path::Tiny;
 
-with 'App::karr::Role::Output', 'App::karr::Role::CliArgs';
+# ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
+# is board-less, so it does not inherit ExitCodes via BoardDiscovery.
+with 'App::karr::Role::Output', 'App::karr::Role::CliArgs', 'App::karr::Role::ExitCodes';
 
 =head1 SYNOPSIS
 

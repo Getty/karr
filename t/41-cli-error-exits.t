@@ -22,8 +22,12 @@ use Symbol qw( gensym );
 #
 # #6: ID-taking commands are inconsistent about not-found exit codes.
 #     App::karr::Cmd::Show/Move/Edit/Delete/Handoff all already
-#     `die "Task $id not found\n"` on a missing id, which is uncaught and
-#     exits 255 -- these five are pinned here as GREEN regressions.
+#     `die "Task $id not found\n"` on a missing id -- these five are pinned
+#     here as GREEN regressions. (Historically that uncaught die leaked exit
+#     255; since ADR 0002 / ticket #22 the central bin/karr handler classifies
+#     it as a runtime failure and exits 1. The assertions below only pin a
+#     non-zero exit, so they hold across that change; the exact code is pinned
+#     in t/57-exit-code-contract.t.)
 #     App::karr::Cmd::Archive is the odd one out: on a missing id it does
 #     `warn "Task $id not found\n"` + records an error result + `next`s the
 #     loop instead of dying, so the command completes normally and exits 0.
@@ -158,8 +162,9 @@ my %ID_CMD = (
 );
 
 # show/move/edit/delete/handoff already `die "Task $id not found\n"`
-# (uncaught -> exit 255): GREEN pins today. archive currently `warn`s and
-# continues instead of dying -> exit 0: RED, ticket #6.
+# (a runtime failure -> exit 1 since ADR 0002; was an uncaught 255 before):
+# GREEN pins today. archive currently `warn`s and continues instead of dying
+# -> exit 0: RED, ticket #6.
 my %EXPECT_RED_TODAY = ( archive => 1 );
 
 for my $name ( sort keys %ID_CMD ) {
