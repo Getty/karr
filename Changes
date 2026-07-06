@@ -9,6 +9,13 @@
       refuses to run when no tasks/ view is present, so it can never silently
       wipe the board. config.yml now joins tasks/ in .gitignore so the whole
       materialized view stays disposable.
+    - Fix the redundant push fired before every syncing command: the SyncGuard
+      returned by sync_before was discarded immediately (nobody held it), so
+      it pushed before the command body even ran — the doubled "Push attempt"
+      seen on every karr move/handoff — and the documented die-insurance never
+      actually engaged. The guard is now retained for the whole command body
+      and neutralized after a successful sync_after, so a crash mid-command
+      triggers exactly one insurance push and a clean run pushes exactly once.
     - Fix SyncGuard's push-failure reporting: the message showed a meaningless
       shell "(exit code $?)" although all Git operations run natively through
       libgit2 (no shell involved); it now carries the real libgit2 error text.

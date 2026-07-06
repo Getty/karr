@@ -4,13 +4,26 @@ package App::karr::Role::SyncLifecycle;
 our $VERSION = '0.304';
 use Moo::Role;
 use Carp qw( croak );
+use App::karr::SyncGuard;
+
+# Holds the SyncGuard for the duration of a command so its DESTROY-insurance
+# actually spans the command body. sync_before stashes it here; sync_after
+# neutralises it after a successful push. Without this the guard returned by
+# sync_before was discarded in void context and pushed prematurely (#28).
+has _sync_guard => (
+    is      => 'rw',
+    default => sub { undef },
+);
 
 =head1 DESCRIPTION
 
 This role provides C<sync_before> and C<sync_after> methods that wrap Git pull
-and push operations with retry logic. C<sync_before> returns a L<App::karr::SyncGuard>
-object that acts as insurance: if the command body dies or croaks before
-C<sync_after> is called, the guard's DESTROY runs C<sync_after> with 3 retries.
+and push operations with retry logic. C<sync_before> creates a
+L<App::karr::SyncGuard> and retains it on the object as insurance: if the
+command body dies or croaks before C<sync_after> runs, the guard's DESTROY
+pushes with 3 retries. Because the guard is held by the role (not by the
+caller), commands may call both methods in void context; C<sync_after>
+neutralises the guard after a successful push so it never pushes twice.
 
 Commands that compose this role must also have a C<store> attribute (provided
 by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
@@ -21,11 +34,12 @@ by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
 
 =head2 sync_before
 
-    my $guard = $self->sync_before;
+    $self->sync_before;
 
 Pulls refs from remote with 3 retries and clear error messages on failure.
-Returns a L<App::karr::SyncGuard> object. The guard must be marked done after
-successful C<sync_after>, or it will attempt push on scope exit.
+Creates a L<App::karr::SyncGuard>, retains it on the object (so it outlives the
+call and covers the command body), and also returns it for callers that want to
+manage it explicitly. C<sync_after> clears it on a successful push.
 
 =cut
 
@@ -48,8 +62,11 @@ sub sync_before {
     }
     croak "Pull failed after 3 attempts: $err\n" unless $ok;
 
-    require App::karr::SyncGuard;
-    return App::karr::SyncGuard->new( git => $git );
+    # Stash the guard on the object so it outlives sync_before's return and
+    # covers the whole command body; sync_after neutralises it on success.
+    my $guard = App::karr::SyncGuard->new( git => $git );
+    $self->_sync_guard($guard);
+    return $guard;
 }
 
 =head2 sync_after
@@ -81,6 +98,13 @@ sub sync_after {
     }
     croak "Push failed after 3 attempts. Local refs are intact.\n"
       . "Run 'karr sync' to retry.\n" unless $ok;
+
+    # Push succeeded: neutralise the insurance guard so its DESTROY does not
+    # fire a second, redundant push once the command body returns.
+    if ( my $guard = $self->_sync_guard ) {
+        $guard->done;
+        $self->_sync_guard(undef);
+    }
 }
 
 1;
