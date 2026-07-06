@@ -142,7 +142,7 @@ sub status_requires_claim {
     (ref $_ ? $_->{name} : $_) eq $status_name
   } @{$self->data->{statuses} // []};
   return 0 unless $sc;
-  return 1 if !ref $sc;
+  return 0 if !ref $sc;
   return $sc->{require_claim} ? 1 : 0;
 }
 

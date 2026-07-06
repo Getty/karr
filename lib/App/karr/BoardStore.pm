@@ -48,9 +48,7 @@ sub load_config_overrides {
 
 sub load_config {
     my ($self) = @_;
-    my $defaults = App::karr::Config->default_config;
-    my $overrides = $self->load_config_overrides;
-    return _merge_hashes( $defaults, $overrides );
+    return App::karr::Config->effective_config( $self->load_config_overrides );
 }
 
 sub effective_config {
@@ -74,13 +72,8 @@ Returns a list of all status names from the effective config.
 
 sub status_requires_claim {
     my ($self, $status_name) = @_;
-    my $ec = $self->effective_config;
-    my ($sc) = grep {
-        (ref $_ ? $_->{name} : $_) eq $status_name
-    } @{$ec->{statuses} // []};
-    return 0 unless $sc;
-    return 0 if !ref $sc;
-    return $sc->{require_claim} ? 1 : 0;
+    return App::karr::Config->from_merged( $self->effective_config )
+        ->status_requires_claim($status_name);
 }
 
 =head2 status_requires_claim
@@ -95,8 +88,7 @@ Returns true if the given status requires a claim.
 
 sub is_terminal_status {
     my ($self, $status_name) = @_;
-    return 1 if $status_name eq 'done' || $status_name eq 'archived';
-    return 0;
+    return App::karr::Config->is_terminal_status($status_name);
 }
 
 =head2 is_terminal_status
@@ -243,19 +235,6 @@ sub restore_snapshot {
         $self->git->write_ref( $ref, $refs->{$ref} );
     }
     return 1;
-}
-
-sub _merge_hashes {
-    my ( $base, $overrides ) = @_;
-    my %merged = %{$base // {}};
-    for my $key ( keys %{ $overrides // {} } ) {
-        if ( ref($merged{$key}) eq 'HASH' && ref($overrides->{$key}) eq 'HASH' ) {
-            $merged{$key} = _merge_hashes( $merged{$key}, $overrides->{$key} );
-        } else {
-            $merged{$key} = $overrides->{$key};
-        }
-    }
-    return \%merged;
 }
 
 sub _diff_hashes {

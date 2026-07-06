@@ -7,6 +7,14 @@
       a swallowed "(in cleanup)" warning while an exception is already
       unwinding — so the "local refs are intact, run 'karr sync' to retry"
       guidance now reliably reaches STDERR.
+    - Internal refactor, no user-visible behavior change: the status/claim
+      config helpers (`is_terminal_status`, `status_requires_claim`, hash
+      merging) now live once in `App::karr::Config`, with `BoardStore` keeping
+      thin delegating wrappers. While folding the duplicates, a latent
+      divergence in dead code was fixed: `Config->status_requires_claim`
+      claimed a bare-string status requires a claim, while the store copy every
+      caller actually used says it does not — bare statuses never require a
+      claim, only an explicit `require_claim: 1` does.
     - `karr config` and `karr skill` now accept options placed before the
       action (`karr config --json show`, `karr skill --json install`) instead
       of misreading the leading flag as the action ("Unknown action: --json").
