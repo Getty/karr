@@ -15,7 +15,7 @@ use warnings;
     undef $guard;
 
     # If die/croak happens before sync_after:
-    # Guard DESTROY runs sync_after with 3 retries, then dies with clear error
+    # Guard DESTROY retries the push 3 times, then warns with a clear error
 
 =head1 DESCRIPTION
 
@@ -85,13 +85,19 @@ sub DESTROY {
             $self->{_done} = 1;
             return;
         }
-        $err = "git push failed (exit code $?)";
+        # Native Git::Native/libgit2 ops set no shell exit code; the failure
+        # detail lives in $git->last_error (see App::karr::Git).
+        $err = "git push failed: " . ( $git->last_error // 'unknown error' );
         push @{$self->{_errors}}, $err;
         print STDERR "  $err\n";
         sleep 1 if $attempt < 3;
     }
 
-    die "Push failed after 3 attempts. Local refs are intact.\n"
+    # Never die() here: DESTROY typically runs while another exception unwinds
+    # the stack, where a die is turned into a swallowed "(in cleanup)" warning
+    # (or lost entirely during global destruction), masking this message. Warn
+    # so the "refs are intact, run karr sync" guidance always reaches STDERR.
+    warn "Push failed after 3 attempts. Local refs are intact.\n"
       . "Run 'karr sync' to retry.\n"
       . "Errors: " . join( ', ', $self->errs ) . "\n";
 }

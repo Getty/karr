@@ -1,5 +1,12 @@
 {{$NEXT}}
 
+    - Fix SyncGuard's push-failure reporting: the message showed a meaningless
+      shell "(exit code $?)" although all Git operations run natively through
+      libgit2 (no shell involved); it now carries the real libgit2 error text.
+      The guard also no longer die()s inside DESTROY — which Perl downgrades to
+      a swallowed "(in cleanup)" warning while an exception is already
+      unwinding — so the "local refs are intact, run 'karr sync' to retry"
+      guidance now reliably reaches STDERR.
     - `karr config` and `karr skill` now accept options placed before the
       action (`karr config --json show`, `karr skill --json install`) instead
       of misreading the leading flag as the action ("Unknown action: --json").
