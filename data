@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-07-04T20:41:55Z
+claimed_by: agent-fox
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:11:50Z
+id: 16
+priority: high
+started: 2026-07-04
+status: done
+tags:
+- bug
+- foundation
+- git
+title: 'foundation: board detection via .git/refs/karr/config file path breaks with
+  packed-refs/worktrees'
+updated: 2026-07-02T16:11:50Z
+---
+
+Foundation.pm:263 and :281 check for the literal file .git/refs/karr/config to
+detect a board. Loose refs get packed (git gc / git pack-refs), worktrees have
+a gitdir indirection, and then the file does not exist although the ref does —
+board silently skipped from the sweep.
+
+FIX DIRECTION: use Git->ref_exists (libgit2, resolves packed refs) instead of
+path existence. Found during architecture sweep. VERSION 0.304.
+Fixed in ee4efbb: board detection now resolves refs/karr/config via libgit2 (Git->ref_exists) instead of the loose .git/refs/karr/config file, so packed-ref repos and worktrees are detected. New _is_karr_board_root guards the discovery loop against open_ext walk-up false positives. Regression tests in t/30-foundation.t (packed refs, worktree, walk-up guard, _process_repo) verified red->green. Full suite green (290 tests).
+Review passed: libgit2 ref resolution + walk-up guard korrekt, Regressionstests (packed refs, worktree) vorhanden, Suite gruen.
