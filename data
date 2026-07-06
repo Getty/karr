@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-07-04T22:52:12Z
+claimed_by: agent-fox
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:12:21Z
+id: 20
+priority: low
+started: 2026-07-04
+status: done
+tags:
+- cleanup
+title: "cleanup: dead code â\x80\x94 Config->next_id, board_dir passthrough, temp_board_dir,
+  Pick dead branch"
+updated: 2026-07-02T16:12:21Z
+---
+
+Callers-free code found during architecture sweep:
+- Config.pm:77-83 next_id (IDs come from BoardStore->allocate_next_id via
+  refs/karr/meta/next-id)
+- BoardDiscovery board_dir attribute + App/karr.pm:264 passthrough — never read
+  by Cmd/Board.pm (leftover of the file design)
+- BoardStore temp_board_dir — no caller anywhere incl. tests
+- Cmd/Pick.pm:100-101 duplicated comment, :139 is_repo always-true branch
+Remove after double-checking reverse deps. VERSION 0.304.
+Fixed in 6b21ae3. Removed dead code (verified callers-free): Config->next_id, BoardDiscovery board_dir attr + App/karr.pm passthrough, BoardStore->temp_board_dir (+ now-dead File::Temp import), duplicate comment in Pick. Collapsed Pick's $use_lock=is_repo guard (6 spots) — invariant is stronger than the ticket claimed: execution croaks at sync_before/_build_git_root when not in a repo, so is_repo is always true by line 139. Added t/48-pick-execute.t: Cmd::Pick::execute had ZERO dynamic coverage before (t/16 tests Lock directly), now pinned end-to-end. Full suite green (294 tests).
+Review passed: Dead Code callerless verifiziert, Pick-Guard-Kollaps sauber begruendet, neue E2E-Abdeckung t/48.
