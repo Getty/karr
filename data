@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-07-06T20:35:08Z
+claimed_by: karr-worker
+class: standard
+completed: 2026-07-06
+created: 2026-07-06T19:30:01Z
+id: 30
+priority: low
+started: 2026-07-06
+status: done
+tags:
+- bug
+- interop
+title: "import: bootstrap import into a fresh repo leaves meta/next-id unset â\x80\x94
+  next create can collide with imported IDs"
+updated: 2026-07-06T19:30:01Z
+---
+
+Found during #21: karr import deliberately does not require board_exists, so a kanban-md tasks/ view can be imported into a repo without a board (bootstrap). But BoardStore->serialize_from does not touch refs/karr/meta/next-id; on a fresh repo the ref is missing, so a following karr create allocates from scratch (id 1) and can collide with imported task IDs. Existing boards are unaffected (import leaves their next-id alone).
+
+FIX DIRECTION: after serialize_from on a board without meta/next-id (or where next-id <= max imported id), seed it to max(imported ids)+1. Regression test: import view with ids 1..3 into fresh repo, then create — expect id 4, not a duplicate. VERSION 0.304.
+Fixed in BoardStore->serialize_from: seed next-id to max(imported)+1 when missing/stale, guard peek_next_id<=max leaves healthy boards untouched. Regression test t/58-import-next-id-seed.t (3 subtests, red/green verified). prove -lr t/ = 347 tests PASS. Diff reviewed by orchestrator. Code not yet committed.
