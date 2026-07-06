@@ -1,0 +1,33 @@
+---
+claimed_at: 2026-07-06T19:49:18Z
+claimed_by: shredded-working
+class: standard
+completed: 2026-07-06
+created: 2026-07-03T12:00:10Z
+id: 27
+priority: medium
+started: 2026-07-06
+status: done
+tags:
+- feature
+- sync
+- output
+title: 'sync output: still bei Versuch 1, sprechen ab echtem Retry, --quiet unterdrueckt
+  auch das'
+updated: 2026-07-03T12:00:10Z
+---
+
+Decided 2026-07-02 (architecture session, Frage 7, Maintainer-Formulierung):
+Default = Retry-only: Versuch 1 ist still; ab Versuch 2 melden
+("Pull retry 2 of 3..." o.ae.), Fehler IMMER auf STDERR. Zusaetzlich
+--quiet (global? Output-Rolle?), das auch die Retry-Meldungen unterdrueckt —
+Fehler nie. Kein --verbose.
+
+SCOPE
+- Role/SyncLifecycle.pm:39,72 (die bedingungslosen attempt-Zeilen)
+- SyncGuard::DESTROY-Doppelmeldung (73-97) mit beruecksichtigen
+- Cmd/Sync.pm:76,81 wechselt von say/STDOUT auf dieselbe STDERR-Konvention
+- t/-Pins pruefen (einige Tests greppen attempt-Zeilen weg)
+Changes-Eintrag noetig (user-visible).
+Fixed in a42b897: sync output is now retry-only (attempt 1 silent, retries announced from attempt 2 as 'Pull/Push retry N of 3'), errors always on STDERR. New --quiet option on Role::SyncLifecycle (composed by every syncing command via BoardAccess or directly; no spurious --json/--compact) suppresses retry announcements but never errors; threaded into SyncGuard DESTROY; Cmd::Sync progress moved STDOUT->STDERR + quiet-gated. Regression t/56-sync-output-quiet.t. Full suite green 54/338.
+Landed on main as b064a6b (retry-only output, --quiet on SyncLifecycle, SyncGuard honours quiet, Cmd/Sync on STDERR; t/56 red->green). Full suite green: 54 files / 338 tests. Changes entry added.
