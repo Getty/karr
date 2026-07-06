@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-07-06T18:51:24Z
+claimed_by: cantos-reprisal
+class: standard
+completed: 2026-07-06
+created: 2026-07-03T12:00:00Z
+id: 26
+priority: low
+started: 2026-07-06
+status: done
+tags:
+- refactor
+- config
+title: "refactor: Config-Semantik einfach halten â\x80\x94 BoardStore delegiert an
+  Config"
+updated: 2026-07-06T18:51:24Z
+---
+
+Decided 2026-07-02 (architecture session, Frage 6): is_terminal_status,
+status_requires_claim, _merge_hashes leben EINMAL in Config.pm
+(Domaenenlogik der Board-Konfiguration). BoardStore behaelt duenne
+Delegations-Methoden (kein Caller aendert sich), seine Duplikate
+(BoardStore.pm:76,97,255) fliegen. Cmds duerfen weiter beide Wege rufen —
+es ist derselbe Code.
+Refactor done in f93b5ac: is_terminal_status/status_requires_claim/_merge_hashes now live once in Config; BoardStore keeps thin delegating wrappers. Found + resolved a latent divergence: Config's status_requires_claim returned 1 for bare-string statuses while BoardStore/MockStore returned 0 (the behaviour every caller sees via the store); folded on 0, so no production behaviour changes and Config's dead-code bug is fixed. New t/53-config-semantics.t locks the semantics on both Config and the BoardStore wrappers. Full suite green (48 files, 307 tests).
+Landed on main as amended cherry-pick (config helpers homed in Config, BoardStore delegates). Divergence resolution reviewed: bare status => no claim required is behavior-preserving; kanban-md has no require_claim at all, so no interop constraint. Changes entry added.
