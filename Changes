@@ -1,5 +1,14 @@
 {{$NEXT}}
 
+    - New commands `karr materialize` and `karr import`: the file-view bridge
+      from ADR 0001. `materialize` writes refs/karr/* out to the board root as
+      a kanban-md compatible view (config.yml + tasks/*.md) for grepping or
+      interop; it reads refs only and syncs nothing. `import` reads such a view
+      back into refs, preserving task timestamps verbatim. Because it replaces
+      task refs and drops refs with no matching file, it requires --yes and
+      refuses to run when no tasks/ view is present, so it can never silently
+      wipe the board. config.yml now joins tasks/ in .gitignore so the whole
+      materialized view stays disposable.
     - Fix SyncGuard's push-failure reporting: the message showed a meaningless
       shell "(exit code $?)" although all Git operations run natively through
       libgit2 (no shell involved); it now carries the real libgit2 error text.
