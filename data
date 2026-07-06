@@ -1,0 +1,21 @@
+---
+claimed_at: 2026-07-06T20:44:59Z
+claimed_by: karr-worker
+class: standard
+completed: 2026-07-06
+created: 2026-07-06T19:29:41Z
+id: 29
+priority: low
+started: 2026-07-06
+status: done
+tags:
+- feature
+- interop
+title: 'init/materialize: offer .gitignore entries for the file view (kanban-md parity)'
+updated: 2026-07-06T19:29:41Z
+---
+
+kanban-md offers at init time to add the board directory to .gitignore (cmd/gitignore.go, offerAddKanbanToGitignore, Y/n prompt, ensureGitignoreEntry appends idempotently). karr has no .gitignore management at all — karr init and karr materialize (new in #21) silently rely on the user having tasks/ + config.yml ignored. In THIS repo the entries exist, but any other repo running karr materialize gets an untracked, committable file view.
+
+FIX DIRECTION: on init (and/or first materialize) offer or ensure tasks/ and config.yml entries in the board root .gitignore, idempotent append like kanban-md. VERSION 0.304.
+Implemented: BoardStore->ensure_gitignore (idempotent append, line-exact presence check) + file_view_gitignore_entries; Init.pm and Materialize.pm call it (Materialize runs it before --json return so guard is format-independent). UX: silent-ensure, no blocking Y/n prompt (karr is agent-driven; import already uses --yes not stdin). import/serialize_from intentionally NOT touched (reads the view, doesn't create it). Regression test t/59-gitignore-file-view.t, red/green verified. Full prove -lr t/ = 355 tests PASS (orchestrator-verified). Code not yet committed.
