@@ -1,0 +1,25 @@
+---
+claimed_at: 2026-07-06T18:49:00Z
+claimed_by: glories-petal
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:12:06Z
+id: 18
+priority: low
+started: 2026-07-06
+status: done
+tags:
+- bug
+- sync
+- git
+title: 'SyncGuard: reports shell $? for native libgit2 push failures + dies in DESTROY'
+updated: 2026-07-02T16:12:06Z
+---
+
+SyncGuard.pm:88 says "git push failed (exit code $?)" but native Git::Native
+ops set no shell exit code (Git.pm:50-55 documents last_error as the channel);
+the message is factually wrong. Additionally die inside DESTROY can mask the
+original exception and may be swallowed during global destruction — prefer
+warn + distinct signaling. Found during architecture sweep. VERSION 0.304.
+Fixed in 7c574b3: SyncGuard DESTROY now uses $git->last_error (native libgit2 has no shell $?) and warns instead of die() (die during unwind gets swallowed as '(in cleanup)'). Regression test t/50-syncguard-errors.t; full suite green (306 tests).
+Landed on main as 6d48ce0 (cherry-pick + Changes entry). Follow-up bug (guard discarded in void context, insurance never engages) filed as #28.
