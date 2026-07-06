@@ -1,0 +1,35 @@
+---
+claimed_at: 2026-07-06T19:25:10Z
+claimed_by: enkidu-emanates
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:23:13Z
+id: 23
+priority: medium
+started: 2026-07-06
+status: done
+tags:
+- refactor
+- roles
+- sync
+title: 'refactor: Role::CliArgs extrahieren + Backup/Restore/Destroy auf SyncLifecycle'
+updated: 2026-07-06T19:25:10Z
+---
+
+Decided 2026-07-02 (architecture session, Frage 3):
+
+1. Neue Role::CliArgs: positional_args, check_positional_args, parse_ids
+   ziehen aus Role::BoardAccess um (CLI-Parsing gehoert nicht in die
+   Datenzugriffs-Rolle; koppelt an MooX-Interna _options_data). BoardAccess
+   komponiert CliArgs -> alle Cmds behalten ihre Methoden, reiner Umzug,
+   nicht breaking. BoardAccess behaelt: store/task-CRUD, activity_log,
+   save_config.
+2. Cmd/Backup, Cmd/Restore, Cmd/Destroy komponieren SyncLifecycle statt
+   handgerolltem $git->pull/$git->push — die destruktivsten Kommandos
+   bekommen damit Retry-Schleife und SyncGuard wie alle anderen.
+
+Suite muss unveraendert gruen bleiben (kein Verhaltens-Soll geaendert);
+fuer Punkt 2 pruefen ob t/28-destroy.t Sync-Verhalten pinnt.
+The 'Role::CliArgs extrahieren' part was done under #17 (commit 1fb3316): positional_args + check_positional_args now live in App::karr::Role::CliArgs, composed by BoardAccess and Cmd::Skill. Remaining scope for #23: move Backup/Restore/Destroy onto SyncLifecycle.
+Punkt 2 done in 24de79c: Cmd/Backup, Cmd/Restore, Cmd/Destroy compose Role::SyncLifecycle instead of hand-rolled $git->pull/$git->push. Restore+Destroy run the full cycle (sync_before -> mutate -> sync_after) for retry + SyncGuard push-insurance; Backup (read-only) takes sync_before for the retrying pull then marks the guard done so it never pushes. push/pull already no-op without a remote so old 'if has_remote' guards were redundant. New t/54-destructive-sync.t (verified it fails without the wiring) pins effects not sync text. Full suite 51 files / 319 tests green. Role/SyncLifecycle.pm + SyncGuard.pm untouched (owned by #27/#28). NOTE: ticket point 1's parse_ids was NOT moved to CliArgs by #17 and is out of #23's remaining scope -- left in BoardAccess (see report).
+Landed on main as amended cherry-pick (guard->done API verified, t/54 mutation-tested, t/27+t/28 green). parse_ids deliberately stays in BoardAccess (data-space helper, not option-aware parsing) — documented decision, no follow-up ticket needed. Changes entry added.
