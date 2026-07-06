@@ -16,6 +16,12 @@
       actually engaged. The guard is now retained for the whole command body
       and neutralized after a successful sync_after, so a crash mid-command
       triggers exactly one insurance push and a clean run pushes exactly once.
+    - Sync output is now retry-only: the first pull/push attempt is silent
+      (no more "Pull attempt 1 of 3..." noise on every command), retries are
+      announced from attempt 2 ("Pull retry 2 of 3..."), and errors always
+      reach STDERR. A new --quiet flag on every syncing command additionally
+      suppresses the retry announcements — never the errors. `karr sync` moves
+      its progress lines from STDOUT to the same STDERR convention.
     - Fix SyncGuard's push-failure reporting: the message showed a meaningless
       shell "(exit code $?)" although all Git operations run natively through
       libgit2 (no shell involved); it now carries the real libgit2 error text.

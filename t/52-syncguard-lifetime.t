@@ -34,6 +34,7 @@ use App::karr::Role::SyncLifecycle;
 {
   package LifecycleBoard;
   use Moo;
+  use MooX::Options;    # SyncLifecycle now carries a MooX::Options option (--quiet)
   with 'App::karr::Role::SyncLifecycle';
   has git => ( is => 'ro', required => 1 );
 }

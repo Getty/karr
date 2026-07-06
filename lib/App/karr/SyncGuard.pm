@@ -36,6 +36,11 @@ has _done => (
     default  => 0,
 );
 
+has quiet => (
+    is      => 'ro',
+    default => 0,
+);
+
 has _errors => (
     is       => 'ro',
     default  => sub { [] },
@@ -79,7 +84,10 @@ sub DESTROY {
     my $err  = '';
 
     for my $attempt ( 1 .. 3 ) {
-        print STDERR "Push attempt $attempt of 3...\n";
+        # Retry-only (#27): the first attempt is silent; only announce retries,
+        # and honour --quiet. Errors and the final guidance are always shown.
+        print STDERR "Push retry $attempt of 3...\n"
+          if $attempt > 1 && !$self->{quiet};
         $ok = $git->push;
         if ($ok) {
             $self->{_done} = 1;

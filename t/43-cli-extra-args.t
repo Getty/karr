@@ -44,9 +44,9 @@ use Symbol qw( gensym );
 # extra token, OR a usage-style message) to accommodate either of the two
 # acceptable diagnostics named on the ticket, while still being false
 # against today's silence. Extra numeric tokens are chosen as "99" (never
-# "1"/"3") to avoid false-positive collisions with the "Pull attempt 1 of
-# 3.../Push attempt 1 of 3..." sync-lifecycle noise that already appears
-# on STDERR for every command that syncs.
+# "1"/"2"/"3") to avoid false-positive collisions with the sync-lifecycle
+# retry noise ("Pull retry 2 of 3.../Push retry 2 of 3...", ticket #27) that
+# can appear on STDERR when a command's sync has to retry.
 #
 # Also recorded here (not pinned -- follow-up candidates for the
 # orchestrator to file, per the ticket's own "proben, ggf. Follow-up"
