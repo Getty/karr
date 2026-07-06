@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - `karr init` and `karr materialize` now ensure the board-root .gitignore
+      covers the materialized file view (tasks/ + config.yml), appending the
+      entries idempotently and preserving any existing content. Previously karr
+      never managed .gitignore, so running `karr materialize` in a repo that had
+      not ignored the view produced an untracked, accidentally-committable
+      config.yml + tasks/. refs/karr/* stays the canonical state; the file view
+      is disposable and never committed.
+    - Fix a bootstrap id collision after `karr import`: importing a kanban-md
+      tasks/ view into a fresh repo (no board) left refs/karr/meta/next-id
+      unset, so the next `karr create` re-allocated from id 1 and collided with
+      an already-imported task. Import now seeds next-id past the highest
+      imported id when the stored next-id is missing or stale, while leaving a
+      next-id that is already ahead of the view untouched.
     - New commands `karr materialize` and `karr import`: the file-view bridge
       from ADR 0001. `materialize` writes refs/karr/* out to the board root as
       a kanban-md compatible view (config.yml + tasks/*.md) for grepping or

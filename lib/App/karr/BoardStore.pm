@@ -184,6 +184,51 @@ sub materialize_to {
     return $board_dir;
 }
 
+sub file_view_gitignore_entries {
+    # The disposable file view materialize_to writes: config.yml + tasks/*.md.
+    # These must always be gitignored -- refs/karr/* is the canonical state and
+    # the view is never committed. Mirror the exact names used by materialize_to.
+    return ( 'tasks/', 'config.yml' );
+}
+
+sub ensure_gitignore {
+    my ( $self, $board_dir ) = @_;
+    $board_dir = path($board_dir);
+    my $gitignore = $board_dir->child('.gitignore');
+
+    my @entries  = $self->file_view_gitignore_entries;
+    my $existing = $gitignore->exists ? $gitignore->slurp_utf8 : '';
+
+    # Line-exact presence (whitespace-insensitive), so we never duplicate an
+    # entry -- or our header -- that is already there.
+    my %present;
+    for my $line ( split /\n/, $existing ) {
+        $line =~ s/^\s+//;
+        $line =~ s/\s+$//;
+        $present{$line} = 1 if length $line;
+    }
+
+    my @missing = grep { !$present{$_} } @entries;
+    return () unless @missing;
+
+    my $header         = '# karr materialized task view -- never commit';
+    my $header_present = $present{$header} ? 1 : 0;
+
+    # Idempotent append that keeps the existing file intact: terminate a
+    # dangling last line, separate a fresh karr block with a blank line, and
+    # only emit the header when starting one.
+    my $append = '';
+    if ( length $existing ) {
+        $append .= "\n" unless $existing =~ /\n\z/;
+        $append .= "\n" unless $header_present;
+    }
+    $append .= "$header\n" unless $header_present;
+    $append .= "$_\n" for @missing;
+
+    $gitignore->append_utf8($append);
+    return @missing;
+}
+
 sub serialize_from {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);
@@ -210,6 +255,16 @@ sub serialize_from {
     for my $id ( $self->git->list_task_refs ) {
         next if $seen{$id};
         $self->delete_task($id);
+    }
+
+    # Bootstrap fix (#30): import does not require a pre-existing board, so on a
+    # fresh repo meta/next-id is missing and a following `karr create` would
+    # re-allocate an already-imported id. Seed next-id past the highest imported
+    # id when the stored next-id is missing or stale, but never lower a next-id
+    # that is already ahead of the view (an existing healthy board is untouched).
+    if (%seen) {
+        my ($max_id) = sort { $b <=> $a } keys %seen;
+        $self->set_next_id( $max_id + 1 ) if $self->peek_next_id <= $max_id;
     }
 
     return 1;

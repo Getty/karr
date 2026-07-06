@@ -60,6 +60,13 @@ sub execute {
     unless $store->board_exists;
 
   my $board_dir = $store->materialize_to( $self->git_root->stringify );
+
+  # The file view we just wrote must never be committed; ensure the board-root
+  # .gitignore covers it (idempotent -- a no-op once init or a prior run added
+  # the entries). Done regardless of --json so the guard never depends on the
+  # output format.
+  my @ignored = $store->ensure_gitignore( $self->git_root->stringify );
+
   my @tasks = $store->load_tasks;
 
   # The view is a task collection (like `list`), so --json always emits an
@@ -67,6 +74,8 @@ sub execute {
   return $self->print_json([ map { $_->to_json_hash } @tasks ]) if $self->json;
 
   printf STDERR "Materialized %d task(s) to %s\n", scalar @tasks, $board_dir;
+  printf STDERR "Added .gitignore entries for the file view: %s\n", join( ', ', @ignored )
+    if @ignored;
 }
 
 1;

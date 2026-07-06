@@ -90,6 +90,13 @@ sub execute {
 
   print "Initialized karr board in refs/karr/\n";
 
+  # The materialized file view (config.yml + tasks/) is a disposable view of the
+  # canonical refs and must never be committed. Ensure the board-root .gitignore
+  # covers it, appending idempotently -- kanban-md does the same at init time.
+  my @ignored = $store->ensure_gitignore( $root->stringify );
+  print "Added .gitignore entries for the file view: " . join( ', ', @ignored ) . "\n"
+    if @ignored;
+
   if ($self->claude_skill) {
     $self->_install_claude_skill($root);
   }
