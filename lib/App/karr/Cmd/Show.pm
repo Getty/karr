@@ -63,9 +63,7 @@ sub _show_task {
   my ($self, $task) = @_;
 
   if ($self->json) {
-    my $data = $task->to_frontmatter;
-    $data->{body} = $task->body if $task->body;
-    $self->print_json($data);
+    $self->print_json($task->to_json_hash);
     return;
   }
 
@@ -149,11 +147,7 @@ sub execute {
   }
 
   if ($self->json) {
-    my @data = map {
-      my $d = $_->to_frontmatter;
-      $d->{body} = $_->body if $_->body;
-      $d;
-    } @tasks;
+    my @data = map { $_->to_json_hash } @tasks;
     # A single explicit lookup stays a bare object for backward compatibility.
     $self->print_json(@data == 1 ? $data[0] : \@data);
     return;

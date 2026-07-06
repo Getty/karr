@@ -181,9 +181,7 @@ sub execute {
   $lock->release($picked->id, $email);
 
   if ($self->json) {
-    my $data = $picked->to_frontmatter;
-    $data->{body} = $picked->body if $picked->body;
-    $self->print_json($data);
+    $self->print_json($picked->to_json_hash);
     return;
   }
 

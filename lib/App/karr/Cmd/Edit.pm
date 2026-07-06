@@ -200,9 +200,7 @@ sub execute {
 
   $self->sync_after;
 
-  if ($self->json) {
-    $self->print_json(@results == 1 ? $results[0] : \@results);
-  }
+  $self->print_json_results(@results);
 }
 
 1;

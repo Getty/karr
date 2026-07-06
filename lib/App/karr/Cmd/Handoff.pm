@@ -142,9 +142,7 @@ sub execute {
   $self->sync_after;
 
   if ($self->json) {
-    my $data = $task->to_frontmatter;
-    $data->{body} = $task->body if $task->body;
-    $self->print_json($data);
+    $self->print_json($task->to_json_hash);
     return;
   }
 

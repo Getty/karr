@@ -28,4 +28,21 @@ sub print_json {
   print JSON::MaybeXS::encode_json($data) . "\n";
 }
 
+=method print_json_results
+
+  $self->print_json_results(@results);
+
+Emits a batch of per-item result hashes as JSON when C<--json> is active, and
+is a no-op otherwise. A single result is rendered as a bare JSON object and
+multiple results as a JSON array, matching the output convention shared by the
+C<move>, C<edit>, C<delete>, and C<archive> commands.
+
+=cut
+
+sub print_json_results {
+  my ($self, @results) = @_;
+  return unless $self->json;
+  $self->print_json(@results == 1 ? $results[0] : \@results);
+}
+
 1;

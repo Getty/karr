@@ -109,6 +109,24 @@ sub to_frontmatter {
   return \%fm;
 }
 
+=method to_json_hash
+
+  my $data = $task->to_json_hash;
+
+Returns the task as a plain hash reference ready for JSON encoding: the
+frontmatter fields from L</to_frontmatter> plus a C<body> key when the task has
+a non-empty body. Used by the C<show>, C<pick>, and C<handoff> commands to
+build their C<--json> payload.
+
+=cut
+
+sub to_json_hash {
+  my ($self) = @_;
+  my $data = $self->to_frontmatter;
+  $data->{body} = $self->body if $self->body;
+  return $data;
+}
+
 sub to_markdown {
   my ($self) = @_;
   my $yaml = Dump($self->to_frontmatter);

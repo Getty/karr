@@ -15,6 +15,12 @@
       claimed a bare-string status requires a claim, while the store copy every
       caller actually used says it does not — bare statuses never require a
       claim, only an explicit `require_claim: 1` does.
+    - Internal refactor, no user-visible behavior change: the JSON output
+      snippets copy-pasted across commands now live once —
+      `Role::Output->print_json_results` (the shared move/edit/delete/archive
+      results tail) and `Task->to_json_hash` (the frontmatter+body payload of
+      show/pick/handoff). The previously untested `--json` paths of
+      move/edit/show/pick/handoff are now pinned by tests.
     - `karr config` and `karr skill` now accept options placed before the
       action (`karr config --json show`, `karr skill --json install`) instead
       of misreading the leading flag as the action ("Unknown action: --json").
