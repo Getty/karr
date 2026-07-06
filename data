@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-07-06T19:02:44Z
+claimed_by: strops-jells
+class: standard
+completed: 2026-07-06
+created: 2026-07-03T11:59:52Z
+id: 25
+priority: medium
+started: 2026-07-06
+status: done
+tags:
+- refactor
+- foundation
+title: "refactor: Foundation intern aufteilen â\x80\x94 Runner/State/Overview als
+  Submodule"
+updated: 2026-07-06T19:02:44Z
+---
+
+Decided 2026-07-02 (architecture session, Frage 5): Foundation bleibt in der
+Dist (first-class per CONTEXT.md, ein Release-Zug, enge Kopplung an
+BoardStore/Git waehrend beide schnell evolvieren) — aber das 906-Zeilen-Modul
+wird entlang der natuerlichen Naehte gesplittet:
+
+- Foundation::Runner — Kommando-Exec via fork/pipe/IO::Select (~629-728) +
+  Fehlerklassifikation
+- Foundation::State — .karr.lock, State-Datei (JSON), Cooldown-Backoff
+- Foundation::Overview — Overview-Rendering
+- Foundation.pm bleibt Orchestrator (Discovery, Drain-Loop, .karr-Parsing)
+
+Reiner Umzug, t/31-foundation-drain.t muss unveraendert gruen bleiben.
+Vorher #16 fixen (packed-refs), damit der Umzug nicht mit dem Bugfix
+kollidiert.
+Split Foundation into Foundation::Runner (exec+error classification), Foundation::State (.karr.lock/.karr.state/cooldown/attempts) and Foundation::Overview (dashboard); Foundation stays orchestrator and re-exposes moved methods via Moo handles delegation. Pure move, no behaviour change. t/30+t/31 unchanged and green (28 tests), full suite 47 files/303 tests PASS. Commit 1589604.
+Landed on main as 1b6962d (verbatim move verified: Runner/State/Overview with weak backref + handles delegation, t/30+t/31 untouched). Full suite green on main: 50 files / 317 tests. Changes entry added.
