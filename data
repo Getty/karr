@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-07-04T23:20:26Z
+claimed_by: agent-fox
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:11:58Z
+id: 17
+priority: medium
+started: 2026-07-04
+status: done
+tags:
+- bug
+- cli
+- parsing
+title: 'config/skill: raw $args_ref->[0] makes option order break actions (config
+  --json show fails)'
+updated: 2026-07-02T16:11:58Z
+---
+
+Cmd/Config.pm:63 and Cmd/Skill.pm:90 read $args_ref->[0] raw. With MooX
+protect_argv the echoed flags stay in argv, so:
+  karr config --json show  => "Unknown action: --json"
+  karr config show --json  => works
+Same class as task #13; both Cmds should use positional_args (+
+check_positional_args for their arity). Found during architecture sweep.
+VERSION 0.304.
+Fixed in 1fb3316. Config + Skill now read their action (and config's key/value) via option-aware positional_args instead of raw $args_ref->[0], so 'config --json show' / 'skill --json check' work regardless of option order. positional_args/check_positional_args extracted from BoardAccess into new lightweight Role::CliArgs (no board coupling) so Skill can use them without composing BoardAccess. Per-action arity for config, arity 1 for skill. Regression test t/49 (subprocess, red->green 8/9). Full suite green (303 tests). NOTE: this completes the 'Role::CliArgs extrahieren' part of #23.
+Review passed: Role::CliArgs sauber extrahiert, Arity pro Action korrekt, Subprocess-Regressionstest t/49. Erledigt damit den CliArgs-Teil von #23.
