@@ -1,0 +1,31 @@
+---
+claimed_at: 2026-07-06T18:54:16Z
+claimed_by: greened-squander
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:23:21Z
+id: 24
+priority: low
+started: 2026-07-06
+status: done
+tags:
+- refactor
+- output
+title: "refactor: JSON-Ausgabe-Duplikate teilen â\x80\x94 print_json-Tail-Helper +
+  Task->to_json_hash"
+updated: 2026-07-02T16:23:21Z
+---
+
+Decided 2026-07-02 (architecture session, Frage 4): KEIN Batch-Template
+(Varianten archive/delete/edit zu unterschiedlich, Callback-Komplexitaet) —
+nur die zwei echten Duplikate teilen:
+
+1. print_json(@results == 1 ? $results[0] : \@results) — identisch in
+   Move:132, Edit:204, Delete:86, Archive:86 -> Helper in Role::Output
+   (z.B. print_json_results).
+2. Frontmatter+Body-JSON-Bau — dupliziert in Show:66, Pick:193, Handoff:145
+   -> Task->to_json_hash.
+
+Schleifen bleiben pro Cmd explizit (bewusste Entscheidung).
+Done in 7a4f14a. Extracted the two JSON-output duplicates into shared helpers: Role::Output->print_json_results (single-object/array collapse tail for move/edit/delete/archive) and Task->to_json_hash (frontmatter+body payload for show/pick/handoff). Loops stay per-command as decided. Pure refactor, JSON contract unchanged, full suite green (48 files / 310 tests). Added t/51-json-output.t covering the previously-untested move/edit/show/pick/handoff --json paths.
+Landed on main as amended cherry-pick (print_json_results + Task->to_json_hash). All seven call sites verified one-to-one, Show single-lookup bare-object contract preserved. Changes entry added.
