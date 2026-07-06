@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-07-06T20:23:27Z
+claimed_by: stump-procter
+class: standard
+completed: 2026-07-06
+created: 2026-07-02T16:17:55Z
+id: 22
+priority: medium
+started: 2026-07-06
+status: done
+tags:
+- feature
+- cli
+- exit-codes
+title: "exit codes: implement the 0/1/2 contract (ADR 0002) â\x80\x94 central die-handler
+  in bin/karr"
+updated: 2026-07-02T16:17:55Z
+---
+
+Decided 2026-07-02 (docs/adr/0002): 0 success / 1 runtime failure / 2 usage
+error, replacing the accidental 255/1/2 mix.
+
+IMPLEMENTATION SKETCH
+- bin/karr: wrap the MooX::Cmd entry in eval; uncaught exception => STDERR
+  message + exit 1 (kills the 255s).
+- Usage paths exit 2 explicitly: unknown command (App/karr.pm guard),
+  check_positional_args, MooX::Options unknown-option path (verify what code
+  MooX emits and whether it can be steered), missing required positionals
+  ("Usage:" dies => these are usage errors => 2, not 1).
+- Not-found / sync failures / board missing => 1.
+- POD: document the table as contract.
+
+TESTS: t/41 pins exit 255 for the not-found matrix, t/43/t/45/t/46 pin some
+exits — update DELIBERATELY per ADR 0002 (maintainer-approved behavior
+change, not test-softening). Changes entry required (user-visible).
+Implemented ADR 0002 exit-code contract (0/1/2) in commit a7d36fe. bin/karr wraps new_with_cmd in eval and classifies uncaught dies by stable leading marker (Unknown command:/unexpected extra argument/Usage: => 2 usage; else 1 runtime, killing the 255 leak). New App::karr::Role::ExitCodes remaps MooX::Options options_usage positive code to 2 (unknown option/bad value); composed via BoardDiscovery + directly on the 4 board-less cmds; root uses matching _print_help remap. Decision: --yes refusals = runtime (1), not usage (well-formed invocation, safety refusal, matches kanban-md). Semantic value errors (Unknown status/action/key) stay 1; only structural dispatch/option/positional errors are 2 (documented boundary, flagged for review). Test pins updated: t/44 delete-not-found 255->1; t/41 comments. New t/57-exit-code-contract.t pins full matrix. Suite: 55 files/344 tests green. NOTE: Changes entry still needed (user-visible) - proposed in report.
+Landed on main as 75f53a3 (central die-classifier in bin/karr + Role::ExitCodes options_usage remap; t/57 contract matrix). Boundary decision (Unknown status/action = 1, not 2) flagged for maintainer sign-off. Full suite green: 55 files / 344 tests. Changes entry added.
