@@ -1,0 +1,23 @@
+---
+claimed_at: 2026-07-06T19:26:36Z
+claimed_by: shredded-working
+class: standard
+completed: 2026-07-06
+created: 2026-07-06T18:50:54Z
+id: 28
+priority: medium
+started: 2026-07-06
+status: done
+tags:
+- bug
+- sync
+title: 'SyncGuard insurance never engages: guard object discarded in void context,
+  causing double push per command'
+updated: 2026-07-06T18:50:54Z
+---
+
+Found while fixing #18: every caller invokes $self->sync_before; in VOID context (Move, Edit, Pick, Handoff, Delete, Config, Create, Archive). Role::SyncLifecycle::sync_before returns the SyncGuard, but since nobody keeps the returned guard alive, it is DESTROYed immediately after sync_before returns — triggering a redundant push BEFORE the command body even runs (visible as the doubled "Push attempt 1 of 3..." on every karr move/handoff). The documented "insurance on die before sync_after" semantics therefore never actually engage: by the time the body dies, the guard is long gone.
+
+FIX DIRECTION: sync_before (or the commands) must hold the guard for the duration of execute — e.g. store it in an attribute cleared by sync_after, so DESTROY-insurance covers the body. Mind interaction with #27 (sync output) and #23 (Backup/Restore/Destroy onto SyncLifecycle). VERSION 0.304.
+Fixed in 5fbaa92: guard now retained on Role::SyncLifecycle::_sync_guard; sync_before stashes it (no more premature void-context DESTROY push), sync_after marks done+clears after successful push. Insurance still fires if body dies before sync_after. Regression: t/52-syncguard-lifetime.t (pull->body->push ordering, exactly one push, insurance path). Full suite green 51/320.
+Landed on main as baf3680 (guard retained on role, neutralized in sync_after; t/52 red->green). Full suite green: 54 files / 338 tests. Changes entry added.
