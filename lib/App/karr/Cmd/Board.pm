@@ -1,7 +1,7 @@
 # ABSTRACT: Show board summary
 
 package App::karr::Cmd::Board;
-our $VERSION = '0.304';
+our $VERSION = '0.401';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

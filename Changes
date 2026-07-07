@@ -1,3 +1,5 @@
+{{$NEXT}}
+
 0.400     2026-07-07 00:03:01Z
 
     - `karr init` and `karr materialize` now ensure the board-root .gitignore

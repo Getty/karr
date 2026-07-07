@@ -1,7 +1,7 @@
 # ABSTRACT: Generate a random two-word agent name
 
 package App::karr::Cmd::AgentName;
-our $VERSION = '0.304';
+our $VERSION = '0.401';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
