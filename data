@@ -1,0 +1,46 @@
+---
+claimed_at: 2026-07-14T13:21:53Z
+claimed_by: mold-cars
+class: standard
+completed: 2026-07-14
+created: 2026-07-14T04:09:00Z
+id: 31
+priority: high
+started: 2026-07-14
+status: done
+tags:
+- sync
+- git
+- bug
+title: 'karr sync: silent success on failure + no ssh-config/ProxyCommand transport'
+updated: 2026-07-14T13:21:53Z
+---
+
+karr sync silently reports success on failure, and cannot sync to ProxyCommand-only remotes. Two distinct issues found while syncing a board to a remote that is defined solely by an ssh-config Host alias (HostName + ProxyCommand jump host), where the real IP has no direct route.
+
+--- Bug A (high): Cmd/Sync.pm swallows pull/push failures ---
+In App::karr::Cmd::Sync::execute the return values of $git->pull and $git->push are ignored:
+
+    $git->pull;      # return value discarded
+    ...
+    $git->push;      # return value discarded
+    say "Done.";     # printed unconditionally
+
+App::karr::Git::pull/push catch the libgit2 exception in try/catch, stash it in _last_error, and return 0. Sync never checks, so "Done." is printed even when nothing was transferred. Result: the operator believes the board synced when it did not -- silent divergence between local and remote refs/karr.
+
+By contrast Role::SyncLifecycle::sync_before/sync_after (used by move/edit/create) DO check the return value and croak, so those commands correctly surface the failure. Only `karr sync` hides it.
+
+Fix: check the boolean from pull/push, print $git->last_error on failure, and exit non-zero. "Done." only when both legs actually succeeded.
+
+--- Bug B (design): all-libgit2 transport cannot use ssh-config aliases / ProxyCommand ---
+App::karr::Git does every remote op via Git::Native/libgit2 ("all-native ... no fork/exec"). libgit2/libssh2 does not read ~/.ssh/config and cannot execute a ProxyCommand. A remote whose reachability depends on an ssh-config Host alias (alias -> HostName + ProxyCommand) is therefore unreachable from ANY karr path, deterministically:
+
+    App::karr::Git->new(dir=>'.')->pull
+    => libgit2 error -1 (klass 12): failed to resolve address for <alias>: No address associated with hostname
+
+The same remote works flawlessly via the git CLI (`git push origin '+refs/karr/*:refs/karr/*'`), because the CLI applies the ssh-config ProxyCommand. This is not a libgit2 bug (ssh-config is an OpenSSH feature libgit2 deliberately omits) -- it is karr's choice of libgit2-only with no CLI fallback.
+
+Fix direction: either (a) add a git-CLI fallback transport for sync when libgit2 cannot connect, or (b) document that the configured remote must be a libgit2-resolvable URL (no ssh-config aliases / ProxyCommand). At minimum, Bug A must be fixed so this failure is never silent.
+
+Repro remote shape: Host alias with `HostName <ip>` + `ProxyCommand ssh <jump> ...`, real IP not directly routable. `karr sync --pull` prints "Done." (Bug A) while `karr move` correctly fails resolution (Bug B).
+Beide Bugs umgesetzt (TDD, an karr-* delegiert). Bug A: Cmd/Sync.pm prueft pull/push-Rueckgabe, die+last_error vor Done., Exit 1; nutzt geerbtes $self->git. Bug B: Git.pm _cli_transport (IPC::Open3) als Fallback im catch aller 5 Transportmethoden (push/pull/push_ref/pull_ref/fetch), Kill-Switch KARR_NO_CLI_FALLBACK=1. Tests t/60 (Bug-A-E2E), t/61 (Fallback inkl. E2E catch-Verdrahtung), t/57 Contract-Subtest. Doku: Git.pm POD, CLAUDE.md, 2x Changes. cpanfile unveraendert (Core-Module). dzil test: 401 Tests PASS. Working tree, kein git commit.
