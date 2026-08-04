@@ -101,6 +101,63 @@ Returns true if the status is terminal (done or archived).
 
 =cut
 
+sub foundation_enabled {
+    my ($self) = @_;
+    return App::karr::Config->from_merged( $self->effective_config )
+        ->foundation_enabled;
+}
+
+=head2 foundation_enabled
+
+Returns true when automated agent runs are allowed on this board
+(C<foundation.enabled> in C<refs/karr/config>; boards default to enabled).
+
+    unless ($store->foundation_enabled) {
+        # karr-foundation skips this board entirely
+    }
+
+=cut
+
+sub foundation_reason {
+    my ($self) = @_;
+    return App::karr::Config->from_merged( $self->effective_config )
+        ->foundation_reason;
+}
+
+=head2 foundation_reason
+
+Returns the reason recorded with the disable flag, or undef when none was
+given.
+
+    my $why = $store->foundation_reason;
+
+=cut
+
+sub set_foundation_enabled {
+    my ( $self, $enabled, $reason ) = @_;
+    my $effective = $self->effective_config;
+    $effective->{foundation} = {} unless ref $effective->{foundation} eq 'HASH';
+    $effective->{foundation}{enabled} = $enabled ? 1 : 0;
+    if ( defined $reason && length $reason ) {
+        $effective->{foundation}{reason} = $reason;
+    } else {
+        delete $effective->{foundation}{reason};
+    }
+    return $self->save_config($effective);
+}
+
+=head2 set_foundation_enabled
+
+Writes the board-level agent switch and its optional reason back into
+C<refs/karr/config>. Re-enabling drops the reason, and because C<enabled> then
+matches the code default the whole C<foundation> key disappears from the sparse
+overrides again.
+
+    $store->set_foundation_enabled( 0, 'abandoned driver' );
+    $store->set_foundation_enabled( 1 );
+
+=cut
+
 sub save_config {
     my ( $self, $effective ) = @_;
     my $defaults = App::karr::Config->default_config;

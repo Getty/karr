@@ -72,11 +72,62 @@ error_patterns:           # extra case-insensitive substrings → common-error
 set globally in `config.yml` (`default_command` / `default_prompt`); the per-repo
 `.karr` value wins.
 
+## Board-level disable
+
+A board can opt out of automated agent runs in **its own karr state**, not in the
+local `.karr` file:
+
+```bash
+cd /path/to/repo
+karr disable --reason "abandoned driver, backlog parked"
+karr enable                                  # allow agent runs again
+```
+
+The flag is `foundation.enabled` in `refs/karr/config`, so it syncs with the
+board — every foundation instance on every machine honours it. That is the
+difference to `.karr`, which is local machine state and cannot express "this
+board is parked" for the whole fleet.
+
+**Precedence — absolute.** A disabled board is skipped **whole**: the flag is
+checked before the agent command is resolved and before the drain decision, so
+there is no drain, no auto-block and no agent run. It wins over `--command`, the
+config's `default_command`, the `.karr` `command` and `claude: true`, and
+`--force` does **not** override it. Disabled means disabled.
+
+This closes the gap where a global `default_command` in `config.yml` turned
+every discovered board into an agent board with no way for a repo to opt out.
+Use it for a repository whose backlog is parked rather than abandoned, so an
+automation host that drains every discovered board leaves this one alone.
+
+The same state is readable and writable through `karr config`:
+
+```bash
+karr config get foundation.enabled           # -> 0 or 1
+karr config set foundation.enabled false     # true/false, yes/no, on/off, 1/0
+karr config set foundation.reason "why"
+```
+
+`karr disable` without `--reason` clears any previously stored reason. When
+every discovered board is disabled (or has no agent), `karr-foundation` falls
+back to the overview instead of draining.
+
 ## Overview
 
 `karr-foundation --status` (and the default when no board has an agent) prints a
 read-only dashboard of every board: status counts, in-progress/blocked tasks,
-and lock/cooldown state. No agent is run — usable by a human to coordinate work.
+and disabled/lock/cooldown state. No agent is run — usable by a human to
+coordinate work.
+
+```
+dbio-informix
+  7 tasks  [disabled]
+  backlog:5  review:2
+  disabled:    abandoned driver, backlog parked
+```
+
+`disabled` leads the flag list and the `disabled:` line carries the reason
+(`no reason given` when none was stored). The `agent` flag is suppressed for a
+disabled board, because that agent will never run there.
 
 ## Options
 
@@ -165,3 +216,6 @@ karr create "Example task" --priority high
 ```
 
 Then add the `.karr` file and configure foundation to scan the parent dir.
+
+To take a single repo out of a fleet that runs on a global `default_command`,
+run `karr disable --reason "why"` in that repo — see "Board-level disable".

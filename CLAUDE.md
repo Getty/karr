@@ -93,6 +93,7 @@ storage backend.
 | `restore` | implemented | — (snapshot→refs, destructive) |
 | `destroy` | implemented | — (remove `refs/karr/*` incl. remote) |
 | `set-refs` / `get-refs` | implemented | — (helper refs outside the board) |
+| `disable` / `enable` | implemented | — (board-level opt-out from karr-foundation runs) |
 
 ## Key design decisions
 

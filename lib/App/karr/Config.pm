@@ -79,6 +79,63 @@ sub claim_timeout {
   return $self->data->{claim_timeout} // '1h';
 }
 
+sub foundation_enabled {
+  my ($self) = @_;
+  my $f = $self->data->{foundation};
+  return 1 unless ref $f eq 'HASH' && exists $f->{enabled};
+  return $f->{enabled} ? 1 : 0;
+}
+
+=head2 foundation_enabled
+
+Returns true when automated agent runs (L<App::karr::Foundation>) are allowed on
+this board. The flag lives in the board config under C<foundation.enabled> and
+therefore travels with C<refs/karr/config>; a board that never set it is
+enabled.
+
+    if ($config->foundation_enabled) {
+        # karr-foundation may drain this board
+    }
+
+=cut
+
+sub foundation_reason {
+  my ($self) = @_;
+  my $f = $self->data->{foundation};
+  return undef unless ref $f eq 'HASH';
+  my $reason = $f->{reason};
+  return ( defined $reason && length $reason ) ? $reason : undef;
+}
+
+=head2 foundation_reason
+
+Returns the free-text reason recorded alongside C<foundation.enabled>, or undef
+when none was given. Only meaningful while the board is disabled.
+
+    my $why = $config->foundation_reason;
+
+=cut
+
+sub parse_bool {
+  my ($class, $value) = @_;
+  die "Missing boolean value\n" unless defined $value;
+  my $v = lc $value;
+  $v =~ s/^\s+//;
+  $v =~ s/\s+$//;
+  return 1 if $v =~ /^(?:1|true|yes|on)$/;
+  return 0 if $v =~ /^(?:0|false|no|off)$/;
+  die "Invalid boolean: $value (use true/false, yes/no, on/off, 1/0)\n";
+}
+
+=head2 parse_bool
+
+Coerces a CLI-supplied boolean string to C<1> or C<0>, dying on anything else.
+Needed because a bare C<"false"> from the command line is true in Perl.
+
+    my $bool = App::karr::Config->parse_bool('false');   # 0
+
+=cut
+
 sub priority_order {
   my ($class) = @_;
   return (critical => 0, high => 1, medium => 2, low => 3);
@@ -176,6 +233,12 @@ sub default_config {
       { name => 'intangible' },
     ],
     claim_timeout => '1h',
+    # Board-level switch for automated agent runs (karr-foundation). Boards are
+    # enabled by default; `karr disable` writes enabled => 0 (plus an optional
+    # reason) into refs/karr/config so the opt-out syncs with the board.
+    foundation => {
+      enabled => 1,
+    },
     defaults => {
       status   => 'backlog',
       priority => 'medium',

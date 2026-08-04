@@ -136,6 +136,7 @@ Important refs:
 | `karr restore --yes` | replace the board from a YAML snapshot |
 | `karr destroy --yes` | remove the board completely |
 | `karr sync` | explicitly pull/push board refs |
+| `karr disable` / `karr enable` | opt this board out of (or back into) automated agent runs |
 
 ### Task lifecycle
 
@@ -255,6 +256,24 @@ error_patterns:             # extra case-insensitive substrings → common-error
 set globally in `config.yml` (as `default_command` / `default_prompt`); the
 per-repo `.karr` value wins. The agent's output streams to the terminal when run
 interactively or with `--verbose`, and is always appended to `.karr.log`.
+
+A board can also opt out **in its own karr state**, which is what a global
+`default_command` otherwise makes impossible:
+
+```bash
+karr disable --reason "abandoned driver, backlog parked"
+karr enable
+```
+
+Unlike `.karr` — local machine state — the flag is board state
+(`foundation.enabled` in `refs/karr/config`), so it syncs with the board and
+every foundation instance on every machine honours it. A disabled board is
+skipped **whole**: the flag is checked before the agent command is resolved and
+before the drain decision, so there is no drain, no auto-block and no agent run.
+It wins over `--command`, `default_command`, the `.karr` `command` and
+`claude: true`, and `--force` does *not* override it. `--status` shows such a
+board with a `disabled` flag and its reason. The same state is visible and
+settable through `karr config` (`foundation.enabled` / `foundation.reason`).
 
 After every agent run, foundation classifies the outcome from what it can
 observe — exit code, board ref movement, and the run's captured output:
