@@ -1,7 +1,7 @@
 # ABSTRACT: Role providing sync lifecycle with retry and guard insurance
 
 package App::karr::Role::SyncLifecycle;
-our $VERSION = '0.402';
+our $VERSION = '0.403';
 use Moo::Role;
 use MooX::Options;
 use Carp qw( croak );

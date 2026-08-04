@@ -1,7 +1,7 @@
 # ABSTRACT: Delete a task
 
 package App::karr::Cmd::Delete;
-our $VERSION = '0.402';
+our $VERSION = '0.403';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

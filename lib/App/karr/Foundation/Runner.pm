@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation command execution — fork/pipe/select tee + error classification
 
 package App::karr::Foundation::Runner;
-our $VERSION = '0.402';
+our $VERSION = '0.403';
 use Moo;
 use Carp qw( croak );
 use IO::Select;

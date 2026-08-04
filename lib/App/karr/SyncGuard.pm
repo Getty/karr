@@ -1,7 +1,7 @@
 # ABSTRACT: Push guard with automatic retry on scope exit
 
 package App::karr::SyncGuard;
-our $VERSION = '0.402';
+our $VERSION = '0.403';
 use Moo;
 use strict;
 use warnings;
