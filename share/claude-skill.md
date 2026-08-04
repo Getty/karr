@@ -45,6 +45,10 @@ karr list --json                             # JSON output
 
 ```bash
 karr show ID
+karr show                  # most recently updated task
+karr show --last 5         # the 5 most recent
+karr show --me             # the task you most recently acted on (re-orient)
+karr show --agent NAME     # the task most recently claimed by NAME
 ```
 
 ### Move task
@@ -89,7 +93,7 @@ Idempotent — archiving an already-archived task is a no-op.
 karr board
 ```
 
-Shows tasks grouped by status.
+Shows tasks grouped by status with WIP utilization.
 
 ### Pick next task (multi-agent)
 
@@ -250,6 +254,9 @@ statuses:
   - done
   - archived
 priorities: [low, medium, high, critical]
+wip_limits:
+  in-progress: 3
+  review: 2
 claim_timeout: 1h
 defaults:
   status: backlog

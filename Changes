@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Shipped skill doc (share/claude-skill.md) caught up with the CLI: now
+      documents the `karr show` variants (bare, --last, --me, --agent), WIP
+      utilization in `karr board`, and wip_limits in the config example. A
+      repo-hygiene test (t/62-skill-doc-sync.t) keeps it in sync with the
+      in-repo copy of the skill so the two can no longer drift apart.
+
 0.401     2026-07-14 14:32:22Z
 
     - Fix `karr sync` reporting success even when pull or push failed: it

@@ -1,5 +1,5 @@
 ---
-name: kanban-issues-karr-foundation-cli
+name: karr-foundation-cli
 description: Use when managing karr-foundation — periodic agent execution across multiple karr boards, drain loops, and auto-block logic.
 ---
 
@@ -13,10 +13,10 @@ when work is available. Designed for cron/systemd-timer invocation.
 ```bash
 # Config at ~/.config/karr-foundation/config.yml
 dirs:
-  - /storage/raid/home/getty/dev/perl/dbio-dev/dbio
-  - /storage/raid/home/getty/dev/perl/dbio-dev/dbio-postgresql
+  - /path/to/repo1
+  - /path/to/repo2
 scan:
-  - /storage/raid/home/getty/dev/perl/dbio-dev   # finds dirs with .karr file
+  - /path/to/parent-dir   # finds dirs with .karr file
 
 # Per-repo .karr file (in each repo root)
 command: claude -p "Use karr-coordinator agent, pick next task"
@@ -142,9 +142,9 @@ During agent execution foundation sets:
 */5 * * * * karr-foundation --verbose 2>&1 | logger -t karr-foundation
 ```
 
-## For dbio-dev repos
+## Enabling agent runs for a repo fleet
 
-Each dbio-* repo needs a `.karr` file with a command that invokes claude on the
+Each repo needs a `.karr` file with a command that invokes an agent on the
 next available task. Example:
 
 ```yaml
@@ -157,10 +157,10 @@ cooldown_base: 2
 cooldown_max: 32
 ```
 
-To initialize karr in a dbio repo:
+To initialize karr in a repo:
 ```bash
-cd /path/to/dbio-postgresql
-karr init --name dbio-postgresql
+cd /path/to/repo
+karr init --name my-project
 karr create "Example task" --priority high
 ```
 

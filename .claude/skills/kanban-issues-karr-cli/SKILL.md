@@ -157,6 +157,18 @@ the current project at `/work` and uses `/home/karr` as `HOME`, so the image
 can drop privileges to the owner of the mounted workspace without breaking
 access to Git config or agent skill directories.
 
+### Sync
+
+```bash
+karr sync
+karr sync --pull
+karr sync --push
+```
+
+Use this when you want explicit control over board ref exchange with the remote
+instead of relying only on the implicit pull/push behavior of mutating
+commands.
+
 ### Backup and restore
 
 ```bash
@@ -165,6 +177,16 @@ karr restore --yes < karr-backup.yml
 ```
 
 `restore` is destructive and replaces the entire `refs/karr/*` namespace.
+
+### Destroy
+
+```bash
+karr destroy --yes
+```
+
+Deletes the entire `refs/karr/*` namespace from the repository and prunes the
+remote board state too when a remote is configured. Prefer taking a
+`karr backup` first.
 
 ### Helper refs
 
@@ -261,6 +283,7 @@ is kept separately in `refs/karr/meta/next-id`.
 12. **Install agent skills?** → `karr skill install`
 13. **Need a full board snapshot?** → `karr backup` / `karr restore --yes`
 14. **Need shared non-task workflow data?** → `karr set-refs` / `karr get-refs`
+15. **Need to remove the board completely?** → `karr destroy --yes`
 
 ## Multi-agent workflow
 
