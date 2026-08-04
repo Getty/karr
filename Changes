@@ -1,4 +1,4 @@
-{{$NEXT}}
+0.402     2026-08-04 04:46:25Z
 
     - New board-level opt-out from automated agent runs: `karr disable
       [--reason "why"]` / `karr enable`. Unlike the per-machine .karr file the
