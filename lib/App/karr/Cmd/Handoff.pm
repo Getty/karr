@@ -111,6 +111,7 @@ sub execute {
   my $old_status = $task->status;
   if ($task->status ne 'review') {
     $task->status('review');
+    $task->update_timestamps($old_status, 'review', ($self->store->all_status_names)[0]);
   }
 
   # Refresh claim
@@ -119,7 +120,7 @@ sub execute {
 
   # Block if requested
   if ($self->block) {
-    $task->blocked($self->block);
+    $task->block($self->block);
   }
 
   # Append note

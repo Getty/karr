@@ -90,7 +90,7 @@ subtest 'tags and a block reason ending in --- round-trip' => sub {
   my $back = App::karr::Task->from_string( $task->to_markdown );
 
   is_deeply( $back->tags, [ 'rel---', 'x' ], 'a tag ending in --- survived' );
-  is( $back->blocked, 'waiting ---', 'a block reason ending in --- survived' );
+  is( $back->block_reason, 'waiting ---', 'a block reason ending in --- survived' );
   is( $back->title,   'Blocked card', 'title untouched' );
   is( $back->body,    'hello',        'body untouched' );
 };

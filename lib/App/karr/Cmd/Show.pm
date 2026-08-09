@@ -76,10 +76,11 @@ sub _show_task {
   printf "Due:      %s\n", $task->due if $task->has_due;
   printf "Estimate: %s\n", $task->estimate if $task->has_estimate;
   printf "Claimed:  %s\n", $task->claimed_by if $task->has_claimed_by;
-  printf "Blocked:  %s\n", $task->blocked if $task->has_blocked;
+  printf "Blocked:  %s\n", $task->has_block_reason ? $task->block_reason : 'yes'
+    if $task->has_blocked;
   printf "Created:  %s\n", $task->created;
   printf "Updated:  %s\n", $task->updated;
-  if ($task->body) {
+  if (defined $task->body && length $task->body) {
     print "\n" . $task->body . "\n";
   }
 }

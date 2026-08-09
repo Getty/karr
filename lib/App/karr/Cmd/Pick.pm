@@ -91,6 +91,11 @@ sub execute {
 
   my $ec = $self->store->effective_config;
 
+  # Before any task is locked or claimed: a bad --move would otherwise park the
+  # picked task in a status that is not a column (ticket #54).
+  App::karr::Config->from_merged($ec)->validate_status( $self->move )
+    if defined $self->move;
+
   my @tasks = $self->load_tasks;
 
   # Filter by status
@@ -150,10 +155,9 @@ sub execute {
     $task->claimed_at(gmtime->datetime . 'Z');
 
     if ($self->move) {
+      my $old_status = $task->status;
       $task->status($self->move);
-      if ($self->move eq 'in-progress' && !$task->has_started) {
-        $task->started(gmtime->strftime('%Y-%m-%d'));
-      }
+      $task->update_timestamps($old_status, $self->move, ($self->store->all_status_names)[0]);
     }
 
     $self->save_task($task);

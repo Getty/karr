@@ -184,7 +184,7 @@ subtest '_autoblock_task' => sub {
   ok $f->_autoblock_task( $repo, 1, 'auto: nope' ), 'autoblock returns true';
   my $t = task_by_id( $repo, 1 );
   ok $t->has_blocked, 'task is blocked';
-  is $t->blocked, 'auto: nope', 'block reason stored';
+  is $t->block_reason, 'auto: nope', 'block reason stored';
 };
 
 # ---------------------------------------------------------------------------
@@ -222,7 +222,7 @@ subtest 'stalled task is auto-blocked' => sub {
 
   my $t = task_by_id( $repo, 1 );
   ok $t->has_blocked, 'stuck task ends up blocked';
-  like $t->blocked, qr/auto-block: no progress/, 'auto-block reason set';
+  like $t->block_reason, qr/auto-block: no progress/, 'auto-block reason set';
   ok ! $f->_has_actionable_tasks( $repo ), 'no actionable tasks left -> drain done';
 };
 

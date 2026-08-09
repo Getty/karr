@@ -59,15 +59,22 @@ if ( !$ran ) {
     #   "Unknown command:"          the dispatch guard in App::karr
     #   "unexpected extra argument"  surplus positionals (Role::CliArgs)
     #   "Usage:"                     a missing required positional
+    #   "Invalid <field>: <value>"   a rejected option or positional value
     # Any new usage-error die must start with one of these. Everything else --
     # task not found, board missing, a Git/sync failure, a refused destructive
     # operation -- is a runtime failure (1).
+    #
+    # The "Invalid <field>: " marker is what App::karr::Config's validators and
+    # `karr config set` raise for a bad status, priority, class, due date,
+    # duration or boolean (ticket #54). The trailing colon is load-bearing: it
+    # is what keeps "Invalid task format", a corrupt stored document rather than
+    # a mistyped argument, on the runtime-failure side.
     #
     # Option-parse errors (unknown option, invalid option value) never reach
     # here: MooX::Options exits 2 directly via App::karr::Role::ExitCodes (and
     # the root's _print_help), so those exits bypass this eval.
     my $is_usage = defined $err
-        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:)/;
+        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:|Invalid [a-z ]+: )/;
 
     print STDERR $err if defined $err && length $err;
     exit( $is_usage ? 2 : 1 );
@@ -283,7 +290,8 @@ a Git or sync operation failed, a destructive command was refused for want of
 C<--yes>, or a batch committed partial work but at least one item failed.
 
 =item * B<2> — usage error: an unknown command, an unknown option, an invalid
-option value, or a surplus or missing positional argument.
+option or argument value (an unconfigured status, priority or class, a due date
+that is not C<YYYY-MM-DD>), or a surplus or missing positional argument.
 
 =back
 

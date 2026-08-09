@@ -79,6 +79,13 @@ sub execute {
 
   my $ec = $self->store->effective_config;
   my @statuses = $self->store->all_status_names;
+  my $config = App::karr::Config->from_merged($ec);
+
+  # Before the loop, so a mistyped column cannot move the first half of a batch
+  # into a status that does not exist (ticket #54). The relative --next/--prev
+  # forms need no check: they pick from @statuses by construction.
+  $config->validate_status($new_status)
+    if defined $new_status && !$self->next && !$self->prev;
 
   my @results;
   for my $id (@ids) {
@@ -111,14 +118,7 @@ sub execute {
 
     my $old_status = $task->status;
     $task->status($task_new_status);
-
-    # Set started/completed timestamps
-    if ($task_new_status eq 'in-progress' && !$task->has_started) {
-      $task->started(gmtime->strftime('%Y-%m-%d'));
-    }
-    if ($task_new_status eq 'done' && !$task->has_completed) {
-      $task->completed(gmtime->strftime('%Y-%m-%d'));
-    }
+    $task->update_timestamps($old_status, $task_new_status, $statuses[0]);
 
     $self->save_task($task);
 

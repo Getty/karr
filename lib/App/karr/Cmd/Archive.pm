@@ -68,6 +68,9 @@ sub execute {
 
     my $old_status = $task->status;
     $task->status('archived');
+    # archived is terminal, so a task archived straight out of the backlog gets
+    # its started/completed stamps here rather than never (ticket #68).
+    $task->update_timestamps($old_status, 'archived', ($self->store->all_status_names)[0]);
     $self->save_task($task);
 
     push @results, {

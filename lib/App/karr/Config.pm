@@ -50,16 +50,27 @@ sub save {
   DumpFile($self->file->stringify, $self->data);
 }
 
+# The three list accessors below tolerate a malformed board config instead of
+# dying inside a dereference. `karr config show` has to stay able to print a
+# broken board so it can be fixed, and L</validate> checks the list shape
+# explicitly before it calls them, so nothing that should fail stops failing
+# (ticket #78).
+sub _list {
+  my ( $self, $key ) = @_;
+  my $value = $self->data->{$key};
+  return ref $value eq 'ARRAY' ? @$value : ();
+}
+
 sub statuses {
   my ($self) = @_;
   return map {
     ref $_ ? $_->{name} : $_
-  } @{ $self->data->{statuses} // [] };
+  } $self->_list('statuses');
 }
 
 sub status_config {
   my ($self, $name) = @_;
-  for my $s (@{ $self->data->{statuses} // [] }) {
+  for my $s ($self->_list('statuses')) {
     if (ref $s) {
       return $s if $s->{name} eq $name;
     } elsif ($s eq $name) {
@@ -71,8 +82,27 @@ sub status_config {
 
 sub priorities {
   my ($self) = @_;
-  return @{ $self->data->{priorities} // [qw(low medium high critical)] };
+  return ref $self->data->{priorities} eq 'ARRAY'
+    ? @{ $self->data->{priorities} }
+    : qw( low medium high critical );
 }
+
+sub classes {
+  my ($self) = @_;
+  return map {
+    ref $_ ? $_->{name} : $_
+  } $self->_list('classes');
+}
+
+=head2 classes
+
+Returns the configured class-of-service names in board order, accepting both
+the mapping form C<< { name => 'expedite', wip_limit => 1 } >> and a bare
+string, the same way L</statuses> does.
+
+    my @classes = $config->classes;
+
+=cut
 
 sub claim_timeout {
   my ($self) = @_;
@@ -136,6 +166,233 @@ Needed because a bare C<"false"> from the command line is true in Perl.
 
 =cut
 
+# Go's time.ParseDuration grammar, which is what kanban-md's claim_timeout is
+# written in: an optional sign, then one or more decimal-number-plus-unit
+# groups. Note there is no day unit -- "7d" is an error in Go too.
+my %DURATION_UNIT = (
+  ns    => 1e-9,
+  us    => 1e-6,
+  "\x{b5}s" => 1e-6,   # micro sign
+  "\x{3bc}s" => 1e-6,  # greek small letter mu
+  ms    => 1e-3,
+  s     => 1,
+  m     => 60,
+  h     => 3600,
+);
+
+sub parse_duration {
+  my ($class, $str) = @_;
+  return undef unless defined $str && length $str;
+
+  my $sign = 1;
+  $sign = -1 if $str =~ s/\A-//;
+  $str =~ s/\A\+//;
+
+  # Go accepts a bare "0" (and only "0") without a unit.
+  return 0 if $str =~ /\A0+\z/;
+
+  my $seconds = 0;
+  my $matched = 0;
+  while ( length $str ) {
+    $str =~ s/\A([0-9]*\.?[0-9]+)// or return undef;
+    my $value = $1;
+    return undef if $value eq '.';
+    $str =~ s/\A(ns|us|\x{b5}s|\x{3bc}s|ms|s|m|h)// or return undef;
+    $seconds += $value * $DURATION_UNIT{$1};
+    $matched++;
+  }
+  return undef unless $matched;
+  return $sign * $seconds;
+}
+
+=head2 parse_duration
+
+Parses a Go C<time.ParseDuration> string into seconds, returning C<undef> when
+it is not a duration at all. kanban-md writes C<claim_timeout> in that grammar,
+so a compound value such as C<1h30m> has to mean ninety minutes on both sides
+of the interop boundary (ticket #78).
+
+    my $secs = App::karr::Config->parse_duration('1h30m');   # 5400
+    my $secs = App::karr::Config->parse_duration('7d');      # undef -- no day unit
+
+=cut
+
+# The "Invalid <field>: <value>" shape is the CLI's usage-error marker (ADR
+# 0002): F<bin/karr> maps a die starting that way to exit 2, so every rejected
+# option value -- from `karr config set` and from the task write paths alike --
+# has to be phrased through these.
+sub validate_status {
+  my ($self, $value) = @_;
+  my @statuses = $self->statuses;
+  return $value if defined $value && grep { $_ eq $value } @statuses;
+  die "Invalid status: " . ( $value // '' )
+    . " (valid: " . join(', ', @statuses) . ")\n";
+}
+
+=head2 validate_status
+
+Dies unless the value is one of the board's configured statuses, returning the
+value otherwise so it can be used inline.
+
+    $task->status( $config->validate_status($wanted) );
+
+=cut
+
+sub validate_priority {
+  my ($self, $value) = @_;
+  my @priorities = $self->priorities;
+  return $value if defined $value && grep { $_ eq $value } @priorities;
+  die "Invalid priority: " . ( $value // '' )
+    . " (valid: " . join(', ', @priorities) . ")\n";
+}
+
+=head2 validate_priority
+
+Dies unless the value is one of the board's configured priorities.
+
+=cut
+
+sub validate_class {
+  my ($self, $value) = @_;
+  my @classes = $self->classes;
+  return $value if defined $value && grep { $_ eq $value } @classes;
+  die "Invalid class: " . ( $value // '' )
+    . " (valid: " . join(', ', @classes) . ")\n";
+}
+
+=head2 validate_class
+
+Dies unless the value is one of the board's configured classes of service.
+
+=cut
+
+sub validate_due {
+  my ($class, $value) = @_;
+  die "Invalid due date: " . ( $value // '' ) . " (expected YYYY-MM-DD)\n"
+    unless defined $value && $value =~ /\A(\d{4})-(\d{2})-(\d{2})\z/;
+  my ( $y, $m, $d ) = ( $1, $2, $3 );
+  # Calendar-correct, not just well-shaped: Go's time.Parse rejects 2026-02-30
+  # and so must karr, or the date sorts fine and means nothing.
+  die "Invalid due date: $value (expected YYYY-MM-DD)\n"
+    unless $m >= 1
+    && $m <= 12
+    && $d >= 1
+    && $d <= _days_in_month( $y, $m );
+  return $value;
+}
+
+=head2 validate_due
+
+Dies unless the value is a real calendar date in C<YYYY-MM-DD>, the only form
+kanban-md's C<date.Date> accepts.
+
+    App::karr::Config->validate_due('2026-02-30');   # dies
+
+=cut
+
+sub _days_in_month {
+  my ( $year, $month ) = @_;
+  my @days = ( 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 );
+  return 29 if $month == 2 && ( $year % 4 == 0 && ( $year % 100 != 0 || $year % 400 == 0 ) );
+  return $days[ $month - 1 ];
+}
+
+sub validate {
+  my ( $class, $data ) = @_;
+  die "Board config is invalid: not a mapping\n" unless ref $data eq 'HASH';
+
+  my $config = $class->from_merged($data);
+
+  die "Board config is invalid: board.name is required\n"
+    unless ref $data->{board} eq 'HASH'
+    && defined $data->{board}{name}
+    && length $data->{board}{name};
+  die "Board config is invalid: tasks_dir is required\n"
+    unless defined $data->{tasks_dir} && length $data->{tasks_dir};
+
+  die "Board config is invalid: statuses must be a list\n"
+    unless ref $data->{statuses} eq 'ARRAY';
+  my @statuses = $config->statuses;
+  die "Board config is invalid: at least 2 statuses are required\n"
+    unless @statuses >= 2;
+  die "Board config is invalid: every status needs a name\n"
+    if grep { !defined || !length } @statuses;
+  die "Board config is invalid: statuses contain duplicates\n"
+    if _has_duplicates(@statuses);
+
+  die "Board config is invalid: priorities must be a list\n"
+    unless ref $data->{priorities} eq 'ARRAY';
+  my @priorities = $config->priorities;
+  die "Board config is invalid: at least 1 priority is required\n"
+    unless @priorities >= 1;
+  die "Board config is invalid: priorities contain duplicates\n"
+    if _has_duplicates(@priorities);
+
+  if ( defined $data->{classes} ) {
+    die "Board config is invalid: classes must be a list\n"
+      unless ref $data->{classes} eq 'ARRAY';
+    my @classes = $config->classes;
+    die "Board config is invalid: every class needs a name\n"
+      if grep { !defined || !length } @classes;
+    die "Board config is invalid: classes contain duplicates\n"
+      if _has_duplicates(@classes);
+    for my $c ( @{ $data->{classes} } ) {
+      next unless ref $c eq 'HASH' && defined $c->{wip_limit};
+      die "Board config is invalid: class $c->{name} wip_limit must be >= 0\n"
+        unless $c->{wip_limit} =~ /\A\d+\z/;
+    }
+  }
+
+  my $defaults = $data->{defaults} // {};
+  die "Board config is invalid: defaults must be a mapping\n"
+    unless ref $defaults eq 'HASH';
+  for my $spec (
+    [ status   => \@statuses   ],
+    [ priority => \@priorities ],
+    ) {
+    my ( $key, $allowed ) = @$spec;
+    my $value = $defaults->{$key};
+    next unless defined $value;
+    die "Board config is invalid: defaults.$key $value is not in the $key list\n"
+      unless grep { $_ eq $value } @$allowed;
+  }
+  if ( defined $defaults->{class} && length $defaults->{class} ) {
+    my @classes = $config->classes;
+    die "Board config is invalid: defaults.class $defaults->{class} is not in the classes list\n"
+      if @classes && !grep { $_ eq $defaults->{class} } @classes;
+  }
+
+  if ( defined $data->{claim_timeout} && length $data->{claim_timeout} ) {
+    die "Board config is invalid: claim_timeout $data->{claim_timeout} is not a duration\n"
+      unless defined $class->parse_duration( $data->{claim_timeout} );
+  }
+
+  return 1;
+}
+
+=head2 validate
+
+Checks a fully merged board config and dies with a C<Board config is invalid:>
+message on the first problem, mirroring kanban-md's C<Config.Validate>. Only the
+parts karr actually models are checked -- karr keeps C<next_id> in a ref rather
+than in the config, has no WIP limits or TUI section yet, and uses its own
+C<version> numbering, so those three checks are deliberately absent.
+
+Called from L<App::karr::BoardStore/save_config>, which is the single write
+choke point for C<refs/karr/config>, so C<karr config set>, C<karr import> and
+C<karr disable> all reject a broken schema instead of writing it (ticket #78).
+It is B<not> called on the read path: a board that is already broken has to stay
+loadable, or it could not be repaired with karr itself.
+
+    App::karr::Config->validate( $store->load_config );
+
+=cut
+
+sub _has_duplicates {
+  my %seen;
+  return scalar grep { $seen{$_}++ } @_;
+}
+
 sub priority_order {
   my ($class) = @_;
   return (critical => 0, high => 1, medium => 2, low => 3);
@@ -197,7 +454,7 @@ sub status_requires_claim {
   my ($self, $status_name) = @_;
   my ($sc) = grep {
     (ref $_ ? $_->{name} : $_) eq $status_name
-  } @{$self->data->{statuses} // []};
+  } $self->_list('statuses');
   return 0 unless $sc;
   return 0 if !ref $sc;
   return $sc->{require_claim} ? 1 : 0;

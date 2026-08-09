@@ -113,20 +113,27 @@ sub _show_all {
 
 sub _display_keys {
   my ($self, $d) = @_;
+  # Through the Config accessors, which tolerate a malformed board: `config
+  # show` is how you find out that a config is broken, so it must not die
+  # dereferencing the very key that is wrong (ticket #78).
+  my $c = App::karr::Config->from_merged($d);
+  my $board    = ref $d->{board} eq 'HASH'    ? $d->{board}    : {};
+  my $defaults = ref $d->{defaults} eq 'HASH' ? $d->{defaults} : {};
   my @out;
   push @out, ['version',            $d->{version}];
-  push @out, ['board.name',         $d->{board}{name}]        if $d->{board}{name};
-  push @out, ['board.description',  $d->{board}{description}] if $d->{board}{description};
+  push @out, ['board.name',         $board->{name}]        if $board->{name};
+  push @out, ['board.description',  $board->{description}] if $board->{description};
   push @out, ['tasks_dir',          $d->{tasks_dir}];
-  push @out, ['statuses',           [map { ref $_ ? $_->{name} : $_ } @{$d->{statuses} // []}]];
-  push @out, ['priorities',         $d->{priorities}];
-  push @out, ['defaults.status',    $d->{defaults}{status}]   if $d->{defaults}{status};
-  push @out, ['defaults.priority',  $d->{defaults}{priority}] if $d->{defaults}{priority};
-  push @out, ['defaults.class',     $d->{defaults}{class}]    if $d->{defaults}{class};
+  push @out, ['statuses',           [$c->statuses]];
+  push @out, ['priorities',         [$c->priorities]];
+  push @out, ['defaults.status',    $defaults->{status}]   if $defaults->{status};
+  push @out, ['defaults.priority',  $defaults->{priority}] if $defaults->{priority};
+  push @out, ['defaults.class',     $defaults->{class}]    if $defaults->{class};
   push @out, ['claim_timeout',      $d->{claim_timeout}];
-  push @out, ['classes',            [map { $_->{name} } @{$d->{classes} // []}]];
-  push @out, ['foundation.enabled', App::karr::Config->from_merged($d)->foundation_enabled];
-  push @out, ['foundation.reason',  $d->{foundation}{reason}] if $d->{foundation}{reason};
+  push @out, ['classes',            [$c->classes]];
+  push @out, ['foundation.enabled', $c->foundation_enabled];
+  push @out, ['foundation.reason',  $d->{foundation}{reason}]
+    if ref $d->{foundation} eq 'HASH' && $d->{foundation}{reason};
   return @out;
 }
 
@@ -148,24 +155,18 @@ sub _set_key {
 
   my $d = $config->data;
 
-  # Validate values
+  # Validate values. The same App::karr::Config validators the task write paths
+  # use, so `karr config set defaults.status X` and `karr create --status X`
+  # cannot disagree about what a legal status is (ticket #54).
   if ($key eq 'defaults.status') {
-    my @statuses = $config->statuses;
-    die "Invalid status: $val (valid: " . join(', ', @statuses) . ")\n"
-      unless grep { $_ eq $val } @statuses;
+    $config->validate_status($val);
   } elsif ($key eq 'defaults.priority') {
-    my @priorities = $config->priorities;
-    die "Invalid priority: $val (valid: " . join(', ', @priorities) . ")\n"
-      unless grep { $_ eq $val } @priorities;
+    $config->validate_priority($val);
   } elsif ($key eq 'defaults.class') {
-    if ($val ne '') {
-      my @classes = map { $_->{name} } @{$d->{classes} // []};
-      die "Invalid class: $val (valid: " . join(', ', @classes) . ")\n"
-        unless grep { $_ eq $val } @classes;
-    }
+    $config->validate_class($val) if $val ne '';
   } elsif ($key eq 'claim_timeout') {
-    die "Invalid timeout format: $val (use e.g. 1h, 30m)\n"
-      unless $val =~ /^\d+[hm]$/;
+    die "Invalid timeout format: $val (use e.g. 1h, 30m, 1h30m)\n"
+      unless defined App::karr::Config->parse_duration($val);
   } elsif ($key eq 'foundation.enabled') {
     # A bare "false" from the command line is true in Perl -- coerce here so the
     # stored value is the same 1/0 `karr disable`/`karr enable` write.

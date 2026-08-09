@@ -650,7 +650,7 @@ sub _autoblock_task {
   return unless $git->is_repo;
   my $store = App::karr::BoardStore->new( git => $git );
   my $task  = $store->find_task( $id ) or return;
-  $task->blocked( $reason );
+  $task->block( $reason );
   $store->save_task( $task );
   $git->push;   # best-effort propagate to remote
   $self->_append_log( $repo, "AUTOBLOCK task#$id: $reason" );

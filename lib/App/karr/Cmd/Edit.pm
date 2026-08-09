@@ -10,6 +10,7 @@ use MooX::Options (
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Task;
+use App::karr::Config;
 use Time::Piece;
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
@@ -147,6 +148,13 @@ sub execute {
   my $id_str = $pos[0] or die "Usage: karr edit ID[,ID,...] [FLAGS]\n";
   my @ids = $self->parse_ids($id_str);
 
+  # Once, before touching any task: a batch edit must not leave half the ids
+  # updated because the value was bad all along (ticket #54).
+  my $config = App::karr::Config->from_merged( $self->store->effective_config );
+  $config->validate_status( $self->status )     if defined $self->status;
+  $config->validate_priority( $self->priority ) if defined $self->priority;
+  App::karr::Config->validate_due( $self->due ) if defined $self->due;
+
   my @results;
   for my $id (@ids) {
     my $task = $self->find_task($id);
@@ -185,11 +193,11 @@ sub execute {
     }
 
     if ($self->block) {
-      $task->blocked($self->block);
+      $task->block($self->block);
     }
 
     if ($self->unblock) {
-      $task->clear_blocked;
+      $task->unblock;
     }
 
     $self->save_task($task);

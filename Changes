@@ -1,5 +1,64 @@
 {{$NEXT}}
 
+    - Fixed every task write path accepting a status, priority, class or due
+      date that does not exist. `karr move 1 totally-invalid`, `karr create x
+      --priority bogus`, `karr edit 1 --status bogus` and `karr pick --move
+      bogus` all exited 0 and wrote the value to the board, which then sat in
+      no column — invisible on `karr board`, still counted in the total, and
+      `karr move --next` died on it. Those values are now checked against the
+      board config before anything is written and rejected with exit 2, the
+      usage-error code from ADR 0002. A due date must be a real calendar date
+      in `YYYY-MM-DD`, so `2026-02-30` is refused as well. A batch `edit` or
+      `move` is checked once up front, so a bad value cannot update half the
+      ids, and a rejected `create` no longer consumes a task id. Validation is
+      on the write path only: a board that already carries a bad value stays
+      readable so `karr move` can put it back.
+    - Fixed `blocked` being incompatible with kanban-md. karr stored the
+      blocking reason as free text in `blocked`; kanban-md has a boolean
+      `blocked` plus a `block_reason` string, and its parser refuses a string
+      there outright — a karr-blocked task was skipped as malformed and
+      vanished from its board. karr now writes the kanban-md shape, and
+      `--json` reports `blocked` as a JSON boolean instead of sometimes a
+      string and sometimes `true`. `karr edit --block "reason"` and `karr
+      handoff --block` are unchanged and still set both fields. Existing boards
+      need no migration: a legacy free-text `blocked` is recognised on read and
+      converted on the next write of that task.
+    - Fixed unknown frontmatter fields being deleted on the first write. Any
+      key karr did not model — a newer kanban-md field, a note added by hand in
+      an editor — was dropped when the task was next saved. Unknown keys are
+      now carried through untouched. They are not order-preserved: karr's YAML
+      output is key-sorted, so a passthrough field lands in alphabetical
+      position.
+    - Fixed the lifecycle timestamps. `completed` was never cleared when a task
+      was reopened, so every reopened task still looked finished; `started` was
+      only set for the literal status `in-progress` and `completed` only for
+      the literal `done`, so a move straight to `done` or `archived` recorded
+      neither; and `started` was written as a bare date while every other
+      timestamp carried a time. All four are fixed, and `karr archive` and
+      `karr handoff` now maintain the stamps as well. Unlike kanban-md, karr
+      does not re-stamp `completed` when a finished task is archived — the date
+      it was actually finished is kept.
+    - Fixed `karr create --body 0` silently dropping the body, and `karr show`
+      not printing a body of `0`.
+    - Fixed a body losing one trailing newline on every save. The two storage
+      paths disagreed about it, so a body ending in blank lines shrank each
+      time the task was written. Both paths now agree: a stored body never ends
+      in a newline.
+    - Fixed `claim_timeout` silently meaning one hour for any compound
+      duration. Only `1h` and `30m` shapes were understood, so a config
+      imported from kanban-md with `claim_timeout: 1h30m` meant 90 minutes
+      there and 60 here. The full Go duration grammar is now parsed (`1h30m`,
+      `90s`, `2h45m30s`, `0.5h`); `7d` is still rejected, as it is by Go.
+    - Fixed task filenames being cut mid-word at 50 characters while kanban-md
+      trims to the last word boundary, which gave the same task two different
+      filenames in a shared `tasks/` directory.
+    - Fixed `karr import` accepting a `config.yml` that does not validate — a
+      `defaults.status` naming a status that does not exist was written to the
+      board and then applied to every new task. The board config is now
+      validated wherever karr writes it (`import`, `config set`, `disable`).
+      `karr restore` is deliberately not covered: it replaces refs verbatim
+      from a snapshot. `karr config show` also no longer dies with a raw Perl
+      error on a board whose config is already broken.
     - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
       out by reading a counter ref and writing it back, so two agents that read
       it at the same time were given the same ID and the second task ref

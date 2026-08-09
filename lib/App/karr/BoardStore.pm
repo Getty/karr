@@ -161,6 +161,13 @@ overrides again.
 
 sub save_config {
     my ( $self, $effective ) = @_;
+    # The single write choke point for refs/karr/config, so validating here is
+    # what makes `karr config set`, `karr import` and `karr disable` all refuse
+    # a broken schema (ticket #78). Callers hand in either a full effective
+    # config or the sparse contents of a config.yml, so merge first -- merging
+    # an already-effective config with the defaults is a no-op.
+    App::karr::Config->validate(
+        App::karr::Config->effective_config($effective) );
     my $defaults = App::karr::Config->default_config;
     my $overrides = _diff_hashes( $defaults, $effective );
     $overrides->{version} = $effective->{version} // 1;
