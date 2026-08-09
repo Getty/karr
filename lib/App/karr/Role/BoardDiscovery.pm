@@ -136,4 +136,31 @@ sub _build_config {
     return App::karr::Config->from_merged($merged);
 }
 
+=head2 require_board
+
+    $self->sync_before;
+    $self->require_board;
+
+Refuses to go on when this repository has no initialized board. Every command
+that writes to C<refs/karr/*> calls it, because without the check a C<karr
+create> typed in the wrong directory silently seeded a partial board in an
+unrelated repository -- and that partial board then locked C<karr init> out of
+it permanently (#62).
+
+Call it B<after> C<sync_before>, never before: on a fresh clone the board only
+exists on the remote until the pull has run, and checking first would report a
+board that is merely not fetched yet as missing. The four commands that read or
+clean up raw refs (C<backup>, C<destroy>, C<materialize>, C<repair>) ask
+L<App::karr::BoardStore/has_board_refs> instead, so they can still deal with a
+half-board left behind by an older karr.
+
+=cut
+
+sub require_board {
+    my ($self) = @_;
+    die "No karr board found. Run 'karr init' to create one.\n"
+        unless $self->store->board_exists;
+    return 1;
+}
+
 1;

@@ -62,7 +62,7 @@ sub execute {
   $guard->done;
 
   die "No karr board found. Run 'karr init' to create one.\n"
-    unless $store->board_exists;
+    unless $store->has_board_refs;
 
   # Characters all the way: spew_utf8 encodes for the --output file, and the
   # CLI's :encoding(UTF-8) layer encodes for stdout. A Dump() here would emit

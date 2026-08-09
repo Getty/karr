@@ -114,6 +114,7 @@ sub execute {
   $self->check_positional_args($args_ref, 1);
 
   $self->sync_before;
+  $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
   my $title = $self->title // $pos[0]
