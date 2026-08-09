@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-08-09T00:36:37Z
+claimed_by: complete-salutary
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T00:11:06Z
+id: 35
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- release
+- dist-zilla
+title: bin/karr ships without a $VERSION
+updated: 2026-08-09T01:21:20Z
+---
+
+Every file under lib/ carries `our $VERSION = '0.403';` (45 files, all in sync). `bin/karr` carries none.
+
+RewriteVersion::Transitional and BumpVersionAfterRelease only *rewrite* an existing `our $VERSION` line — neither inserts one. So `bin/karr` is not merely stale, it will stay versionless across every future release; no amount of `dzil release` will ever give it a version.
+
+Impact is small but real: the installed executable reports no version of its own, and anything introspecting the installed script (packaging, `dzil` metadata consumers) sees a versionless file where the house convention says there should be one.
+
+Fix: add `our $VERSION = '0.403';` to `bin/karr` next to the existing `use App::karr;`, matching the value in `lib/App/karr.pm`. From then on the bundle keeps it in step automatically.
+
+Convention reference: skill `perl-release-author-getty`, section "Every file carries its own `$VERSION`" — "Each file under lib/ and bin/ needs its own our $VERSION". That section was flipped back to per-file versions in commit cc5aaae; this repo already follows it everywhere except the executable.
+Premise verified, then fixed. Finder DOES cover bin/: dist.ini sets no version_finder/no_cpan/task, so the bundle passes no finder override and RewriteVersion::Transitional + BumpVersionAfterRelease use their defaults [':InstallModules',':ExecFiles']; @Author::GETTY pulls in -bundle=@Basic which adds [ExecDir] dir=bin. So adding the line is correct, NOT the reverse problem. dist.ini untouched.
+
+Root cause of the versionlessness is subtler than the ticket says: Transitional DOES insert (rewrite_version falls back to Role::InsertVersion), but insert runs through PkgVersion::munge_perl, which needs a PPI package statement. bin/karr has none, so insertion silently no-ops. Proved with a minimal scratch dist: bin/hasversion (our $VERSION, no package) got rewritten to the dist version; bin/noversion logged 'PkgVersion, via RewriteVersion::Transitional: skipping bin/noversion: no package statement found' and shipped versionless.
+
+Also found and fixed the SAME defect in bin/karr-foundation (ticket only named bin/karr) - confirmed versionless in released 0.400/0.401/0.402 tarballs too.
+
+Verified in built tarball (dzil build): App-karr-0.403/bin/karr line 7 and bin/karr-foundation line 6 both carry our $VERSION = '0.403'. Baseline build before the change had none (only PodWeaver's =head1 VERSION, which comes from $zilla->version and says nothing about the code).
+
+Version WILL track future releases: simulated next release with V=0.500 dzil build - bin/karr, bin/karr-foundation and lib/App/karr.pm all came out at 0.500. BumpVersionAfterRelease writes back to the repo source (slurps $file->_original_name, appends+truncates $file->name, preserving the exec bit).
+
+Regression test t/67-bin-version.t covers both executables; verified it genuinely fails both ways (line removed -> fail, version desynced to 0.401 -> fail). Full suite: prove -lr t/ = 65 files, 402 tests, PASS.
+
+Files: bin/karr, bin/karr-foundation, t/67-bin-version.t. No commit (per instructions). Changes not touched.
