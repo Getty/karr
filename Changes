@@ -42,6 +42,48 @@
       code itself declared none. Dist::Zilla only inserts a `$VERSION` into a
       file that has a `package` statement, which a script does not — so the
       line has to exist once, after which every release keeps it in step.
+    - `karr list --sort FIELD` no longer turns the field name from the command
+      line into a method call. `$a->$field` meant any method on
+      App::karr::Task was reachable from argv — `--sort slug` and `--sort
+      to_markdown` both ran — and anything else died with "Can't locate object
+      method ... at List.pm line 204", but only on a board with two or more
+      tasks, since a shorter list never reaches the comparator. The field is
+      now looked up in an explicit table of the six documented keys, and
+      anything outside it is a usage error (exit 2, ADR 0002) on every board
+      size.
+    - Three `karr list --sort` orders now match kanban-md
+      (internal/board/sort.go) instead of deviating from it. **This changes
+      existing output.** `--sort status` follows the board config's status
+      order rather than the alphabet (backlog, todo, review — not backlog,
+      review, todo). `--sort priority` follows the config's `priorities` list,
+      which it previously ignored in favour of a hardcoded critical-first
+      table, so the default order is now low, medium, high, critical —
+      **exactly reversed** from before; use `--reverse` for the old reading.
+      `--sort due` puts tasks without a due date last instead of first. Ties
+      are broken by id so the order no longer depends on Perl's sort being
+      stable.
+    - `karr skill show --json` emits JSON. It used to print the raw skill
+      Markdown, byte for byte identical to `karr skill show`, so the flag was
+      silently ignored and the output was not parseable — while its siblings
+      `skill check --json` and `skill install --json` were correct. The content
+      now comes back as a JSON object under `content`, encoded exactly once
+      (through Role::Output, not on top of the plain branch's encode).
+    - New App::karr::Error: one place that turns an internal error into a
+      single user-facing line, with `user_error` (a plain `die`, which honours
+      the trailing-newline convention that Carp's `croak` ignores) and
+      `clean_error` (strips the "at FILE line N." suffix and any trailing
+      backend chatter). Applied to the file I/O in `karr skill install`,
+      `skill check` and `skill update`, whose Path::Tiny failures used to
+      report a karr source location at the user: an unwritable target now says
+      "Could not write PATH: Permission denied" and nothing else. This is only
+      the mechanism plus one caller — the rest of the sweep is NOT done here.
+      Still leaking a call site: the `croak` in App::karr::Role::BoardDiscovery
+      ("Not a git repository"), both sync failures in
+      App::karr::Role::SyncLifecycle (which also prints the same git error once
+      per attempt and lets `--quiet` silence only the retry banners), the
+      croaks in App::karr::Foundation and App::karr::Foundation::Runner, and
+      the raw Path::Tiny errors from `karr restore`, `karr backup`, `karr init`
+      and `karr context`.
 
 0.402     2026-08-04 04:46:25Z
 

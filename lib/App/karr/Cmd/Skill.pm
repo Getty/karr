@@ -10,6 +10,7 @@ use MooX::Options (
 use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
+use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
 use File::ShareDir ();
 use Encode qw( encode_utf8 );
@@ -58,7 +59,9 @@ Refreshes existing installed copies in place.
 
 =item * C<show>
 
-Prints the bundled skill content to standard output.
+Prints the bundled skill content to standard output. With C<--json> the same
+content is emitted as a JSON object under the C<content> key instead of raw
+Markdown.
 
 =back
 
@@ -104,16 +107,31 @@ sub execute {
   } elsif ($action eq 'update') {
     $self->_update;
   } elsif ($action eq 'show') {
-    # _skill_content is decoded (slurp_utf8), so it must be encoded back to
-    # bytes here or perl warns "Wide character in print". Encode at this one
-    # call site rather than putting a UTF-8 layer on STDOUT: the rest of the
-    # CLI already hands raw UTF-8 bytes to print (task text from the refs,
-    # encode_json in Role::Output), and a global layer would double-encode
-    # all of it.
-    print encode_utf8( $self->_skill_content );
+    $self->_show;
   } else {
     die "Unknown action: $action (use install, check, update, or show)\n";
   }
+}
+
+sub _show {
+  my ($self) = @_;
+  my $content = $self->_skill_content;
+
+  if ($self->json) {
+    # Role::Output::print_json is the octet boundary for JSON output
+    # (encode_json emits UTF-8 bytes), so the decoded characters from
+    # _skill_content go in as-is. Encoding here as well would double-encode.
+    return $self->print_json({ content => $content });
+  }
+
+  # _skill_content is decoded (slurp_utf8), so it must be encoded back to
+  # bytes here or perl warns "Wide character in print". Encode at this one
+  # call site rather than putting a UTF-8 layer on STDOUT: the rest of the
+  # CLI already hands raw UTF-8 bytes to print (task text from the refs,
+  # encode_json in Role::Output), and a global layer would double-encode
+  # all of it.
+  print encode_utf8($content);
+  return;
 }
 
 sub _install {
@@ -132,8 +150,7 @@ sub _install {
       next;
     }
 
-    $dir->mkpath;
-    $file->spew_utf8($content);
+    $self->_write_skill($file, $content);
     push @results, { agent => $agent, status => 'installed', path => "$file" };
     printf "%-12s installed to %s\n", $agent, $file unless $self->json;
   }
@@ -159,7 +176,7 @@ sub _check {
       next;
     }
 
-    my $installed = $file->slurp_utf8;
+    my $installed = $self->_read_skill($file);
     if ($installed eq $current) {
       push @results, { agent => $agent, status => 'current' };
       printf "%-12s current\n", $agent unless $self->json;
@@ -192,12 +209,12 @@ sub _update {
       next;
     }
 
-    my $installed = $file->slurp_utf8;
+    my $installed = $self->_read_skill($file);
     if ($installed eq $content) {
       push @results, { agent => $agent, status => 'current' };
       printf "%-12s already current\n", $agent unless $self->json;
     } else {
-      $file->spew_utf8($content);
+      $self->_write_skill($file, $content);
       push @results, { agent => $agent, status => 'updated' };
       printf "%-12s updated\n", $agent unless $self->json;
     }
@@ -206,6 +223,25 @@ sub _update {
   if ($self->json) {
     $self->print_json(\@results);
   }
+}
+
+# Path::Tiny raises Path::Tiny::Error objects that stringify with the call site
+# appended ("... Permission denied at .../Skill.pm line 135."), so an
+# unwritable skill directory used to report a karr source location at the user.
+# App::karr::Error reduces it to the one line that is actually about them.
+sub _read_skill {
+  my ($self, $file) = @_;
+  my $content = eval { $file->slurp_utf8 };
+  defined $content
+    or user_error( "Could not read $file: ", clean_error($@) );
+  return $content;
+}
+
+sub _write_skill {
+  my ($self, $file, $content) = @_;
+  eval { $file->parent->mkpath; $file->spew_utf8($content); 1 }
+    or user_error( "Could not write $file: ", clean_error($@) );
+  return;
 }
 
 sub _target_agents {

@@ -6,6 +6,7 @@ my @modules = qw(
   App::karr
   App::karr::Task
   App::karr::Config
+  App::karr::Error
   App::karr::BoardStore
   App::karr::Role::BoardAccess
   App::karr::Role::Output
