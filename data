@@ -1,0 +1,67 @@
+---
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T16:58:07Z
+id: 81
+priority: high
+status: done
+tags:
+- upstream
+- git-native
+- sync
+title: 'upstream: fetch and push cannot see per-ref rejections, so a rejected push
+  is invisible'
+updated: 2026-08-09T20:50:20Z
+---
+
+Upstream work in `../p5-git-native`. Explains why the karr pull bug is *silent*,
+and points at a second silent failure nobody has tested yet.
+
+`Git::Native::Remote::fetch` and `::push` (`lib/Git/Native/Remote.pm:66` and
+`:83`) both do the same thing: call `git_remote_fetch` / `git_remote_push`, then
+`check_rc $rc`. That is the whole error handling.
+
+But libgit2 returns 0 from both even when **individual refs were rejected**:
+
+- `git_remote_fetch` returns 0 when a ref update is skipped as non-fast-forward.
+  The only way to learn about it is the `update_tips` callback in
+  `git_remote_callbacks`.
+- `git_remote_push` returns 0 when the **server** rejected a ref (pre-receive
+  hook, protected ref, non-ff on a non-forced refspec). The only way to learn
+  about it is the `push_update_reference` callback, which receives a non-NULL
+  `status` string per rejected ref.
+
+Neither callback is installed — `_build_fetch_options` / `_build_push_options`
+wire up credentials and certificate checking only.
+
+Consequences:
+
+1. It is the mechanism behind karr's silent pull: karr's own refspec fix
+   (forcing `+refs/karr/*`) makes the rejection stop happening, but the
+   *blindness* stays.
+2. **A server-rejected push is structurally invisible to karr.** This one is not
+   yet reproduced: the storage audit tried and found that libgit2's local
+   transport bypasses a bare origin's `pre-receive` hook entirely, so a
+   file-path remote cannot produce the rejection. It needs a real ssh/https
+   remote with a rejecting hook to confirm. Given the code above, though, karr
+   cannot detect it even in principle.
+
+Work: install `update_tips` and `push_update_reference` callbacks, collect
+per-ref outcomes, and surface them — either as a return value listing rejected
+refs or by failing the operation. karr then has to check it.
+Upstream half done and released in Git::Native 0.004 (2026-08-09).
+
+fetch and push now install the update_tips and push_update_reference callbacks
+and return a Git::Native::Remote::Result carrying the per-ref verdicts:
+->updated gives the accepted moves as { ref, from, to } (from is undef for a
+ref that did not exist locally), ->rejected gives push rejections as
+{ ref, reason } with the libgit2 / server message. So the blindness described
+here is fixed at the source.
+
+karr does not consume that Result yet — it still throws the return value away,
+which means a server-rejected push is still reported as a successful sync.
+Split out as #84.
+
+Also in that release, relevant to the same code path: a certificate_check
+callback so git+ssh remotes work on libgit2 < 1.7 instead of failing with
+GIT_ECERTIFICATE.
