@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - `karr skill show` no longer warns "Wide character in print". The bundled
+      skill file is read decoded, so it is now encoded back to UTF-8 bytes at
+      the one print site. The output bytes were always correct, but the warning
+      was noise on stderr — and it ended up inside the written file whenever
+      someone refreshed an installed SKILL.md with `karr skill show >file 2>&1`.
+
 0.402     2026-08-04 04:46:25Z
 
     - New board-level opt-out from automated agent runs: `karr disable

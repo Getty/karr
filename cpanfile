@@ -9,6 +9,7 @@ requires 'Term::ANSIColor';
 requires 'Time::Piece';
 requires 'File::ShareDir';
 requires 'Try::Tiny';
+requires 'Encode';
 requires 'Git::Native', '0.003';
 requires 'Git::Libgit2', '0.004';
 

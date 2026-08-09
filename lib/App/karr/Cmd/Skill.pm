@@ -11,6 +11,7 @@ use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
 use Path::Tiny;
+use Encode qw( encode_utf8 );
 
 # ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
 # is board-less, so it does not inherit ExitCodes via BoardDiscovery.
@@ -102,7 +103,13 @@ sub execute {
   } elsif ($action eq 'update') {
     $self->_update;
   } elsif ($action eq 'show') {
-    print $self->_skill_content;
+    # _skill_content is decoded (slurp_utf8), so it must be encoded back to
+    # bytes here or perl warns "Wide character in print". Encode at this one
+    # call site rather than putting a UTF-8 layer on STDOUT: the rest of the
+    # CLI already hands raw UTF-8 bytes to print (task text from the refs,
+    # encode_json in Role::Output), and a global layer would double-encode
+    # all of it.
+    print encode_utf8( $self->_skill_content );
   } else {
     die "Unknown action: $action (use install, check, update, or show)\n";
   }
