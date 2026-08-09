@@ -88,6 +88,9 @@ sub execute {
   my $effective = App::karr::Config->effective_config($overrides);
   $store->save_config($effective);
   $store->set_next_id(1);
+  # A board born here is written under the current encoding contract, so mark
+  # it and spare it the legacy-mojibake repair (ticket #53).
+  $store->stamp_encoding_version;
 
   print "Initialized karr board in refs/karr/\n";
 

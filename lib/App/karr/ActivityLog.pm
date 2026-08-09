@@ -3,7 +3,7 @@
 package App::karr::ActivityLog;
 our $VERSION = '0.403';
 use Moo;
-use JSON::MaybeXS qw( encode_json decode_json );
+use App::karr::Encoding qw( json_encode json_decode );
 use POSIX qw( strftime );
 
 =head1 SYNOPSIS
@@ -111,7 +111,7 @@ sub log_entry {
     $entry{ts} //= strftime('%Y-%m-%dT%H:%M:%SZ', gmtime());
     my $ref = $self->_ref;
     my $existing = $self->git->read_ref($ref);
-    my $line = encode_json(\%entry);
+    my $line = json_encode(\%entry);
     my $new = $existing ? "$existing\n$line" : $line;
     return $self->git->write_ref($ref, $new);
 }
@@ -136,8 +136,8 @@ sub entries {
     my @entries;
     for my $line (split /\n/, $content) {
         next unless length $line;
-        my $decoded = eval { decode_json($line) };
-        push @entries, $decoded if $decoded;
+        my $decoded = eval { json_decode($line) };
+        push @entries, $self->git->maybe_repair_legacy($decoded) if $decoded;
     }
     return @entries;
 }

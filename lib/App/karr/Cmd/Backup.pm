@@ -8,7 +8,7 @@ use MooX::Options (
   usage_string => 'USAGE: karr backup [--output PATH]',
 );
 use Path::Tiny;
-use YAML::XS qw( Dump );
+use App::karr::Encoding qw( yaml_dump );
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::SyncLifecycle;
 
@@ -64,7 +64,10 @@ sub execute {
   die "No karr board found. Run 'karr init' to create one.\n"
     unless $store->board_exists;
 
-  my $yaml = Dump( $store->snapshot );
+  # Characters all the way: spew_utf8 encodes for the --output file, and the
+  # CLI's :encoding(UTF-8) layer encodes for stdout. A Dump() here would emit
+  # octets and both paths would encode them a second time (ticket #53).
+  my $yaml = yaml_dump( $store->snapshot );
 
   if ( $self->output ) {
     my $file = path( $self->output );

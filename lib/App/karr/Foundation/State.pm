@@ -4,7 +4,7 @@ package App::karr::Foundation::State;
 our $VERSION = '0.403';
 use Moo;
 use Path::Tiny;
-use JSON::MaybeXS qw( encode_json decode_json );
+use App::karr::Encoding qw( json_encode json_decode );
 use Try::Tiny;
 
 =head1 DESCRIPTION
@@ -64,7 +64,7 @@ sub _state_get {
   my ( $self, $repo, $key ) = @_;
   my $state_file = $self->_state_file( $repo );
   return undef unless $state_file->exists;
-  my $data = try { decode_json( $state_file->slurp_utf8 ) } catch { {} };
+  my $data = try { json_decode( $state_file->slurp_utf8 ) } catch { {} };
   return $data->{$key};
 }
 
@@ -74,10 +74,10 @@ sub _state_set {
   my $state_file = $self->_state_file( $repo );
   my $data = {};
   if ( $state_file->exists ) {
-    $data = try { decode_json( $state_file->slurp_utf8 ) } catch { {} };
+    $data = try { json_decode( $state_file->slurp_utf8 ) } catch { {} };
   }
   $data->{$_} = $kv{$_} for keys %kv;
-  $state_file->spew_utf8( encode_json( $data ) );
+  $state_file->spew_utf8( json_encode( $data ) );
 }
 
 # ---------------------------------------------------------------------------

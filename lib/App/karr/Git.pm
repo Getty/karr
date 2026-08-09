@@ -8,7 +8,10 @@ use Path::Tiny qw( path );
 use Try::Tiny;
 use IPC::Open3 qw( open3 );
 use Symbol qw( gensym );
-use YAML::XS qw( Dump Load );
+use App::karr::Encoding qw(
+    BOARD_ENCODING_VERSION
+    to_octets from_octets yaml_dump yaml_load repair_mojibake
+);
 use Git::Native;
 use Git::Native::Signature;
 use Git::Native::Credential;
@@ -222,11 +225,14 @@ sub validate_helper_ref {
 
 # ----- Ref CRUD (the hotspot — was 4 fork/exec per write_ref) -----
 
+# Ref blobs are the octet edge of the board (see App::karr::Encoding): callers
+# above this line hand over and receive character strings, and write_ref /
+# read_ref are the only two places that convert.
 sub write_ref {
     my ( $self, $ref, $content ) = @_;
     my $repo = $self->_repo or return;
 
-    my $blob_oid = $repo->blob_create_frombuffer($content);
+    my $blob_oid = $repo->blob_create_frombuffer( to_octets($content) );
     my $tb       = $repo->tree_builder;
     $tb->insert(name => 'data', oid => $blob_oid, mode => 0100644);
     my $tree_oid = $tb->write;
@@ -259,6 +265,7 @@ sub read_ref {
         return '' unless $entry;
         return $repo->blob( $entry->{oid} )->content;
     } catch { '' };
+    $content = from_octets($content);
     # Match historical CLI behaviour: cat-file's trailing newline was chomped.
     chomp $content if defined $content;
     return $content;
@@ -455,6 +462,45 @@ sub _cli_transport {
     return 0;
 }
 
+# ----- Board encoding contract (ticket #53) -----
+
+# karr up to 0.402 handed YAML::XS::Dump output (octets) around as if it were
+# characters, so every board written before this ref existed carries UTF-8
+# encoded twice in its task frontmatter, its config, and its activity log. The
+# ref is the discriminator: absent means "legacy, repair on read", 2 means
+# "written under the current contract, hands off". Boards are stamped by
+# `karr init`, `karr repair --yes`, and `karr import --yes`.
+#
+# Cached per object: it is consulted once per task load, and a board does not
+# change contract version mid-command.
+sub board_encoding_version {
+    my ($self) = @_;
+    return $self->{_encoding_version} //= do {
+        my $raw = $self->read_ref('refs/karr/meta/encoding') // '';
+        $raw =~ s/\s+//g;
+        $raw =~ /\A(\d+)\z/ ? int($1) : 1;
+    };
+}
+
+sub write_encoding_version {
+    my ( $self, $version ) = @_;
+    $version //= BOARD_ENCODING_VERSION;
+    delete $self->{_encoding_version};
+    return $self->write_ref( 'refs/karr/meta/encoding', "$version\n" );
+}
+
+sub board_is_legacy_encoded {
+    my ($self) = @_;
+    return $self->board_encoding_version < BOARD_ENCODING_VERSION ? 1 : 0;
+}
+
+# Repair board payloads read off a pre-contract board, and only those.
+sub maybe_repair_legacy {
+    my ( $self, $data ) = @_;
+    return $data unless $self->board_is_legacy_encoded;
+    return repair_mojibake($data);
+}
+
 # ----- Task / config refs (sit on top of write_ref/read_ref) -----
 
 sub save_task_ref {
@@ -468,7 +514,10 @@ sub load_task_ref {
   my $ref = "refs/karr/tasks/$id/data";
   my $content = $self->read_ref($ref);
   return undef unless $content;
-  return App::karr::Task->from_string($content);
+  return App::karr::Task->from_string(
+    $content,
+    repair_frontmatter => $self->board_is_legacy_encoded,
+  );
 }
 
 sub list_task_refs {
@@ -508,12 +557,12 @@ sub read_config_ref {
     my ($self) = @_;
     my $content = $self->read_ref('refs/karr/config');
     return {} unless $content;
-    return Load($content);
+    return $self->maybe_repair_legacy( yaml_load($content) );
 }
 
 sub write_config_ref {
     my ( $self, $data ) = @_;
-    return $self->write_ref( 'refs/karr/config', Dump($data) );
+    return $self->write_ref( 'refs/karr/config', yaml_dump($data) );
 }
 
 sub read_next_id_ref {

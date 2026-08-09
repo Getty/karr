@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - Fixed a frontmatter value ending in `---` corrupting the task and
+      bricking the board. The closing delimiter was not anchored to the start
+      of a line, so a value that merely ended in `---` — `karr edit 1 --block
+      "waiting ---"` was enough, and YAML dumps such a value unquoted — cut the
+      frontmatter mid-line. Every command that loads the board then died with
+      "Missing required arguments: id, title", `delete` included, so the board
+      could not be repaired with karr at all. The parser now scans for `---` at
+      a line start, matching kanban-md.
+    - Fixed UTF-8 being encoded twice everywhere. karr passed YAML::XS::Dump
+      output (octets) around as characters, mixed that with character-level
+      file I/O, and never decoded `@ARGV`. Non-ASCII text was therefore stored
+      mojibaked in the refs, handed to agents mojibaked through `--json`,
+      written three encodes deep by `materialize`, and destroyed by
+      `backup`/`restore`; a correctly encoded kanban-md task file could not be
+      imported at all ("invalid trailing UTF-8 octet"). `karr show` looked
+      right only because two errors cancelled out. karr now keeps character
+      strings internally and encodes only at its edges — argv, stdout/stderr,
+      Git ref blobs, YAML and JSON — so non-ASCII titles, bodies, tags, and
+      board names round-trip and kanban-md interop works outside ASCII.
+    - Boards written by earlier versions keep working and are read correctly:
+      the double encoding is undone on load for any board without the new
+      `refs/karr/meta/encoding` marker. New command `karr repair` makes that
+      permanent — it reports by default, rewrites the affected refs with
+      `--yes`, and stamps the marker so nothing guesses at the board's bytes
+      again. It is idempotent, never rewrites a ref whose payload is ASCII, and
+      preserves task timestamps. `karr init` and `karr import --yes` stamp the
+      marker themselves.
     - Fixed a runaway that could take the whole machine down: after a command
       died (a plain usage error was enough), the sync guard was only reaped in
       Perl's global destruction and pushed from there. libgit2 is reached

@@ -185,6 +185,22 @@ sub set_next_id {
     return $self->git->write_next_id_ref($next_id);
 }
 
+sub stamp_encoding_version {
+    my ($self) = @_;
+    return $self->git->write_encoding_version;
+}
+
+=head2 stamp_encoding_version
+
+Records in C<refs/karr/meta/encoding> that this board's payloads follow the
+current character-encoding contract, so nothing reading it applies the
+legacy-mojibake repair (see L<App::karr::Encoding>). Written by C<karr init>,
+C<karr repair --yes>, and the import path below.
+
+    $store->stamp_encoding_version;
+
+=cut
+
 sub load_tasks {
     my ($self) = @_;
     my @ids = $self->git->list_task_refs;
@@ -323,6 +339,14 @@ sub serialize_from {
         my ($max_id) = sort { $b <=> $a } keys %seen;
         $self->set_next_id( $max_id + 1 ) if $self->peek_next_id <= $max_id;
     }
+
+    # Everything just written came from character-level file reads (LoadFile,
+    # Task->from_file), so the refs now satisfy the current encoding contract
+    # even if the board did not before. Stamping here stops the legacy repair
+    # from running over data that is already correct. Only when it is missing:
+    # every ref write mints a fresh commit object, and re-stamping an already
+    # current board would push a new one on every import for no reason.
+    $self->stamp_encoding_version if $self->git->board_is_legacy_encoded;
 
     return 1;
 }
