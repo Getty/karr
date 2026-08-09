@@ -1,5 +1,55 @@
 {{$NEXT}}
 
+    - Fixed `karr edit --status` bypassing every rule `karr move` applies.
+      `karr move 1 in-progress` refused without `--claim`, while `karr edit 1
+      --status in-progress` set the field and exited 0 — so `require_claim`,
+      the guarantee karr's multi-agent coordination rests on, was one flag
+      away from optional, by accident as easily as on purpose. `edit --status`
+      also skipped the `started`/`completed` lifecycle stamps that `move`
+      writes. Both commands now change a status through one shared path and
+      behave identically. Status *names* are still not validated on either
+      path: `karr move 1 ZZZ` and `karr edit 1 --status ZZZ` both still take
+      ZZZ.
+    - Fixed `karr move`, `karr edit` and `karr delete` taking over another
+      agent's live claim without a word. None of the three asked who held the
+      claim, so `karr move 1 review --claim mallory` on a task alice was
+      working on simply reassigned it, and `karr delete 1 --yes` removed it.
+      All three now apply the same claim rule `karr handoff` and `karr pick`
+      already applied: an unclaimed task is free, the holder may proceed, an
+      expired claim blocks nobody, and anything else is refused with "Task N
+      is claimed by X". `karr edit --release` stays exempt, because it is the
+      only way to break a claim a crashed agent left behind. `karr delete`
+      refuses on any live claim whoever holds it, matching kanban-md, which
+      gives delete no `--claim` either. For move and edit the check and the
+      write are now one compare-and-swap against the task ref, so a claim
+      taken between the two no longer loses; delete re-checks immediately
+      before removing the ref, which is as close as libgit2's unguarded ref
+      delete allows.
+    - Fixed claim expiry misreading every timestamp that carries a UTC offset.
+      kanban-md stamps claims as RFC3339 with the agent's local offset and
+      nanoseconds (`2026-08-09T17:28:46.449764553+02:00`) and karr discarded
+      both, reading the stamp as if it were UTC. A claim stamped `+02:00`
+      never expired, so `karr pick` would not take over stale work; one
+      stamped `-05:00` expired five hours early, so pick stole claims whose
+      owners were still working. Every call also printed "Garbage at end of
+      string in strptime" to stderr, on every single `karr pick`. Offsets and
+      fractional seconds are now parsed and normalised to UTC, and the
+      warnings are gone with them.
+    - Fixed `karr delete` without `--yes` printing "Use of uninitialized value
+      $answer" twice when stdin reaches EOF without an answer — which is every
+      agent and CI invocation that forgets the flag — and then silently
+      skipping the task with exit 0. When there is no answer and stdin is not
+      a terminal it now refuses with "No answer on stdin and stdin is not a
+      terminal. Re-run with --yes." and exits 1, the way karr's other
+      destructive commands already refuse without `--yes`. Ctrl-D at a real
+      terminal still means "no", and piping `y` or `n` into the prompt still
+      works.
+    - Fixed `karr move , todo`, `karr edit ,` and `karr delete ,` — an id list
+      that contains no ids — doing nothing at all and exiting 0. The comma got
+      past the "an id is required" check because it is a non-empty string, and
+      then split to an empty list, so the per-id loop never ran and no error
+      was raised for the exit-code contract to classify. All three now report
+      a usage error and exit 2.
     - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
       out by reading a counter ref and writing it back, so two agents that read
       it at the same time were given the same ID and the second task ref
