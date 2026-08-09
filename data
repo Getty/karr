@@ -1,0 +1,185 @@
+---
+claimed_at: 2026-08-09T00:58:09Z
+claimed_by: imbibes-funks
+class: standard
+completed: 2026-08-09
+created: 2026-08-08T23:55:16Z
+id: 34
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- move
+- git-libgit2
+- ffi
+- memory
+title: "karr move hangs and grows to OOM (53 GB) â\x80\x94 deep recursion in FFI::Platypus::TypeParser
+  via Git::Libgit2"
+updated: 2026-08-09T01:29:26Z
+---
+
+## Symptom
+
+`karr move` hangs indefinitely and grows without bound until the machine is out
+of memory. Observed in `~/dev/perl/io-k8s-p5`:
+
+```
+$ karr move 1 in-progress
+# ... never returns
+```
+
+After ~4 minutes the process held **53 GB RSS (80% of a 62 GB machine)** and was
+still growing. It has to be killed from outside; it never fails on its own.
+
+Re-run under `ulimit -v 4000000` to cap it, the actual error surfaces:
+
+```
+Use of uninitialized value in hash element at FFI/CheckLib.pm line 259 during global destruction.
+Use of uninitialized value in hash element at FFI/CheckLib.pm line 259 during global destruction.
+Use of uninitialized value in hash element at FFI/CheckLib.pm line 259 during global destruction.
+Deep recursion on subroutine "FFI::Platypus::TypeParser::Version1::parse"
+    at FFI/Platypus/TypeParser/Version1.pm line 207 during global destruction.
+Out of memory!
+```
+
+`Git::Libgit2` (0.004) is the FFI::Platypus consumer in the dependency chain, so
+that is where the recursion lives.
+
+## Impact
+
+The board cannot be mutated at all in the affected repository — no `move`, so no
+status tracking. Worse than a plain failure: an agent that calls `karr move`
+unattended will eat all system memory until something else on the machine gets
+OOM-killed. There is no timeout and no self-limiting behaviour.
+
+## What is ruled out
+
+Each of these was tested against a throwaway board (`git init` + `karr create`)
+and **works correctly**:
+
+| hypothesis | test | result |
+|---|---|---|
+| `move` is broken generally | `karr move 1 in-progress` in a fresh repo | clean error: `Status 'in-progress' requires --claim` |
+| the validation/error path itself | same as above | clean, exits normally |
+| board is missing `refs/karr/config` | both boards only have `meta/next-id` + `tasks/*/data`; neither has a config ref | not the difference |
+| large / non-ASCII ticket body | created a ticket with the exact 5 KB UTF-8 body of the affected ticket, then moved it | `Moved task 2: backlog -> todo`, clean |
+| source status `todo` (not `backlog`) | `karr move 2 in-progress` from `todo` in the fresh repo | clean error, exits normally |
+
+Read paths are unaffected: `karr list`, `karr show` and `karr create` all work
+normally in the affected repository.
+
+Note the failing invocation was `karr move 1 in-progress` **without** `--claim` —
+i.e. an invocation that should have died immediately on validation with
+`Status 'in-progress' requires --claim`, as it does in the fresh repo. So the
+runaway happens *before* that check, while loading, not while writing.
+
+## Remaining suspect
+
+The one variable not yet isolated is the repository itself. `io-k8s-p5` is a
+large repo (~750 modules, long history); the throwaway board was a single empty
+commit. A probe ticket created directly in the affected board would separate
+"this repository" from "this one ticket" — I did not run it to avoid leaving
+scratch tickets on a live board.
+
+## Suggested direction
+
+Two separate concerns, both worth fixing independently of the root cause:
+
+1. **The recursion itself** — likely a `Git::Libgit2` / FFI::Platypus type
+   parser cycle triggered during global destruction. The `FFI::CheckLib`
+   uninitialized-value warnings on the same line suggest teardown ordering:
+   something is still resolving FFI types after the library handle is gone.
+2. **The unbounded growth** — regardless of the trigger, `karr` should not be
+   able to consume all system memory. A runaway in a git helper should fail
+   loudly, not take the machine with it. Worth a guard, given karr is explicitly
+   built to be driven by unattended agents.
+Reproduced with Git::Libgit2 0.005 (ticket said 0.004) — the version bump does NOT fix it. Also reproduced with a purely LOCAL file origin, so SSH/network is not involved.
+
+ISOLATION DONE. Repo size/history is a red herring; io-k8s-p5 is only 7.3M with 2 karr refs. The real variable is:
+
+  fresh 'git init' + one karr ticket + NO remote      -> clean, prints "Status 'in-progress' requires --claim", exits 0
+  fresh 'git init' + one karr ticket + a local remote -> same message, THEN unbounded FFI recursion during global destruction
+
+Correction to the ticket: the runaway does NOT happen before the --claim check. The check runs and prints correctly; the process then hangs in GLOBAL DESTRUCTION. Earlier runs just lost the message in the warning flood.
+
+Mechanism: move calls sync_before, which stores an App::karr::SyncGuard on $self->_sync_guard. The croak from validation unwinds, but the command object is kept alive (MooX::Cmd command_chain cycles), so the guard is only reaped during global destruction. SyncGuard::DESTROY then calls $git->push, which does fresh FFI work (Git::Native remote + credential closure). With no remote, push short-circuits at 'return 1 unless $repo->has_remote' and no FFI work happens — which is exactly why the ticket's throwaway board looked clean.
+## Narrowed further: write paths are fine, it is `move` specifically
+
+In the same affected repository (io-k8s-p5), on the same board, these all work
+normally and exit cleanly:
+
+- `karr create "..." --priority high --tags a,b --body "<5 KB body>"` (twice)
+- `karr edit <id> --body "<3 KB body>"`
+- `karr list`, `karr show`
+
+Only `karr move` runs away. So it is not "writing to a large repository" and not
+libgit2 write access in general -- it is something on the move path in
+particular, before the `--claim` validation is reached. That validation is the
+part that works fine on a fresh board, which makes the loading/preparation step
+that `move` does before it the prime suspect.
+ROOT CAUSE (confirmed, reproduced both directions).
+
+Chain: move -> sync_before -> guard stashed on the command object -> validation croaks -> bin/karr's handler prints the error and exits -> the guard is never released, so it is first reaped during GLOBAL DESTRUCTION -> SyncGuard::DESTROY runs a full $git->push -> Git::Native/libgit2 through FFI::Platypus. By that phase Perl has already freed FFI::CheckLib's $pattern/@path and FFI::Platypus's type-parser globals, so Git::Libgit2::FFI::ffi() rebuilds from scratch, find_lib re-runs against undefined globals (the 'uninitialized value' warnings) and TypeParser::Version1::parse recurses without bound. Measured growth: 1 GB in 1.5s, ~700 MB/s.
+
+So the FFI recursion is real but it is a SYMPTOM of karr calling into libgit2 at a phase where libgit2 must not be called. Nothing needs fixing in Git::Libgit2.
+
+Also worth recording: the insurance push has never actually worked on the CLI die path. bin/karr catches the die and exits, so the guard ALWAYS reached global destruction, where the push either recursed to OOM or died as '(in cleanup) Can't call method push on an undefined value' depending on teardown order. It was never a timely push.
+
+FIX (2 layers, no new deps):
+ * lib/App/karr/Git.pm - _repo and is_repo refuse every native op while ${^GLOBAL_PHASE} eq 'DESTRUCT', setting last_error. This is the hard backstop for concern 2: it caps the whole class of bug, not just this call site, because every native op funnels through _repo and every caller already handles a false _repo.
+ * lib/App/karr/SyncGuard.pm - DESTROY reports instead of pushing in that phase.
+ * Git.pm gains pending_writes (counts write_ref/delete_ref) so the guard stays quiet when the body died before writing anything, and only warns when local refs really are unpushed. Without it every 'forgot --claim' would print misleading 'run karr sync' advice.
+
+VERIFIED: pre-fix exit 139 (killed by a 2 GB cap) with 7028 runaway-marker lines; post-fix exit 1 in 0.35s with just "Status 'in-progress' requires --claim". Happy path still pushes to origin. Regression test: t/66-global-destruction-guard.t (5 subtests, runs children under ulimit -v so a returning runaway kills the child, never the host).
+
+cpanfile pins Git::Native 0.003 / Git::Libgit2 0.004, which ARE the latest CPAN releases - the 0.004/0.005 on this box are local unreleased builds. No pin change needed.
+Fixed and verified. Full suite: 'All tests successful. Files=64, Tests=396 ... Result: PASS' (prove -lr t/).
+
+Root cause: NOT Git::Libgit2 and NOT the repository. karr called into libgit2 during Perl's global destruction. SyncGuard::DESTROY runs $git->push; on the CLI die path bin/karr catches the die and exits without releasing the guard, so the guard is first reaped in global destruction, where FFI::CheckLib's and FFI::Platypus's package globals are already freed. Git::Libgit2::FFI::ffi() then rebuilds from scratch and TypeParser::Version1::parse recurses without bound (~700 MB/s). Reproduces on Git::Libgit2 0.005 and on a brand-new empty repo, so neither the version nor repo size was ever the variable — only 'does the repo have a remote' (without one, push short-circuits before any FFI work, which is why the throwaway board in the ticket looked clean).
+
+Changed:
+ * lib/App/karr/Git.pm — _repo/is_repo refuse every native op while ${^GLOBAL_PHASE} eq 'DESTRUCT' (sets last_error). Hard backstop covering the whole class, since all native ops funnel through _repo. Plus pending_writes(), counting write_ref/delete_ref.
+ * lib/App/karr/SyncGuard.pm — DESTROY reports instead of pushing in that phase; silent when pending_writes proves nothing was written, so ordinary usage errors gain no noise. DESCRIPTION updated to stop promising coverage it no longer has.
+ * t/66-global-destruction-guard.t — 5 subtests. Children run under 'ulimit -v', so a returning runaway kills the child, never the host.
+
+Evidence: pre-fix exit 139 (killed by a 2 GB cap), 7028 runaway-marker lines. Post-fix exit 1 in 0.35s with only "Status 'in-progress' requires --claim", on both a synthetic board and a clone of io-k8s-p5. Happy path still pushes to origin (asserted).
+
+Not done, on purpose: the #28 insurance push still never fires at a safe time on the CLI die path — it is now a loud 'run karr sync' report instead of a push. Fixing that needs an END-block guard registry; filed as ticket #37.
+
+Untouched per brief: Changes, lib/App/karr/Cmd/Skill.pm. cpanfile needs no change — Git::Native 0.003 / Git::Libgit2 0.004 are the latest CPAN releases; 0.004/0.005 here are local unreleased builds. No commit, no push, no release.
+Review durch Orchestrator: t/66 Subtest 1 ist nicht deterministisch — 1 von 6 parallelen Laeufen rot bei 'no sync advice for a command that died before writing anything'. Die Silent-Bedingung in SyncGuard::DESTROY ruft pending_writes als Methode auf $git auf, also auf ein Objekt, dessen Freigabe in derselben global destruction stattfindet und deren Reihenfolge undefiniert ist. Zurueck an den Worker.
+FLAKY SUBTEST FIXED (coordinator report). Diagnosis confirmed, not adopted on faith.
+
+Instrumented SyncGuard::DESTROY and ran the exact subtest-1 scenario 60x:
+  52 x  git=DEF   pending_writes=0  -> silent (correct)
+   8 x  git=UNDEF unreadable        -> warned (spurious)
+The write count was 0 in every readable run; the ONLY variable was whether the blessed $git had already been reaped. So ~13% of plain usage errors printed sync advice for a board nothing had written to. Coordinator's diagnosis was exactly right.
+
+Why it happens: perl tears down global destruction in two passes — sv_clean_objs() destroys every blessed object first (that is where DESTROY runs), then sv_clean_all() frees the rest. Any blessed object is therefore a coin flip inside DESTROY; a plain non-object SV is not.
+
+FIX: the counter moved from per-object $self->{_writes} to the package scalar $App::karr::Git::WRITES, and SyncGuard's DESTRUCT branch now reads that scalar and touches no object at all. Re-instrumented, 60 runs each:
+  unwritten board: WRITES=0 in 60/60 (10 of them with git already UNDEF), 0 'Push skipped'
+  written board:   WRITES=1 in 60/60 (52 of them with git already UNDEF), 60 'Push skipped'
+Both directions now decided by real state instead of teardown order.
+
+TEST: t/66 gains a deterministic mechanism subtest — the guard is handed a double that cannot answer pending_writes at all (standing in for the reaped $git) and must still be silent when nothing was written, and must still report when WRITES is set. Verified it FAILS against the old object-dependent check. Subtest 1 additionally repeats the real CLI invocation 10x so any regression to a teardown-order-dependent test shows up there.
+
+PARALLEL PROOF: 36 concurrent runs (6 rounds x 6, coordinator's command) — 36/36 logs with exactly 6 top-level ok, 0 'not ok', 0 stray 'Push skipped'. Each run repeats the previously-flaky scenario 11x, so 396 real CLI invocations with zero spurious warnings.
+Flaky subtest fixed. Clean full suite on the final tree:
+
+  All tests successful.
+  Files=65, Tests=403, 175 wallclock secs ( 0.26 usr  0.12 sys + 119.41 cusr 18.90 csys = 138.69 CPU)
+  Result: PASS
+
+Coordinator's diagnosis confirmed by instrumentation, not adopted on faith: over 60 runs of the exact subtest-1 scenario the write count was 0 every readable time; the only variable was whether the blessed $git had already been reaped (52 DEF / 8 UNDEF), so ~13% of plain usage errors printed sync advice for a board nothing had written to.
+
+Cause: perl runs global destruction in two passes — sv_clean_objs() destroys every blessed object first (where DESTROY runs), then sv_clean_all() frees the rest. A blessed object is a coin flip inside DESTROY; a plain non-object SV is not. The old check read the one kind of thing that phase cannot guarantee.
+
+Fix: counter moved from per-object $self->{_writes} to package scalar $App::karr::Git::WRITES; the DESTRUCT branch reads that scalar and does not reference $self->{git} at all. Re-instrumented 60 runs per direction: unwritten -> WRITES=0 60/60 (10 with git UNDEF), 0 'Push skipped'; written -> WRITES=1 60/60 (52 with git UNDEF), 60 'Push skipped'. Kept the quiet/loud distinction rather than always-warn because it is now decided by real state.
+
+Test: new deterministic mechanism subtest hands the guard a double that cannot answer pending_writes (standing in for the reaped $git) — must stay silent when nothing was written, must report when WRITES is set. Verified it FAILS against the old object-dependent check. Subtest 1 also repeats the real CLI invocation 10x.
+
+Parallel proof (coordinator's command, 6 rounds x 6 = 36 concurrent runs): 36/36 logs with exactly 6 top-level ok, 0 'not ok', 0 stray 'Push skipped' — 396 real CLI invocations of the previously-flaky scenario. Pre-fix the same harness failed 1 in 18.
+
+Files: lib/App/karr/Git.pm, lib/App/karr/SyncGuard.pm, t/66-global-destruction-guard.t. Untouched: Changes, bin/karr, bin/karr-foundation, t/67-bin-version.t, lib/App/karr/Cmd/Skill.pm, cpanfile, t/65. No commit, no push, no release. Residual #37 (insurance push never fires at a safe time on the CLI die path) still open by design.
