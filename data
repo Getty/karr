@@ -1,0 +1,42 @@
+---
+claimed_at: 2026-08-09T17:01:25Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:35:47Z
+id: 42
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- sync
+- git
+title: _cli_transport reports success when git dies from a signal
+updated: 2026-08-09T17:53:28Z
+---
+
+`lib/App/karr/Git.pm:441` and `:450`:
+
+    $exit = $? >> 8;
+    ...
+    return 1 if defined $exit && $exit == 0;
+
+`$? >> 8` is **0** when the child was killed by a signal — `$? & 127` is never
+checked. So a `git` that dies from a signal is reported as a successful
+transport operation.
+
+Reproduced with a fake `git` that does `kill -TERM $$`, on a remote that forces
+the CLI fallback:
+
+    karr create "Silently lost task"
+    -> Created task 1: Silently lost task     EXIT=0
+    git -C origin.git for-each-ref            -> EMPTY
+
+Real-world triggers are not exotic: the OOM killer (SIGKILL), Ctrl-C reaching
+the process group (SIGINT), SIGPIPE. In every one of those the user is told the
+task was created and the remote never received it.
+
+This is the same class as the already-fixed silent-sync-failure ticket (#31):
+a return value that can only say yes. Fix: check `$? & 127` and treat a signal
+death as failure, with the signal number in the error text.
