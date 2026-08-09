@@ -8,6 +8,7 @@ use MooX::Options (
   usage_string => 'USAGE: karr init [--name TEXT] [--statuses LIST] [--claude-skill]',
 );
 use Path::Tiny;
+use File::ShareDir ();
 use App::karr::Config;
 use App::karr::Role::BoardDiscovery;
 
@@ -117,7 +118,6 @@ sub _find_skill_source {
 
   # Try File::ShareDir (installed dist)
   my $installed = eval {
-    require File::ShareDir;
     my $dir = File::ShareDir::dist_dir('App-karr');
     my $file = path($dir)->child('claude-skill.md');
     $file->slurp_utf8 if $file->exists;

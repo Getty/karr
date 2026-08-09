@@ -12,6 +12,7 @@ use YAML::XS qw( Dump Load );
 use Git::Native;
 use Git::Native::Signature;
 use Git::Native::Credential;
+use App::karr::Task;
 
 =head1 SYNOPSIS
 
@@ -467,7 +468,6 @@ sub load_task_ref {
   my $ref = "refs/karr/tasks/$id/data";
   my $content = $self->read_ref($ref);
   return undef unless $content;
-  require App::karr::Task;
   return App::karr::Task->from_string($content);
 }
 

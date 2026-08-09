@@ -7,6 +7,7 @@ use Path::Tiny qw( path );
 use YAML::XS qw( DumpFile LoadFile );
 use Time::Piece;
 use App::karr::Config;
+use App::karr::Task;
 
 has git => (
     is       => 'ro',
@@ -299,7 +300,6 @@ sub serialize_from {
     my %seen;
     my $tasks_dir = $board_dir->child('tasks');
     if ( $tasks_dir->exists ) {
-        require App::karr::Task;
         for my $file ( $tasks_dir->children(qr/\.md$/) ) {
             my $task = App::karr::Task->from_file($file);
             # Restore/import path: persist verbatim so the original `updated`

@@ -7,6 +7,7 @@ use MooX::Cmd;
 use MooX::Options;
 use Term::ANSIColor qw( colored );
 use App::karr::Role::BoardAccess;
+use App::karr::Cmd::Board;
 
 with 'App::karr::Role::BoardAccess';
 
@@ -269,7 +270,6 @@ sub execute {
   # --dir from; forward the root's own --dir explicitly so bare
   # `karr --dir PATH` targets PATH rather than silently falling back to cwd.
   eval {
-    require App::karr::Cmd::Board;
     my %board_args = (
       done      => $self->done,
     );

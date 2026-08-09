@@ -7,6 +7,7 @@ use MooX::Cmd;
 use MooX::Options (
   usage_string => 'USAGE: karr context [--write-to FILE] [--sections LIST] [--days N] [--json]',
 );
+use Path::Tiny ();
 use Time::Piece;
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -186,7 +187,6 @@ sub _render_markdown {
 
 sub _write_to_file {
   my ($self, $md) = @_;
-  require Path::Tiny;
   my $file = Path::Tiny::path($self->write_to);
 
   if ($file->exists) {

@@ -4,6 +4,7 @@ package App::karr::Role::BoardAccess;
 our $VERSION = '0.403';
 use Moo::Role;
 use App::karr::Role::CliArgs;
+use App::karr::ActivityLog;
 
 with 'App::karr::Role::BoardDiscovery';
 with 'App::karr::Role::SyncLifecycle';
@@ -53,7 +54,6 @@ sub parse_ids {
 sub activity_log {
     my ($self, $git) = @_;
     $git //= $self->git;
-    require App::karr::ActivityLog;
     return App::karr::ActivityLog->new(git => $git, role => $self->role);
 }
 

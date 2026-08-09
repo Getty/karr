@@ -4,6 +4,10 @@ package App::karr::Role::Output;
 our $VERSION = '0.403';
 use Moo::Role;
 use MooX::Options;
+# Loaded without importing: a Moo::Role composes every sub in this package into
+# its consumers, so an imported encode_json would become a method on every
+# command class.
+use JSON::MaybeXS ();
 
 =head1 DESCRIPTION
 
@@ -24,7 +28,6 @@ option compact => (
 
 sub print_json {
   my ($self, $data) = @_;
-  require JSON::MaybeXS;
   print JSON::MaybeXS::encode_json($data) . "\n";
 }
 

@@ -7,6 +7,9 @@ use MooX::Options;
 use Path::Tiny;
 use Carp qw( croak );
 use App::karr::Role::ExitCodes;
+use App::karr::Git;
+use App::karr::BoardStore;
+use App::karr::Config;
 
 # Every command that composes this role (directly or via BoardAccess) inherits
 # the exit-code contract's option-parse half: an unknown option / bad option
@@ -100,7 +103,6 @@ sub _effective_dir {
 
 sub _build_git_root {
     my ($self) = @_;
-    require App::karr::Git;
 
     my $dir = $self->_effective_dir;
     my $start = defined $dir
@@ -119,8 +121,6 @@ sub _build_git_root {
 
 sub _build_store {
     my ($self) = @_;
-    require App::karr::Git;
-    require App::karr::BoardStore;
     my $git = App::karr::Git->new( dir => $self->git_root->stringify );
     return App::karr::BoardStore->new( git => $git );
 }
@@ -133,7 +133,6 @@ sub _build_git {
 sub _build_config {
     my ($self) = @_;
     my $merged = $self->store->effective_config;
-    require App::karr::Config;
     return App::karr::Config->from_merged($merged);
 }
 

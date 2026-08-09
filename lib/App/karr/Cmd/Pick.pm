@@ -11,6 +11,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Task;
 use App::karr::Config;
+use App::karr::Lock;
 use Time::Piece;
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output', 'App::karr::Role::ClaimTimeout';
@@ -137,7 +138,6 @@ sub execute {
   # Try to lock + claim. A karr board lives in refs/karr/*, which exist only
   # inside a Git repo, so reaching this point means we are in one -- the
   # locking path is unconditional.
-  require App::karr::Lock;
   my $lock  = App::karr::Lock->new(git => $self->git);
   my $email = $self->git->git_user_email || $self->claim;
 

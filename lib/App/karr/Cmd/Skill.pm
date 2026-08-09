@@ -11,6 +11,7 @@ use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
 use Path::Tiny;
+use File::ShareDir ();
 use Encode qw( encode_utf8 );
 
 # ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
@@ -240,7 +241,6 @@ sub _skill_content {
 
   # Try File::ShareDir (installed dist)
   my $installed = eval {
-    require File::ShareDir;
     my $dir = File::ShareDir::dist_dir('App-karr');
     my $file = path($dir)->child('claude-skill.md');
     $file->slurp_utf8 if $file->exists;

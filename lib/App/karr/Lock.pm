@@ -4,6 +4,7 @@ package App::karr::Lock;
 our $VERSION = '0.403';
 use strict;
 use warnings;
+use App::karr::Git;
 
 =head1 SYNOPSIS
 
@@ -22,7 +23,6 @@ sub new {
     my ( $class, %args ) = @_;
     my $git = $args{git};
     unless ($git) {
-        require App::karr::Git;
         $git = App::karr::Git->new( dir => $args{dir} // '.' );
     }
     return bless {
