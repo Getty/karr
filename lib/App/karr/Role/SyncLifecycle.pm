@@ -29,7 +29,13 @@ L<App::karr::SyncGuard> and retains it on the object as insurance: if the
 command body dies or croaks before C<sync_after> runs, the guard's DESTROY
 pushes with 3 retries. Because the guard is held by the role (not by the
 caller), commands may call both methods in void context; C<sync_after>
-neutralises the guard after a successful push so it never pushes twice.
+neutralises the guard so it never pushes twice.
+
+Holding the guard on the command object is also why the CLI cannot rely on
+DESTROY alone: L<MooX::Cmd>'s command chain keeps that object alive past
+F<bin/karr>'s error handler, so on the die path the guard is only reaped in
+global destruction, where pushing is forbidden. F<bin/karr> therefore drains
+L<App::karr::SyncGuard/flush_armed> from an C<END> block.
 
 Commands that compose this role must also have a C<store> attribute (provided
 by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
@@ -88,8 +94,10 @@ sub sync_before {
 Pushes refs to remote with up to 3 attempts, using the same retry-only output
 convention as L</sync_before> (silent first attempt, retries announced from
 attempt 2, errors always on STDERR, C<--quiet> silencing only the
-announcements). After a successful push it marks the retained guard done and
-clears it so the guard's DESTROY is a no-op.
+announcements). It marks the retained guard done and clears it on both
+outcomes: after a successful push there is nothing left to insure, and after a
+failed one the guard's three attempts have just been spent, so re-running them
+from L<App::karr::SyncGuard/flush_armed> would only repeat the failure.
 
 =cut
 
@@ -113,15 +121,29 @@ sub sync_after {
         print STDERR "  $err\n";
         sleep 1 if $attempt < 3;
     }
+    # Neutralise the insurance guard on both outcomes.
+    #
+    # On success: so its DESTROY does not fire a second, redundant push once
+    # the command body returns (#28).
+    #
+    # On failure: the three attempts the insurance would make have just been
+    # made and the croak below carries the same "run karr sync" guidance, so
+    # leaving the guard armed would only make the END flush in bin/karr (#37)
+    # repeat the identical failing push, doubling both the delay and the noise
+    # on an already-failing command.
+    $self->_release_guard;
+
     croak "Push failed after 3 attempts. Local refs are intact.\n"
       . "Run 'karr sync' to retry.\n" unless $ok;
+}
 
-    # Push succeeded: neutralise the insurance guard so its DESTROY does not
-    # fire a second, redundant push once the command body returns.
+sub _release_guard {
+    my ($self) = @_;
     if ( my $guard = $self->_sync_guard ) {
         $guard->done;
         $self->_sync_guard(undef);
     }
+    return;
 }
 
 1;

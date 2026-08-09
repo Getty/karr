@@ -18,6 +18,19 @@
       worked (it either recursed as above or was lost as an "(in cleanup)"
       warning) — making it deterministic is what exposed that. Restoring a real
       push is tracked separately.
+    - And now restored: a command that dies after writing refs pushes them
+      before the process exits again, instead of only advising `karr sync`.
+      Armed sync guards register in a process-wide registry that `karr` drains
+      from an `END` block — the last point at which pushing is still safe, and
+      one that also covers the `exit` calls inside command bodies. A command
+      that died before writing anything still pushes nothing and says nothing,
+      and a push that fails there warns without touching the exit code. The
+      global-destruction report above stays as the last resort for embedders
+      that never drain the registry.
+    - A writing command whose push fails no longer retries six times. Its
+      `sync_after` disarms the guard after spending its own three attempts, so
+      the new `END` flush does not repeat the identical failing push on a
+      command that is already reporting the failure.
     - `karr skill show` no longer warns "Wide character in print". The bundled
       skill file is read decoded, so it is now encoded back to UTF-8 bytes at
       the one print site. The output bytes were always correct, but the warning

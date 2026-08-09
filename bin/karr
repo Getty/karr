@@ -6,6 +6,31 @@ use strict;
 use warnings;
 our $VERSION = '0.403';
 use App::karr;
+use App::karr::SyncGuard;
+
+# Push insurance, flushed at the last safe moment (ticket #37).
+#
+# App::karr::Role::SyncLifecycle arms an App::karr::SyncGuard for every writing
+# command and stashes it on the command object, so that a body dying before
+# sync_after still pushes what it wrote. On this CLI that never fired: the run
+# below is wrapped in an eval, the handler exits, and MooX::Cmd's command chain
+# holds the command object -- so the guard was first reaped in global
+# destruction, where App::karr::Git refuses to work at all (#34) and the guard
+# can do nothing but print "run karr sync".
+#
+# END is the fix: it runs before global destruction with the interpreter still
+# whole, and unlike the error handler it also covers the exit() calls inside
+# command bodies and the option-parse exits from App::karr::Role::ExitCodes.
+#
+# $? is localized because the exit code is a documented contract (see EXIT CODES
+# below) and the push may shell out to `git` on App::karr::Git's CLI-fallback
+# path, whose open3/waitpid would otherwise overwrite it. flush_armed is
+# documented never to die, which is the other half of protecting that contract:
+# an exception here would abort perl's END queue and set its own exit status.
+END {
+    local $?;
+    App::karr::SyncGuard->flush_armed;
+}
 
 if (@ARGV) {
     $ARGV[0] = 'setrefs' if $ARGV[0] eq 'set-refs';
