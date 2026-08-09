@@ -11,6 +11,10 @@ requires 'File::ShareDir';
 requires 'Try::Tiny';
 requires 'Encode';
 requires 'Scalar::Util';
+requires 'IO::Select';
+requires 'Errno';
+requires 'POSIX';
+requires 'Time::HiRes';
 requires 'Git::Native', '0.003';
 requires 'Git::Libgit2', '0.004';
 

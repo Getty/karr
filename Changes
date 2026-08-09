@@ -69,6 +69,52 @@
       code itself declared none. Dist::Zilla only inserts a `$VERSION` into a
       file that has a `package` statement, which a script does not — so the
       line has to exist once, after which every release keeps it in step.
+    - Fixed silent loss of another agent's work on every shared board. `push`
+      sent `refs/karr/*` with a forced refspec but `pull` fetched with a
+      non-forced one, and since karr writes every board ref as a parentless
+      commit, no update is ever a fast-forward. libgit2 declined the update
+      without reporting an error, so `karr sync` said "Done." and exited 0 while
+      the local ref stayed stale — and the next write force-pushed that stale
+      ref over the other agent's version. A pull now really applies what the
+      remote has, so the board settles on last-writer-wins with no stale read in
+      between. The first sync of a task always worked, which is why this hid.
+    - A task deleted in one clone stays deleted instead of being resurrected by
+      the next clone that writes. Push already pruned, so `karr delete` was not
+      durable in any multi-clone setup.
+    - `pull` no longer fetches straight into the board. The remote state lands
+      in a per-remote tracking mirror under `refs/karr-remote/`, and the board is
+      reconciled against it. That mirror is what tells a ref the remote deleted
+      apart from one that only exists locally because its push failed — the
+      first is pruned, the second is kept, which is what karr promises with
+      "Local refs are intact. Run 'karr sync' to retry.". It also means a board
+      that `karr init` created and never pushed, and a clone that has never
+      fetched, both survive their first sync untouched.
+    - A ref that changed on both sides since the last sync is no longer resolved
+      in silence. The remote version takes the slot, the local one is kept under
+      `refs/karr-conflict/` and a warning names both, so the overwrite is
+      reported and recoverable rather than invisible. Neither `refs/karr-remote/`
+      nor `refs/karr-conflict/` is ever pushed or shown on the board.
+    - Helper refs (`karr set-refs` / `get-refs`) are fetched forced for the same
+      reason, so `karr get-refs` no longer serves a stale local copy after the
+      ref changed on the remote.
+    - The git-CLI transport fallback and libgit2 no longer disagree on a
+      diverged board. The fallback used to fail with "non-fast-forward" on every
+      ref, which made every writing command fail permanently — including `karr
+      sync`, so the clone could only be recovered with raw git. Both transports
+      now take the same refspec, and the reconciliation that follows the fetch
+      is the same code either way, so they reach the same board state.
+    - The git-CLI transport no longer reports success when `git` dies from a
+      signal. It checked `$? >> 8`, which is 0 for a signal death as well as for
+      a clean exit, so a `git` stopped by the OOM killer, a Ctrl-C on the process
+      group or a SIGPIPE was announced as a completed transport while the remote
+      received nothing. The signal is now reported as a failure, with its number.
+    - The git-CLI transport no longer deadlocks past 64 KiB of stderr. It read
+      stdout to EOF before touching stderr, so once the child filled the stderr
+      pipe buffer neither side moved again — reachable with roughly 700 rejected
+      refs, and possible after the command had already printed its result. Both
+      streams are drained together now, and a run is bounded by a wall-clock
+      timeout (120s by default, `KARR_TRANSPORT_TIMEOUT` overrides, `0` disables)
+      after which the child is killed and the transport reported as failed.
 
 0.402     2026-08-04 04:46:25Z
 

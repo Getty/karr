@@ -7,7 +7,11 @@ use warnings;
 use Path::Tiny qw( path );
 use Try::Tiny;
 use IPC::Open3 qw( open3 );
+use IO::Select;
 use Symbol qw( gensym );
+use Errno qw( EINTR );
+use POSIX qw( WNOHANG );
+use Time::HiRes ();
 use App::karr::Encoding qw(
     BOARD_ENCODING_VERSION
     to_octets from_octets yaml_dump yaml_load repair_mojibake
@@ -40,6 +44,20 @@ libssh2 doesn't read C<~/.ssh/config> and can't run a C<ProxyCommand> —
 directives like C<Host> aliases, C<IdentityFile>, and C<insteadOf> only take
 effect through the CLI. Set C<KARR_NO_CLI_FALLBACK=1> to disable the
 fallback and surface native transport failures directly.
+
+Every CLI transport run is bounded by a wall-clock timeout, 120 seconds by
+default; C<KARR_TRANSPORT_TIMEOUT> overrides it (in seconds, C<0> disables
+it). A run that blows the timeout is killed and reported as a failure.
+
+C<push> sends C<refs/karr/*> under a forced, pruning refspec. C<pull> is its
+inverse, but it never fetches straight into the board: the remote state lands
+in a per-remote tracking mirror under C<refs/karr-remote/>, and the local
+board is then reconciled against it. That mirror is what tells a ref the
+remote I<deleted> apart from one that only exists locally because it has not
+been pushed yet -- the first is pruned, the second is kept. Where both sides
+changed the same ref the remote version takes the slot, the local one is
+parked under C<refs/karr-conflict/>, and a warning names both. Neither extra
+namespace is ever pushed.
 
 =head1 SEE ALSO
 
@@ -287,6 +305,57 @@ sub delete_ref {
 
 # ----- Remote / network ops: native via Git::Native::Remote -----
 
+# The push refspec. Forced, because write_ref builds every board commit with
+# `parents => []`: no board ref update is ever a fast-forward, so a non-forced
+# refspec can never apply one. push has always been forced; pull was not, and
+# libgit2 declines a non-ff fetch update without raising an error, so pull
+# returned success while leaving the ref stale -- and the next push then
+# force-wrote that stale ref over the other agent's work (#40). Both
+# directions are forced now; see _fetch_refspec for the pull side.
+#
+# The semantics this settles on are last-writer-wins, which is what the
+# parentless-commit design already implied everywhere else. Doing better
+# would need compare-and-swap on the ref (git_reference_create_matching,
+# unbound in Git::Libgit2 -- see ticket #81) plus per-ref rejection reporting
+# from libgit2's update_tips/push_update_reference callbacks (not installed
+# by Git::Native -- ticket #80). Neither is reachable from karr today.
+use constant BOARD_REFSPEC => '+refs/karr/*:refs/karr/*';
+
+use constant BOARD_ROOT => 'refs/karr/';
+
+# Remote-tracking mirror: refs/karr-remote/<remote>/<X> holds the remote's
+# refs/karr/<X> as of the last successful fetch or push from this clone.
+#
+# It exists because "the remote does not have this ref" is two different
+# situations and the ref alone cannot tell them apart: the remote deleted a
+# task (prune is right -- #49), or the ref is local work that has not been
+# pushed yet (prune destroys it). karr promises exactly the latter after a
+# failed push -- "Local refs are intact. Run 'karr sync' to retry." -- so
+# pruning on that signal alone broke the promise the sync guard and the END
+# flush (#37) exist to keep.
+#
+# The mirror makes the four cases decidable. See _reconcile_with_mirror.
+use constant MIRROR_ROOT => 'refs/karr-remote';
+
+# Where the local side of a genuine conflict is parked before the remote
+# version replaces it. Outside refs/karr/, so it never reaches the remote and
+# never shows up on the board.
+use constant CONFLICT_ROOT => 'refs/karr-conflict';
+
+sub _mirror_prefix {
+    my ( $self, $remote ) = @_;
+    return MIRROR_ROOT . "/$remote/";
+}
+
+# Fetch never writes into the live board any more: the remote state lands in
+# the mirror, and karr decides per ref what that means. Forced and pruning is
+# safe here for the same reason -- the mirror is supposed to be an exact copy
+# of the remote, nothing of ours lives in it.
+sub _fetch_refspec {
+    my ( $self, $remote ) = @_;
+    return '+refs/karr/*:' . $self->_mirror_prefix($remote) . '*';
+}
+
 sub has_remote {
     my ( $self, $remote ) = @_;
     $remote //= 'origin';
@@ -350,8 +419,8 @@ sub push {
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
-    $refspec //= '+refs/karr/*:refs/karr/*';
-    return try {
+    $refspec //= BOARD_REFSPEC;
+    my $ok = try {
         my $r = $repo->remote($remote);
         $r->push(
             refspecs    => [$refspec],
@@ -363,6 +432,14 @@ sub push {
         $self->{_last_error} = "$_";
         $self->_cli_transport( 'push', $remote, [$refspec], prune => 1 );
     };
+
+    # A push that went through made the remote identical to the local board
+    # (forced refspec, prune), so the mirror has to follow. Without this every
+    # ref this clone ever pushed would still look "changed locally" on the next
+    # pull, and the other agent's perfectly ordinary update would be reported
+    # as a conflict.
+    $self->_mirror_local_state($remote) if $ok && $refspec eq BOARD_REFSPEC;
+    return $ok;
 }
 
 sub pull {
@@ -370,17 +447,172 @@ sub pull {
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
-    return try {
+
+    my $refspec = $self->_fetch_refspec($remote);
+
+    # The mirror as it stands now is the remote state at the last sync; the
+    # fetch is about to overwrite it with the current one. Both are needed to
+    # tell the four cases apart, so snapshot it first.
+    my $tracked = $self->ref_oids( $self->_mirror_prefix($remote) ) || {};
+
+    my $ok = try {
         my $r = $repo->remote($remote);
         $r->fetch(
-            refspecs    => ['refs/karr/*:refs/karr/*'],
+            refspecs    => [$refspec],
             credentials => _default_credentials_cb(),
+            prune       => 1,
         );
         1;
     } catch {
         $self->{_last_error} = "$_";
-        $self->_cli_transport( 'fetch', $remote, ['refs/karr/*:refs/karr/*'] );
+        $self->_cli_transport( 'fetch', $remote, [$refspec], prune => 1 );
     };
+    return 0 unless $ok;
+
+    $self->_reconcile_with_mirror( $remote, $tracked );
+    return 1;
+}
+
+# Bring the local board in line with the remote, one ref at a time, using
+# L = local, T = the mirror before this fetch (the remote at the last sync)
+# and R = the mirror after it (the remote now).
+#
+#   L == T, R exists       the local ref carries nothing the remote has not
+#                          seen -> take R. This is the #40 fix: without it the
+#                          stale local ref survived the pull and the next push
+#                          force-wrote it over the other agent's work.
+#   L == T, R gone         the remote deleted it -> delete it here too (#49).
+#   L != T, R == T         only this clone moved: work that was written but
+#                          never pushed -> keep it exactly as it is. Covers a
+#                          local deletion too, which must stay deleted rather
+#                          than being restored from a remote that has not been
+#                          told about it yet.
+#   L != T, R != T         both sides moved. Last-writer-wins still applies
+#                          and R takes the slot -- including when R is a
+#                          deletion -- but the local version is parked and the
+#                          user is told, instead of it disappearing without a
+#                          word.
+#
+# A clone that predates the mirror has T empty everywhere, so every ref reads
+# as "changed locally". That degrades to the right outcome: refs that already
+# match the remote are left alone (the normal case for a clone that pushes at
+# the end of every command), a remote-only update is still adopted -- with one
+# spurious conflict report -- and nothing local is dropped. From the next pull
+# on the mirror is populated and the answers are exact.
+sub _reconcile_with_mirror {
+    my ( $self, $remote, $tracked ) = @_;
+    return unless $self->_repo;
+
+    my $prefix     = $self->_mirror_prefix($remote);
+    my $remote_now = $self->ref_oids($prefix)    || {};
+    my $local      = $self->ref_oids(BOARD_ROOT) || {};
+
+    my %names = map { $_ => 1 } keys %$local;
+    for my $mirror ( keys %$remote_now, keys %$tracked ) {
+        $names{ BOARD_ROOT . substr( $mirror, length $prefix ) } = 1;
+    }
+
+    my @conflicts;
+    for my $ref ( sort keys %names ) {
+        my $mirror = $prefix . substr( $ref, length BOARD_ROOT );
+        my ( $l, $r, $t ) =
+            ( $local->{$ref}, $remote_now->{$mirror}, $tracked->{$mirror} );
+
+        next if _same_oid( $l, $r );        # already converged
+
+        if ( _same_oid( $l, $t ) ) {
+            $self->_adopt_remote_ref( $ref, $r );
+            next;
+        }
+
+        next if _same_oid( $r, $t );        # unpushed local work: keep it
+
+        $self->_park_conflicting_local( $remote, $ref, $l ) if defined $l;
+        $self->_adopt_remote_ref( $ref, $r );
+        CORE::push @conflicts, $ref;
+    }
+
+    $self->_warn_conflicts( $remote, \@conflicts ) if @conflicts;
+    return;
+}
+
+# Put the remote's answer for one ref in place. An undefined OID is the
+# remote's answer too: it means the ref is gone there.
+sub _adopt_remote_ref {
+    my ( $self, $ref, $oid ) = @_;
+    return defined $oid
+        ? $self->_write_ref_untracked( $ref, $oid )
+        : $self->_delete_ref_untracked($ref);
+}
+
+sub _same_oid {
+    my ( $left, $right ) = @_;
+    return 1 if !defined $left && !defined $right;
+    return 0 if !defined $left || !defined $right;
+    return $left eq $right ? 1 : 0;
+}
+
+# Ref writes that are not board work: reconciling with the remote, and keeping
+# the mirror up to date. They deliberately bypass write_ref/delete_ref so that
+# $WRITES stays a count of real board edits -- SyncGuard reads it to decide
+# whether anything still needs pushing, and counting a pull's own bookkeeping
+# there would make read-only commands claim they had unpushed work (#34).
+sub _write_ref_untracked {
+    my ( $self, $ref, $oid ) = @_;
+    my $repo = $self->_repo or return 0;
+    return try { $repo->reference_create( $ref, $oid, force => 1 ); 1 }
+           catch { 0 };
+}
+
+sub _delete_ref_untracked {
+    my ( $self, $ref ) = @_;
+    my $repo = $self->_repo or return 0;
+    return try { $repo->reference_delete($ref); 1 } catch { 0 };
+}
+
+# The losing side of a conflict, kept reachable. Without this the displaced
+# local commit is unreferenced the moment the ref moves and the next gc takes
+# it, so "your edit was overwritten" would be a report with nothing behind it.
+# One slot per ref: bounded by board size, and a second conflict on the same
+# ref has already been reported once.
+sub _park_conflicting_local {
+    my ( $self, $remote, $ref, $oid ) = @_;
+    my $parked =
+        CONFLICT_ROOT . "/$remote/" . substr( $ref, length BOARD_ROOT );
+    $self->_write_ref_untracked( $parked, $oid );
+    return $parked;
+}
+
+sub _warn_conflicts {
+    my ( $self, $remote, $refs ) = @_;
+    my $names = join ', ', map { substr $_, length BOARD_ROOT } @$refs;
+    warn "karr: this clone and the remote both changed $names since the last "
+       . "sync.\n"
+       . "The remote version is now in place. The local one is kept at "
+       . CONFLICT_ROOT . "/$remote/<name> and is never pushed.\n";
+    return;
+}
+
+# Make the mirror match the local board. Called after a successful push, where
+# the remote has just been made identical to it.
+sub _mirror_local_state {
+    my ( $self, $remote ) = @_;
+    return unless $self->_repo;
+
+    my $prefix = $self->_mirror_prefix($remote);
+    my $local  = $self->ref_oids(BOARD_ROOT) || {};
+    my $mirror = $self->ref_oids($prefix)    || {};
+
+    for my $ref ( keys %$local ) {
+        my $name = $prefix . substr( $ref, length BOARD_ROOT );
+        next if _same_oid( $mirror->{$name}, $local->{$ref} );
+        $self->_write_ref_untracked( $name, $local->{$ref} );
+    }
+    for my $name ( keys %$mirror ) {
+        my $ref = BOARD_ROOT . substr( $name, length $prefix );
+        $self->_delete_ref_untracked($name) unless exists $local->{$ref};
+    }
+    return;
 }
 
 sub push_ref {
@@ -408,16 +640,20 @@ sub pull_ref {
     $ref = $self->validate_helper_ref($ref);
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
+    # Forced for the same reason as the board refspec (#40): helper refs are
+    # written by write_ref too, so a helper ref that changed on the remote is
+    # never a fast-forward and a non-forced fetch would leave `karr get-refs`
+    # quietly serving the stale local copy.
     return try {
         my $r = $repo->remote($remote);
         $r->fetch(
-            refspecs    => ["$ref:$ref"],
+            refspecs    => ["+$ref:$ref"],
             credentials => _default_credentials_cb(),
         );
         1;
     } catch {
         $self->{_last_error} = "$_";
-        $self->_cli_transport( 'fetch', $remote, ["$ref:$ref"] );
+        $self->_cli_transport( 'fetch', $remote, ["+$ref:$ref"] );
     };
 }
 
@@ -431,35 +667,153 @@ sub _cli_transport {
     my ( $self, $verb, $remote, $refspecs, %opt ) = @_;
     return 0 if $ENV{KARR_NO_CLI_FALLBACK};
 
-    my @cmd = ( 'git', '-C', $self->dir->stringify, $verb );
-    CORE::push @cmd, '--prune' if $opt{prune};
-    CORE::push @cmd, $remote, @$refspecs;
+    my @args = ($verb);
+    CORE::push @args, '--prune' if $opt{prune};
+    CORE::push @args, $remote, @$refspecs;
 
-    my ( $err, $exit );
-    my $ok = try {
-        local $ENV{GIT_TERMINAL_PROMPT} = 0;   # never hang on an interactive prompt
-        my $err_fh = gensym;
-        my $pid = open3( my $in, my $out_fh, $err_fh, @cmd );
-        close $in;
-        local $/;
-        my $out = <$out_fh>;                    # drained so the child can exit
-        $err = <$err_fh>;
-        waitpid( $pid, 0 );
-        $exit = $? >> 8;
-        1;
-    } catch {
+    my $native = $self->{_last_error};
+    my $run    = $self->_run_git(@args);
+
+    if ( $run->{failure} eq 'start' ) {
         $self->{_last_error} =
-            "git CLI fallback unavailable: $_"
-          . ( defined $self->{_last_error} ? " (native: $self->{_last_error})" : '' );
-        0;
-    };
-    return 0 unless $ok;
-    return 1 if defined $exit && $exit == 0;
+            "git CLI fallback unavailable: $run->{err}"
+          . ( defined $native ? " (native: $native)" : '' );
+        return 0;
+    }
 
-    my $detail = defined $err ? $err : '';
+    my $detail = $run->{err};
     $detail =~ s/\s+\z//;
+    my $suffix = length $detail ? ": $detail" : '';
+
+    if ( $run->{failure} eq 'timeout' ) {
+        $self->{_last_error} = "git $verb (CLI fallback) timed out after "
+          . "$run->{timeout}s and was killed$suffix";
+        return 0;
+    }
+
+    # `$? >> 8` is 0 both for "exited cleanly" and for "died from a signal",
+    # so a git the OOM killer, a Ctrl-C on the process group or a SIGPIPE took
+    # down used to be reported as a successful transport -- the task was
+    # announced as created and the remote never saw it (#42). The signal bits
+    # have to be read first.
+    if ( my $sig = $run->{status} & 127 ) {
+        $self->{_last_error} =
+          "git $verb (CLI fallback) was killed by signal $sig$suffix";
+        return 0;
+    }
+    return 1 unless $run->{status} >> 8;
+
     $self->{_last_error} = "git $verb (CLI fallback) failed: $detail";
     return 0;
+}
+
+# Wall-clock budget for one `git` CLI run, in seconds. 0 (or a non-numeric
+# value) disables it. karr is driven by unattended agents, so the default is a
+# ceiling rather than a guess at how slow a legitimate transfer may be.
+use constant DEFAULT_TRANSPORT_TIMEOUT => 120;
+
+# Cap on how much of each stream is kept. Draining continues past it -- the
+# point is only to stop a runaway git from being buffered into memory whole.
+use constant CLI_OUTPUT_LIMIT => 65_536;
+
+sub _transport_timeout {
+    my $raw = $ENV{KARR_TRANSPORT_TIMEOUT};
+    return DEFAULT_TRANSPORT_TIMEOUT
+        unless defined $raw && $raw =~ /\A\d+(?:\.\d+)?\z/;
+    return $raw + 0;
+}
+
+# Run `git -C <dir> @args` and return
+#   { ok => 0|1, failure => ''|'start'|'timeout', status => $?, out, err,
+#     timeout => $seconds }
+#
+# Both pipes are drained through one IO::Select loop. Reading stdout to EOF
+# first, as this used to, deadlocks the moment the child fills the 64 KiB
+# stderr pipe buffer: the child blocks on write and so never exits or closes
+# stdout, while the parent is still blocked reading stdout. A diverged board
+# reaches that at roughly 700 rejected refs, and it could strike inside
+# bin/karr's END flush, i.e. after the command had already printed its result
+# (#43). The loop is also bounded by a deadline, so a transport that stalls
+# (an ssh ProxyCommand hanging on a jump host, a grandchild holding the pipes
+# open past the child's exit) fails instead of hanging an unattended agent.
+#
+# `status` is the raw waitpid status, not `$? >> 8`, so callers can tell a
+# clean exit from a death by signal (#42).
+sub _run_git {
+    my ( $self, @args ) = @_;
+
+    my @cmd     = ( 'git', '-C', $self->dir->stringify, @args );
+    my $timeout = _transport_timeout();
+    my %result  = (
+        ok => 0, failure => 'start', status => 0,
+        out => '', err => '', timeout => $timeout,
+    );
+
+    my ( $pid, $timed_out );
+    my $started = try {
+        local $ENV{GIT_TERMINAL_PROMPT} = 0;   # never hang on an interactive prompt
+        my $err_fh = gensym;
+        $pid = open3( my $in, my $out_fh, $err_fh, @cmd );
+        close $in;
+
+        my %sink = (
+            fileno($out_fh) => \$result{out},
+            fileno($err_fh) => \$result{err},
+        );
+        my $select   = IO::Select->new( $out_fh, $err_fh );
+        my $deadline = $timeout ? Time::HiRes::time() + $timeout : undef;
+
+        while ( $select->count ) {
+            my $left = defined $deadline
+                     ? $deadline - Time::HiRes::time() : undef;
+            if ( defined $left && $left <= 0 ) { $timed_out = 1; last }
+            # Poll in slices so the deadline is still honoured while git is
+            # quiet on both streams.
+            my $slice = !defined $left || $left > 1 ? 1 : $left;
+            for my $fh ( $select->can_read($slice) ) {
+                my $read = sysread $fh, my $chunk, 65_536;
+                if ( !defined $read ) {
+                    next if $! == EINTR;
+                    $select->remove($fh);
+                    next;
+                }
+                if ( !$read ) { $select->remove($fh); next }
+                my $buffer = $sink{ fileno($fh) };
+                $$buffer .= $chunk if length($$buffer) < CLI_OUTPUT_LIMIT;
+            }
+        }
+        1;
+    } catch {
+        $result{err} = "$_";
+        0;
+    };
+    return \%result unless $started;
+
+    if ($timed_out) {
+        $self->_reap_killed($pid);
+        $result{failure} = 'timeout';
+        return \%result;
+    }
+
+    waitpid $pid, 0;
+    @result{qw( ok failure status )} = ( 1, '', $? );
+    return \%result;
+}
+
+# Take down a child that blew the transport timeout: TERM first, KILL if it is
+# still around, and reap it either way so it cannot linger as a zombie in a
+# long-running embedder.
+sub _reap_killed {
+    my ( $self, $pid ) = @_;
+    return unless $pid;
+    kill 'TERM', $pid;
+    for ( 1 .. 20 ) {                       # up to ~2s for a clean exit
+        return if waitpid( $pid, WNOHANG ) > 0;
+        Time::HiRes::sleep(0.1);
+    }
+    kill 'KILL', $pid;
+    waitpid $pid, 0;
+    return;
 }
 
 # ----- Board encoding contract (ticket #53) -----
