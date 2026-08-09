@@ -1,0 +1,70 @@
+---
+claimed_at: 2026-08-09T15:50:00Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:42:15Z
+id: 52
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- task
+- parsing
+- data-loss
+title: a frontmatter value ending in --- corrupts the task and bricks the whole board
+updated: 2026-08-09T17:00:27Z
+---
+
+Verified twice, independently. One ordinary user input makes the whole board
+unusable with no way back through karr.
+
+## Mechanism
+
+`lib/App/karr/Task.pm:141`:
+
+    my ($yaml, $body) = $content =~ m{\A---\n(.+?)---(?:\n(.*))?\z}s
+
+The closing `---` is **not anchored to a line start**. `Dump` writes a value
+like `title: Release v1 ---` unquoted, and the non-greedy `(.+?)` then cuts the
+frontmatter in the middle of that line.
+
+kanban-md does not have this bug: `splitFrontmatter`
+(`../kanban-md/internal/task/file.go:63`) looks for the literal `"\n---\n"`.
+
+## Reproduction — board bricked by a block reason
+
+    karr create "Normal task" --body hello
+    karr edit 1 --block "waiting ---"      -> "Updated task 1"  exit 0
+    karr list    -> Missing required arguments: id, title at Git.pm line 471   exit 1
+    karr board   -> same
+    karr show 1  -> same
+    karr delete 1 --yes -> same
+
+`blocked` is dumped first alphabetically, so it takes the whole frontmatter with
+it. **Even `delete` cannot save you** — it loads the task before deleting. The
+only way out is a raw `git update-ref -d`.
+
+## Reproduction — silent data corruption
+
+    karr create "Release v1 ---" --body "important notes"
+    karr show 1
+      -> Task #1: Release v1                   # title truncated
+      -> Body:  updated: 2026-08-09T15:30:39Z  # rest of the frontmatter is now body
+                ---
+                important notes
+
+Any frontmatter string value triggers it: `--title`, `--tags "rel---"`,
+`--assignee`, `--estimate`, `--due`.
+
+## Fix
+
+Anchor the closing delimiter to a line start (`^---$` with `/m`, or split on
+`\n---\n` the way kanban-md does). Regression test must cover a value ending in
+`---` in title, tags and block reason, and must assert the board still lists.
+
+Consider also: writing frontmatter values quoted would make this unreachable
+from the write side, but the parser must be fixed regardless — karr has to be
+able to read what an editor or kanban-md wrote.
+Fixed in 46f006b. Reviewed by delight-agronomy: full diff read, prove -lr t/ re-run independently — 70 files, 442 tests, PASS.
