@@ -1,0 +1,46 @@
+---
+claimed_at: 2026-08-09T17:01:31Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:35:53Z
+id: 43
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- sync
+- git
+title: _cli_transport deadlocks forever when git writes more than 64 KiB to stderr
+updated: 2026-08-09T17:53:35Z
+---
+
+`lib/App/karr/Git.pm:438-439`:
+
+    my $out = <$out_fh>;   # slurps stdout to EOF FIRST
+    $err = <$err_fh>;
+
+Classic single-threaded open3 ordering bug. Once the child has written 64 KiB to
+stderr the pipe buffer is full and the child blocks; it therefore never exits and
+never closes stdout, while the parent is still blocked reading stdout. Neither
+side moves again. There is no timeout anywhere in this path.
+
+Reproduced with real git — bare origin plus a clone with 800 diverged
+`refs/karr/tasks/N/data` refs:
+
+    git fetch origin 'refs/karr/*:refs/karr/*' 2>&1 >/dev/null | wc -c   -> 75220
+    timeout 15 perl -e '...->_cli_transport("fetch","origin",[...])'
+    -> exit 124 (hung)
+
+Measured threshold: 600 rejected refs still complete, 700 hang (~64 KiB).
+
+Not a theoretical board size: the pull-refspec bug guarantees that **every** ref
+on a diverged board is rejected, and each rejection is one stderr line. A board
+of ~700 tasks on the ssh/ProxyCommand transport is enough. It can also hang
+inside `bin/karr`'s END flush, i.e. after the command has already printed its
+result and the user believes it finished.
+
+Fix direction: read both handles without blocking (IO::Select, or
+`IPC::Run3`/`Capture::Tiny` if a dependency is acceptable), and put a timeout on
+the transport so an unattended agent cannot hang forever.
