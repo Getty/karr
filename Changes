@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Raised the minimum Git::Native to 0.004 and Git::Libgit2 to 0.005. Those
+      releases add compare-and-swap reference updates (`expected_old`) and
+      per-ref outcomes from fetch/push, which karr needs to make ID allocation
+      and lock acquisition atomic and to notice a server-rejected push. They
+      also fix git+ssh remotes under libgit2 < 1.7 by verifying the hostkey
+      against `~/.ssh/known_hosts`.
     - Fixed a frontmatter value ending in `---` corrupting the task and
       bricking the board. The closing delimiter was not anchored to the start
       of a line, so a value that merely ended in `---` — `karr edit 1 --block
