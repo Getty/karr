@@ -209,6 +209,11 @@ Shows the grouped board view.
 
 Finds the next suitable task and claims it for an agent.
 
+=item * L<App::karr::Cmd::Unlock>
+
+Shows the pick locks currently held on the board, and breaks them. The escape
+hatch for a lock left behind by an agent that died mid-pick.
+
 =item * L<App::karr::Cmd::Handoff>
 
 Moves work into review and optionally appends a timestamped note.

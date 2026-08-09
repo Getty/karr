@@ -143,19 +143,43 @@ sub _repo {
     return $self->{_repo};
 }
 
+# The identity is read from git config once per process. The timestamp is not,
+# and that is the point: libgit2 stamps a signature at the moment the
+# git_signature is allocated, so a signature cached for the life of the process
+# made every commit it ever wrote carry the time of the first one. In a
+# short-lived CLI run that is invisible; in a long-running driver
+# (karr-foundation draining boards for hours) every ref it wrote was
+# backdated to process start.
+#
+# App::karr::Lock reads exactly this timestamp back -- via commit_time below --
+# to decide whether a lock is stale, so a cached one would have made every lock
+# taken by a long-running agent look expired the instant it was written (#45).
 sub _signature {
     my ($self) = @_;
-    # Reuse one signature per process; falls back if user.name/email unset.
-    return $self->{_sig} if $self->{_sig};
-    my $repo = $self->_repo or return;
-    $self->{_sig} = try { $repo->signature_default }
-                    catch {
-                      Git::Native::Signature->new(
-                        name  => $self->git_user_name  || 'karr',
-                        email => $self->git_user_email || 'karr@localhost',
-                      );
-                    };
-    return $self->{_sig};
+    unless ( $self->{_sig_identity} ) {
+        $self->_repo or return;
+        $self->{_sig_identity} = {
+            name  => $self->git_user_name  || 'karr',
+            email => $self->git_user_email || 'karr@localhost',
+        };
+    }
+    return Git::Native::Signature->new(
+        %{ $self->{_sig_identity} },
+        when   => time,
+        offset => 0,
+    );
+}
+
+# Committer time of the commit a ref points at, as a Unix epoch. Takes the OID
+# rather than the ref name so the caller can judge the age of the same revision
+# it is about to guard a compare-and-swap against: reading the ref a second time
+# here would let it move in between, and a lock steal decided on one revision
+# but applied to another silently evicts a live holder.
+sub commit_time {
+    my ( $self, $oid ) = @_;
+    return undef unless defined $oid && length $oid;
+    my $repo = $self->_repo or return undef;
+    return try { $repo->commit($oid)->time } catch { undef };
 }
 
 # ----- Repo discovery -----
@@ -1016,20 +1040,40 @@ sub save_task_ref {
 
 sub load_task_ref {
   my ($self, $id) = @_;
-  my $ref = "refs/karr/tasks/$id/data";
-  my $content = $self->read_ref($ref);
-  return undef unless $content;
-  return App::karr::Task->from_string(
-    $content,
-    repair_frontmatter => $self->board_is_legacy_encoded,
-  );
+  return ( $self->load_task_ref_with_oid($id) )[1];
 }
 
+# The task plus the OID of the commit it was read from, for callers that then
+# write it back under compare-and-swap (App::karr::Cmd::Pick). Same pairing
+# rule as read_ref_with_oid: guarding a write against an OID fetched
+# independently of the content would guard the wrong revision.
+sub load_task_ref_with_oid {
+  my ($self, $id) = @_;
+  my ($oid, $content) = $self->read_ref_with_oid("refs/karr/tasks/$id/data");
+  return (undef, undef) unless defined $oid && length $content;
+  return ($oid, App::karr::Task->from_string(
+    $content,
+    repair_frontmatter => $self->board_is_legacy_encoded,
+  ));
+}
+
+sub save_task_ref_cas {
+  my ($self, $task, $expected_old) = @_;
+  my $ref = "refs/karr/tasks/" . $task->id . "/data";
+  return $self->write_ref_cas($ref, $task->to_markdown, $expected_old);
+}
+
+# Only the data ref makes a task exist. The pattern used to be
+# m{refs/karr/tasks/(\d+)/}, which also matched .../N/lock -- so a lock left
+# behind by an agent that died mid-pick put its task id into this list even
+# after the card itself was deleted, load_tasks mapped that id to undef, and
+# every command that walks the board died on the undef. One orphaned lock ref
+# bricked the whole board with no way out from inside karr (#45).
 sub list_task_refs {
   my ($self) = @_;
   my %ids;
   for my $ref ( $self->list_refs('refs/karr/tasks/') ) {
-    $ids{$1} = 1 if $ref =~ m{refs/karr/tasks/(\d+)/};
+    $ids{$1} = 1 if $ref =~ m{\Arefs/karr/tasks/(\d+)/data\z};
   }
   return sort { $a <=> $b } keys %ids;
 }

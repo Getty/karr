@@ -12,12 +12,18 @@ and determine whether an existing claim should still block other agents.
 
 =cut
 
+# $fallback is what an absent or unparseable value means. It defaults to an
+# hour, which is right for claim_timeout but far too long for lock_timeout --
+# a lock covers one pick transaction, not a work session, so App::karr::Cmd::Pick
+# passes its own (see LOCK_TIMEOUT_FALLBACK there).
 sub _parse_timeout {
-    my ($self, $timeout_str) = @_;
-    return 3600 unless $timeout_str;
+    my ($self, $timeout_str, $fallback) = @_;
+    $fallback //= 3600;
+    return $fallback unless $timeout_str;
     if ($timeout_str =~ /^(\d+)h$/) { return $1 * 3600; }
     if ($timeout_str =~ /^(\d+)m$/) { return $1 * 60; }
-    return 3600;
+    if ($timeout_str =~ /^(\d+)s$/) { return $1; }
+    return $fallback;
 }
 
 sub _claim_expired {

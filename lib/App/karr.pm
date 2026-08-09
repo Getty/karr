@@ -184,6 +184,7 @@ my @COMMANDS = (
   [ edit      => 'Modify task fields' ],
   [ delete    => 'Delete a task' ],
   [ pick      => 'Claim the next available task' ],
+  [ unlock    => 'Show or break pick locks' ],
   [ archive   => 'Archive a task (soft-delete)' ],
   [ handoff   => 'Hand off a task for review' ],
   [ destroy   => 'Delete the entire refs/karr/* board' ],

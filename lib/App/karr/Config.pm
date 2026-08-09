@@ -233,6 +233,13 @@ sub default_config {
       { name => 'intangible' },
     ],
     claim_timeout => '1h',
+    # Deliberately not claim_timeout. A claim says "an agent owns this work"
+    # and has to outlive a whole session; a lock only covers the few
+    # milliseconds `karr pick` spends deciding on and writing one card, and it
+    # is the thing an agent that dies mid-pick leaves behind. Reusing the 1h
+    # claim window here would leave that task unpickable for an hour (#45).
+    # Accepts Nh / Nm / Ns; an explicit zero (`0s`) disables lock expiry.
+    lock_timeout => '5m',
     # Board-level switch for automated agent runs (karr-foundation). Boards are
     # enabled by default; `karr disable` writes enabled => 0 (plus an optional
     # reason) into refs/karr/config so the opt-out syncs with the board.

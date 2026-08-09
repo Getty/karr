@@ -16,6 +16,47 @@
       safe for concurrent agents — pick still decides which task to take from a
       snapshot read before the lock, so it can hand out a task another agent
       has already claimed. That is a separate fix.
+    - Fixed `karr pick` handing the same task to several agents. Pick ranked
+      candidates from a snapshot of the board read before any lock existed and
+      never looked at the card again, so it claimed tasks that had been taken
+      in the meantime: 12 parallel picks on a fresh 12-task board told nine
+      agents they owned task 1, while the card named only the last of them. The
+      lock was not the hole — its holder identity is the clone's `user.email`,
+      which every agent on one machine shares, so all 12 acquired it quite
+      legitimately. Each candidate is now re-read from its ref under its lock,
+      re-tested with the same predicate, and written back under a
+      compare-and-swap on the OID it was read from; an agent that loses that
+      swap picks nothing and moves on. Verified with 12 forked contenders
+      behind a barrier: 12 picks, 12 different tasks, and every agent named on
+      the card it was told it got.
+    - Fixed one orphaned lock ref bricking every command on the board.
+      `list_task_refs` matched `refs/karr/tasks/N/lock` as well as `.../data`,
+      so a lock left behind by an agent that died mid-pick made its task id
+      exist after the card was deleted; `load_tasks` mapped that id to undef
+      and `list`, `board`, `materialize` and `pick` all died on it, with no way
+      out short of `git update-ref -d`. Only the data ref makes a task exist
+      now, and the board list never contains undef.
+    - `karr pick` no longer publishes its lock to the remote or strands its log
+      entry. The lock was released, and the pick logged, after the push, so the
+      remote kept the lock ref forever and the activity-log entry never left
+      the clone. Both now happen before the push.
+    - Locks expire. An agent that died between acquiring and releasing left a
+      lock nothing could ever clear, and its task stayed unpickable forever. A
+      lock older than the new `lock_timeout` board setting (default `5m`) may
+      be taken over, itself by compare-and-swap against the revision whose age
+      was judged, so a holder that refreshes in between is never silently
+      evicted. This is deliberately not `claim_timeout` (default `1h`): a claim
+      covers a work session, a lock covers one pick.
+    - New command `karr unlock`: with no arguments it lists the pick locks
+      currently held, with their holder, age, and whether they have expired;
+      given task ids or `--all` it breaks them. The manual escape hatch for a
+      stuck board, and the only one on a board that sets `lock_timeout` to
+      `0s`. Breaking a lock cannot corrupt a concurrent pick — the claim is
+      bound by the compare-and-swap on the card, not by the lock.
+    - Board ref commits carry the time they were written. The git signature was
+      built once and cached for the life of the process, so every ref a
+      long-running driver (`karr-foundation`) wrote was stamped with the time
+      of its first write.
     - Fixed ordinary ref contention aborting commands with a raw libgit2 error
       ("failed to lock file '.../lock.lock' for writing") followed by a stack
       trace of module paths and line numbers. Losing the race for a ref's lock

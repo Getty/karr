@@ -210,16 +210,36 @@ C<karr repair --yes>, and the import path below.
 
 =cut
 
+# The grep is not redundant with the /data-only match in list_task_refs: a ref
+# that exists but holds no parseable card still loads as undef, and every
+# consumer of this list calls methods on each element. One undef in here took
+# out list, board, materialize and pick at once (#45), so the board list is
+# filtered at the single point that produces it rather than at each of them.
 sub load_tasks {
     my ($self) = @_;
     my @ids = $self->git->list_task_refs;
-    return map { $self->git->load_task_ref($_) } @ids;
+    return grep { defined } map { $self->git->load_task_ref($_) } @ids;
 }
 
 sub find_task {
     my ( $self, $id ) = @_;
     return $self->git->load_task_ref($id);
 }
+
+sub find_task_with_oid {
+    my ( $self, $id ) = @_;
+    return $self->git->load_task_ref_with_oid($id);
+}
+
+=head2 find_task_with_oid
+
+Returns C<< ($oid, $task) >> for one task: the card, plus the OID of the commit
+it was read from. Pair it with L</save_task_cas> to write the card back only if
+nobody else has touched it in between.
+
+    my ( $oid, $task ) = $store->find_task_with_oid(7);
+
+=cut
 
 sub save_task {
     my ( $self, $task ) = @_;
@@ -231,6 +251,33 @@ sub save_task {
     $task->updated( gmtime->datetime . 'Z' ) if $self->git->ref_exists($ref);
     return $self->git->save_task_ref($task);
 }
+
+sub save_task_cas {
+    my ( $self, $task, $expected_oid ) = @_;
+    # The card came from find_task_with_oid, so the ref exists by construction
+    # and the `updated` bump is unconditional (see save_task above).
+    $task->updated( gmtime->datetime . 'Z' );
+    return $self->git->save_task_ref_cas( $task, $expected_oid );
+}
+
+=head2 save_task_cas
+
+Writes a card back only if its ref still points at C<$expected_oid>, the OID
+L</find_task_with_oid> read it from. Returns true when the write landed and
+false when another agent changed the card first -- at which point the caller
+must re-read and decide again, never retry with the value that already lost.
+
+This is what makes C<karr pick> exclusive. The lock ref serialises agents but
+cannot bind them: its holder identity is the clone's C<user.email>, which every
+agent on one machine shares, so twelve parallel picks were all told they owned
+the lock and all wrote their claim over each other's (#86). The compare-and-swap
+is on the card itself and does not care who thinks it holds what.
+
+    my ( $oid, $task ) = $store->find_task_with_oid(7);
+    $task->claimed_by('agent-fox');
+    $store->save_task_cas( $task, $oid ) or ...;  # someone else got there first
+
+=cut
 
 sub delete_task {
     my ( $self, $id ) = @_;

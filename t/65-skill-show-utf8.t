@@ -111,8 +111,24 @@ subtest 'karr skill show through the real CLI emits the bundled file verbatim' =
     };
     ok( $raw =~ /[\x80-\xff]/, 'the bundled skill really does contain non-ASCII bytes' );
 
+    # Hand the child a share dir of our own, ahead of everything else in @INC.
+    #
+    # _skill_content asks File::ShareDir for the *installed* dist first and only
+    # falls back to the checkout, so on a machine with App::karr installed this
+    # compared `karr skill show`'s output against a file the child never read.
+    # It passed only for as long as the installed copy happened to be
+    # byte-identical to the checkout -- i.e. it broke on any edit to
+    # share/claude-skill.md, reporting it as an encoding bug. dist_dir resolves
+    # auto/share/dist/<dist> against @INC in order, so a -I in front of the rest
+    # pins it deterministically.
+    my $share_lib = path( tempdir( CLEANUP => 1 ) );
+    my $share_dir = $share_lib->child(qw( auto share dist App-karr ));
+    $share_dir->mkpath;
+    $bundled->copy( $share_dir->child('claude-skill.md') );
+
     my $err_fh = gensym;
-    my $pid = open3( my $in, my $out_fh, $err_fh, $^X, "-I$ROOT/lib", $BIN, 'skill', 'show' );
+    my $pid = open3( my $in, my $out_fh, $err_fh,
+        $^X, "-I$share_lib", "-I$ROOT/lib", $BIN, 'skill', 'show' );
     close $in;
     binmode $out_fh;
     my $stdout = do { local $/; <$out_fh> };
