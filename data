@@ -1,0 +1,72 @@
+---
+claimed_at: 2026-08-09T15:50:06Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:42:21Z
+id: 53
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- task
+- encoding
+- interop
+title: 'UTF-8 is double-encoded everywhere: mojibake in refs and --json, and UTF-8
+  files cannot be imported'
+updated: 2026-08-09T17:00:39Z
+---
+
+Verified independently. karr writes mojibake into its own refs, hands mojibake
+to agents through `--json`, and cannot read a correctly encoded UTF-8 task file
+at all. The interop goal ("task file format 100% compatible with kanban-md") is
+broken for everything outside ASCII.
+
+## Mechanism
+
+`YAML::XS::Dump` returns UTF-8 **octets** and `Load` expects octets, but karr
+mixes those with character-level IO and never decodes `@ARGV`:
+
+- `Task.pm:132` — `Dump` output (octets) treated as characters
+- `Task.pm:141`/`:146` — `Load` fed a character string
+- `Task.pm:158` — `slurp_utf8` (decodes)
+- `Task.pm:167` — `spew_utf8` (encodes again)
+
+## Reproduction — writing
+
+    karr create "Fix Ünicode — ärger"
+    git cat-file -p <ref>:data | grep '^title:'
+      -> title: "Fix Ã\x9Cnicode â\x80\x94 Ã¤rger"     # double-encoded in the ref
+
+    karr show 1        -> Task #1: Fix Ünicode — ärger   # looks fine!
+    karr show 1 --json -> {"title":"Fix Ãnicode â Ã¤rger"}
+
+The plain-text output only looks correct because two encoding errors cancel out.
+`--json` is the one an agent parses, and it is wrong.
+
+## Reproduction — reading
+
+A correctly UTF-8-encoded task file (title `Café latte`, `c3 a9` on disk):
+
+    karr import --yes
+    -> YAML::XS::Load Error: The problem:
+           invalid trailing UTF-8 octet
+       was found at document: 0
+    exit 1
+
+So karr cannot import any kanban-md file with a non-ASCII character in the
+frontmatter.
+
+## Fix
+
+Decide one boundary and hold it: keep everything internal as character strings
+and encode only at the IO edges (or the reverse), then make `Dump`/`Load`,
+`slurp_utf8`/`spew_utf8`, the ref read/write path and `@ARGV` all agree. Decode
+`@ARGV` explicitly (`Encode::decode` with the locale, or `use open`).
+
+Ticket #33 fixed one symptom of this at the `karr skill show` print site; this
+is the underlying inconsistency. Regression test needs the full round trip:
+argv -> ref -> show -> --json -> materialize -> import -> ref, with a non-ASCII
+title, body and tag, plus reading a file kanban-md wrote.
+Fixed in 46f006b. Reviewed by delight-agronomy: full diff read, prove -lr t/ re-run independently — 70 files, 442 tests, PASS.
