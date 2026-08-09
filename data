@@ -1,0 +1,57 @@
+---
+claimed_at: 2026-08-09T04:35:15Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T00:29:33Z
+id: 37
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- sync
+- syncguard
+title: SyncGuard insurance push never fires at a safe time on the CLI die path
+updated: 2026-08-09T04:40:13Z
+---
+
+Split out of #34, which fixed the machine-killing part but deliberately left this open.
+
+## What
+
+App::karr::Role::SyncLifecycle/sync_before arms an App::karr::SyncGuard and stashes it on the command object as "insurance": if the body dies before sync_after, DESTROY is supposed to push anyway (#28).
+
+On the CLI that never actually happens at a usable time. bin/karr wraps the run in `eval { App::karr->new_with_cmd; 1 }`; when a command body dies the eval catches it, prints, and exits. Nothing releases the guard, and the command object is kept alive by the MooX::Cmd command_chain, so the guard is first reaped during GLOBAL DESTRUCTION.
+
+Before #34 that meant one of two things, depending on teardown order:
+  * $git still alive  -> a real push attempt into libgit2/FFI, which recursed until the box was out of memory (that was #34)
+  * $git already gone -> "(in cleanup) Can't call method \"push\" on an undefined value", i.e. the insurance silently evaporating
+
+#34 made this deterministic and safe: SyncGuard::DESTROY now refuses to push once ${^GLOBAL_PHASE} is DESTRUCT and instead prints "Push skipped ... Run 'karr sync'" when refs were actually written. Safe and honest, but it is a report, not the automatic push #28 promised.
+
+## Why it was not fixed in #34
+
+Fixing it properly means releasing the guard at a deterministic point, and the guard is not reachable from bin/karr: when a command dies, new_with_cmd never returns, so there is no handle on the command chain. The plausible route is a process-level registry of armed guards flushed from an END block (END runs before global destruction, while the interpreter is still whole). That is real machinery and a behaviour change to the die path, so it wants its own ticket rather than riding along on a crash fix.
+
+## Impact
+
+Low and bounded: local refs are always intact, the user/agent is told to run `karr sync`, and every command that succeeds pushes normally via sync_after. Only the "died after writing but before sync_after" window is left to a manual sync.
+
+## Acceptance
+
+  * a command that dies after writing refs pushes them before the process exits, or documents that it will not
+  * no git/FFI work in global destruction (the #34 invariant must hold)
+  * regression test covering die-after-write
+Fixed. Approach: process-wide registry of armed guards in App::karr::SyncGuard (%ARMED, weakened values, keyed by refaddr), drained by a new class method flush_armed, called from an END block in bin/karr.
+
+Chose END-in-bin/karr over END-in-SyncGuard.pm: an END block in a library installs process-lifetime policy on every embedder, and bin/karr already owns the other process-lifetime contract (exit codes, ADR 0002). It also keeps the #34 DESTRUCT safety net genuinely reachable and testable for embedders that never flush -- t/66 needed no changes at all.
+
+Also: sync_after now disarms its guard on failure as well as success. It has already spent the three attempts and its croak carries the same guidance, so leaving it armed made the END flush repeat the identical failing push (six attempts, doubled noise).
+
+Files: lib/App/karr/SyncGuard.pm, lib/App/karr/Role/SyncLifecycle.pm, bin/karr, cpanfile (Scalar::Util), Changes ({{$NEXT}}), t/68-syncguard-end-flush.t (new, 9 subtests).
+
+Verification: reproduced first (karr move 1,999 in-progress --claim X left the remote on 'backlog' while local was 'in-progress'); the new test is red without the lib/bin diff and green with it. prove -lr t/ = 66 files, 412 tests, PASS.
+
+NOT committed -- diff is with the maintainer for review.
+Reviewed by delight-agronomy: diff read in full, prove -lr t/ re-run independently — 66 files, 412 tests, PASS, nothing skipped. Committed as 7a414f0.
