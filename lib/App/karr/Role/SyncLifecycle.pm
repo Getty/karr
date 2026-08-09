@@ -62,8 +62,9 @@ sub sync_before {
     my ($self) = @_;
     my $git = $self->can('git') ? $self->git : $self->store->git;
 
-    my $ok   = 0;
-    my $err  = '';
+    my $ok    = 0;
+    my $err   = '';
+    my $shown = '';
     for my $attempt ( 1 .. 3 ) {
         # Retry-only: attempt 1 is silent; only announce the actual retries.
         print STDERR "Pull retry $attempt of 3...\n"
@@ -73,9 +74,15 @@ sub sync_before {
             print STDERR "Pull succeeded.\n" if $attempt > 1 && !$self->quiet;
             last;
         }
-        # Errors always reach STDERR, even under --quiet.
+        # Errors always reach STDERR, even under --quiet (#27). But the same
+        # error once per attempt is not three pieces of information, and
+        # last_error is multi-line now that a rejection lists a reason per ref
+        # (#84) -- three copies of that buries the one thing worth reading. A
+        # repeat of what was just printed is dropped; a *different* error still
+        # gets its own line.
         $err = "git pull failed: " . ( $git->last_error // 'unknown error' );
-        print STDERR "  $err\n";
+        print STDERR "  $err\n" if $err ne $shown;
+        $shown = $err;
         sleep 1 if $attempt < 3;
     }
     croak "Pull failed after 3 attempts: $err\n" unless $ok;
@@ -99,14 +106,20 @@ outcomes: after a successful push there is nothing left to insure, and after a
 failed one the guard's three attempts have just been spent, so re-running them
 from L<App::karr::SyncGuard/flush_armed> would only repeat the failure.
 
+A push the remote I<rejected> per ref (a pre-receive hook, a protected ref)
+is not retried at all: the connection worked and the far side gave its answer,
+which the error message carries ref by ref.
+
 =cut
 
 sub sync_after {
     my ($self) = @_;
     my $git = $self->can('git') ? $self->git : $self->store->git;
 
-    my $ok   = 0;
-    my $err  = '';
+    my $ok       = 0;
+    my $err      = '';
+    my $shown    = '';
+    my $rejected = 0;
     for my $attempt ( 1 .. 3 ) {
         # Retry-only: attempt 1 is silent; only announce the actual retries.
         print STDERR "Push retry $attempt of 3...\n"
@@ -116,9 +129,19 @@ sub sync_after {
             print STDERR "Push succeeded.\n" if $attempt > 1 && !$self->quiet;
             last;
         }
-        # Errors always reach STDERR, even under --quiet.
+        # Always shown, never three times over -- see sync_before.
         $err = "git push failed: " . ( $git->last_error // 'unknown error' );
-        print STDERR "  $err\n";
+        print STDERR "  $err\n" if $err ne $shown;
+        $shown = $err;
+
+        # A per-ref rejection is final (#84): the remote was reached and said
+        # no, so two more attempts would only collect the same refusal twice
+        # more, at a second each, on every writing command. The `can` is for
+        # the duck-typed git objects the sync tests drive this role with.
+        $rejected = $git->can('push_rejections')
+                 && @{ $git->push_rejections } ? 1 : 0;
+        last if $rejected;
+
         sleep 1 if $attempt < 3;
     }
     # Neutralise the insurance guard on both outcomes.
@@ -130,11 +153,18 @@ sub sync_after {
     # made and the croak below carries the same "run karr sync" guidance, so
     # leaving the guard armed would only make the END flush in bin/karr (#37)
     # repeat the identical failing push, doubling both the delay and the noise
-    # on an already-failing command.
+    # on an already-failing command. On a per-ref rejection the attempts were
+    # not spent, but the answer was given (#84), so it holds there too.
     $self->_release_guard;
 
+    return if $ok;
+
+    croak "Push rejected by the remote. Local refs are intact.\n"
+      . "The refs above were refused, not lost in transit, so pushing again "
+      . "would only be refused again.\n" if $rejected;
+
     croak "Push failed after 3 attempts. Local refs are intact.\n"
-      . "Run 'karr sync' to retry.\n" unless $ok;
+      . "Run 'karr sync' to retry.\n";
 }
 
 sub _release_guard {
