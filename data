@@ -1,0 +1,40 @@
+---
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:35:41Z
+id: 41
+priority: high
+status: done
+tags:
+- bug
+- sync
+- git
+title: 'CLI fallback and libgit2 disagree on a diverged board: silent no-op vs. permanent
+  lockout'
+updated: 2026-08-09T17:53:22Z
+---
+
+Same repo, same refs, same operation — the two transports disagree completely.
+Depends on the pull bug (see the ticket about pull silently not updating refs);
+that one is the cause, this is what the CLI-fallback path does with it.
+
+`lib/App/karr/Git.pm:361-377`. Observed on an identical diverged board:
+
+    native pull rv=1  last_error=(none)                    # silently no-op
+    cli    fetch rv=0  last_error=... ! [rejected] ... (non-fast-forward)
+
+The CLI fallback is the documented transport for ssh-config/ProxyCommand
+remotes, so this is not a corner case for anyone using a jump host. On that
+path a diverged board makes **every writing command fail forever**:
+
+    karr --dir b edit 1 -a "B2"
+    -> 3x "git pull failed: ... (non-fast-forward)"
+    -> Pull failed after 3 attempts ... at lib/App/karr/Cmd/Edit.pm line 144
+    EXIT=1
+
+`karr sync` fails identically, so there is no way to recover from inside karr.
+The clone is bricked until someone runs raw git by hand.
+
+Two backends, opposite outcomes on the same state: silent corruption on one,
+total lockout on the other. Whatever the fix for the pull refspec is, it has to
+land on both transports, and there should be a test that asserts the two agree.
