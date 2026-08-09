@@ -175,10 +175,19 @@ sub peek_next_id {
 
 sub allocate_next_id {
     my ($self) = @_;
-    my $id = $self->peek_next_id;
-    $self->git->write_next_id_ref( $id + 1 );
-    return $id;
+    return $self->git->allocate_next_id_ref;
 }
+
+=head2 allocate_next_id
+
+Returns the next free task id and moves the counter past it, atomically. Two
+agents running C<karr create> at the same time are guaranteed different ids;
+before this was a compare-and-swap they could both be handed the same one and
+the second task overwrote the first (#44).
+
+    my $id = $store->allocate_next_id;
+
+=cut
 
 sub set_next_id {
     my ( $self, $next_id ) = @_;

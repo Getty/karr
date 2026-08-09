@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
+      out by reading a counter ref and writing it back, so two agents that read
+      it at the same time were given the same ID and the second task ref
+      overwrote the first — 40 successful creates produced 32 tasks, with no
+      warning on either side. Allocation is now a compare-and-swap against the
+      counter ref, retried on contention, so concurrent agents always get
+      distinct IDs.
+    - Fixed task locking granting the same lock to every agent at once. Lock
+      acquisition checked the lock ref and then wrote it, so all 16 contenders
+      in a race passed the check and all 16 were told they had acquired it,
+      while the ref could only hold one. Acquisition is now an atomic
+      create-if-absent: exactly one agent wins and the rest get the usual
+      "locked by ..." answer. Note this does not on its own make `karr pick`
+      safe for concurrent agents — pick still decides which task to take from a
+      snapshot read before the lock, so it can hand out a task another agent
+      has already claimed. That is a separate fix.
+    - Fixed ordinary ref contention aborting commands with a raw libgit2 error
+      ("failed to lock file '.../lock.lock' for writing") followed by a stack
+      trace of module paths and line numbers. Losing the race for a ref's lock
+      file is now retried with a randomised backoff, and a ref write that
+      genuinely fails reports a single karr-level line.
     - Raised the minimum Git::Native to 0.004 and Git::Libgit2 to 0.005. Those
       releases add compare-and-swap reference updates (`expected_old`) and
       per-ref outcomes from fetch/push, which karr needs to make ID allocation

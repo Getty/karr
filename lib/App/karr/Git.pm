@@ -11,7 +11,9 @@ use IO::Select;
 use Symbol qw( gensym );
 use Errno qw( EINTR );
 use POSIX qw( WNOHANG );
+use Scalar::Util qw( blessed );
 use Time::HiRes ();
+use Git::Libgit2 qw( GIT_ELOCKED );
 use App::karr::Encoding qw(
     BOARD_ENCODING_VERSION
     to_octets from_octets yaml_dump yaml_load repair_mojibake
@@ -243,40 +245,184 @@ sub validate_helper_ref {
 
 # ----- Ref CRUD (the hotspot — was 4 fork/exec per write_ref) -----
 
-# Ref blobs are the octet edge of the board (see App::karr::Encoding): callers
-# above this line hand over and receive character strings, and write_ref /
-# read_ref are the only two places that convert.
-sub write_ref {
-    my ( $self, $ref, $content ) = @_;
-    my $repo = $self->_repo or return;
+# How many times a contended ref write is re-attempted before karr gives up,
+# and the backoff between attempts. Contention here is measured in the time it
+# takes libgit2 to take refs/<name>.lock, write and rename -- microseconds --
+# so a few milliseconds of randomised sleep is enough to break up a pile-up.
+# The randomisation is the point: a fixed delay makes every loser wake up
+# together and collide again.
+#
+# Bounded on purpose. karr is driven by unattended agents, and a write loop
+# that can spin forever on a genuinely wedged ref is worse than one that fails
+# with something the agent can report.
+use constant CAS_ATTEMPTS       => 32;
+use constant CAS_BACKOFF_STEP   => 0.001;   # seconds, times the attempt number
+use constant CAS_BACKOFF_CAP    => 0.010;   # ...but never longer than this
+use constant CAS_BACKOFF_JITTER => 0.005;
 
+# Run $attempt until it commits to an answer, with backoff in between.
+#
+# $attempt returns the empty list to mean "another writer got in first, read
+# again and retry"; any other return value is the final answer and comes back
+# to the caller untouched (in list context as the list it returned). Anything
+# it dies with propagates immediately -- a real failure is not retried.
+#
+# Every compare-and-swap caller goes through here, so the rules for what counts
+# as contention live in exactly one place (see _is_contended_ref_error).
+sub retry_contended {
+    my ( $self, $what, $attempt ) = @_;
+    for my $try ( 1 .. CAS_ATTEMPTS ) {
+        my @answer = $attempt->($try);
+        return wantarray ? @answer : $answer[0] if @answer;
+        _cas_backoff($try);
+    }
+    die "karr: gave up updating $what after " . CAS_ATTEMPTS
+      . " attempts -- too many agents are writing the board at once. "
+      . "Try again.\n";
+}
+
+sub _cas_backoff {
+    my ($try) = @_;
+    my $step = CAS_BACKOFF_STEP * $try;
+    $step = CAS_BACKOFF_CAP if $step > CAS_BACKOFF_CAP;
+    Time::HiRes::sleep( $step + rand CAS_BACKOFF_JITTER );
+    return;
+}
+
+# A ref write fails for two very different reasons once more than one agent is
+# on the board, and telling them apart is the whole fix for #44 and #46:
+#
+#   GIT_EMODIFIED  the ref moved out from under the OID we guarded against
+#   GIT_ENOTFOUND  ...or was deleted, which is the same thing when we expected
+#                  a specific old value
+#   GIT_ELOCKED    another process holds refs/<name>.lock right now
+#
+# All three are transient: read again and retry. Everything else is real.
+#
+# GIT_ELOCKED is the one that actually decides whether this works. It is the
+# common outcome under contention -- libgit2 takes a lock file per ref -- and
+# Git::Native::Error has no predicate for it, so it has to be compared against
+# the code. A loop that retries only is_not_matched still loses most writes:
+# 16 contenders on one counter left 4 processes dead and 4 increments missing.
+sub _is_contended_ref_error {
+    my ( $err, $guarded ) = @_;
+    return 0 unless blessed($err) && $err->isa('Git::Native::Error');
+    return 1 if $err->code == GIT_ELOCKED;
+    return 1 if $err->is_not_matched;
+    return 1 if $guarded && $err->is_not_found;
+    return 0;
+}
+
+# libgit2 exceptions are Throwable::Error, so stringifying one prints the
+# message followed by a stack trace full of module paths and line numbers.
+# That used to reach the user verbatim when an ordinary concurrent ref write
+# aborted a command mid-body (#46). Keep the first line of libgit2's own
+# message and drop the rest; the trailing newline stops perl appending
+# " at ... line N." on top.
+sub _ref_write_error {
+    my ( $ref, $err ) = @_;
+    my $detail = blessed($err) && $err->can('message') ? $err->message : "$err";
+    $detail =~ s/ at \S+ line \d+\.?.*\z//s;
+    $detail =~ s/\n.*\z//s;
+    $detail =~ s/\s+\z//;
+    $detail = 'unknown git error' unless length $detail;
+    return "karr: could not write $ref: $detail\n";
+}
+
+# The parentless commit every board ref points at. Built once per write, not
+# once per attempt: the content does not change while we are losing races for
+# the ref, and rebuilding it would leave a dangling object behind each time.
+sub _commit_for_content {
+    my ( $self, $repo, $content ) = @_;
     my $blob_oid = $repo->blob_create_frombuffer( to_octets($content) );
     my $tb       = $repo->tree_builder;
     $tb->insert(name => 'data', oid => $blob_oid, mode => 0100644);
     my $tree_oid = $tb->write;
 
     my $sig = $self->_signature;
-    my $commit_oid = $repo->commit_create(
+    return $repo->commit_create(
         tree       => $tree_oid,
         parents    => [],
         message    => 'karr ref update',
         author     => $sig,
         committer  => $sig,
     );
+}
 
-    $repo->reference_create( $ref, $commit_oid, force => 1 );
+# Ref blobs are the octet edge of the board (see App::karr::Encoding): callers
+# above this line hand over and receive character strings, and
+# _commit_for_content / read_ref_with_oid are the only two places that convert.
+#
+# Unconditional last-writer-wins, which is what most callers want. It still
+# retries, because losing the race for refs/<name>.lock is not a failed write,
+# it is a write that has not been attempted yet -- letting that escape killed
+# 9 of 12 contenders outright (#46).
+sub write_ref {
+    my ( $self, $ref, $content ) = @_;
+    my $repo = $self->_repo or return;
+    my $commit_oid = $self->_commit_for_content( $repo, $content );
+
+    return $self->retry_contended( "ref $ref", sub {
+        my $wrote = try {
+            $repo->reference_create( $ref, $commit_oid, force => 1 );
+            1;
+        } catch {
+            my $err = $_;
+            return 0 if _is_contended_ref_error( $err, 0 );
+            die _ref_write_error( $ref, $err );
+        };
+        return () unless $wrote;
+        $WRITES++;
+        return 1;
+    } );
+}
+
+# Compare-and-swap sibling of write_ref: the write lands only if the ref still
+# holds $expected_old, where undef means "the ref must not exist at all".
+#
+# Returns 1 when the write landed and 0 when someone else got there first --
+# the caller is expected to be inside retry_contended, re-read whatever it
+# decided on, and try again. A real failure dies with a karr-level message.
+#
+# $WRITES counts writes that actually landed. SyncGuard reads it to decide
+# whether local refs still need pushing, so a lost race must not bump it.
+sub write_ref_cas {
+    my ( $self, $ref, $content, $expected_old ) = @_;
+    my $repo = $self->_repo
+        or die "karr: could not write $ref: "
+             . ( $self->last_error // 'no usable git repository' ) . "\n";
+
+    my $commit_oid = $self->_commit_for_content( $repo, $content );
+    my $wrote = try {
+        $repo->reference_create( $ref, $commit_oid,
+            expected_old => $expected_old );
+        1;
+    } catch {
+        my $err = $_;
+        return 0 if _is_contended_ref_error( $err, defined $expected_old );
+        die _ref_write_error( $ref, $err );
+    };
+    return 0 unless $wrote;
     $WRITES++;
     return 1;
 }
 
-sub read_ref {
+# Two answers from one read: the OID the ref points at (undef when the ref is
+# absent) and the content of that exact commit. Compare-and-swap callers need
+# both together -- deciding on content fetched independently of the OID would
+# guard the write against the wrong revision.
+sub read_ref_with_oid {
     my ( $self, $ref ) = @_;
-    my $repo = $self->_repo or return '';
+    my $repo = $self->_repo or return ( undef, '' );
+
+    # Ask whether the ref is there before looking it up. Letting Git::Native
+    # throw for a miss would build a full Throwable stack trace, and this runs
+    # once per task load.
+    return ( undef, '' ) unless $repo->reference_exists($ref);
+    my $oid = try { $repo->reference($ref)->target } catch { undef };
+    return ( undef, '' ) unless $oid;
+
     my $content = try {
-        return '' unless $repo->reference_exists($ref);
-        my $r      = $repo->reference($ref);
-        my $oid    = $r->target;
-        return '' unless $oid;
         my $commit = $repo->commit($oid);
         my $tree   = $commit->tree;
         my $entry  = $tree->entry_by_name('data');
@@ -286,7 +432,12 @@ sub read_ref {
     $content = from_octets($content);
     # Match historical CLI behaviour: cat-file's trailing newline was chomped.
     chomp $content if defined $content;
-    return $content;
+    return ( $oid->hex, $content );
+}
+
+sub read_ref {
+    my ( $self, $ref ) = @_;
+    return ( $self->read_ref_with_oid($ref) )[1];
 }
 
 sub ref_exists {
@@ -919,17 +1070,41 @@ sub write_config_ref {
     return $self->write_ref( 'refs/karr/config', yaml_dump($data) );
 }
 
+use constant NEXT_ID_REF => 'refs/karr/meta/next-id';
+
+sub _parse_next_id {
+    my ($raw) = @_;
+    $raw = '' unless defined $raw;
+    $raw =~ s/\s+\z//;
+    return $raw =~ /^\d+$/ ? int($raw) : 1;
+}
+
 sub read_next_id_ref {
     my ($self) = @_;
-    my $content = $self->read_ref('refs/karr/meta/next-id');
-    return 1 unless length $content;
-    $content =~ s/\s+\z//;
-    return $content =~ /^\d+$/ ? int($content) : 1;
+    return _parse_next_id( $self->read_ref(NEXT_ID_REF) );
 }
 
 sub write_next_id_ref {
     my ( $self, $next_id ) = @_;
-    return $self->write_ref( 'refs/karr/meta/next-id', "$next_id\n" );
+    return $self->write_ref( NEXT_ID_REF, "$next_id\n" );
+}
+
+# Hand out one id and move the counter past it in a single guarded step.
+#
+# The old read-then-write lost tasks outright: two agents that read the same
+# counter both got that id, wrote the same refs/karr/tasks/N/data, and the
+# loser's task was destroyed with both processes reporting success -- 40
+# parallel creates produced 32 tasks (#44). The counter has to be re-read
+# inside the loop, not once outside it: retrying with the value that already
+# lost would just lose again.
+sub allocate_next_id_ref {
+    my ($self) = @_;
+    return $self->retry_contended( 'the next-id counter', sub {
+        my ( $oid, $raw ) = $self->read_ref_with_oid(NEXT_ID_REF);
+        my $id = _parse_next_id($raw);
+        return () unless $self->write_ref_cas( NEXT_ID_REF, ($id + 1) . "\n", $oid );
+        return $id;
+    } );
 }
 
 sub delete_refs {
