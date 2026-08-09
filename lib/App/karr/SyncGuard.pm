@@ -5,6 +5,7 @@ our $VERSION = '0.403';
 use Moo;
 use strict;
 use warnings;
+use App::karr::Git;
 
 =head1 SYNOPSIS
 
@@ -23,6 +24,17 @@ L<App::karr::SyncGuard> is created by L<App::karr::Role::SyncLifecycle/sync_befo
 It acts as an insurance policy: if the command body dies or croaks before
 L<App::karr::Role::SyncLifecycle/sync_after> is called explicitly, the guard's
 DESTROY runs sync_after with retry logic, ensuring refs are pushed even on failure.
+
+The one case it deliberately does not retry is a guard that survives to Perl's
+global destruction, which is where the CLI's own error handler leaves it.
+L<App::karr::Git> is not re-entrant in that phase: pushing from there drove
+L<FFI::Platypus>'s type parser into unbounded recursion until the machine was
+out of memory. DESTROY therefore reports instead of pushing once
+C<${^GLOBAL_PHASE}> is C<DESTRUCT>, and stays silent when
+C<$App::karr::Git::WRITES> shows no ref was ever written. It reads that package
+scalar rather than the C<git> attribute because blessed objects are destroyed
+in undefined order in this phase. Local refs are untouched either way, so
+C<karr sync> completes the push.
 
 =cut
 
@@ -78,6 +90,24 @@ sub errs {
 sub DESTROY {
     my ($self) = @_;
     return if $self->{_done};
+
+    # A guard only reaped during global destruction cannot push. By then Perl
+    # is destroying blessed objects in no defined order, and App::karr::Git's
+    # libgit2/FFI layer is explicitly not re-entrant in that phase -- attempting
+    # it recursed until the machine was out of memory (#34). Report instead of
+    # pushing; the refs are still on disk.
+    #
+    # Nothing here may touch $self->{git}: it is a blessed object and may
+    # already have been reaped, which is exactly what made this branch
+    # nondeterministic before. $App::karr::Git::WRITES is a plain package
+    # scalar, still readable throughout this phase, so "the body died before
+    # writing anything" is decided on real state rather than on teardown order.
+    if ( ${^GLOBAL_PHASE} eq 'DESTRUCT' ) {
+        return unless $App::karr::Git::WRITES;
+        warn "Push skipped: karr exited before the board was pushed.\n"
+          . "Local refs are intact. Run 'karr sync' to push them.\n";
+        return;
+    }
 
     my $git  = $self->git;
     my $ok   = 0;

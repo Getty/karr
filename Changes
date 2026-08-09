@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - Fixed a runaway that could take the whole machine down: after a command
+      died (a plain usage error was enough), the sync guard was only reaped in
+      Perl's global destruction and pushed from there. libgit2 is reached
+      through FFI::Platypus, whose type parser and library-search tables are
+      already being freed in that phase, so the push re-entered them and
+      recursed without bound — observed at 53 GB RSS on a 62 GB box, killable
+      only from outside. It needed a board with a remote to trigger, which is
+      why boards without one never showed it. App::karr::Git now refuses every
+      native operation while `${^GLOBAL_PHASE}` is `DESTRUCT`, so the whole
+      class of teardown re-entry degrades into an ordinary error.
+    - Behaviour change on the die path: a sync guard reaped in global
+      destruction reports instead of pushing. When refs were written but never
+      pushed it now prints "Local refs are intact. Run 'karr sync' to push
+      them."; when the command died before writing anything it stays silent.
+      The automatic insurance push promised for this window never actually
+      worked (it either recursed as above or was lost as an "(in cleanup)"
+      warning) — making it deterministic is what exposed that. Restoring a real
+      push is tracked separately.
     - `karr skill show` no longer warns "Wide character in print". The bundled
       skill file is read decoded, so it is now encoded back to UTF-8 bytes at
       the one print site. The output bytes were always correct, but the warning

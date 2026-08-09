@@ -65,10 +65,54 @@ sub last_error {
     return $self->{_last_error};
 }
 
+# Ref writes and deletes performed in this process. App::karr::SyncGuard reads
+# it on the die path -- where no push has succeeded by definition -- to tell
+# "the command died before writing anything" (nothing to push, stay quiet)
+# apart from "local refs changed and never reached the remote" (say so).
+#
+# Deliberately a package scalar rather than per-object state. The guard reads
+# the count from DESTROY during global destruction, and perl tears that phase
+# down in two passes: sv_clean_objs() destroys every blessed object first, then
+# sv_clean_all() frees everything else. So when DESTROY runs, another object may
+# already be gone while a plain non-object SV like this one is still intact.
+# Reading the count off $git made the quiet/loud decision a coin flip -- over 60
+# identical runs of one failing command $git was still there 52 times and
+# already reaped 8, so 13% of plain usage errors printed sync advice for a
+# board that had never been written to (#34).
+our $WRITES = 0;
+
+sub pending_writes {
+    return $WRITES;
+}
+
 # ----- Native repository handle (lazy) -----
+
+# libgit2 is reached through FFI::Platypus, and both its type parser and
+# FFI::CheckLib's library-search tables are package-level state. Perl frees
+# that state during global destruction in no defined order, and re-entering it
+# there does not fail cleanly: FFI::CheckLib re-runs its search against
+# already-undefined globals and FFI::Platypus::TypeParser::Version1::parse
+# recurses without bound, allocating around 700 MB/s until the machine is out
+# of memory (#34 -- observed at 53 GB RSS on a 62 GB box, killable only from
+# outside).
+#
+# karr is built to be driven by unattended agents, so that failure mode is not
+# survivable. _repo and is_repo are the gate: every native operation reachable
+# from a teardown path goes through them, and every caller already treats a
+# false _repo as "no usable repository", so the runaway degrades into an
+# ordinary failure with last_error set. (validate_helper_ref calls libgit2
+# directly, but nothing destroys helper refs during teardown.)
+sub _in_global_destruction {
+    return ${^GLOBAL_PHASE} eq 'DESTRUCT' ? 1 : 0;
+}
 
 sub _repo {
     my ($self) = @_;
+    if ( _in_global_destruction() ) {
+        $self->{_last_error} =
+            'refused: libgit2 is not re-entrant during global destruction';
+        return undef;
+    }
     return $self->{_repo} if $self->{_repo};
     return undef unless $self->is_repo;
     $self->{_repo} = Git::Native->open_ext( $self->dir->stringify );
@@ -94,6 +138,7 @@ sub _signature {
 
 sub is_repo {
     my ($self) = @_;
+    return 0 if _in_global_destruction();
     my $ok = try {
         # open_ext walks up to find a .git; throws on miss.
         Git::Native->open_ext( $self->dir->stringify );
@@ -195,6 +240,7 @@ sub write_ref {
     );
 
     $repo->reference_create( $ref, $commit_oid, force => 1 );
+    $WRITES++;
     return 1;
 }
 
@@ -227,6 +273,7 @@ sub delete_ref {
     my ( $self, $ref ) = @_;
     my $repo = $self->_repo or return 0;
     try { $repo->reference_delete($ref) };
+    $WRITES++;
     return 1;
 }
 
