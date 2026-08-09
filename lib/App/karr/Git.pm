@@ -180,6 +180,50 @@ sub repo_root {
     return path($root);
 }
 
+# ----- Working-tree file status -----
+
+# libgit2's status flags. A path git carries in the index or HEAD reports
+# anything *except* these two: GIT_STATUS_WT_NEW is "untracked" and
+# GIT_STATUS_IGNORED is "untracked and matched by a .gitignore rule". An
+# unmodified tracked file reports GIT_STATUS_CURRENT (0), and ignore rules do
+# not apply to tracked files -- which is the case that matters here, because
+# `karr init` puts tasks/ and config.yml into .gitignore.
+use constant GIT_STATUS_WT_NEW  => 0x0080;
+use constant GIT_STATUS_IGNORED => 0x4000;
+
+sub is_tracked {
+    my ( $self, $file ) = @_;
+    my $repo = $self->_repo   or return 0;
+    my $root = $self->repo_root or return 0;
+
+    # status_for_path wants a path relative to the work tree. Resolve both ends
+    # through the containing directory (the file itself may not exist yet) so a
+    # symlinked work tree does not make every path look like it escapes.
+    $file = path($file)->absolute;
+    my $parent = try { $file->parent->realpath } catch { undef } or return 0;
+    my $base   = try { $root->realpath }        catch { $root };
+    my $rel    = $parent->child( $file->basename )->relative($base)->stringify;
+    return 0 if $rel =~ m{\A\.\.(?:/|\z)};   # outside the work tree
+
+    # Throws GIT_ENOTFOUND for a path git has never heard of and that is not on
+    # disk either; that is simply "not tracked".
+    my $status = try { $repo->status_for_path($rel) } catch { undef };
+    return 0 unless defined $status;
+    return $status & ( GIT_STATUS_WT_NEW | GIT_STATUS_IGNORED ) ? 0 : 1;
+}
+
+=head2 is_tracked
+
+Returns true when the given working-tree path is under version control -- known
+to the index or to C<HEAD>. Untracked and ignored paths, paths outside the work
+tree, and anything in a repository that cannot be opened all return false.
+
+    if ( $git->is_tracked($file) ) {
+        # deleting or overwriting it would be data loss
+    }
+
+=cut
+
 # ----- User identity (read via native config, not via CLI) -----
 
 sub _config_string {

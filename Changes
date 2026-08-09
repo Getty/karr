@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - Fixed `karr materialize` silently deleting and overwriting tracked
+      project files. It wrote its file view straight into the working tree —
+      replacing `config.yml` and removing every `tasks/*.md` — so a repository
+      that already kept its own `tasks/` directory or `config.yml` lost them,
+      from a command that only reads the board. Materialize now refuses to run
+      when it would overwrite or delete anything Git tracks, names each such
+      path, and writes nothing on that path; `--force` overrides it. The sweep
+      of stale cards is also limited to files named the way karr and kanban-md
+      name them (`NNN-slug.md`), so unrelated files in `tasks/` are left alone.
+    - Fixed `karr import --yes` wiping the board when `tasks/` exists but holds
+      no cards. The guard only checked that the directory was there, so an
+      empty view imported zero tasks, deleted every task ref and exited 0
+      reporting success. An empty view is now refused.
+    - Fixed `karr import` leaving the board half-written when one file is
+      malformed. Refs were written as files were parsed, so a bad card aborted
+      the run mid-way with some tasks updated, the prune never reached, and a
+      bare "Invalid task format" that named no file. The whole view is now
+      parsed before any ref is touched: the import either applies completely or
+      changes nothing, and every rejected file is listed with its reason.
+      `App::karr::Task::from_file` names the file in all its errors.
+    - Fixed `karr materialize` writing a `config.yml` that kanban-md refuses to
+      load, which defeated the purpose of the file view. Perl's `1`/`0` were
+      dumped as YAML integers where kanban-md's schema wants booleans
+      (`require_claim`, `bypass_column_wip`), and `next_id`, which it validates
+      as `>= 1`, was never written at all. The view now carries real YAML
+      booleans and `next_id`; the counter itself stays in
+      `refs/karr/meta/next-id` and import continues to ignore the file's copy.
     - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
       out by reading a counter ref and writing it back, so two agents that read
       it at the same time were given the same ID and the second task ref
