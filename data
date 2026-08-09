@@ -1,0 +1,108 @@
+---
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:36:38Z
+id: 46
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- race
+- lock
+title: "Lock::acquire is not atomic â\x80\x94 all contenders can win, and write_ref
+  leaks raw libgit2 errors"
+updated: 2026-08-09T21:27:29Z
+---
+
+`lib/App/karr/Lock.pm:55-60`. `acquire` does `get` then `write_ref` — a plain
+TOCTOU window with no atomicity. Every contender can pass the check.
+
+16 forked processes with a wall-clock barrier, three runs:
+
+    run 1: acquired=16 denied=0   total=16/16   <-- every contender "acquired" it
+    run 2: acquired=2  denied=12  total=14/16
+    run 3: acquired=7  denied=8   total=15/16
+
+So the guarantee `Cmd/Pick.pm` documents ("avoid concurrent agents selecting the
+same task") does not hold at all.
+
+The missing totals in runs 2 and 3 are a second bug in the same repro: those
+processes **died with an uncaught raw libgit2 error**
+
+    libgit2 error -14 (klass 2): failed to lock file '.../tasks/1/lock.lock' for writing:
+
+`write_ref` (`Git.pm:225-246`) has no error handling, so an ordinary concurrent
+ref write aborts the command mid-body with a message no user can act on.
+
+Fix: make acquisition atomic (create-if-absent on the ref, i.e. a ref write with
+an expected-old-value of "does not exist"), and give `write_ref` real error
+handling so contention surfaces as a retry or a clean karr error instead of a
+raw libgit2 line.
+
+Related: the ticket about orphaned locks bricking the board covers the missing
+TTL, the missing unlock command, and the release-after-sync ordering.
+Unblocked: the upstream CAS API is released and pinned (#80, #83, commit 3d54e03).
+
+Lock::acquire can now be atomic: create the lock ref with
+Git::Native::Repository::reference_create($ref, $oid, expected_old => undef),
+which fails if the ref already exists, so exactly one contender wins instead of
+all of them. Releasing/stealing an expired lock is reference_set_target(...,
+expected_old => $old) against the OID that was read when the expiry was judged,
+so a lock refreshed in between is not stolen.
+
+The second half of this ticket stands unchanged: is_not_matched is the one
+outcome to retry on, everything else is still a raw libgit2 error that
+write_ref must not leak to the user (see #77).
+
+cpanfile is on Git::Native 0.004 / Git::Libgit2 0.005.
+Reproduced 2026-08-09 before the fix: 12 forked contenders calling
+App::karr::Lock::acquire on the same task lock — 3 were told "acquired" while
+the ref ended up holding only one of them. The remaining 9 got neither the lock
+nor a clean (0, "locked by ...") — they died on the raw libgit2 error escaping
+write_ref, which is the second half of this ticket.
+
+Retry contract as for #44: GIT_ELOCKED (-14) is the common contention outcome,
+not is_not_matched. See #85.
+Fixed (working tree, not committed -- maintainer reviews the diff).
+
+Both halves:
+
+1. Lock::acquire is now one compare-and-swap per attempt. An absent lock ref is
+   taken with reference_create(expected_old => undef) -- create-if-absent, so
+   exactly one contender wins. A lock we already hold is refreshed guarded by
+   the OID read in the same attempt. Re-entrancy is unchanged, and another
+   agent's lock still returns (0, 'locked by $current') rather than dying.
+   That OID guard is also the primitive a future expiry/steal needs: a holder
+   that refreshes between the staleness decision and the takeover moves the
+   ref, so the takeover loses instead of overwriting a live lock. (Lock still
+   has no TTL -- that stays with the orphaned-locks ticket.)
+
+2. write_ref no longer lets raw libgit2 errors escape. Losing the race for
+   refs/<name>.lock (GIT_ELOCKED) is retried with randomised backoff instead of
+   aborting the command, and a write that genuinely fails dies with a single
+   'karr: could not write <ref>: <libgit2 message>' line -- no Throwable stack
+   trace, no module paths. Uses die, not croak, so it does not make #77 worse.
+
+Regression test t/75-ref-cas-contention.t, subtest 'parallel Lock::acquire has
+exactly one winner': 12 forked contenders on a wall-clock barrier. Against the
+old code: 11 told 'acquired', 1 dead on the raw libgit2 error, and the ref held
+agent-9 while agent-1 was also told it had won.
+
+Full suite: prove -lr t/ -> Files=73, Tests=460, Result: PASS.
+
+NOTE -- the pick guarantee is still broken for a different reason, filed as
+#86: Cmd/Pick.pm snapshots and filters the task list BEFORE taking any lock and
+never re-reads the task under the lock, so after each agent releases, the next
+one acts on a stale snapshot and claims the same task. 12 parallel 'karr pick'
+still produced 1x task 1, 4x task 2, 7x task 3 -- with the lock working and no
+libgit2 leakage. Out of scope here.
+Fixed in 4f4b375. Lock::acquire is one compare-and-swap per attempt
+(reference_create with expected_old => undef for the exclusive case), and
+write_ref no longer lets a GIT_ELOCKED collision escape as a raw libgit2 stack
+trace — contention is retried, real failures report one karr-level line.
+Verified: 12 contenders, exactly 1 winner, the other 11 cleanly denied (was 3
+winners and 9 dead). Regression test t/75-ref-cas-contention.t.
+
+Note the re-entrancy and steal semantics are unchanged; the orphaned-lock TTL
+is still #45, and pick's own race is #86.
