@@ -22,11 +22,34 @@ exit C<0>.
 
 The complementary half of the contract -- catching the uncaught C<die>s raised
 by command bodies and classifying them into runtime (C<1>) versus usage (C<2>)
--- lives in the central handler in F<bin/karr>. The root command's own
-option-parse errors go through its C<_print_help> override instead of this role,
-and that override applies the same positive-to-C<2> remap.
+-- lives in the central handler in F<bin/karr>. That handler classifies by a
+stable leading marker on the message, so a command that wants to reject an
+invalid invocation itself calls C<usage_error>, which emits the generic marker.
+The root command's own option-parse errors go through its C<_print_help>
+override instead of this role, and that override applies the same
+positive-to-C<2> remap.
+
+=method usage_error
+
+    $self->usage_error("--last must be 1 or greater (got 0)");
+
+Dies with a message carrying the C<Usage error:> marker that F<bin/karr>
+classifies as a usage error, so the process exits C<2>.
+
+This is for misuse that MooX::Options cannot catch on its own: an option value
+that parses but is out of range, a mutually exclusive combination of flags, an
+argument list that is syntactically fine but semantically empty. Anything
+MooX::Options B<can> catch -- an unknown option, a value that does not fit the
+declared C<format> -- already exits C<2> through the C<options_usage> wrapper
+above and must not be re-checked here.
 
 =cut
+
+sub usage_error {
+    my ($self, $message) = @_;
+    chomp $message if defined $message;
+    die "Usage error: " . ( defined $message ? $message : 'invalid invocation' ) . "\n";
+}
 
 around options_usage => sub {
     my ($orig, $self, $code, @rest) = @_;

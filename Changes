@@ -42,6 +42,35 @@
       code itself declared none. Dist::Zilla only inserts a `$VERSION` into a
       file that has a `package` statement, which a script does not — so the
       line has to exist once, after which every release keeps it in step.
+    - `set-refs`, `get-refs` and `agent-name` are reachable again with `--dir`.
+      The dashed spellings were rewritten to their internal command names only
+      at `$ARGV[0]`, so `karr --dir PATH get-refs REF` — the shape an
+      orchestrator driving karr from outside the target repository uses — died
+      with "Unknown command: get-refs". They are now registered as command names
+      in their own right, which also means a payload or title that merely spells
+      one (`karr set-refs REF set-refs`) is stored verbatim. `get-refs` and
+      `set-refs` additionally accept `--dir` after the command, matching every
+      other command and the documented "either position" rule; `agent-name`
+      still does not, since it touches no repository.
+    - `--` now works as the end-of-options separator, so an option-shaped
+      positional can be passed without a named option: `karr create -- --json`
+      creates a task titled "--json" instead of reporting "Title is required".
+      Getopt::Long always honoured the separator, but karr's own positional
+      extraction re-read the escaped tokens as options and dropped them. Applies
+      to every command that takes a positional argument.
+    - `karr get-refs` no longer reports success for a ref that does not exist.
+      It printed an empty line, said "Fetched ..." and exited 0, so the
+      documented `karr get-refs spec.md > spec.md` shape silently truncated the
+      file it was meant to fill. A missing ref is now a runtime failure: "Ref
+      refs/... not found" on stderr, nothing on stdout, exit 1. A ref that
+      exists with an empty payload is still a success.
+    - `karr show --last 0` (and any negative count) is a usage error, exit 2,
+      instead of being clamped to 1 and answering with a task at exit 0.
+      Commands can now raise that class of error through `usage_error` in
+      App::karr::Role::ExitCodes. Still open from the same report: `karr list
+      --sort <bogus>` leaks a raw Perl method-resolution error at exit 1, `karr
+      skill <bogus>` / `karr skill check --agent <bogus>` exit 1, and `karr move
+      , todo` exits 0 in silence — all four should be exit 2.
 
 0.402     2026-08-04 04:46:25Z
 

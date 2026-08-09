@@ -32,12 +32,6 @@ END {
     App::karr::SyncGuard->flush_armed;
 }
 
-if (@ARGV) {
-    $ARGV[0] = 'setrefs' if $ARGV[0] eq 'set-refs';
-    $ARGV[0] = 'getrefs' if $ARGV[0] eq 'get-refs';
-    $ARGV[0] = 'agentname' if $ARGV[0] eq 'agent-name';
-}
-
 my $ran = eval { App::karr->new_with_cmd; 1 };
 if ( !$ran ) {
     my $err = $@;
@@ -51,15 +45,21 @@ if ( !$ran ) {
     #   "Unknown command:"          the dispatch guard in App::karr
     #   "unexpected extra argument"  surplus positionals (Role::CliArgs)
     #   "Usage:"                     a missing required positional
-    # Any new usage-error die must start with one of these. Everything else --
-    # task not found, board missing, a Git/sync failure, a refused destructive
-    # operation -- is a runtime failure (1).
+    #   "Usage error:"               anything a command rejects as misuse that
+    #                                is not one of the shapes above -- raised
+    #                                via App::karr::Role::ExitCodes'
+    #                                usage_error(), which is the generic entry
+    #                                point for e.g. an out-of-range option value
+    # Any new usage-error die must start with one of these; prefer usage_error()
+    # over inventing a fifth marker. Everything else -- task not found, board
+    # missing, a Git/sync failure, a refused destructive operation -- is a
+    # runtime failure (1).
     #
-    # Option-parse errors (unknown option, invalid option value) never reach
+    # Option-parse errors (unknown option, unparseable option value) never reach
     # here: MooX::Options exits 2 directly via App::karr::Role::ExitCodes (and
     # the root's _print_help), so those exits bypass this eval.
     my $is_usage = defined $err
-        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:)/;
+        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:|Usage error:)/;
 
     print STDERR $err if defined $err && length $err;
     exit( $is_usage ? 2 : 1 );
