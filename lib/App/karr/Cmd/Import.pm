@@ -31,6 +31,12 @@ by the file view, and task refs with no matching file are deleted. It therefore
 requires an explicit C<--yes> acknowledgement, and, because it mutates refs, it
 pulls before and pushes after like the other writing commands.
 
+Two things it will not do. An empty F<tasks/> is refused rather than read as
+"delete every task" -- deleting the whole board is what C<karr delete> is for.
+And the import is all-or-nothing: every card is parsed before any ref is
+written, so a malformed file aborts the run with each offending file named and
+the board left exactly as it was.
+
 =head1 OPTIONS
 
 =over 4
@@ -69,9 +75,20 @@ sub execute {
   # missing tasks/ directory would make serialize_from delete all task refs.
   my $store     = $self->store;
   my $board_dir = $self->git_root;
+  my $tasks_dir = $board_dir->child('tasks');
   die "No materialized task view found at $board_dir (no tasks/ directory).\n"
     . "Run 'karr materialize' first, or place a tasks/ directory there before importing.\n"
-    unless $board_dir->child('tasks')->exists;
+    unless $tasks_dir->exists;
+
+  # Ticket #50: the directory existing is not the same as there being a view.
+  # serialize_from prunes every ref the view does not mention, so an empty
+  # tasks/ imported zero tasks, deleted the whole board and reported success.
+  # Empty input means "nothing to import", never "delete everything".
+  my @cards = $tasks_dir->children(qr/\.md$/);
+  die "No task cards found in $tasks_dir -- the file view is empty.\n"
+    . "Importing it would delete every task on the board. Run 'karr materialize' to\n"
+    . "refresh the view, or remove tasks deliberately with 'karr delete ID'.\n"
+    unless @cards;
 
   # Writing command: pull before, push after, with SyncGuard insurance.
   $self->sync_before;

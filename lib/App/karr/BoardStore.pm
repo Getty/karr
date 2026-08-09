@@ -248,23 +248,80 @@ sub delete_all_karr_refs {
 }
 
 sub materialize_to {
-    my ( $self, $board_dir ) = @_;
+    my ( $self, $board_dir, %args ) = @_;
     $board_dir = path($board_dir);
-    my $tasks_dir = $board_dir->child('tasks');
+    my $tasks_dir   = $board_dir->child('tasks');
+    my $config_file = $board_dir->child('config.yml');
+
+    my @stale = $self->_materialized_cards($tasks_dir);
+
+    # Ticket #48: the view is written into the working tree, and `tasks/` and
+    # `config.yml` at a repository root are perfectly ordinary names for a
+    # project to already use. Overwriting or deleting a file Git tracks is data
+    # loss from a command that only reads the board, so check before writing
+    # anything at all -- not even the directories are created on this path.
+    unless ( $args{force} ) {
+        my @tracked = grep { $self->git->is_tracked($_) } $config_file, @stale;
+        die "Refusing to materialize into $board_dir: "
+            . scalar(@tracked)
+            . " file(s) there are tracked by git and would be overwritten or deleted:\n"
+            . join( '', map { '  ' . $_->relative($board_dir) . "\n" } @tracked )
+            . "The file view is disposable board state, not project content. Move those files\n"
+            . "aside, or re-run with --force to replace them.\n"
+            if @tracked;
+    }
+
     $board_dir->mkpath;
     $tasks_dir->mkpath;
 
-    DumpFile( $board_dir->child('config.yml')->stringify, $self->load_config );
-
-    for my $old_file ( $tasks_dir->children(qr/\.md$/) ) {
-        $old_file->remove;
+    {
+        # kanban-md's schema types several config keys as Go bools and rejects
+        # the integers Perl uses for them; JSON::PP is YAML::XS's mode name for
+        # "dump JSON::PP::Boolean as a real YAML boolean" (ticket #60).
+        local $YAML::XS::Boolean = 'JSON::PP';
+        DumpFile(
+            $config_file->stringify,
+            App::karr::Config->file_view_config(
+                $self->load_config,
+                next_id => $self->peek_next_id,
+            ),
+        );
     }
+
+    $_->remove for @stale;
 
     for my $task ( $self->load_tasks ) {
         $task->save($tasks_dir);
     }
 
     return $board_dir;
+}
+
+=head2 materialize_to
+
+Writes the board out to C<$board_dir> as a kanban-md file view: a F<config.yml>
+plus a F<tasks/> directory of cards. Stale cards from an earlier run are swept
+first, but only files named the way karr and kanban-md name them
+(C<NNN-slug.md>) -- anything else in F<tasks/> belongs to the project.
+
+Dies without writing anything when the view would overwrite or delete a file
+Git tracks, naming each one; C<< force => 1 >> proceeds anyway (ticket #48).
+
+    $store->materialize_to( $git_root );
+    $store->materialize_to( $git_root, force => 1 );
+
+=cut
+
+# The files in tasks/ that a previous materialization could have written, i.e.
+# everything shaped like App::karr::Task::filename -- which is also kanban-md's
+# own task-filename prefix (`^(\d+)-` in internal/task/find.go). Anything else
+# in the directory belongs to the project, not to karr, and is never swept
+# (ticket #48).
+sub _materialized_cards {
+    my ( $self, $tasks_dir ) = @_;
+    return () unless $tasks_dir->exists;
+    return sort { $a->basename cmp $b->basename }
+        $tasks_dir->children(qr/\A\d+-.*\.md\z/);
 }
 
 sub file_view_gitignore_entries {
@@ -315,23 +372,54 @@ sub ensure_gitignore {
 sub serialize_from {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);
-    my $config_file = $board_dir->child('config.yml');
-    if ( $config_file->exists ) {
-        my $config = LoadFile( $config_file->stringify );
-        delete $config->{next_id};
-        $self->save_config($config);
+
+    # Ticket #70: parse the entire view before a single ref is touched, so one
+    # malformed card leaves the board exactly as it was instead of half
+    # imported with the prune never reached. Reading the config here rather
+    # than writing it keeps that promise for the config too.
+    my $tasks_dir = $board_dir->child('tasks');
+    my @files     = $tasks_dir->exists
+        ? sort { $a->basename cmp $b->basename } $tasks_dir->children(qr/\.md$/)
+        : ();
+
+    my ( @tasks, @rejected );
+    for my $file (@files) {
+        my $task = eval { App::karr::Task->from_file($file) };
+        if   ($task) { push @tasks, $task }
+        else         { push @rejected, ( $@ || "unknown error\n" ) }
+    }
+    # kanban-md skips malformed files and carries on, but import cannot: a
+    # skipped card's ref would be pruned below, turning an unreadable file into
+    # a deleted task. All or nothing -- and every rejected file is named, which
+    # a bare "Invalid task format" never was.
+    if (@rejected) {
+        die "Refusing to import from $board_dir: "
+            . scalar(@rejected)
+            . " of " . scalar(@files) . " task file(s) could not be parsed:\n"
+            . join( '', map { my $why = $_; chomp $why; "  $why\n" } @rejected )
+            . "No refs were changed. Fix or remove those files and import again.\n";
     }
 
+    my $config_file = $board_dir->child('config.yml');
+    my $config = $config_file->exists
+        ? ( LoadFile( $config_file->stringify ) // {} )
+        : undef;
+    if ( defined $config ) {
+        # next_id belongs to refs/karr/meta/next-id, not to the config; the
+        # seeding below owns it. materialize writes it into the view purely
+        # because kanban-md refuses a config without it (ticket #60).
+        delete $config->{next_id};
+    }
+
+    # Nothing above this line wrote anything.
+    $self->save_config($config) if defined $config;
+
     my %seen;
-    my $tasks_dir = $board_dir->child('tasks');
-    if ( $tasks_dir->exists ) {
-        for my $file ( $tasks_dir->children(qr/\.md$/) ) {
-            my $task = App::karr::Task->from_file($file);
-            # Restore/import path: persist verbatim so the original `updated`
-            # timestamps survive, even when overwriting pre-existing refs.
-            $self->git->save_task_ref($task);
-            $seen{ $task->id } = 1;
-        }
+    for my $task (@tasks) {
+        # Restore/import path: persist verbatim so the original `updated`
+        # timestamps survive, even when overwriting pre-existing refs.
+        $self->git->save_task_ref($task);
+        $seen{ $task->id } = 1;
     }
 
     for my $id ( $self->git->list_task_refs ) {
@@ -359,6 +447,22 @@ sub serialize_from {
 
     return 1;
 }
+
+=head2 serialize_from
+
+Reads a file view at C<$board_dir> back into C<refs/karr/*>: task refs are
+replaced by the cards, refs the view does not mention are pruned, and
+C<next_id> is seeded past the highest imported id when the stored counter is
+missing or stale.
+
+All or nothing. Every card is parsed before the first ref is written, so a
+malformed file aborts the whole import -- listing each rejected file and its
+reason -- with the board left exactly as it was (ticket #70). Refusing an empty
+view is the caller's job; see L<App::karr::Cmd::Import>.
+
+    $store->serialize_from( $git_root );
+
+=cut
 
 sub snapshot {
     my ($self) = @_;
