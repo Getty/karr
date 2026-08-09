@@ -9,7 +9,7 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
-use JSON::MaybeXS qw( decode_json );
+use App::karr::Encoding qw( json_decode );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
 
@@ -85,8 +85,8 @@ sub execute {
         my $content = $git->read_ref($ref);
         next unless $content;
         for my $line (split /\n/, $content) {
-            my $entry = eval { decode_json($line) };
-            push @entries, $entry if $entry;
+            my $entry = eval { json_decode($line) };
+            push @entries, $git->maybe_repair_legacy($entry) if $entry;
         }
     }
 

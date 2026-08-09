@@ -1,5 +1,59 @@
 {{$NEXT}}
 
+    - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
+      out by reading a counter ref and writing it back, so two agents that read
+      it at the same time were given the same ID and the second task ref
+      overwrote the first — 40 successful creates produced 32 tasks, with no
+      warning on either side. Allocation is now a compare-and-swap against the
+      counter ref, retried on contention, so concurrent agents always get
+      distinct IDs.
+    - Fixed task locking granting the same lock to every agent at once. Lock
+      acquisition checked the lock ref and then wrote it, so all 16 contenders
+      in a race passed the check and all 16 were told they had acquired it,
+      while the ref could only hold one. Acquisition is now an atomic
+      create-if-absent: exactly one agent wins and the rest get the usual
+      "locked by ..." answer. Note this does not on its own make `karr pick`
+      safe for concurrent agents — pick still decides which task to take from a
+      snapshot read before the lock, so it can hand out a task another agent
+      has already claimed. That is a separate fix.
+    - Fixed ordinary ref contention aborting commands with a raw libgit2 error
+      ("failed to lock file '.../lock.lock' for writing") followed by a stack
+      trace of module paths and line numbers. Losing the race for a ref's lock
+      file is now retried with a randomised backoff, and a ref write that
+      genuinely fails reports a single karr-level line.
+    - Raised the minimum Git::Native to 0.004 and Git::Libgit2 to 0.005. Those
+      releases add compare-and-swap reference updates (`expected_old`) and
+      per-ref outcomes from fetch/push, which karr needs to make ID allocation
+      and lock acquisition atomic and to notice a server-rejected push. They
+      also fix git+ssh remotes under libgit2 < 1.7 by verifying the hostkey
+      against `~/.ssh/known_hosts`.
+    - Fixed a frontmatter value ending in `---` corrupting the task and
+      bricking the board. The closing delimiter was not anchored to the start
+      of a line, so a value that merely ended in `---` — `karr edit 1 --block
+      "waiting ---"` was enough, and YAML dumps such a value unquoted — cut the
+      frontmatter mid-line. Every command that loads the board then died with
+      "Missing required arguments: id, title", `delete` included, so the board
+      could not be repaired with karr at all. The parser now scans for `---` at
+      a line start, matching kanban-md.
+    - Fixed UTF-8 being encoded twice everywhere. karr passed YAML::XS::Dump
+      output (octets) around as characters, mixed that with character-level
+      file I/O, and never decoded `@ARGV`. Non-ASCII text was therefore stored
+      mojibaked in the refs, handed to agents mojibaked through `--json`,
+      written three encodes deep by `materialize`, and destroyed by
+      `backup`/`restore`; a correctly encoded kanban-md task file could not be
+      imported at all ("invalid trailing UTF-8 octet"). `karr show` looked
+      right only because two errors cancelled out. karr now keeps character
+      strings internally and encodes only at its edges — argv, stdout/stderr,
+      Git ref blobs, YAML and JSON — so non-ASCII titles, bodies, tags, and
+      board names round-trip and kanban-md interop works outside ASCII.
+    - Boards written by earlier versions keep working and are read correctly:
+      the double encoding is undone on load for any board without the new
+      `refs/karr/meta/encoding` marker. New command `karr repair` makes that
+      permanent — it reports by default, rewrites the affected refs with
+      `--yes`, and stamps the marker so nothing guesses at the board's bytes
+      again. It is idempotent, never rewrites a ref whose payload is ASCII, and
+      preserves task timestamps. `karr init` and `karr import --yes` stamp the
+      marker themselves.
     - Fixed a runaway that could take the whole machine down: after a command
       died (a plain usage error was enough), the sync guard was only reaped in
       Perl's global destruction and pushed from there. libgit2 is reached
@@ -42,6 +96,52 @@
       code itself declared none. Dist::Zilla only inserts a `$VERSION` into a
       file that has a `package` statement, which a script does not — so the
       line has to exist once, after which every release keeps it in step.
+    - Fixed silent loss of another agent's work on every shared board. `push`
+      sent `refs/karr/*` with a forced refspec but `pull` fetched with a
+      non-forced one, and since karr writes every board ref as a parentless
+      commit, no update is ever a fast-forward. libgit2 declined the update
+      without reporting an error, so `karr sync` said "Done." and exited 0 while
+      the local ref stayed stale — and the next write force-pushed that stale
+      ref over the other agent's version. A pull now really applies what the
+      remote has, so the board settles on last-writer-wins with no stale read in
+      between. The first sync of a task always worked, which is why this hid.
+    - A task deleted in one clone stays deleted instead of being resurrected by
+      the next clone that writes. Push already pruned, so `karr delete` was not
+      durable in any multi-clone setup.
+    - `pull` no longer fetches straight into the board. The remote state lands
+      in a per-remote tracking mirror under `refs/karr-remote/`, and the board is
+      reconciled against it. That mirror is what tells a ref the remote deleted
+      apart from one that only exists locally because its push failed — the
+      first is pruned, the second is kept, which is what karr promises with
+      "Local refs are intact. Run 'karr sync' to retry.". It also means a board
+      that `karr init` created and never pushed, and a clone that has never
+      fetched, both survive their first sync untouched.
+    - A ref that changed on both sides since the last sync is no longer resolved
+      in silence. The remote version takes the slot, the local one is kept under
+      `refs/karr-conflict/` and a warning names both, so the overwrite is
+      reported and recoverable rather than invisible. Neither `refs/karr-remote/`
+      nor `refs/karr-conflict/` is ever pushed or shown on the board.
+    - Helper refs (`karr set-refs` / `get-refs`) are fetched forced for the same
+      reason, so `karr get-refs` no longer serves a stale local copy after the
+      ref changed on the remote.
+    - The git-CLI transport fallback and libgit2 no longer disagree on a
+      diverged board. The fallback used to fail with "non-fast-forward" on every
+      ref, which made every writing command fail permanently — including `karr
+      sync`, so the clone could only be recovered with raw git. Both transports
+      now take the same refspec, and the reconciliation that follows the fetch
+      is the same code either way, so they reach the same board state.
+    - The git-CLI transport no longer reports success when `git` dies from a
+      signal. It checked `$? >> 8`, which is 0 for a signal death as well as for
+      a clean exit, so a `git` stopped by the OOM killer, a Ctrl-C on the process
+      group or a SIGPIPE was announced as a completed transport while the remote
+      received nothing. The signal is now reported as a failure, with its number.
+    - The git-CLI transport no longer deadlocks past 64 KiB of stderr. It read
+      stdout to EOF before touching stderr, so once the child filled the stderr
+      pipe buffer neither side moved again — reachable with roughly 700 rejected
+      refs, and possible after the command had already printed its result. Both
+      streams are drained together now, and a run is bounded by a wall-clock
+      timeout (120s by default, `KARR_TRANSPORT_TIMEOUT` overrides, `0` disables)
+      after which the child is killed and the transport reported as failed.
     - `set-refs`, `get-refs` and `agent-name` are reachable again with `--dir`.
       The dashed spellings were rewritten to their internal command names only
       at `$ARGV[0]`, so `karr --dir PATH get-refs REF` — the shape an

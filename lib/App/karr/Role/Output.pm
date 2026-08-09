@@ -5,9 +5,9 @@ our $VERSION = '0.403';
 use Moo::Role;
 use MooX::Options;
 # Loaded without importing: a Moo::Role composes every sub in this package into
-# its consumers, so an imported encode_json would become a method on every
+# its consumers, so an imported json_encode would become a method on every
 # command class.
-use JSON::MaybeXS ();
+use App::karr::Encoding ();
 
 =head1 DESCRIPTION
 
@@ -26,9 +26,12 @@ option compact => (
   doc => 'Compact output',
 );
 
+# Characters out, not octets: STDOUT carries the CLI's :encoding(UTF-8) layer
+# (App::karr::Encoding::enable_std_utf8), so encoding here as well would give an
+# agent double-encoded JSON -- the machine-readable half of ticket #53.
 sub print_json {
   my ($self, $data) = @_;
-  print JSON::MaybeXS::encode_json($data) . "\n";
+  print App::karr::Encoding::json_encode($data) . "\n";
 }
 
 =method print_json_results

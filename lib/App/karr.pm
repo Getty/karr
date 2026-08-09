@@ -224,6 +224,7 @@ my @COMMANDS = (
   [ restore   => 'Replace refs/karr/* from YAML' ],
   [ materialize => 'Write refs/karr/* out as a tasks/ file view' ],
   [ import    => 'Import a tasks/ file view into refs/karr/*' ],
+  [ repair    => 'Migrate a pre-0.403 board off double-encoded UTF-8' ],
   [ sync      => 'Sync board with remote' ],
   [ 'agent-name' => 'Generate a random agent name' ],
   [ skill     => 'Install/update agent skills' ],

@@ -7,6 +7,14 @@ use warnings;
 our $VERSION = '0.403';
 use App::karr;
 use App::karr::SyncGuard;
+use App::karr::Encoding qw( decode_argv enable_std_utf8 );
+
+# The character/octet boundary (ticket #53). Everything above this line is
+# bytes, everything below is Perl characters: @ARGV comes in decoded, STDOUT and
+# STDERR encode on the way out, and no command body encodes anything itself.
+# STDIN stays raw on purpose -- karr restore decodes its own payload.
+enable_std_utf8();
+decode_argv();
 
 # Push insurance, flushed at the last safe moment (ticket #37).
 #
@@ -236,6 +244,12 @@ destructive and requires explicit confirmation flags.
 =item * L<App::karr::Cmd::Destroy>
 
 Deletes the whole board namespace from the repository.
+
+=item * L<App::karr::Cmd::Repair>
+
+Migrates a board written before 0.403 off double-encoded UTF-8. Reports by
+default; C<--yes> rewrites the affected refs. Idempotent, and a no-op on a
+board that is already current.
 
 =back
 
