@@ -13,7 +13,6 @@ use App::karr::Role::ExitCodes;
 use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
 use File::ShareDir ();
-use Encode qw( encode_utf8 );
 
 # ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
 # is board-less, so it does not inherit ExitCodes via BoardDiscovery.
@@ -118,19 +117,20 @@ sub _show {
   my $content = $self->_skill_content;
 
   if ($self->json) {
-    # Role::Output::print_json is the octet boundary for JSON output
-    # (encode_json emits UTF-8 bytes), so the decoded characters from
-    # _skill_content go in as-is. Encoding here as well would double-encode.
+    # Characters in, characters out, exactly like the plain branch below:
+    # print_json goes through App::karr::Encoding::json_encode, which is the
+    # character-level codec, and STDOUT's :encoding(UTF-8) layer does the one
+    # and only encode. _skill_content is already decoded (slurp_utf8), so it
+    # goes in untouched.
     return $self->print_json({ content => $content });
   }
 
-  # _skill_content is decoded (slurp_utf8), so it must be encoded back to
-  # bytes here or perl warns "Wide character in print". Encode at this one
-  # call site rather than putting a UTF-8 layer on STDOUT: the rest of the
-  # CLI already hands raw UTF-8 bytes to print (task text from the refs,
-  # encode_json in Role::Output), and a global layer would double-encode
-  # all of it.
-  print encode_utf8($content);
+  # Ticket #33 encoded here, because back then the rest of the CLI handed raw
+  # octets to print and a layer on STDOUT would have double-encoded them.
+  # Ticket #53 removed that premise: STDOUT now carries :encoding(UTF-8) and
+  # every command prints characters, so _skill_content goes out as-is.
+  # Encoding it again here would be the very double encode #33 was avoiding.
+  print $content;
   return;
 }
 

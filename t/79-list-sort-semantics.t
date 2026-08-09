@@ -67,14 +67,17 @@ sub mk {
   return $t;
 }
 
-# Returns the task ids in the order `karr list` rendered them.
+# Returns the task ids in the order `karr list` rendered them. The capture
+# carries the :encoding(UTF-8) layer F<bin/karr> installs
+# (App::karr::Encoding::enable_std_utf8), because reopening STDOUT drops it and
+# the command prints characters.
 sub list_ids {
   my ( $store, %opt ) = @_;
   my $cmd = App::karr::Cmd::List->new( store => $store, %opt );
   my $buf = '';
   {
     local *STDOUT;
-    open STDOUT, '>', \$buf or die $!;
+    open STDOUT, '>:encoding(UTF-8)', \$buf or die $!;
     $cmd->execute( [], [] );
   }
   return [ $buf =~ /^#(\d+)/mg ];
@@ -87,7 +90,7 @@ sub list_error {
   my $buf = '';
   my $ok  = eval {
     local *STDOUT;
-    open STDOUT, '>', \$buf or die $!;
+    open STDOUT, '>:encoding(UTF-8)', \$buf or die $!;
     $cmd->execute( [], [] );
     1;
   };

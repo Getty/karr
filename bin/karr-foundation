@@ -5,6 +5,14 @@ use strict;
 use warnings;
 our $VERSION = '0.403';
 use App::karr::Foundation;
+use App::karr::Encoding qw( decode_argv enable_std_utf8 );
+
+# Same character/octet boundary as F<karr> (ticket #53). The agent output this
+# tees to the terminal is raw bytes and is decoded incrementally in
+# App::karr::Foundation::Runner, not here.
+enable_std_utf8();
+decode_argv();
+
 exit App::karr::Foundation->new_with_options->run;
 
 =synopsis
