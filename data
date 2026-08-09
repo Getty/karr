@@ -1,0 +1,72 @@
+---
+claimed_at: 2026-08-09T18:26:46Z
+claimed_by: bot-claude
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T16:58:01Z
+id: 80
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- upstream
+- git-native
+- blocker
+title: 'upstream: no compare-and-swap ref API, so karr''s atomicity bugs cannot be
+  fixed properly'
+updated: 2026-08-09T20:50:14Z
+---
+
+Upstream work in `../p5-git-libgit2` and `../p5-git-native`, blocking the karr
+tickets about the allocate_next_id race and the non-atomic Lock::acquire.
+
+Both of those need **compare-and-swap on a ref**: write only if the ref still
+holds the value we read, retry on mismatch. libgit2 has exactly that —
+`git_reference_create_matching` and `git_reference_set_target_matching`, which
+take an expected-old-oid — but neither is reachable from Perl:
+
+- `p5-git-libgit2` binds 25 `git_reference_*` functions; grep confirms
+  `git_reference_create_matching` and `git_reference_symbolic_create_matching`
+  are **not among them**.
+- `p5-git-native` `Repository.pm` exposes `reference_create`,
+  `reference_delete`, `reference_exists`, `reference_names`,
+  `reference_symbolic_create` — no expected-old-value parameter anywhere.
+
+So karr's `write_ref` can only do `reference_create(force => 1)`: last writer
+wins, unconditionally. There is no way to express "only if unchanged" and
+therefore no way to make ID allocation or lock acquisition atomic in-process.
+
+Work: bind `git_reference_create_matching` (and probably
+`git_reference_set_target_matching`) in Git::Libgit2, expose it in
+Git::Native — e.g. `reference_create($name, $oid, expected_old => $old)` — with
+a distinguishable "did not match" outcome rather than a generic croak, so karr
+can retry rather than fail. Then karr's write path can offer a CAS variant.
+
+Fallback if this is not wanted upstream: shell out to `git update-ref <ref>
+<new> <old>`, which has CAS built in. That would put the board's correctness on
+the CLI path for exactly the operations that must be atomic — workable, but it
+inverts the design (native for local ops, CLI only for remote transport).
+
+Release chain: installed here are Git::Native 0.004 / Git::Libgit2 0.005, while
+CPAN has 0.003 / 0.004 — the repos are already ahead. karr's cpanfile pins the
+released versions, so anything added upstream has to be released before karr may
+depend on it (perl-core rule: Getty-authored deps pinned to the latest CPAN
+release).
+Start: bind git_reference_create_matching + git_reference_set_target_matching in p5-git-libgit2, expose expected_old=> in Git::Native::Repository with is_matched/is_not_matched predicate. No dzil release.
+Done upstream and released.
+
+Git::Libgit2 0.005 (2026-08-09) binds git_reference_create_matching, so the
+compare-and-swap primitive is reachable from Perl. Git::Native 0.004
+(2026-08-09) exposes it as reference_create($name, $oid, expected_old => $old)
+and reference_set_target($name, $new, expected_old => $old); a stale
+expectation throws a Git::Native::Error whose is_not_matched predicate is true,
+which is the retryable outcome this ticket asked for. expected_old => undef
+atomically requires the ref to be absent. There is no
+git_reference_set_target_matching in libgit2 — git_reference_set_target already
+does the guarded write internally, so the Perl side covers both directions.
+
+karr's cpanfile now pins Git::Native 0.004 / Git::Libgit2 0.005, so the API is
+available to karr. The shell-out-to-git-update-ref fallback is not needed.
+
+The karr-side migration — write_ref, Lock::acquire, allocate_next_id — is not
+part of this ticket and stays open in #46 and #44.
