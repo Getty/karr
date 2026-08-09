@@ -8,6 +8,7 @@ use File::Temp qw( tempdir );
 use Cwd qw( abs_path getcwd );
 use IPC::Open3 qw( open3 );
 use Symbol qw( gensym );
+use Encode qw( encode_utf8 );
 
 # Regression tests for karr board tickets #71, #72, #74 and part of #76 -- four
 # defects at the argv/dispatch boundary (MooX::Cmd + MooX::Options).
@@ -61,6 +62,12 @@ sub _run_karr {
         @argv,
     );
 
+    # Read both edges as bytes: App::karr::Encoding puts a :encoding(UTF-8)
+    # layer on the CLI's own STDOUT/STDERR, so what arrives here is octets and
+    # the non-ASCII assertion below is allowed to be about octets (t/70's
+    # rationale -- decoding what karr encoded is an identity round trip).
+    binmode $stdout_fh;
+    binmode $stderr;
     my $stdout      = do { local $/; <$stdout_fh> };
     my $stderr_text = do { local $/; <$stderr> };
     waitpid( $pid, 0 );
@@ -195,6 +202,17 @@ subtest '-- ends option processing, so an option-shaped positional survives' => 
     my $show = _run_karr( $repo, 'show', '--', '1' );
     is( $show->{exit}, 0, 'karr show -- 1 exits 0' ) or diag $show->{stderr};
     like( $show->{stdout}, qr/^Task #1:/m, 'and shows task 1' );
+
+    # The separator sits downstream of App::karr::Encoding's decode_argv, so an
+    # escaped positional is a character string by the time positional_args sees
+    # it. Pinned on bytes: a title that is both option-shaped AND non-ASCII must
+    # come back single-encoded, not mojibake and not dropped.
+    my $utf8_title = "--json \x{c4}rger \x{2014} gr\x{f6}\x{df}er";
+    my $u = _run_karr( $repo, 'create', '--', $utf8_title );
+    is( $u->{exit}, 0, 'an option-shaped non-ASCII title survives the separator' )
+        or diag $u->{stderr};
+    like( $u->{stdout}, qr/\Q@{[ encode_utf8($utf8_title) ]}\E/,
+        'and is echoed back as single-encoded UTF-8' );
 };
 
 # --------------------------------------------------------------- ticket #74
