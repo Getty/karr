@@ -1,0 +1,59 @@
+---
+claimed_at: 2026-08-09T15:50:13Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:46:17Z
+id: 63
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- test
+- coverage
+title: the test suite has a non-ASCII blind spot, and three tests that cannot fail
+updated: 2026-08-09T17:00:51Z
+---
+
+The test suite is green at 412 tests and still let four confirmed bugs through.
+A coverage run (Devel::Cover 1.51, in-process only — the CLI subprocesses could
+not be instrumented, so the numbers understate real coverage) plus 14 mutations
+shows why. In-process totals: 77.1% stmt, 51.8% branch, 42.6% condition.
+
+**The decisive gap is not a module, it is a dimension: not one test in `t/` puts
+a non-ASCII character into task data.** The only non-ASCII bytes in the whole
+suite are em-dashes in comments. Every UTF-8 bug on the board follows from that.
+
+Three concrete test defects, each verified by mutation:
+
+- **`t/51-json-output.t` cannot fail.** It does `decode_json($out)` and compares
+  against the source literal — encode-then-decode is an identity round trip
+  whether or not the encoding is correct. It needs an assertion on the **raw
+  bytes** of stdout.
+- **`t/27-backup-restore.t` stays green with a non-ASCII fixture.** It asserts
+  which refs exist and what `next_id` is, never that a restored task's *content*
+  survived. Adding one accented character to its fixture does not turn it red,
+  even though restore demonstrably corrupts the board.
+- **`t/55-materialize-import.t` goes red** with the same one-character change —
+  its assertions were fine all along, only the fixtures were ASCII.
+
+Surviving mutations (test gaps, no bug behind them):
+
+- `Role/ClaimTimeout.pm`: `return $1 * 60` -> `$1 * 3600` survives — minutes
+  parsing untested. `_claim_expired` -> `return 0` survives — expiry untested.
+- `Git.pm`: `_in_global_destruction` -> `return 0` survives. **The #34 fix's
+  first guard is unpinned** — `t/66` stays green because SyncGuard's own DESTRUCT
+  check alone satisfies it, so the defence-in-depth layer could be deleted in a
+  refactor and CI would never notice.
+- `Git.pm`: removing `refs/karr/` from `validate_helper_ref`'s blocklist
+  survives — `t/21` only tests `refs/heads/main`.
+
+Work: non-ASCII fixtures in `t/27`, `t/51`, `t/55`; content assertions in `t/27`;
+raw-byte assertion in `t/51`; direct tests for `_parse_timeout` minutes and both
+sides of `_claim_expired`; pin `_in_global_destruction` and the full
+`validate_helper_ref` blocklist.
+
+Modules never loaded in-process at all: `Cmd::Import`, `Cmd::Materialize`,
+`Cmd::Sync`, `Cmd::Disable`, `Cmd::Enable` (they are covered via subprocess, but
+nothing asserts their internals).
+Fixed in 46f006b. Reviewed by delight-agronomy: full diff read, prove -lr t/ re-run independently — 70 files, 442 tests, PASS.
