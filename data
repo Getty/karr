@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-08-04T04:26:11Z
+claimed_by: stevens-snowball
+class: standard
+completed: 2026-08-04
+created: 2026-08-04T03:05:53Z
+id: 32
+priority: high
+started: 2026-08-04
+status: done
+tags:
+- foundation
+- cli
+title: Board-level disable flag in karr state, respected by foundation
+updated: 2026-08-09T00:07:34Z
+---
+
+Problem: karr-foundation resolves the agent command as CLI --command > config default_command > .karr command > claude: flag. With a global default_command in config.yml, EVERY discovered board becomes an agent board and a repo cannot opt out — a .karr file cannot override it, and .karr is local-machine state anyway, not board state.
+
+Feature: a per-board disable flag stored in the karr git structure (refs/karr/config) so it syncs with the board like any other karr state, and every foundation instance on every machine respects it.
+
+Suggested shape (implementer makes the final call):
+- CLI: `karr disable [--reason "why"]` / `karr enable` (or `karr config set foundation.enabled false` — pick what fits the existing config command surface).
+- Foundation checks the flag FIRST, before agent-command resolution and before the drain decision, and skips the board entirely.
+- Precedence: disable wins over CLI --command, config default_command, .karr, and claude: true. Decide whether --force overrides it or an explicit per-repo override is required (leaning: --force does NOT override; disabled means disabled).
+- `karr-foundation --status` overview shows the disabled state + reason.
+- Tests alongside t/30-34 foundation tests.
+
+Reference case: dbio-informix — abandoned driver (DBD::Informix needs the unobtainable Informix CSDK). Its board is a parked backlog with actionable-looking tasks (backlog + review) that foundation must never drain or auto-block. Disabling the board in its own karr state is the correct, syncing place for that fact.
+Acceptance criterion (docs): after implementing the disable flag, update BOTH skill docs — .claude/skills/karr-foundation-cli/SKILL.md (disable/enable surface, precedence, --status display) and share/claude-skill.md + .claude/skills/kanban-issues-karr-cli/SKILL.md if the karr CLI itself grows a disable/enable command. Note: share/claude-skill.md and .claude/skills/kanban-issues-karr-cli/SKILL.md must stay in sync (identical bodies after frontmatter) — a test in t/ enforces this.
+Implementation landed (uncommitted, tests pending): board-level flag foundation.enabled (+ foundation.reason) in refs/karr/config; new commands karr disable [--reason] / karr enable (Cmd/Disable.pm, Cmd/Enable.pm) writing the same key that karr config get/set foundation.enabled reads (Config.pm parse_bool coerces 'false'); BoardStore foundation_enabled/foundation_reason/set_foundation_enabled; Foundation._board_disabled/_skip_disabled checked first in _process_repo (before agent-command resolution and the drain decision) and again right after _sync_pull, plus excluded from the any_agent grep in run(); --force does not override. Overview shows [disabled] + a 'disabled:' reason line and suppresses the 'agent' flag. Changes entry under {{$NEXT}}. prove -lr t/: Files=60, Tests=363, PASS (no new tests yet -- karr-test-writer next). Skill docs still to update.
+Implementation done (karr disable/enable + foundation skip + config surface). Docs updated: .claude/skills/karr-foundation-cli/SKILL.md, share/claude-skill.md + .claude/skills/kanban-issues-karr-cli/SKILL.md (bodies in sync, t/62 green), README.md, CLAUDE.md, CONTEXT.md, docs/adr/0003-board-level-disable-is-board-state-and-absolute.md. Tests pending.
+Implemented (karr-worker): CLI karr disable/enable + foundation skip with absolute precedence + parse_bool + config surface. Docs (this turn): skill docs (hardlink-safe via cat redirect), README, CLAUDE.md, CONTEXT.md, ADR 0003. Tests (karr-test-writer, recovered from session-limit crash): t/63 (Config+BoardStore roundtrip incl. parse_bool footgun) + t/64 (CLI subtests incl. JSON + ADR 0002 surplus-positional). Full suite: Files=62, Tests=389, PASS. No commit yet — awaiting your review.
+Committed as a08c117 on main. Branch ahead of origin/main by 2 (incl. prior uncommitted .claude-audit). No push yet — awaiting go.
