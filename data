@@ -1,0 +1,94 @@
+---
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:36:27Z
+id: 44
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- race
+- storage
+- data-loss
+title: 'allocate_next_id is a read-then-write race: parallel karr create silently
+  loses tasks'
+updated: 2026-08-09T21:27:29Z
+---
+
+`lib/App/karr/BoardStore.pm:176-181`. `allocate_next_id` reads the next-id ref,
+increments, and writes it back with no compare-and-swap. Two agents that read
+the same value both get it.
+
+Module level, 8 forked processes with a wall-clock barrier: 8 calls returned
+only **2 distinct ids** — six of them got id 1.
+
+Through the real CLI, 5 rounds of 8 parallel `karr create`, every one exit 0:
+
+    round 1: created=8  on board=6
+    round 2: created=16 on board=12
+    round 5: created=40 on board=32
+
+**40 successful creates produced 32 tasks.** The collision is visible in the
+output itself:
+
+    Created task 36: final-8
+    Created task 36: final-1
+    Created task 38: final-2
+    Created task 38: final-3
+
+Each duplicate pair writes the same `refs/karr/tasks/N/data` and the loser is
+destroyed. Every process reports success; nothing is logged.
+
+This matters because karr-foundation runs parallel agents against one board,
+which is the documented use case. Fix needs a compare-and-swap on the next-id
+ref (write only if the ref still has the value we read, retry on mismatch) —
+libgit2's reference update takes an expected-old-value for exactly this.
+Unblocked: the upstream CAS API is released and pinned (#80, #83, commit 3d54e03).
+
+allocate_next_id can now do a real compare-and-swap instead of
+reference_create(force => 1): read the current next-id ref, then write with
+Git::Native::Repository::reference_set_target($name, $new, expected_old =>
+$old). A concurrent writer makes that throw a Git::Native::Error with
+is_not_matched true — catch it, re-read, retry in a bounded loop rather than
+letting the last writer win. For the first ever write use
+reference_create(..., expected_old => undef), which atomically requires the ref
+to be absent.
+
+cpanfile is on Git::Native 0.004 / Git::Libgit2 0.005, so nothing external is
+missing any more.
+Reproduced 2026-08-09 before the fix: 12 parallel `karr create` on a fresh
+board produced 11 tasks, ids #1..#11. One create silently overwrote another's
+id allocation.
+
+Probe result on the retry contract (see #85): under contention the failure is
+usually GIT_ELOCKED (-14), not is_not_matched — libgit2 holds a refs/*.lock for
+the write. A loop that retries only is_not_matched still loses writes. Retry on
+both, with randomised backoff.
+Fixed (working tree, not committed -- maintainer reviews the diff).
+
+allocate_next_id is now a compare-and-swap on refs/karr/meta/next-id, with the
+counter re-read INSIDE each attempt. New in App::karr::Git: read_ref_with_oid
+(OID + content from one read), write_ref_cas (1 landed / 0 lost the race /
+dies on a real error; undef expected_old = must-not-exist), retry_contended
+(the one place the retry policy lives), allocate_next_id_ref.
+BoardStore::allocate_next_id delegates; public API unchanged.
+
+The trap: under real contention the common libgit2 failure is NOT
+GIT_EMODIFIED but GIT_ELOCKED (-14) -- libgit2 takes a refs/<name>.lock file.
+Git::Native::Error has no predicate for it, so it is compared against the code
+imported from Git::Libgit2. A loop retrying only is_not_matched still loses.
+
+Verified end to end: 12 parallel 'karr create' on a fresh board -> 12 tasks,
+ids 1..12 (was 11 tasks with a duplicated id).
+
+Regression test t/75-ref-cas-contention.t (12 forked contenders on a
+wall-clock barrier). Against the old code it fails: allocations came back as
+{1 x6, 2 x2, 3 x2} and 2 processes died on the raw libgit2 error.
+
+Full suite: prove -lr t/ -> Files=73, Tests=460, Result: PASS.
+Fixed in 4f4b375. allocate_next_id now goes through
+App::karr::Git::allocate_next_id_ref: read the counter and its OID together,
+write guarded by that OID, re-read inside each attempt. Verified: 12 parallel
+`karr create` produce 12 tasks with ids 1..12 (was 11 tasks). Regression test
+t/75-ref-cas-contention.t, which fails against the pre-fix code.
