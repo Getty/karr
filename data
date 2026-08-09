@@ -1,0 +1,72 @@
+---
+claimed_at: 2026-08-09T17:01:19Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T15:34:59Z
+id: 40
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- sync
+- git
+- data-loss
+title: "pull silently never updates an existing ref â\x80\x94 the next push destroys
+  the other agent's work"
+updated: 2026-08-09T17:53:16Z
+---
+
+Found by an independent storage-layer audit, then reproduced a second time from
+scratch by the orchestrating agent. Root cause of several other findings.
+
+## Mechanism
+
+Three decisions in `lib/App/karr/Git.pm` combine into silent data loss:
+
+- `write_ref` (`Git.pm:237`) creates commits with `parents => []`, so **every**
+  ref update is non-fast-forward by construction.
+- `push` (`Git.pm:346`) uses the forced refspec `+refs/karr/*:refs/karr/*`.
+- `pull` (`Git.pm:369`, `:375`) uses the **non-forced** `refs/karr/*:refs/karr/*`.
+
+libgit2 declines the non-ff update on fetch, reports **no error**, `last_error`
+stays unset, and `pull` returns 1. So `karr sync` prints "Done.", exits 0, and
+the local ref is silently unchanged. A ref that does not exist locally yet is
+fetched fine — which is why this hides: the first sync of a task always works,
+only updates are lost.
+
+## Reproduction (verified twice, independently)
+
+    git init -q --bare origin.git
+    # clone a and b, both with the board synced, task 1 exists on both
+
+    karr --dir a edit 1 -a "note from A"    # pushes A's version
+    karr --dir b sync --pull                # "Done.", exit 0
+    karr --dir b show 1                     # "note from A" is MISSING
+    karr --dir b edit 1 -a "note from B"    # force-pushes B's stale version
+
+Origin's task 1 afterwards contains `hello / note from B`. **"note from A" is
+gone from the shared board.** No warning anywhere, exit 0 on every step.
+
+## Why this is critical
+
+This is unattended, silent data loss in exactly the multi-agent workflow karr
+exists for, and karr-foundation runs parallel agents against shared boards. Any
+two agents touching the same task lose one side's work; the loser is never told.
+
+It is also the keystone for other findings: it is the direct cause of the
+CLI-fallback lockout, the realistic trigger for the open3 stderr deadlock (a
+diverged board rejects every ref, which is what produces the >64 KiB of stderr),
+and the reason stale-clone deletes resurrect.
+
+## Fix direction
+
+Forcing the fetch refspec (`+refs/karr/*:refs/karr/*`) makes pull match push and
+converts this into last-writer-wins without the stale read — which is the
+semantics the parentless-commit design already implies everywhere else. That is
+the minimal fix and it should come with a regression test using two clones.
+
+Worth deciding separately, and probably its own ticket: whether last-writer-wins
+is good enough for the multi-agent case at all, or whether the write path needs
+compare-and-swap. This ticket is only about pull not silently doing nothing.
