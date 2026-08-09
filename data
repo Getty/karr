@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-08-09T00:16:41Z
+claimed_by: jackets-cruise
+class: standard
+completed: 2026-08-09
+created: 2026-08-08T21:26:36Z
+id: 33
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- cli
+- encoding
+title: karr skill show prints wide characters without a UTF-8 layer
+updated: 2026-08-09T00:26:26Z
+---
+
+App::karr::Cmd::Skill line 55 does a plain print of _skill_content. The content arrives decoded via slurp_utf8, but STDOUT carries no UTF-8 layer, so every run of karr skill show emits: Wide character in print at App/karr/Cmd/Skill.pm line 55. The bytes on stdout are still valid UTF-8, so the output is usable, but the warning is noise on stderr and lands inside the file when someone redirects with 2>&1 while refreshing a hardlinked SKILL.md. Every other I/O path in that module already uses the utf8 variants (spew_utf8, slurp_utf8) - only this print was missed. Fix: set a UTF-8 layer on STDOUT before printing, or encode explicitly. Found while refreshing the shared karr skill hardlink chain from p5-file-sops.
+Fixed: Cmd/Skill.pm now encodes at the one print site (use Encode qw( encode_utf8 ); print encode_utf8( $self->_skill_content )). Chose explicit encode over a STDOUT layer because the rest of the CLI hands raw UTF-8 BYTES to print (task text from refs is undecoded, print_json uses encode_json) - verified empirically: running the CLI under perl -CS mojibakes karr show ('Task #1: Ãmlaut â tÃ¤sk'). So a global layer would double-encode every other command. Not systemic: show/list/board/context on non-ASCII tasks emit no warning. Also added requires 'Encode' to cpanfile (bundle uses Prereqs::FromCPANfile, so cpanfile is authoritative). Regression test t/65-skill-show-utf8.t captures warnings via $SIG{__WARN__} plus an in-memory STDOUT handle; with the fix reverted it fails 2 assertions ('no Wide character warning', 'no warnings at all') while the byte-equality assertions still pass, which matches the bug (noisy stderr, output itself was already valid UTF-8). Second subtest pins _skill_content as decoded, guarding the wrong fix of slurping raw (would break check/update comparisons and double-encode installs). Full suite: prove -lr t/ -> Files=63, Tests=391, All tests successful, Result: PASS. No skips. Changes file left untouched (maintained centrally); Git.pm untouched. No commit made.
