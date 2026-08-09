@@ -169,6 +169,12 @@
       now comes back as a JSON object under `content`, handed to Role::Output
       as characters like every other payload, so the CLI's output layer encodes
       it exactly once.
+    - `karr skill <unknown-action>` and `karr skill --agent <unknown-name>`
+      exit 2 instead of 1, joining the rest of the exit-code contract. Neither
+      is reachable by MooX::Options — the action is a positional and `--agent`
+      takes free-form text — so both were plain runtime dies. A scripting agent
+      can now tell "I called this wrong" from "the operation failed" on the
+      skill command too.
     - New App::karr::Error: one place that turns an internal error into a
       single user-facing line, with `user_error` (a plain `die`, which honours
       the trailing-newline convention that Carp's `croak` ignores) and
@@ -176,9 +182,11 @@
       backend chatter). Applied to the file I/O in `karr skill install`,
       `skill check` and `skill update`, whose Path::Tiny failures used to
       report a karr source location at the user: an unwritable target now says
-      "Could not write PATH: Permission denied" and nothing else. This is only
-      the mechanism plus one caller — the rest of the sweep is NOT done here.
-      Still leaking a call site: the `croak` in App::karr::Role::BoardDiscovery
+      "Could not write PATH: Permission denied" and nothing else. This is the
+      mechanism plus one command — the rest of the sweep is NOT done here.
+      `App::karr::Git::_ref_write_error` already does the identical reduction
+      inline and should collapse onto `clean_error`. Still leaking a call site:
+      the `croak` in App::karr::Role::BoardDiscovery
       ("Not a git repository"), both sync failures in
       App::karr::Role::SyncLifecycle (which also prints the same git error once
       per attempt and lets `--quiet` silence only the retry banners), the

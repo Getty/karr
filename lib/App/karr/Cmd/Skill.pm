@@ -108,7 +108,11 @@ sub execute {
   } elsif ($action eq 'show') {
     $self->_show;
   } else {
-    die "Unknown action: $action (use install, check, update, or show)\n";
+    # Leading "Usage:" is what bin/karr's handler keys on to exit 2 rather than
+    # 1 (ADR 0002: an invalid value is a usage error). Becomes a one-line swap
+    # to Role::ExitCodes' usage_error once that lands (ticket #76).
+    user_error( "Usage: karr skill [install|check|update|show]\n",
+                "Unknown action: $action (use install, check, update, or show)" );
   }
 }
 
@@ -226,9 +230,10 @@ sub _update {
 }
 
 # Path::Tiny raises Path::Tiny::Error objects that stringify with the call site
-# appended ("... Permission denied at .../Skill.pm line 135."), so an
-# unwritable skill directory used to report a karr source location at the user.
-# App::karr::Error reduces it to the one line that is actually about them.
+# appended ("mkpath failed for ...: Permission denied at .../Cmd/Skill.pm line
+# NNN."), so an unwritable skill directory used to report a karr source
+# location at the user. App::karr::Error reduces it to the one line that is
+# actually about them (ticket #77).
 sub _read_skill {
   my ($self, $file) = @_;
   my $content = eval { $file->slurp_utf8 };
@@ -249,7 +254,10 @@ sub _target_agents {
   if ($self->agent) {
     my @names = split /,/, $self->agent;
     for my $name (@names) {
-      die "Unknown agent: $name (known: " . join(', ', sort keys %AGENTS) . ")\n"
+      # --agent is a value MooX::Options cannot validate, so the usage error is
+      # raised here; see the note on the unknown-action branch in execute.
+      user_error( "Usage: karr skill --agent NAME[,NAME,...]\n",
+                  "Unknown agent: $name (known: ", join( ', ', sort keys %AGENTS ), ")" )
         unless $AGENTS{$name};
     }
     return @names;

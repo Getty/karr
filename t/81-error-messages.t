@@ -18,12 +18,16 @@ use App::karr::Error qw( user_error clean_error );
 # Probed pre-fix, `karr skill install` into an unwritable directory:
 #
 #   mkpath failed for .claude/skills/karr: Permission denied at
-#   /.../lib/App/karr/Cmd/Skill.pm line 135.
+#   /.../lib/App/karr/Cmd/Skill.pm line 134.
 #
 # App::karr::Error is the single place that turns such an error into one clean
 # line. This file pins the mechanism and its use in App::karr::Cmd::Skill.
-# It does NOT cover App::karr::Role::BoardDiscovery or
-# App::karr::Role::SyncLifecycle, which still croak -- see the follow-up sweep.
+# It does NOT cover the rest of the sweep -- App::karr::Role::BoardDiscovery
+# and App::karr::Role::SyncLifecycle still croak, App::karr::Foundation and
+# App::karr::Foundation::Runner too, and `karr restore` / `backup` / `init` /
+# `context` still let Path::Tiny's call site through.
+# App::karr::Git::_ref_write_error does this same reduction inline and is the
+# obvious first thing to collapse onto clean_error.
 
 subtest 'croak really does ignore the trailing-newline convention' => sub {
     # The premise of the whole ticket. If this ever stops being true, the
