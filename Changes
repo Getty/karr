@@ -5,6 +5,12 @@
       the one print site. The output bytes were always correct, but the warning
       was noise on stderr — and it ended up inside the written file whenever
       someone refreshed an installed SKILL.md with `karr skill show >file 2>&1`.
+    - The installed executables `karr` and `karr-foundation` now carry a
+      `$VERSION`. Both shipped versionless through 0.400, 0.401 and 0.402: the
+      woven POD had a VERSION section (generated from the dist version), but the
+      code itself declared none. Dist::Zilla only inserts a `$VERSION` into a
+      file that has a `package` statement, which a script does not — so the
+      line has to exist once, after which every release keeps it in step.
 
 0.402     2026-08-04 04:46:25Z
 

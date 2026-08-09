@@ -3,6 +3,7 @@
 # ABSTRACT: Single-shot foundation daemon for periodic karr agent execution
 use strict;
 use warnings;
+our $VERSION = '0.403';
 use App::karr::Foundation;
 exit App::karr::Foundation->new_with_options->run;
 

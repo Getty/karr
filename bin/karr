@@ -4,6 +4,7 @@
 
 use strict;
 use warnings;
+our $VERSION = '0.403';
 use App::karr;
 
 if (@ARGV) {
