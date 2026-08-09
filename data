@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-08-09T04:54:11Z
+claimed_by: delight-agronomy
+class: standard
+completed: 2026-08-09
+created: 2026-08-09T00:18:04Z
+id: 36
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- perl-core
+- cleanup
+title: Runtime require instead of use across lib/ (14 sites)
+updated: 2026-08-09T04:59:26Z
+---
+
+The `perl-core` house rule is `use Module;` to load modules — `require` only when you absolutely know why (runtime plugin loading), not as a lazy-load optimisation. A sweep of `lib/` and `bin/` turns up 14 `require` call sites:
+
+**External modules — no circularity argument possible, these look like plain lazy-loading:**
+- `lib/App/karr/Role/Output.pm:27` — `require JSON::MaybeXS;`
+- `lib/App/karr/Cmd/Context.pm:189` — `require Path::Tiny;` (note: `Path::Tiny` is already `use`d at the top of several other Cmd classes)
+- `lib/App/karr/Cmd/Skill.pm:243`, `lib/App/karr/Cmd/Init.pm:120` — `require File::ShareDir;`
+
+**Internal App::karr modules — may be deliberate circular-dependency breaks, needs checking per site:**
+- `lib/App/karr.pm:272` — App::karr::Cmd::Board
+- `lib/App/karr/Cmd/Pick.pm:140` — App::karr::Lock
+- `lib/App/karr/Git.pm:457`, `lib/App/karr/BoardStore.pm:302` — App::karr::Task
+- `lib/App/karr/Role/BoardAccess.pm:56` — App::karr::ActivityLog
+- `lib/App/karr/Role/BoardDiscovery.pm:103,122,123,136` — App::karr::Git, App::karr::BoardStore, App::karr::Config
+- `lib/App/karr/Lock.pm:25` — App::karr::Git
+
+Work to do: convert the external ones to top-of-file `use` unconditionally. For each internal one, determine whether a real load cycle exists (does the required module load the requiring one, directly or through a role?) — convert where it does not, and leave a one-line comment naming the cycle where it does, so the next reader does not "fix" it back.
+
+Watch out: `Role/*` modules are consumed by many classes, so moving a `require` to `use` there changes what gets loaded on every single karr invocation. Check startup cost before and after; if a load genuinely must stay deferred, that is the "absolutely know why" case and it should say so in a comment.
+
+Found while reviewing the fix for ticket #33.
+All 14 require sites converted to compile-time use; zero require left in lib/ and bin/. No load cycle exists at any of the 10 internal sites, so none needed a keep-with-comment: Task/Config/ActivityLog have no App::karr deps at all, Git depends only on Task, BoardStore only on Config+Task, Lock only on Git, and nothing under lib/ loads the root App::karr (only bin/karr does), which made Cmd::Board safe as well. The 4 external sites all called fully qualified (JSON::MaybeXS::encode_json, Path::Tiny::path, File::ShareDir::dist_dir) so they load via explicit empty import list 'use Mod ();'. That is load-bearing in Role/Output.pm: a Moo::Role composes every sub in its package into consumers, so an imported encode_json would have become a method on ~20 command classes. Verified the method surface of every class is byte-identical to before. Startup, interleaved A/B vs pristine HEAD, medians of 21-31 paired runs: board commands +2..+5ms (list 293->298, board 289->291, show 289->294) since they already use'd Task/Config/Output themselves; --help and board-less commands +22..+33ms (--help 257->279, agent-name 322->355), fully accounted for by POSIX ~12ms, JSON::MaybeXS+Cpanel::JSON::XS ~14ms and Time::Piece ~14ms now loading eagerly. %INC 196->214, nothing dropped. prove -lr t/: Files=66, Tests=412, Result PASS, zero skips/todos; t/66 and t/68 re-run individually and green, teardown order untouched. No Changes entry: pure internal cleanup, no behaviour change. NOT COMMITTED - 11 files, +16/-14, left in the working tree for maintainer review.
+Reviewed by delight-agronomy: diff read in full (+16/-14 over 11 files), no require left in lib/ or bin/, prove -lr t/ re-run independently - 66 files, 412 tests, PASS. Committed as dadbada.
