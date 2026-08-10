@@ -315,8 +315,9 @@ Use this for:
 - agent scratch state
 - workflow metadata you want synced through Git but not modeled as cards
 
-Protected namespaces such as branches, tags, remotes, stash, and `refs/karr/*`
-are blocked.
+Protected namespaces such as branches, tags, remotes, stash, `refs/karr/*` and
+`refs/karr-local/*` (where `karr pick` keeps its process-local locks) are
+blocked.
 
 ## Skills
 

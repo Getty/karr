@@ -44,6 +44,20 @@ unattended agent needs. This command is the other half: the way a human sees
 what is stuck and clears it now instead of waiting, and the only way out at all
 on a board that has set C<lock_timeout> to C<0s>.
 
+=head1 STRAY LOCKS
+
+Locks used to live inside C<refs/karr/*>, so a sync while one was held published
+it and every other clone pulled it (#93). They are outside the board namespace
+now, but the ones already published do not disappear on their own: an older
+C<karr>, or a pull from a remote that still carries them, leaves refs at the old
+address.
+
+Nothing acts on those any more -- a lock taken in another clone says nothing
+about this process -- but they are listed here, marked
+C<[stray: pushed by an older karr, safe to break]>, and breaking a lock clears
+the old address along with the current one. That is how a board that was
+published with locks in it gets clean again.
+
 Breaking a lock is safe by construction: it is not what makes a pick exclusive.
 The claim is written under a compare-and-swap on the card itself
 (L<App::karr::Cmd::Pick/EXCLUSIVITY>), so an agent whose lock is broken out from
@@ -104,8 +118,13 @@ sub execute {
     return;
   }
 
-  my @ids = $self->all ? map { $_->{task_id} } @held
-                       : $self->parse_ids($pos[0]);
+  # break_lock clears both addresses a lock can have -- the current one and the
+  # pre-#93 one inside refs/karr/* -- so a task holding one of each appears
+  # twice in @held but must only be broken, and reported, once.
+  my %seen;
+  my @ids = $self->all
+    ? grep { !$seen{$_}++ } map { $_->{task_id} } @held
+    : $self->parse_ids($pos[0]);
 
   my @results;
   for my $id (@ids) {
@@ -129,7 +148,10 @@ sub _report {
   my ($self, @held) = @_;
 
   if ($self->json) {
-    $self->print_json([ map { { %$_, expired => $_->{expired} ? \1 : \0 } } @held ]);
+    $self->print_json([ map { { %$_,
+      expired => $_->{expired} ? \1 : \0,
+      legacy  => $_->{legacy}  ? \1 : \0,
+    } } @held ]);
     return;
   }
 
@@ -139,11 +161,15 @@ sub _report {
   }
 
   for my $l (@held) {
-    printf "Task %-4d held by %s%s%s\n",
+    printf "Task %-4d held by %s%s%s%s\n",
       $l->{task_id},
       $l->{owner},
       ( defined $l->{age} ? sprintf( ' for %s', _duration( $l->{age} ) ) : '' ),
-      ( $l->{expired} ? ' [expired]' : '' );
+      ( $l->{expired} ? ' [expired]' : '' ),
+      # A lock still sitting in the board namespace was written by a karr older
+      # than #93, or pulled from a remote that was given one. Nothing takes it
+      # into account any more, and breaking it is how it finally goes away.
+      ( $l->{legacy} ? ' [stray: pushed by an older karr, safe to break]' : '' );
   }
   print "\nBreak one with 'karr unlock ID', or all of them with 'karr unlock --all'.\n";
 }

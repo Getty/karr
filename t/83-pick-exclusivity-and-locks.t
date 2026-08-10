@@ -39,6 +39,15 @@ use App::karr::Cmd::List;
 
 my $CONTENDERS = 12;
 
+# Built from the class rather than spelled out, so a move of the namespace --
+# refs/karr/tasks/N/lock became refs/karr-local/tasks/N/lock in #93, to keep
+# locks out of everything karr pushes -- cannot leave these assertions quietly
+# checking an address nothing writes to any more.
+sub lock_ref {
+    my ($id) = @_;
+    return App::karr::Lock->LOCK_ROOT . "$id/lock";
+}
+
 sub init_repo {
     my $repo = tempdir( CLEANUP => 1 );
     system( 'git', 'init', '-q', $repo ) == 0 or BAIL_OUT('git init failed');
@@ -169,7 +178,7 @@ subtest 'twelve parallel picks claim twelve different tasks' => sub {
             'results:', @lines;
 
     ok !( grep { m{/lock\z} } App::karr::Git->new( dir => $repo )
-            ->list_refs('refs/karr/tasks/') ),
+            ->list_refs( App::karr::Lock->LOCK_ROOT ) ),
         'no lock ref was left behind by any of the twelve';
 };
 
@@ -257,7 +266,7 @@ subtest 'an orphaned lock ref does not brick the board' => sub {
     App::karr::Lock->new( git => $git )->acquire( 1, 'ghost@example.com' );
     $store->delete_task(1);
 
-    ok $git->ref_exists('refs/karr/tasks/1/lock'), 'the orphaned lock is still there';
+    ok $git->ref_exists(lock_ref(1)), 'the orphaned lock is still there';
     is_deeply [ $git->list_task_refs ], [2],
         'a lock ref alone does not make a task id exist';
     is_deeply [ map { $_->id } $store->load_tasks ], [2],
@@ -320,18 +329,18 @@ subtest 'a stale-lock takeover is a compare-and-swap, not a force write' => sub 
     $lock->acquire( 1, 'ghost@example.com' );
     sleep 2;
 
-    my ( $stale_oid ) = $git->read_ref_with_oid('refs/karr/tasks/1/lock');
+    my ( $stale_oid ) = $git->read_ref_with_oid(lock_ref(1));
     ok $lock->expired($stale_oid), 'the lock reads as expired';
 
     # The holder comes back and refreshes before the takeover lands.
     $lock->acquire( 1, 'ghost@example.com' );
-    my ( $fresh_oid ) = $git->read_ref_with_oid('refs/karr/tasks/1/lock');
+    my ( $fresh_oid ) = $git->read_ref_with_oid(lock_ref(1));
     isnt $fresh_oid, $stale_oid, 'the refresh moved the ref';
     ok !$lock->expired($fresh_oid), 'and the refreshed lock is live again';
 
-    is $git->write_ref_cas( 'refs/karr/tasks/1/lock', "other\@example.com", $stale_oid ),
+    is $git->write_ref_cas( lock_ref(1), "other\@example.com", $stale_oid ),
         0, 'a takeover guarded by the OID that was judged stale is refused';
-    is $git->read_ref('refs/karr/tasks/1/lock'), 'ghost@example.com',
+    is $git->read_ref(lock_ref(1)), 'ghost@example.com',
         'the live holder keeps its lock';
 };
 
@@ -348,7 +357,7 @@ subtest 'karr unlock reports locks and breaks them' => sub {
     is $err, '', 'karr unlock with no arguments does not die' or diag $err;
     like $out, qr/Task 1\s+held by ghost-1\@example\.com/, 'it names the first holder';
     like $out, qr/Task 2\s+held by ghost-2\@example\.com/, 'and the second';
-    ok $git->ref_exists('refs/karr/tasks/1/lock'),
+    ok $git->ref_exists(lock_ref(1)),
         'reporting on its own destroys nothing';
 
     ( $err, $out ) = run_execute(
@@ -356,8 +365,8 @@ subtest 'karr unlock reports locks and breaks them' => sub {
     is $err, '', 'breaking one lock does not die' or diag $err;
     like $out, qr/Broke lock on task 1 \(was held by ghost-1\@example\.com\)/,
         'it says what it broke';
-    ok !$git->ref_exists('refs/karr/tasks/1/lock'), 'the lock ref is gone';
-    ok $git->ref_exists('refs/karr/tasks/2/lock'), 'the other one is untouched';
+    ok !$git->ref_exists(lock_ref(1)), 'the lock ref is gone';
+    ok $git->ref_exists(lock_ref(2)), 'the other one is untouched';
 
     ( $err, $out ) = run_execute(
         App::karr::Cmd::Unlock->new( store => $store ), '1' );
@@ -367,7 +376,7 @@ subtest 'karr unlock reports locks and breaks them' => sub {
     ( $err, $out ) = run_execute(
         App::karr::Cmd::Unlock->new( store => $store, all => 1 ) );
     is $err, '', '--all does not die' or diag $err;
-    ok !( grep { m{/lock\z} } $git->list_refs('refs/karr/tasks/') ),
+    ok !( grep { m{/lock\z} } $git->list_refs( App::karr::Lock->LOCK_ROOT ) ),
         '--all clears every remaining lock';
 
     ( $err, $out ) = run_execute(
@@ -381,7 +390,7 @@ subtest 'karr unlock reports locks and breaks them' => sub {
     ( $err, $out ) = run_execute(
         App::karr::Cmd::Unlock->new( store => $store ), '3' );
     is $err, '', 'a lock with no card behind it can still be broken' or diag $err;
-    ok !$git->ref_exists('refs/karr/tasks/3/lock'), '...and it is';
+    ok !$git->ref_exists(lock_ref(3)), '...and it is';
 };
 
 subtest 'the lock is released, and the pick logged, before the push' => sub {

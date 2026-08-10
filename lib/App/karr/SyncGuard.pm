@@ -122,13 +122,16 @@ C<END> block, which is the last moment a push is safe.
 Does nothing at all when C<$App::karr::Git::WRITES> is zero: no ref was written
 in this process, so there is nothing to push.
 
-Never dies. A push that fails all three attempts warns, exactly as the DESTROY
-path does, and anything unexpected thrown by one guard is caught and warned so
-the remaining guards still get their turn. That matters because the only caller
-is an C<END> block on an already-failing exit path: an exception there would
-abort perl's END queue and replace karr's documented exit code with perl's own.
-Each flushed guard is marked done, so DESTROY does not repeat the attempt
-afterwards.
+Never dies. A push that fails warns, exactly as the DESTROY path does, and
+anything unexpected thrown by one guard is caught and warned so the remaining
+guards still get their turn. That matters because the only caller is an C<END>
+block on an already-failing exit path: an exception there would abort perl's
+END queue and replace karr's documented exit code with perl's own. Each flushed
+guard is marked done, so DESTROY does not repeat the attempt afterwards.
+
+A push the remote refused ref by ref is not retried, and the warning does not
+advise one: the far side already gave its answer, so it names what was refused
+instead of pointing at a C<karr sync> that would be refused identically.
 
 =cut
 
@@ -226,17 +229,49 @@ sub _insurance_push {
         $err = "git push failed: " . ( $git->last_error // 'unknown error' );
         push @{$self->{_errors}}, $err;
         print STDERR "  $err\n";
+
+        # A push the far side refused ref by ref is not a lost connection: the
+        # remote was reached and gave its answer, so the other two attempts
+        # would collect the same refusal twice more, a second apart, on a
+        # command that has already died. App::karr::Role::SyncLifecycle stops
+        # on the same signal (#84); this path is the one that runs *after* a
+        # command failed, so reporting the least here was backwards (#96).
+        #
+        # The `can` is for the duck-typed git objects the sync tests drive this
+        # class with, and matches how SyncLifecycle asks the same question.
+        last if $git->can('push_rejections') && @{ $git->push_rejections };
+
         sleep 1 if $attempt < 3;
     }
 
     # Never die() here: DESTROY typically runs while another exception unwinds
     # the stack, where a die is turned into a swallowed "(in cleanup)" warning
     # (or lost entirely during global destruction), masking this message. Warn
-    # so the "refs are intact, run karr sync" guidance always reaches STDERR.
-    warn "Push failed after 3 attempts. Local refs are intact.\n"
-      . "Run 'karr sync' to retry.\n"
-      . "Errors: " . join( ', ', $self->errs ) . "\n";
+    # so the guidance always reaches STDERR.
+    #
+    # Which guidance depends on what failed. "Run 'karr sync' to retry" is only
+    # true when retrying can work; after a refusal it sends the user to a
+    # command that will be refused identically, and says nothing about the one
+    # thing they need to know -- that the remote, not the network, said no. The
+    # per-ref reasons are in the error printed just above.
+    warn $self->_rejected
+      ? "Push rejected by the remote. Local refs are intact.\n"
+        . "The refs above were refused, not lost in transit, so pushing again "
+        . "would only be refused again.\n"
+      : "Push failed after 3 attempts. Local refs are intact.\n"
+        . "Run 'karr sync' to retry.\n"
+        . "Errors: " . join( ', ', $self->errs ) . "\n";
     return 0;
+}
+
+# Whether the last push failed because the remote refused refs, rather than
+# because it could not be reached.
+sub _rejected {
+    my ($self) = @_;
+    my $git = $self->git;
+    return 0 unless $git && $git->can('push_rejections');
+    my $rejected = $git->push_rejections;
+    return $rejected && @$rejected ? 1 : 0;
 }
 
 1;

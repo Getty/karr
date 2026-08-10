@@ -14,6 +14,7 @@ use POSIX qw( WNOHANG );
 use Scalar::Util qw( blessed );
 use Time::HiRes ();
 use Git::Libgit2 qw( GIT_ELOCKED );
+use App::karr::Error qw( clean_error );
 use App::karr::Encoding qw(
     BOARD_ENCODING_VERSION
     to_octets from_octets yaml_dump yaml_load repair_mojibake
@@ -308,6 +309,11 @@ sub validate_helper_ref {
         'refs/bisect/',
         'refs/replace/',
         'refs/karr/',
+        # Pick locks (App::karr::Lock). They were moved out of refs/karr/ so
+        # that no refspec could publish them (#93); `karr set-refs` names a ref
+        # and pushes it, so leaving it able to reach them would put the same
+        # hole back one command over.
+        'refs/karr-local/',
     );
 
     for my $prefix (@blocked) {
@@ -397,17 +403,12 @@ sub _is_contended_ref_error {
 # libgit2 exceptions are Throwable::Error, so stringifying one prints the
 # message followed by a stack trace full of module paths and line numbers.
 # That used to reach the user verbatim when an ordinary concurrent ref write
-# aborted a command mid-body (#46). Keep the first line of libgit2's own
-# message and drop the rest; the trailing newline stops perl appending
-# " at ... line N." on top.
-sub _ref_write_error {
-    my ( $ref, $err ) = @_;
-    my $detail = blessed($err) && $err->can('message') ? $err->message : "$err";
-    $detail =~ s/ at \S+ line \d+\.?.*\z//s;
-    $detail =~ s/\n.*\z//s;
-    $detail =~ s/\s+\z//;
-    $detail = 'unknown git error' unless length $detail;
-    return "karr: could not write $ref: $detail\n";
+# aborted a command mid-body (#46). App::karr::Error::clean_error is the one
+# reduction to a single line of prose -- this used to carry its own copy of it
+# -- and the trailing newline stops perl appending " at ... line N." on top.
+sub _ref_error {
+    my ( $verb, $ref, $err ) = @_;
+    return "karr: could not $verb $ref: " . clean_error($err) . "\n";
 }
 
 # The parentless commit every board ref points at. Built once per write, not
@@ -457,7 +458,7 @@ sub _write_ref_oid {
         } catch {
             my $err = $_;
             return 0 if _is_contended_ref_error( $err, 0 );
-            die _ref_write_error( $ref, $err );
+            die _ref_error( 'write', $ref, $err );
         };
         return () unless $wrote;
         $WRITES++;
@@ -488,9 +489,60 @@ sub write_ref_cas {
     } catch {
         my $err = $_;
         return 0 if _is_contended_ref_error( $err, defined $expected_old );
-        die _ref_write_error( $ref, $err );
+        die _ref_error( 'write', $ref, $err );
     };
     return 0 unless $wrote;
+    $WRITES++;
+    return 1;
+}
+
+# Compare-and-swap sibling of delete_ref, and the mirror image of
+# write_ref_cas: the ref is removed only if it still holds $expected_old.
+#
+# libgit2 has two removals and karr only ever reached the unguarded one.
+# git_reference_remove(repo, name) -- what delete_ref uses -- takes a name and
+# no expected-old OID, so a delete can never be guarded: whatever the caller
+# checked may have changed by the time the ref goes. git_reference_delete()
+# takes a looked-up reference instead and refuses with GIT_EMODIFIED when the
+# ref on disk no longer matches the one that was looked up, which is exactly
+# the guarantee the claim guards need (#94).
+#
+# Both halves are needed. The explicit OID comparison covers the window
+# between the caller's read and the lookup here; libgit2's own check covers
+# the window between that lookup and the removal. Neither alone is a CAS.
+#
+# Returns 1 when the delete landed and 0 when the ref had moved or gone -- the
+# same contract write_ref_cas answers with, so a caller inside retry_contended
+# re-reads what it decided on and tries again. Contention that has not
+# committed to an answer yet (another process holding refs/<name>.lock) is
+# reported as 0 as well, for the same reason: read again and retry. A real
+# failure dies with a karr-level message.
+sub delete_ref_cas {
+    my ( $self, $ref, $expected_old ) = @_;
+    defined $expected_old
+        or die "karr: could not delete $ref: no expected revision given\n";
+    my $repo = $self->_repo
+        or die "karr: could not delete $ref: "
+             . ( $self->last_error // 'no usable git repository' ) . "\n";
+
+    # A miss is "somebody got there first", not an error, and asking first
+    # keeps libgit2 from building a full Throwable stack trace for it.
+    return 0 unless $repo->reference_exists($ref);
+
+    my $reference = try { $repo->reference($ref) } catch { undef };
+    return 0 unless $reference;
+    my $target = try { $reference->target } catch { undef };
+    return 0 unless $target && $target->hex eq $expected_old;
+
+    my $deleted = try {
+        $reference->delete;
+        1;
+    } catch {
+        my $err = $_;
+        return 0 if _is_contended_ref_error( $err, 1 );
+        die _ref_error( 'delete', $ref, $err );
+    };
+    return 0 unless $deleted;
     $WRITES++;
     return 1;
 }

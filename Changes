@@ -1,5 +1,38 @@
 {{$NEXT}}
 
+    - Fixed `karr pick` locks being published to the remote. Lock refs lived at
+      `refs/karr/tasks/N/lock`, inside the namespace karr pushes, so any sync
+      that fired while a lock was held put it on the remote; other clones then
+      pulled a lock whose holder they could not see, could not outlive and
+      could only clear with `karr unlock`. Board backups snapshotted it too.
+      Locks are process-local state, so they now live under `refs/karr-local/`,
+      which nothing pushes, fetches, prunes or snapshots — and which
+      `karr set-refs` refuses, so no refspec can reach them at all. Board
+      state, including the `refs/karr/log/*` activity log, is unaffected and
+      still syncs. Locks left at the old address by an older karr, or pulled
+      from a remote that still has them, are not acted on — a lock from another
+      clone says nothing about this process — but `karr unlock` lists them,
+      marked as strays, and clears them.
+    - Fixed the last race in `karr delete`'s claim guard. `App::karr::Git`
+      could only delete a ref by name, through a libgit2 call that takes no
+      expected-old OID, so no delete could be guarded: re-reading the task and
+      re-applying the claim rule closed the minutes-long window behind the
+      confirmation prompt but left the microseconds after it, in which a claim
+      landing on the card was deleted along with it. There is now a
+      compare-and-swap delete (`delete_ref_cas`) reporting the same retryable
+      outcomes the existing retry loop understands, and the guarded delete
+      paths — `karr delete` and giving back a `karr pick` lock — go through it.
+      The unguarded `delete_ref` is unchanged, because `karr destroy` and
+      breaking a lock deliberately remove whatever is there.
+    - Fixed the push insurance retrying a push the remote had already refused.
+      When a command dies after writing refs, karr pushes from an END block so
+      the writes are not stranded; that path still made three attempts a second
+      apart at a refusal the far side had already given its answer to, and then
+      told the user to run `karr sync` — a command that would be refused
+      identically. It now stops at the refusal and reports what the remote
+      refused, ref by ref, on both the native and the git-CLI transport. An
+      ordinary transport failure is still retried three times and still advises
+      a sync, because there retrying can work.
     - Fixed `karr materialize` silently deleting and overwriting tracked
       project files. It wrote its file view straight into the working tree —
       replacing `config.yml` and removing every `tasks/*.md` — so a repository

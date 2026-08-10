@@ -82,29 +82,50 @@ it must not have side effects outside the task object.
 
 =cut
 
-# Deleting has no compare-and-swap equivalent: karr's App::karr::Git::delete_ref
-# goes through libgit2's git_reference_remove(repo, name), which takes no
-# expected-old OID. (The guarded form exists -- git_reference_delete on a looked
-# up reference fails if the ref moved since the lookup -- but wiring it through
-# is App::karr::Git's lane, not this role's.)
+# The same shape as update_task_guarded, and for the same reason: the claim rule
+# is applied to the revision the delete is guarded against, so the two can never
+# be about different bytes.
 #
-# So this re-reads the task and re-applies the claim rule immediately before the
-# delete. That closes the window that actually matters, the one that can stay
-# open for minutes while a confirmation prompt waits for a human, and leaves
-# only the microseconds between this read and the remove. Not atomic; smaller
-# than it was.
+# This used to re-read the task and delete by name, because karr had no guarded
+# delete to reach for -- App::karr::Git::delete_ref goes through libgit2's
+# git_reference_remove(repo, name), which takes no expected-old OID. Re-reading
+# closed the window that can stay open for minutes behind a confirmation prompt
+# and left the microseconds between the read and the remove, in which a claim
+# landing on the card was deleted along with it. App::karr::Git::delete_ref_cas
+# closes that one too (#94).
 sub delete_task_guarded {
     my ($self, $id, $claimant) = @_;
-    my $task = $self->find_task($id);
-    die "Task $id not found\n" unless $task;
-    $self->check_claim( $task, $claimant );
-    return $self->delete_task($id);
+    my $git = $self->git;
+    my $ref = $self->_task_data_ref($id);
+
+    my $task = $git->retry_contended( "task $id", sub {
+        my ( $oid, $content ) = $git->read_ref_with_oid($ref);
+        die "Task $id not found\n" unless defined $oid && length $content;
+
+        my $found = App::karr::Task->from_string( $content,
+            repair_frontmatter => $git->board_is_legacy_encoded );
+        $self->check_claim( $found, $claimant );
+
+        return () unless $git->delete_ref_cas( $ref, $oid );
+        return $found;
+    } );
+
+    # L<App::karr::Role::BoardAccess/delete_task> is the activity-log funnel for
+    # the unguarded path; this one writes the ref itself, so it records the same
+    # entry rather than going without one (#64).
+    $self->log_task_write($id);
+    return $task;
 }
 
 =head2 delete_task_guarded
 
-Re-reads the task, re-applies the claim rule, and deletes it. Not atomic --
-see the note above the implementation.
+Deletes a task, but only if the task ref is still exactly where it was when the
+claim rule was applied to it. If another agent got in first the check is re-run
+against the fresh task -- so a claim that lands in the window blocks the delete
+instead of being deleted with the card -- and a task another agent deleted
+meanwhile is reported as not found. Returns the deleted task.
+
+    $self->delete_task_guarded( $id, undef );
 
 =cut
 

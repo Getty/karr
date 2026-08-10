@@ -112,7 +112,7 @@ subtest 'parallel allocate_next_id never hands out the same id twice' => sub {
 subtest 'parallel Lock::acquire has exactly one winner' => sub {
     my $repo = init_repo();
     my $git  = App::karr::Git->new( dir => $repo );
-    $git->ref_exists('refs/karr/tasks/1/lock');
+    $git->ref_exists( App::karr::Lock->LOCK_ROOT . '1/lock' );
 
     my @lines = race( sub {
         my ( $n, $barrier ) = @_;
@@ -145,7 +145,7 @@ subtest 'parallel Lock::acquire has exactly one winner' => sub {
     # The point of #46: three processes were told "acquired" while the ref could
     # only hold one of them. Comparing the ref against the set of self-declared
     # winners catches that even if the counts above were somehow satisfied.
-    my $holder = $git->read_ref('refs/karr/tasks/1/lock');
+    my $holder = $git->read_ref( App::karr::Lock->LOCK_ROOT . '1/lock' );
     is_deeply [$holder],
         [ map { my $n = ( split ' ', $_ )[1]; "agent-$n\@test.com" } @acquired ],
         'the lock ref holds exactly the one contender that was told it won';
