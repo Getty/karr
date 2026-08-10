@@ -1,0 +1,39 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:31:21Z
+id: 93
+priority: medium
+status: done
+tags:
+- lock
+- sync
+- multi-agent
+title: task lock refs live inside the pushed refspec and can be published to the remote
+updated: 2026-08-10T01:40:24Z
+---
+
+Found while fixing #86 and #45.
+
+Locks are stored at refs/karr/tasks/N/lock, which is inside refs/karr/*, which is
+what karr pushes. A lock is process-local state -- it means "this agent, in this
+clone, is mid-pick right now" -- and it has no meaning in another clone.
+
+After the #86 fix a lock is no longer held across the push on the success path,
+so the common case is clean. But it is still structurally wrong: any sync that
+fires while a lock is held publishes it, and then a lock taken by one clone
+appears on the remote, gets pulled by others, and can only be cleared by the
+new unlock command.
+
+Fix direction: move locks out of refs/karr/* entirely -- e.g. refs/karr-local/*
+-- so no refspec can reach them, rather than relying on the timing of when they
+are released. That also removes them from backup/restore, where a snapshot
+containing someone elses momentary lock is noise at best.
+
+Check while doing it: the pull side prunes refs/karr/*, so a pruned lock and a
+locally held lock must not be confused.
+Fixed and merged into main (fa79722); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. #94 additionally confirmed empirically that libgit2 lookup-based delete
+really does guard: moving the ref underneath it answers "old reference value
+does not match".
