@@ -1,0 +1,89 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:45:01Z
+id: 61
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+- batch
+title: batch commands abort on the first bad id, violating karr's own ADR 0002
+updated: 2026-08-10T02:39:53Z
+---
+
+`move`, `edit` and `delete` `die` on a missing id **inside** the loop
+(`Cmd/Move.pm:86`, `Cmd/Edit.pm:153`, `Cmd/Delete.pm:65`), so every remaining id
+is skipped. `archive` alone does it right (`Cmd/Archive.pm:51-52`: warn and
+collect).
+
+    karr list --compact     # #1 t1  #2 t2  #3 t3
+    karr move 999,3 todo    -> rc=1 "Task 999 not found";  #3 never processed
+    karr delete 999,3 --yes -> rc=1, nothing deleted
+    karr edit 999,3 -a note -> rc=1, nothing edited
+    karr archive 999,3      -> rc=1, but task 3 IS archived
+
+The outcome depends on the order of the ids: `move 1,999 todo` moves 1,
+`move 999,1 todo` moves nothing.
+
+ADR 0002 states it explicitly: *"Batch semantics stay: partial success is
+committed, the exit code reports the failure (1)."* So this is a violation of
+karr's own documented contract, not just a parity gap. kanban-md's `runBatch`
+(`cmd/root.go:199-238`) iterates every id, collects per-id results and returns 1
+at the end.
+
+There is a second, sharper edge on `delete`: because the `die` happens inside the
+loop, `sync_after` never runs, so refs already deleted locally never reach the
+remote (the #37 END flush pushes them, but the command has already reported
+failure).
+
+Fix: one shared batch runner used by all four commands — iterate, collect,
+report `Completed N/M`, exit 1 if any id failed.
+Re-verified against main at 3dac607, and it is worse than filed on one point:
+
+    $ karr move 4,999,5 todo
+    Moved task 4: backlog -> todo
+    Task 999 not found
+    $ echo $?
+    0
+    $ karr list --compact
+    #4          todo a
+    #5       backlog b
+
+Task 5 is never reached -- so it is not only "aborts on the first bad id", the
+command also exits 0 while having half-applied the batch and reported a failure
+on stderr. A caller checking the exit code is told everything worked.
+
+Per karr ADR 0002 the batch should apply every valid id and report the invalid
+ones, and the exit code has to reflect that something failed.
+CORRECTION to my note above: the "exits 0" claim is WRONG and was my own
+measurement error. I ran `karr move 4,999,5 todo 2>&1 | head -4; echo rc=$?`,
+where $? reports the exit status of `head`, not of karr. Re-measured without the
+pipe:
+
+    $ out=$(karr move 1,999,2 todo 2>&1); echo $?
+    1
+
+The agent working this ticket independently failed to reproduce exit 0 across
+four configurations (with and without a remote, current and installed karr) and
+was right to push back rather than take my word for it.
+
+What IS real, and is what this ticket is about: move, edit and delete die inside
+the loop, so every id after the bad one is skipped, and the behaviour is
+order-dependent -- `move 1,999` moves 1, `move 999,1` moves nothing. archive
+already warned and continued. The exit code was never the defect.
+Fixed and merged into main (228fffa); full suite green at 98 files / 670 tests.
+
+#61: the exit-code half of my earlier note was my own measurement error (see the
+correction above) -- the real defect was the loop dying on the first bad id and
+the resulting order-dependence. Contract now: per-id runtime failures warn,
+continue, and exit 1 with an "N of M ids failed" summary; a usage error aborts
+the batch at exit 2 with nothing written, because it is wrong for every id at
+once and collecting it would demote a 2 to a 1.
+
+#97: archive is on the guarded path; handoff had already adopted check_claim in
+an earlier merge, but its read-then-write was still unguarded and is now a
+compare-and-swap. Verified afterwards that store->save_task_cas has exactly one
+caller, Role::BoardAccess::save_task -- no command reaches around the door.
