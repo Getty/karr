@@ -35,12 +35,15 @@ pile onto the same candidate.
 
 =item * Eligible statuses
 
-If C<--status> is omitted, tasks in C<done> and C<archived> are excluded.
+If C<--status> is omitted, tasks in the board's terminal statuses are excluded
+-- its final configured status and C<archived>, which on the default board
+means C<done> and C<archived>.
 
 =item * Claim timeout
 
 Already claimed tasks are ignored unless their claim timestamp has expired
-according to C<claim_timeout>.
+according to C<claim_timeout>. A C<claimed_by> of the empty string is not a
+claim; it is how kanban-md spells "unclaimed".
 
 =item * Ordering
 
@@ -51,6 +54,13 @@ Candidates are sorted by class of service, then by priority, then by task id.
 Optionally updates the picked task to a new status such as C<in-progress>.
 
 =back
+
+=head1 JSON OUTPUT
+
+With C<--json> a successful pick prints the picked task as a JSON object, and
+picking nothing prints C<< {"picked":null} >>. Either way the exit status is
+C<0>, so a polling agent decodes the payload and tests for a task rather than
+reading the exit code or the message text.
 
 =head1 EXCLUSIVITY
 
@@ -148,8 +158,7 @@ sub execute {
   } @tasks;
 
   unless (@tasks) {
-    print "No available tasks to pick.\n";
-    return;
+    return $self->_nothing_picked("No available tasks to pick.");
   }
 
   # Try to lock + claim. A karr board lives in refs/karr/*, which exist only
@@ -178,8 +187,8 @@ sub execute {
   }
 
   unless ($picked) {
-    print "No available tasks to pick (every candidate was locked or taken).\n";
-    return;
+    return $self->_nothing_picked(
+      "No available tasks to pick (every candidate was locked or taken).");
   }
 
   # Both writes have to happen before the push, or they never leave this clone:
@@ -207,6 +216,29 @@ sub execute {
   }
 }
 
+# Both empty results in one place, because both of them have to honour --json.
+# `pick` is the agent-facing command, so its --json is the one output in karr
+# most certain to be machine-parsed -- and it was the one that answered a plain
+# English sentence, which a consumer could only meet with a decode error
+# (ticket #65). Every other command already had this: `list --json` prints [],
+# `archive --json` prints its note as an object.
+#
+# The payload is deliberately an object rather than a bare `null`: the JSON
+# encoder App::karr::Encoding hands out has allow_nonref off, so a top-level
+# null cannot be emitted without loosening that for every other command's
+# output as well.
+#
+# The exit status stays 0. kanban-md raises a NothingToPick error and exits
+# nonzero, but karr's exit-code contract (ADR 0002) spends 1 on failure and 2
+# on usage, and "no work for you right now" is the normal answer to a poll, not
+# a failure -- a drain loop that treats it as one stops on its first idle pass.
+sub _nothing_picked {
+  my ($self, $message) = @_;
+  return $self->print_json({ picked => undef }) if $self->json;
+  print "$message\n";
+  return;
+}
+
 # The one and only definition of "this card is available to me right now". It is
 # a method rather than a chain of greps in execute so that the pre-lock ranking
 # and the re-read under the lock cannot drift apart: the second test has to be
@@ -219,10 +251,24 @@ sub _is_pickable {
     my %allowed = map { $_ => 1 } split /,/, $self->status;
     return 0 unless $allowed{$task->status};
   } else {
-    return 0 if App::karr::Config->is_terminal_status($task->status);
+    # The board's own terminal status, not a hardcoded 'done': a board imported
+    # from kanban-md can end in `shipped`, and pick used to hand those finished
+    # cards straight back out (ticket #67).
+    return 0 if $self->store->is_terminal_status($task->status);
   }
 
-  return 0 if $task->has_claimed_by && !$self->_claim_expired($task, $timeout);
+  # `claimed_by: ""` means unclaimed. kanban-md's omitempty writes the key only
+  # when it is non-empty, but a card it read and rewrote -- or any hand-written
+  # one -- can carry the empty string, and Moo's predicate calls that "set". So
+  # every imported kanban-md card looked as though somebody held it, and pick
+  # reported an empty board while `karr list` showed the work sitting there
+  # (ticket #59).
+  # This is the same emptiness test App::karr::Role::ClaimTimeout/check_claim
+  # already applies; the two have to agree or a task pick refuses is a task
+  # move happily accepts.
+  return 0 if $task->has_claimed_by
+    && length $task->claimed_by
+    && !$self->_claim_expired($task, $timeout);
   return 0 if $task->has_blocked;
 
   if ($self->tags) {

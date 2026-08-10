@@ -5,7 +5,7 @@ our $VERSION = '0.403';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr list [--status LIST] [--priority LIST] [--sort FIELD] [options]',
+  usage_string => 'USAGE: karr list [--status LIST] [--priority LIST] [--archived] [--sort FIELD] [options]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -25,9 +25,18 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
 =head1 DESCRIPTION
 
 Lists tasks from the current board with optional filtering and sorting.
-Archived tasks are excluded by default so the output focuses on active work.
-Use C<--compact> for terse one-line output and C<--json> for machine-readable
+Finished tasks are excluded by default so the output focuses on active work:
+that means the board's terminal statuses -- its final configured status plus
+C<archived>, so C<done> and C<archived> on a default board, but C<shipped> and
+C<archived> on a board whose columns end in C<shipped>. Ask for them by name
+with C<--status>, or for the archive alone with C<--archived>. Use
+C<--compact> for terse one-line output and C<--json> for machine-readable
 automation.
+
+Note that karr excludes the whole terminal group here where kanban-md's
+C<list> excludes only C<archived> and still shows finished work. That is a
+deliberate difference, not an oversight: C<karr list> is the agent's "what is
+open" view.
 
 =head1 FILTERS AND SORTING
 
@@ -37,6 +46,12 @@ automation.
 
 Accept comma-separated lists and only return tasks matching one of the
 requested values.
+
+=item * C<--archived>
+
+Shows the archive and nothing else. It is a status filter, so it replaces
+C<--status> rather than intersecting with it -- matching kanban-md's flag of
+the same name -- while the remaining filters still narrow the result.
 
 =item * C<--assignee>, C<--tag>, C<--claimed-by>
 
@@ -120,6 +135,11 @@ option reverse => (
   doc => 'Reverse sort order',
 );
 
+option archived => (
+  is => 'ro',
+  doc => 'Show only archived tasks',
+);
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
   my @tasks = $self->_load_tasks;
@@ -143,7 +163,10 @@ sub execute {
   for my $t (@tasks) {
     my @meta;
     push @meta, $t->priority if defined $t->priority && length $t->priority;
-    push @meta, '@' . $t->assignee if $t->has_assignee;
+    # An `assignee: ""` from kanban-md satisfies the predicate but names
+    # nobody, and printing it gave every imported card a bare "@" in its meta
+    # list. Empty means absent here as it does in pick (ticket #59).
+    push @meta, '@' . $t->assignee if $t->has_assignee && length $t->assignee;
     push @meta, 'blocked' if $t->has_blocked;
     my $title = $t->title;
     $title .= ' [' . join(', ', @meta) . ']' if @meta;
@@ -165,15 +188,25 @@ sub _filter {
   my ($self, $tasks) = @_;
   my @filtered = @$tasks;
 
-  # Exclude terminal statuses (done/archived) by default, but let an explicit
-  # --status request surface them.
-  unless ($self->status) {
-    @filtered = grep { !App::karr::Config->is_terminal_status($_->status) } @filtered;
+  # Which statuses were asked for, if any. --archived is a status filter and
+  # nothing more, exactly as in kanban-md (cmd/list.go): it replaces --status
+  # rather than intersecting with it, and every other filter below still
+  # applies on top, so `--archived --tag legacy` means what it reads like.
+  my $wanted;
+  if ($self->archived) {
+    $wanted = { App::karr::Config->ARCHIVED_STATUS => 1 };
+  } elsif ($self->status) {
+    $wanted = { map { $_ => 1 } split /,/, $self->status };
   }
 
-  if ($self->status) {
-    my %statuses = map { $_ => 1 } split /,/, $self->status;
-    @filtered = grep { $statuses{$_->status} } @filtered;
+  # Nothing asked for: hide the board's terminal statuses, so the default view
+  # is open work. Asked of the store, so a board whose final column is
+  # `shipped` hides shipped work instead of the `done` it does not have
+  # (ticket #67).
+  if ($wanted) {
+    @filtered = grep { $wanted->{$_->status} } @filtered;
+  } else {
+    @filtered = grep { !$self->store->is_terminal_status($_->status) } @filtered;
   }
   if ($self->priority) {
     my %priorities = map { $_ => 1 } split /,/, $self->priority;

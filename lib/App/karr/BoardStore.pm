@@ -120,12 +120,16 @@ Returns true if the given status requires a claim.
 
 sub is_terminal_status {
     my ($self, $status_name) = @_;
-    return App::karr::Config->is_terminal_status($status_name);
+    # Through the board's own config, not the class default: an imported
+    # kanban-md board names its final column whatever it likes (ticket #67).
+    return App::karr::Config->from_merged( $self->effective_config )
+        ->is_terminal_status($status_name);
 }
 
 =head2 is_terminal_status
 
-Returns true if the status is terminal (done or archived).
+Returns true if the status is terminal for this board -- its final configured
+status, or C<archived>.
 
     unless ($store->is_terminal_status($task->status)) {
         # task is still active
