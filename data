@@ -1,0 +1,51 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:36:33Z
+id: 45
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- lock
+- storage
+title: one orphaned lock ref bricks every command on the board, with no way out from
+  inside karr
+updated: 2026-08-10T01:27:58Z
+---
+
+`lib/App/karr/Git.pm:478` and `lib/App/karr/BoardStore.pm:191`.
+
+`list_task_refs` matches `m{refs/karr/tasks/(\d+)/}`, which also matches
+`.../N/lock`. `load_tasks` maps `load_task_ref` over those ids with no undef
+filter, so a lock ref whose `data` sibling is gone injects `undef` into the task
+list and every consumer dies on it.
+
+Reproduced without hand-crafting any refs — the lock is orphaned by a perfectly
+normal failure (origin read-only, so `sync_after`'s push fails):
+
+    karr pick --claim tester   -> dies at Cmd/Pick.pm line 170, lock NOT released
+                                  refs/karr/tasks/1/lock survives
+    karr delete 1 --yes        # later, task is removed
+    karr list       -> Can't call method "status" on an undefined value at Cmd/List.pm line 160
+    karr board      -> same, Cmd/Board.pm line 112
+    karr materialize-> Can't call method "save" on an undefined value at BoardStore.pm line 239
+    karr pick       -> same, Cmd/Pick.pm line 102
+
+`karr delete 1` then reports "Task 1 not found", so **there is no way to recover
+from inside karr** — it takes a manual `git update-ref -d`.
+
+Two compounding gaps in `lib/App/karr/Lock.pm`, both verified:
+
+- Locks have no TTL, no owner-liveness check, and there is no unlock command
+  anywhere in the CLI (`App::karr::Lock` is used only by `Cmd/Pick.pm`). A stale
+  lock blocks every other agent permanently — confirmed with a second agent on a
+  different `user.email`, which skipped the locked task forever.
+- `Cmd/Pick.pm` releases the lock *after* `sync_after`, so the release is never
+  pushed to the remote even on the success path.
+
+Fix needs three parts: filter undef out of `load_tasks` (or make
+`list_task_refs` match only `/data`) so one bad ref cannot brick every command;
+give locks a TTL or liveness check; release the lock before the sync that
+publishes it, and expose an unlock escape hatch.
