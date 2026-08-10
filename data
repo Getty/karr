@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-08-10T04:24:34Z
+claimed_by: claude-main
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T03:56:05Z
+id: 102
+priority: medium
+started: 2026-08-10
+status: done
+tags:
+- cli
+- config
+title: handoff moves to a hardcoded review column without checking the board has one
+updated: 2026-08-10T04:58:11Z
+---
+
+Left over from #67, named in the cd4d043 Changes entry. Cmd/Handoff.pm moves the task to the literal status 'review'; on a board whose columns do not include review that writes an invalid status. kanban-md's handoff targets the configured review-ish column (second-to-last, or the one before archived).
+Geschlossen durch 20dfec4 + Merge: handoff_status auf Config -- review wenn konfiguriert (kanban-md-Verhalten, handoff.go:105-110), sonst letzte nicht-terminale Spalte, sonst Usage-Error. Abweichung von kanban-md nur dort, wo es refused. t/112.
