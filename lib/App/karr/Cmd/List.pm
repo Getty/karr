@@ -11,6 +11,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Task;
 use App::karr::Config;
+use App::karr::Error qw( user_error );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
 
@@ -48,7 +49,13 @@ Performs a case-insensitive substring search across title, body, and tags.
 =item * C<--sort>, C<--reverse>
 
 Sort by C<id>, C<status>, C<priority>, C<created>, C<updated>, or C<due>, and
-optionally reverse the result order.
+optionally reverse the result order. Any other field is a usage error (exit
+C<2>).
+
+C<status> and C<priority> follow the board config's own order, so C<--sort
+priority> lists C<low> before C<critical> with the default C<priorities>
+setting; reach for C<--reverse> to put the most urgent work first. Tasks
+without a C<due> date sort last. Ties are broken by C<id>.
 
 =back
 
@@ -96,11 +103,15 @@ option claimed_by => (
   doc => 'Filter by claim owner',
 );
 
+# The complete set of --sort keys, in the order the usage message lists them.
+# Single source for the option doc, the usage message, and _comparators.
+my @SORT_FIELDS = qw( id status priority created updated due );
+
 option sort => (
   is => 'ro',
   format => 's',
   default => sub { 'id' },
-  doc => 'Sort by: id, status, priority, created, updated, due',
+  doc => 'Sort by: ' . join(', ', @SORT_FIELDS),
 );
 
 option reverse => (
@@ -194,17 +205,69 @@ sub _filter {
 sub _sort {
   my ($self, $tasks) = @_;
   my $field = $self->sort;
-  my @sorted;
-  if ($field eq 'id') {
-    @sorted = sort { $a->id <=> $b->id } @$tasks;
-  } elsif ($field eq 'priority') {
-    my %pri = App::karr::Config->priority_order;
-    @sorted = sort { ($pri{$a->priority} // 2) <=> ($pri{$b->priority} // 2) } @$tasks;
-  } else {
-    @sorted = sort { ($a->$field // '') cmp ($b->$field // '') } @$tasks;
-  }
+
+  # Look the key up in an explicit table; never call it as a method. The old
+  # `$a->$field` turned a value straight from argv into a method call on
+  # App::karr::Task, so `--sort slug` and `--sort to_markdown` both ran, and an
+  # unknown key died with "Can't locate object method ... at List.pm line NNN".
+  my $comparators = $self->_comparators;
+  my $cmp = $comparators->{$field}
+    or user_error( "Usage: karr list --sort ", join('|', @SORT_FIELDS),
+                   " (got '$field')" );
+
+  # Tie-break on id so the order is fully determined: Perl's sort is stable in
+  # practice but not by contract, and load_tasks already hands tasks over in
+  # ascending id order, so this pins what stability was silently providing.
+  my @sorted = sort { $cmp->($a, $b) || $a->id <=> $b->id } @$tasks;
   @sorted = reverse @sorted if $self->reverse;
   return @sorted;
+}
+
+# One comparator per allowed --sort key. Status and priority follow the board
+# config's own order rather than the alphabet or a hardcoded table, matching
+# kanban-md's Sort/compareTasks (internal/board/sort.go) which indexes both
+# through cfg.StatusIndex / cfg.PriorityIndex. A value that is not in the
+# config gets index -1 and therefore sorts first, as kanban-md's IndexOf does.
+sub _comparators {
+  my ($self) = @_;
+  my %status   = $self->_index_of( $self->config->statuses );
+  my %priority = $self->_index_of( $self->config->priorities );
+  return {
+    id       => sub { $_[0]->id <=> $_[1]->id },
+    status   => sub { ($status{$_[0]->status}     // -1) <=> ($status{$_[1]->status}     // -1) },
+    priority => sub { ($priority{$_[0]->priority} // -1) <=> ($priority{$_[1]->priority} // -1) },
+    # created/updated are ISO-8601 UTC stamps, so a string compare is
+    # chronological.
+    created  => sub { $_[0]->created cmp $_[1]->created },
+    updated  => sub { $_[0]->updated cmp $_[1]->updated },
+    due      => sub { $self->_cmp_due(@_) },
+  };
+}
+
+sub _index_of {
+  my ($self, @values) = @_;
+  my %index;
+  $index{$values[$_]} //= $_ for 0 .. $#values;
+  return %index;
+}
+
+# `due` is optional. kanban-md's compareDue sorts a task without a due date
+# last; the previous `('' cmp '')` fallback sorted it first.
+sub _cmp_due {
+  my ($self, $left, $right) = @_;
+  my $l = $self->_due_of($left);
+  my $r = $self->_due_of($right);
+  return 0 unless defined $l || defined $r;
+  return 1 unless defined $l;
+  return -1 unless defined $r;
+  return $l cmp $r;
+}
+
+sub _due_of {
+  my ($self, $task) = @_;
+  return undef unless $task->has_due;
+  my $due = $task->due;
+  return ( defined $due && length $due ) ? $due : undef;
 }
 
 1;
