@@ -1,0 +1,58 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:31Z
+id: 56
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- claim
+- multi-agent
+title: move, edit and delete steal other agents' live claims
+updated: 2026-08-10T01:28:12Z
+---
+
+Found independently by two lanes. `move`, `edit` and `delete` never check who
+holds a claim, so any agent can take over another agent's in-flight work:
+
+    karr move 1 in-progress --claim alice
+    karr move 1 review --claim mallory   -> rc=0, claim reassigned to mallory
+    karr edit 1 -a "mallory was here"    -> rc=0
+    karr delete 1 --yes                  -> rc=0
+
+`handoff` does it correctly (`Cmd/Handoff.pm:49-54` -> "Task 1 is claimed by
+mallory", rc=1) and `pick` filters claimed tasks, because `Role::ClaimTimeout`
+is composed only into those two.
+
+kanban-md calls `checkClaim` in move (`cmd/move.go:142`), edit
+(`cmd/edit.go:149`), delete (`cmd/delete.go:78,129`) and handoff; `CheckClaim`
+(`internal/task/validate.go:126`) allows the same claimant and expired claims.
+
+Four commands with four different claim policies today. Fix: one shared check,
+composed everywhere a task is mutated, with the same expiry semantics.
+Scope note from the #86 work: handoff writes claims the same unguarded
+last-writer-wins way move/edit/delete do, so it belongs in this ticket even
+though the title does not name it.
+
+Also relevant, and the reason #86 needed a card-level fix rather than a lock
+fix: App::karr::Lock identifies the holder by git_user_email, so every agent
+in one clone shares a lock identity. acquire() then legitimately succeeds for
+all of them via the re-entrancy path -- the holder is "the same agent" as far
+as the lock can tell. The ref-level exclusivity from #46 is real, but it does
+not give per-agent exclusivity for anything that identifies holders that way.
+Whatever guard this ticket puts on claims must key on the agent name the user
+passed (--claim), not on the git identity.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
+Closed on its stated scope: move, edit and delete no longer take over a live
+claim, and for move and edit the check and the write are one compare-and-swap.
+
+The two write paths found while fixing it -- archive (no claim check at all) and
+handoff (its own private copy of the rule, still read-then-write) -- are split
+out as #97 rather than left as an invisible remainder on a closed ticket.
