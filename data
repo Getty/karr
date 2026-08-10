@@ -1,0 +1,29 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:49:33Z
+id: 79
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- bug
+- json
+- cli
+title: karr skill show ignores --json
+updated: 2026-08-10T01:27:58Z
+---
+
+    diff <(karr skill show) <(karr skill show --json)   # identical
+
+Both print the raw skill YAML; neither is valid JSON. `skill check --json` works
+correctly, so this is an inconsistency inside one command.
+
+Fix: wrap the content in a JSON object when `--json` is given, or reject the
+combination.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
