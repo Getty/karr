@@ -1,0 +1,39 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:48:44Z
+id: 71
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+title: --dir makes set-refs, get-refs and agent-name unreachable
+updated: 2026-08-10T01:27:58Z
+---
+
+`bin/karr` rewrites the hyphenated aliases only at `$ARGV[0]`:
+
+    $ARGV[0] = 'setrefs'   if $ARGV[0] eq 'set-refs';
+    $ARGV[0] = 'getrefs'   if $ARGV[0] eq 'get-refs';
+    $ARGV[0] = 'agentname' if $ARGV[0] eq 'agent-name';
+
+With the documented root option in front, `$ARGV[0]` is the option:
+
+    karr --dir /path get-refs my/ref     -> rc=2 "Unknown command: get-refs"
+    karr --dir=/path set-refs a/b.md x   -> rc=2 "Unknown command: set-refs"
+    karr --dir /path agent-name          -> rc=2 "Unknown command: agent-name"
+    karr get-refs my/ref --dir /path     -> rc=2 "Unknown option: dir"
+
+Clearly unintended: `Cmd/GetRefs.pm:44-49` and `Cmd/SetRefs.pm:45-50` deliberately
+read `--dir` off the chain root, so the combination is implemented but
+unreachable from the command line.
+
+Fix: rewrite the first non-option argument instead of assuming position 0.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
