@@ -3,11 +3,10 @@
 package App::karr::Task;
 our $VERSION = '0.403';
 use Moo;
-use YAML::XS qw( Load Dump );
 use Path::Tiny;
 use Time::Piece;
-use JSON::MaybeXS qw( encode_json );
 use Carp qw( croak );
+use App::karr::Encoding qw( yaml_dump yaml_load repair_mojibake );
 
 =head1 SYNOPSIS
 
@@ -129,7 +128,7 @@ sub to_json_hash {
 
 sub to_markdown {
   my ($self) = @_;
-  my $yaml = Dump($self->to_frontmatter);
+  my $yaml = yaml_dump($self->to_frontmatter);
   $yaml =~ s/\A---\n//;
   my $md = "---\n${yaml}---\n";
   $md .= "\n" . $self->body . "\n" if $self->body;
@@ -138,25 +137,53 @@ sub to_markdown {
 
 sub _parse_content {
   my ($class, $content) = @_;
-  my ($yaml, $body) = $content =~ m{\A---\n(.+?)---(?:\n(.*))?\z}s
+  # The closing delimiter is anchored to the start of a line (/m), the way
+  # kanban-md's splitFrontmatter scans for a literal "\n---\n". Without the
+  # anchor a frontmatter value that merely *ends* in "---" -- `blocked:
+  # waiting ---`, which YAML::XS dumps unquoted -- terminated the frontmatter
+  # mid-line, and the truncated document then failed Task->new with "Missing
+  # required arguments: id, title". Every command that loads the board hit it,
+  # `delete` included, so the board could not be repaired with karr at all
+  # (ticket #52).
+  my ($yaml, $body) = $content =~ m{\A---\n(.+?)^---[ \t]*(?:\n(.*))?\z}ms
     or die "Invalid task format\n";
   $body //= '';
   $body =~ s/^\n//;
   $body =~ s/\n$//;
-  return (Load($yaml), $body);
+  return (yaml_load($yaml), $body);
 }
 
 sub from_string {
-  my ($class, $content) = @_;
+  my ($class, $content, %opt) = @_;
   my ($fm, $body) = $class->_parse_content($content);
+  # repair_frontmatter is set by App::karr::Git::load_task_ref for a board
+  # written before refs/karr/meta/encoding existed. Only the frontmatter is
+  # repaired: it went through YAML::XS::Dump, which encoded the already-encoded
+  # octets a second time. The body was concatenated onto the document verbatim
+  # and is single-encoded, so touching it would corrupt it (ticket #53).
+  $fm = repair_mojibake($fm) if $opt{repair_frontmatter};
   return $class->new(%$fm, body => $body);
 }
 
 sub from_file {
   my ($class, $file) = @_;
   $file = path($file);
-  my ($fm, $body) = $class->_parse_content($file->slurp_utf8);
-  return $class->new(%$fm, body => $body, file_path => $file);
+  # Every failure names the file. `karr import` parses a whole directory in one
+  # go, and a bare "Invalid task format" -- which is also what a CRLF card gets,
+  # since _parse_content requires a literal "\A---\n" for kanban-md parity --
+  # left the user to guess which card it came from (ticket #70).
+  my $task = eval {
+    my ($fm, $body) = $class->_parse_content($file->slurp_utf8);
+    $class->new(%$fm, body => $body, file_path => $file);
+  };
+  return $task if $task;
+  my $why = $@ || 'unknown error';
+  chomp $why;
+  # Moo's "Missing required arguments: id, title" carries an "at <file> line N"
+  # pointing into generated constructor code, which only buries the filename
+  # that matters.
+  $why =~ s/ at .+ line \d+\.?\z//s;
+  die "$why ($file)\n";
 }
 
 sub save {

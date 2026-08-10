@@ -74,6 +74,11 @@ sub _board_repo {
     system( 'git', '-C', $repo, 'remote', 'add', 'origin', $bare ) == 0
         or die 'git remote add failed';
 
+    # init first: a write command in a repository without a board is refused
+    # (#62), so `create` alone no longer conjures one.
+    is _run_karr( $repo, 'init', '--name', 'Flush Board' )->{exit}, 0,
+        'setup: karr init exits 0';
+
     for my $title (@tasks) {
         is _run_karr( $repo, 'create', $title )->{exit}, 0,
             "setup: karr create '$title' exits 0";

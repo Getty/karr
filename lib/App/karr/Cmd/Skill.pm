@@ -10,9 +10,9 @@ use MooX::Options (
 use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
+use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
 use File::ShareDir ();
-use Encode qw( encode_utf8 );
 
 # ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
 # is board-less, so it does not inherit ExitCodes via BoardDiscovery.
@@ -58,7 +58,9 @@ Refreshes existing installed copies in place.
 
 =item * C<show>
 
-Prints the bundled skill content to standard output.
+Prints the bundled skill content to standard output. With C<--json> the same
+content is emitted as a JSON object under the C<content> key instead of raw
+Markdown.
 
 =back
 
@@ -104,16 +106,36 @@ sub execute {
   } elsif ($action eq 'update') {
     $self->_update;
   } elsif ($action eq 'show') {
-    # _skill_content is decoded (slurp_utf8), so it must be encoded back to
-    # bytes here or perl warns "Wide character in print". Encode at this one
-    # call site rather than putting a UTF-8 layer on STDOUT: the rest of the
-    # CLI already hands raw UTF-8 bytes to print (task text from the refs,
-    # encode_json in Role::Output), and a global layer would double-encode
-    # all of it.
-    print encode_utf8( $self->_skill_content );
+    $self->_show;
   } else {
-    die "Unknown action: $action (use install, check, update, or show)\n";
+    # Leading "Usage:" is what bin/karr's handler keys on to exit 2 rather than
+    # 1 (ADR 0002: an invalid value is a usage error). Becomes a one-line swap
+    # to Role::ExitCodes' usage_error once that lands (ticket #76).
+    user_error( "Usage: karr skill [install|check|update|show]\n",
+                "Unknown action: $action (use install, check, update, or show)" );
   }
+}
+
+sub _show {
+  my ($self) = @_;
+  my $content = $self->_skill_content;
+
+  if ($self->json) {
+    # Characters in, characters out, exactly like the plain branch below:
+    # print_json goes through App::karr::Encoding::json_encode, which is the
+    # character-level codec, and STDOUT's :encoding(UTF-8) layer does the one
+    # and only encode. _skill_content is already decoded (slurp_utf8), so it
+    # goes in untouched.
+    return $self->print_json({ content => $content });
+  }
+
+  # Ticket #33 encoded here, because back then the rest of the CLI handed raw
+  # octets to print and a layer on STDOUT would have double-encoded them.
+  # Ticket #53 removed that premise: STDOUT now carries :encoding(UTF-8) and
+  # every command prints characters, so _skill_content goes out as-is.
+  # Encoding it again here would be the very double encode #33 was avoiding.
+  print $content;
+  return;
 }
 
 sub _install {
@@ -132,8 +154,7 @@ sub _install {
       next;
     }
 
-    $dir->mkpath;
-    $file->spew_utf8($content);
+    $self->_write_skill($file, $content);
     push @results, { agent => $agent, status => 'installed', path => "$file" };
     printf "%-12s installed to %s\n", $agent, $file unless $self->json;
   }
@@ -159,7 +180,7 @@ sub _check {
       next;
     }
 
-    my $installed = $file->slurp_utf8;
+    my $installed = $self->_read_skill($file);
     if ($installed eq $current) {
       push @results, { agent => $agent, status => 'current' };
       printf "%-12s current\n", $agent unless $self->json;
@@ -192,12 +213,12 @@ sub _update {
       next;
     }
 
-    my $installed = $file->slurp_utf8;
+    my $installed = $self->_read_skill($file);
     if ($installed eq $content) {
       push @results, { agent => $agent, status => 'current' };
       printf "%-12s already current\n", $agent unless $self->json;
     } else {
-      $file->spew_utf8($content);
+      $self->_write_skill($file, $content);
       push @results, { agent => $agent, status => 'updated' };
       printf "%-12s updated\n", $agent unless $self->json;
     }
@@ -208,12 +229,35 @@ sub _update {
   }
 }
 
+# Path::Tiny raises Path::Tiny::Error objects that stringify with the call site
+# appended ("mkpath failed for ...: Permission denied at .../Cmd/Skill.pm line
+# NNN."), so an unwritable skill directory used to report a karr source
+# location at the user. App::karr::Error reduces it to the one line that is
+# actually about them (ticket #77).
+sub _read_skill {
+  my ($self, $file) = @_;
+  my $content = eval { $file->slurp_utf8 };
+  defined $content
+    or user_error( "Could not read $file: ", clean_error($@) );
+  return $content;
+}
+
+sub _write_skill {
+  my ($self, $file, $content) = @_;
+  eval { $file->parent->mkpath; $file->spew_utf8($content); 1 }
+    or user_error( "Could not write $file: ", clean_error($@) );
+  return;
+}
+
 sub _target_agents {
   my ($self) = @_;
   if ($self->agent) {
     my @names = split /,/, $self->agent;
     for my $name (@names) {
-      die "Unknown agent: $name (known: " . join(', ', sort keys %AGENTS) . ")\n"
+      # --agent is a value MooX::Options cannot validate, so the usage error is
+      # raised here; see the note on the unknown-action branch in execute.
+      user_error( "Usage: karr skill --agent NAME[,NAME,...]\n",
+                  "Unknown agent: $name (known: ", join( ', ', sort keys %AGENTS ), ")" )
         unless $AGENTS{$name};
     }
     return @names;

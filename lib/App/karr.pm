@@ -174,6 +174,34 @@ option done => (
   doc => 'Include the Done section in the default board view',
 );
 
+# MooX::Cmd derives a command name from the class basename, so
+# App::karr::Cmd::SetRefs is only ever spelled "setrefs" -- the documented
+# dashed forms need registering as extra keys in the command table.
+#
+# Registering them here rather than rewriting $ARGV[0] in bin/karr is what makes
+# them reachable with a root option in front (ticket #71): MooX::Cmd looks the
+# command up with a first_index over this very table across the WHOLE argv, so
+# `karr --dir PATH get-refs REF` leaves the alias at index 2, where the old
+# position-0-only rewrite never saw it. Leaving argv untouched also keeps a
+# payload that merely spells an alias intact -- `karr set-refs REF set-refs`
+# stores "set-refs", it does not store "setrefs" -- because only the token
+# MooX::Cmd itself dispatches on is ever consulted.
+my %COMMAND_ALIASES = (
+  'set-refs'   => 'setrefs',
+  'get-refs'   => 'getrefs',
+  'agent-name' => 'agentname',
+);
+
+around _build_command_commands => sub {
+  my ($orig, $self, @args) = @_;
+  my $commands = $orig->($self, @args);
+  for my $alias (keys %COMMAND_ALIASES) {
+    my $name = $COMMAND_ALIASES{$alias};
+    $commands->{$alias} = $commands->{$name} if $commands->{$name};
+  }
+  return $commands;
+};
+
 my @COMMANDS = (
   [ init      => 'Initialize a new karr board' ],
   [ create    => 'Create a new task' ],
@@ -184,6 +212,7 @@ my @COMMANDS = (
   [ edit      => 'Modify task fields' ],
   [ delete    => 'Delete a task' ],
   [ pick      => 'Claim the next available task' ],
+  [ unlock    => 'Show or break pick locks' ],
   [ archive   => 'Archive a task (soft-delete)' ],
   [ handoff   => 'Hand off a task for review' ],
   [ destroy   => 'Delete the entire refs/karr/* board' ],
@@ -196,6 +225,7 @@ my @COMMANDS = (
   [ restore   => 'Replace refs/karr/* from YAML' ],
   [ materialize => 'Write refs/karr/* out as a tasks/ file view' ],
   [ import    => 'Import a tasks/ file view into refs/karr/*' ],
+  [ repair    => 'Migrate a pre-0.403 board off double-encoded UTF-8' ],
   [ sync      => 'Sync board with remote' ],
   [ 'agent-name' => 'Generate a random agent name' ],
   [ skill     => 'Install/update agent skills' ],

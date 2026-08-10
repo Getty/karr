@@ -9,10 +9,12 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::TaskMutation;
 use App::karr::Task;
 use Time::Piece;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::TaskMutation';
 
 =head1 SYNOPSIS
 
@@ -34,7 +36,14 @@ unblocked without changing the task id.
 =item * Metadata updates
 
 C<--title>, C<--status>, C<--priority>, C<--assignee>, and C<--due> replace
-existing values.
+existing values. C<--status> is the same status change L<App::karr::Cmd::Move>
+performs and obeys the same rules, C<require_claim> included.
+
+=item * Claim ownership
+
+Editing a task claimed by another agent is refused unless that claim has
+expired. C<--claim> with the current claimant's name proceeds, and C<--release>
+is exempt, since breaking a stale claim is what it is for.
 
 =item * Body updates
 
@@ -142,57 +151,67 @@ sub execute {
   $self->check_positional_args($args_ref, 1);
 
   $self->sync_before;
+  $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
   my $id_str = $pos[0] or die "Usage: karr edit ID[,ID,...] [FLAGS]\n";
+  # See the note in Cmd::Move: a comma with no ids around it is truthy here and
+  # splits to nothing, so the command used to exit 0 having done nothing.
   my @ids = $self->parse_ids($id_str);
+  die "Usage: karr edit ID[,ID,...] [FLAGS]\n" unless @ids;
 
   my @results;
   for my $id (@ids) {
-    my $task = $self->find_task($id);
-    die "Task $id not found\n" unless $task;
+    my $task = $self->update_task_guarded($id, sub {
+      my ($task) = @_;
 
-    $task->title($self->title)       if $self->title;
-    $task->status($self->status)     if $self->status;
-    $task->priority($self->priority) if $self->priority;
-    $task->assignee($self->assignee) if $self->assignee;
-    $task->due($self->due)           if $self->due;
-    $task->body($self->body)         if defined $self->body;
+      # --release is the one edit that may act on somebody else's claim: it
+      # exists precisely to break a claim a crashed agent left behind, and it
+      # is karr's only way out of one before the timeout. Everything else has
+      # to own the claim, or find it expired. Same carve-out as kanban-md's
+      # validateEditClaim (cmd/edit.go).
+      $self->check_claim($task, $self->claim) unless $self->release;
 
-    if ($self->append_body) {
-      $task->body(($task->body ? $task->body . "\n" : '') . $self->append_body);
-    }
+      $task->title($self->title)       if $self->title;
+      $self->apply_status_change($task, $self->status, $self->claim) if $self->status;
+      $task->priority($self->priority) if $self->priority;
+      $task->assignee($self->assignee) if $self->assignee;
+      $task->due($self->due)           if $self->due;
+      $task->body($self->body)         if defined $self->body;
 
-    if ($self->add_tag) {
-      my @new = split /,/, $self->add_tag;
-      my %existing = map { $_ => 1 } @{$task->tags};
-      push @{$task->tags}, grep { !$existing{$_} } @new;
-    }
+      if ($self->append_body) {
+        $task->body(($task->body ? $task->body . "\n" : '') . $self->append_body);
+      }
 
-    if ($self->remove_tag) {
-      my %remove = map { $_ => 1 } split /,/, $self->remove_tag;
-      $task->tags([grep { !$remove{$_} } @{$task->tags}]);
-    }
+      if ($self->add_tag) {
+        my @new = split /,/, $self->add_tag;
+        my %existing = map { $_ => 1 } @{$task->tags};
+        push @{$task->tags}, grep { !$existing{$_} } @new;
+      }
 
-    if ($self->claim) {
-      $task->claimed_by($self->claim);
-      $task->claimed_at(gmtime->datetime . 'Z');
-    }
+      if ($self->remove_tag) {
+        my %remove = map { $_ => 1 } split /,/, $self->remove_tag;
+        $task->tags([grep { !$remove{$_} } @{$task->tags}]);
+      }
 
-    if ($self->release) {
-      $task->clear_claimed_by;
-      $task->clear_claimed_at;
-    }
+      if ($self->claim) {
+        $task->claimed_by($self->claim);
+        $task->claimed_at(gmtime->datetime . 'Z');
+      }
 
-    if ($self->block) {
-      $task->blocked($self->block);
-    }
+      if ($self->release) {
+        $task->clear_claimed_by;
+        $task->clear_claimed_at;
+      }
 
-    if ($self->unblock) {
-      $task->clear_blocked;
-    }
+      if ($self->block) {
+        $task->blocked($self->block);
+      }
 
-    $self->save_task($task);
+      if ($self->unblock) {
+        $task->clear_blocked;
+      }
+    });
 
     push @results, { id => $task->id, title => $task->title };
     printf "Updated task %d: %s\n", $task->id, $task->title unless $self->json;

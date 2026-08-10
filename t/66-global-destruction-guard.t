@@ -97,6 +97,10 @@ sub _board_repo {
 
     my $old = getcwd();
     chdir $repo or die "chdir $repo: $!";
+    # init first: a write command in a repository without a board is refused
+    # (#62), so `create` alone no longer conjures one.
+    system( $^X, "-I$ROOT/lib", $BIN, 'init', '--name', 'Guard Board' ) == 0
+        or die 'karr init failed';
     system( $^X, "-I$ROOT/lib", $BIN, 'create', 'probe ticket' ) == 0
         or die 'karr create failed';
     chdir $old or die "chdir $old: $!";
@@ -226,6 +230,55 @@ PERL
     is $loud->{exit}, 0, 'written board: child exits cleanly';
     like $loud->{stderr}, qr/Push skipped/,
         'written board reports, without consulting the git object either';
+};
+
+subtest 'App::karr::Git refuses native work in the DESTRUCT phase' => sub {
+    # Ticket #63: mutating _in_global_destruction to `return 0` left this file
+    # green, because SyncGuard's own DESTRUCT check alone satisfies every
+    # subtest above. That makes karr's first line of defence -- the one that
+    # covers every native call reachable from teardown, not just the guard's --
+    # deletable in a refactor with nothing to notice. Pin it on its own.
+    is( App::karr::Git::_in_global_destruction(), 0,
+        'false during ordinary execution' );
+
+    my $repo = _board_repo( remote => 0 );
+
+    # Assert from inside the real phase. The child prints its findings to
+    # STDOUT from a DESTROY that only runs once Perl is tearing down.
+    my $script = <<'PERL';
+use App::karr::Git;
+{ package Probe;
+  sub new { bless {}, shift }
+  sub DESTROY {
+    print "PHASE:${^GLOBAL_PHASE}\n";
+    print "GUARD:",   App::karr::Git::_in_global_destruction(), "\n";
+    my $git = App::karr::Git->new( dir => $ARGV[0] );
+    print "IS_REPO:", $git->is_repo, "\n";
+    print "READ:[",   $git->read_ref('refs/karr/tasks/1/data'), "]\n";
+    print "WRITE:[",  ( defined $git->write_ref( 'refs/karr/probe/gd2', 'x' ) ? 'defined' : 'undef' ), "]\n";
+    print "ERR:",     ( $git->last_error // '' ), "\n";
+  }
+}
+our $P = Probe->new;
+print "BODY-DONE\n";
+PERL
+
+    my $res = _run_capped( $repo, '-e', $script, $repo );
+
+    plan skip_all => 'shell cannot set `ulimit -v` on this platform' unless $res;
+
+    is $res->{exit}, 0, 'child exits cleanly';
+    like $res->{stdout}, qr/^BODY-DONE$/m,     'the body ran';
+    like $res->{stdout}, qr/^PHASE:DESTRUCT$/m, 'DESTROY really ran in global destruction';
+    like $res->{stdout}, qr/^GUARD:1$/m,        '_in_global_destruction reports the phase';
+    like $res->{stdout}, qr/^IS_REPO:0$/m,      'is_repo refuses rather than opening libgit2';
+    like $res->{stdout}, qr/^READ:\[\]$/m,      'read_ref returns empty instead of touching FFI';
+    like $res->{stdout}, qr/^WRITE:\[undef\]$/m, 'write_ref refuses';
+    like $res->{stdout}, qr/^ERR:refused: libgit2/m, 'and says why';
+    unlike $res->{stderr}, $RUNAWAY,            'no FFI fallout';
+
+    my $refs = `git -C '$repo' for-each-ref --format='\%(refname)' refs/karr/probe`;
+    unlike $refs, qr{refs/karr/probe/gd2}, 'and the refused write really wrote nothing';
 };
 
 subtest 'pending_writes counts ref mutations' => sub {

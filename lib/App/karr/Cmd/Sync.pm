@@ -6,7 +6,7 @@ use Moo;
 use MooX::Cmd;
 use feature 'say';
 use MooX::Options (
-    usage_string => 'USAGE: karr sync [--push] [--pull]',
+    usage_string => 'USAGE: karr sync [--push] [--pull] [--prune]',
 );
 use App::karr::Role::BoardAccess;
 
@@ -37,6 +37,15 @@ Only fetches remote C<refs/karr/*>.
 
 Only pushes local C<refs/karr/*> state to the configured remote.
 
+=item * C<--prune>
+
+Accepts a reconciliation that would delete every remaining board ref. Any
+other command refuses that and stops, because "the remote deliberately
+dropped the board" and "the remote is empty for the wrong reason" -- a
+re-created origin, an edited remote URL, a rolled-back hosting-side restore --
+look exactly alike from here. Use it to let a C<karr destroy> performed on
+another clone take effect on this one; check C<git remote -v> first.
+
 =back
 
 =head1 SEE ALSO
@@ -48,6 +57,11 @@ L<App::karr::Cmd::Backup>, L<App::karr::Cmd::Restore>
 
 option push => ( is => 'ro', default => 0, doc => 'Push refs to remote' );
 option pull => ( is => 'ro', default => 0, doc => 'Pull refs from remote' );
+option prune => (
+    is      => 'ro',
+    default => 0,
+    doc     => 'Accept a pull that deletes every remaining board ref',
+);
 
 sub execute {
     my ( $self, $args, $data ) = @_;
@@ -73,7 +87,9 @@ sub execute {
 
     unless ($push_only) {
         print STDERR "Pulling refs/karr/ from remote...\n" unless $self->quiet;
-        $git->pull
+        # --prune is the one place that may reconcile the board down to
+        # nothing; everywhere else App::karr::Git refuses and says so (#82).
+        $git->pull( undef, accept_wipe => $self->prune )
             or die "Pull failed: " . ( $git->last_error // 'unknown error' ) . "\n";
     }
 

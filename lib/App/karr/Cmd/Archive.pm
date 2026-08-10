@@ -37,6 +37,7 @@ sub execute {
   $self->check_positional_args($args_ref, 1);
 
   $self->sync_before;
+  $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
   my $id_str = $pos[0] or die "Usage: karr archive ID[,ID,...]\n";

@@ -6,6 +6,7 @@ my @modules = qw(
   App::karr
   App::karr::Task
   App::karr::Config
+  App::karr::Error
   App::karr::BoardStore
   App::karr::Role::BoardAccess
   App::karr::Role::Output
@@ -18,6 +19,7 @@ my @modules = qw(
   App::karr::Cmd::Delete
   App::karr::Cmd::Board
   App::karr::Cmd::Pick
+  App::karr::Cmd::Unlock
   App::karr::Cmd::Archive
   App::karr::Cmd::Handoff
   App::karr::Cmd::Destroy

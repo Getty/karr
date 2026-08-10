@@ -4,6 +4,7 @@ package App::karr::Foundation::Runner;
 our $VERSION = '0.403';
 use Moo;
 use Carp qw( croak );
+use Encode ();
 use IO::Select;
 use IO::Handle ();
 
@@ -87,6 +88,14 @@ sub _run_command {
   my $timed_out = 0;
   my $sel       = IO::Select->new($reader);
 
+  # The agent's output arrives as raw octets in 64k reads that can split a
+  # multi-byte character, while STDOUT carries the :encoding(UTF-8) layer
+  # F<karr-foundation> installed and therefore wants characters. FB_QUIET is
+  # the streaming decoder: it consumes every complete sequence and leaves a
+  # trailing partial one in $pending for the next chunk. The log file and the
+  # error-scanning buffer keep the raw octets.
+  my $pending = '';
+
   while (1) {
     my $wait;
     if ( $max_runtime > 0 ) {
@@ -106,7 +115,10 @@ sub _run_command {
     last if !defined $n;   # read error
     last if $n == 0;       # EOF — the command closed its output
     print {$log_fh} $chunk;
-    print $chunk if $stream_terms;
+    if ($stream_terms) {
+      $pending .= $chunk;
+      print Encode::decode( 'UTF-8', $pending, Encode::FB_QUIET );
+    }
     $output .= $chunk;
   }
 

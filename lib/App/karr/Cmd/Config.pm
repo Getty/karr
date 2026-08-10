@@ -43,6 +43,13 @@ Default values applied by L<App::karr::Cmd::Create>.
 
 Claim expiry duration in C<Nh> or C<Nm> format.
 
+=item * C<lock_timeout>
+
+How long a C<karr pick> lock ref may be held before another agent may break it,
+in C<Nh>, C<Nm>, or C<Ns> format. This is not C<claim_timeout>: a claim covers a
+work session, a lock covers one pick. Defaults to C<5m>; C<0s> disables expiry,
+leaving L<App::karr::Cmd::Unlock> as the only way to clear a stale lock.
+
 =item * C<foundation.enabled>, C<foundation.reason>
 
 Board-level switch for automated agent runs (L<App::karr::Foundation>) and the
@@ -62,7 +69,7 @@ L<App::karr::Cmd::Context>, L<App::karr::Config>
 my %WRITABLE = map { $_ => 1 } qw(
   board.name board.description
   defaults.status defaults.priority defaults.class
-  claim_timeout
+  claim_timeout lock_timeout
   foundation.enabled foundation.reason
 );
 
@@ -76,7 +83,12 @@ sub execute {
   my %arity = ( show => 1, get => 2, set => 3 );
   $self->check_positional_args($args_ref, $arity{$action}) if $arity{$action};
 
-  $self->sync_before if $action eq 'set';
+  # Only `set` writes, and only `set` needs a board: `get` and `show` fall
+  # back to the code defaults, which is a useful answer even without one.
+  if ( $action eq 'set' ) {
+    $self->sync_before;
+    $self->require_board;
+  }
 
   my $config = App::karr::Config->from_merged($self->store->effective_config);
 
@@ -124,6 +136,7 @@ sub _display_keys {
   push @out, ['defaults.priority',  $d->{defaults}{priority}] if $d->{defaults}{priority};
   push @out, ['defaults.class',     $d->{defaults}{class}]    if $d->{defaults}{class};
   push @out, ['claim_timeout',      $d->{claim_timeout}];
+  push @out, ['lock_timeout',       $d->{lock_timeout}];
   push @out, ['classes',            [map { $_->{name} } @{$d->{classes} // []}]];
   push @out, ['foundation.enabled', App::karr::Config->from_merged($d)->foundation_enabled];
   push @out, ['foundation.reason',  $d->{foundation}{reason}] if $d->{foundation}{reason};
@@ -166,6 +179,9 @@ sub _set_key {
   } elsif ($key eq 'claim_timeout') {
     die "Invalid timeout format: $val (use e.g. 1h, 30m)\n"
       unless $val =~ /^\d+[hm]$/;
+  } elsif ($key eq 'lock_timeout') {
+    die "Invalid timeout format: $val (use e.g. 5m, 30s, 0s to disable)\n"
+      unless $val =~ /^\d+[hms]$/;
   } elsif ($key eq 'foundation.enabled') {
     # A bare "false" from the command line is true in Perl -- coerce here so the
     # stored value is the same 1/0 `karr disable`/`karr enable` write.

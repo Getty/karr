@@ -7,6 +7,14 @@ use warnings;
 our $VERSION = '0.403';
 use App::karr;
 use App::karr::SyncGuard;
+use App::karr::Encoding qw( decode_argv enable_std_utf8 );
+
+# The character/octet boundary (ticket #53). Everything above this line is
+# bytes, everything below is Perl characters: @ARGV comes in decoded, STDOUT and
+# STDERR encode on the way out, and no command body encodes anything itself.
+# STDIN stays raw on purpose -- karr restore decodes its own payload.
+enable_std_utf8();
+decode_argv();
 
 # Push insurance, flushed at the last safe moment (ticket #37).
 #
@@ -32,12 +40,6 @@ END {
     App::karr::SyncGuard->flush_armed;
 }
 
-if (@ARGV) {
-    $ARGV[0] = 'setrefs' if $ARGV[0] eq 'set-refs';
-    $ARGV[0] = 'getrefs' if $ARGV[0] eq 'get-refs';
-    $ARGV[0] = 'agentname' if $ARGV[0] eq 'agent-name';
-}
-
 my $ran = eval { App::karr->new_with_cmd; 1 };
 if ( !$ran ) {
     my $err = $@;
@@ -51,15 +53,21 @@ if ( !$ran ) {
     #   "Unknown command:"          the dispatch guard in App::karr
     #   "unexpected extra argument"  surplus positionals (Role::CliArgs)
     #   "Usage:"                     a missing required positional
-    # Any new usage-error die must start with one of these. Everything else --
-    # task not found, board missing, a Git/sync failure, a refused destructive
-    # operation -- is a runtime failure (1).
+    #   "Usage error:"               anything a command rejects as misuse that
+    #                                is not one of the shapes above -- raised
+    #                                via App::karr::Role::ExitCodes'
+    #                                usage_error(), which is the generic entry
+    #                                point for e.g. an out-of-range option value
+    # Any new usage-error die must start with one of these; prefer usage_error()
+    # over inventing a fifth marker. Everything else -- task not found, board
+    # missing, a Git/sync failure, a refused destructive operation -- is a
+    # runtime failure (1).
     #
-    # Option-parse errors (unknown option, invalid option value) never reach
+    # Option-parse errors (unknown option, unparseable option value) never reach
     # here: MooX::Options exits 2 directly via App::karr::Role::ExitCodes (and
     # the root's _print_help), so those exits bypass this eval.
     my $is_usage = defined $err
-        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:)/;
+        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:|Usage error:)/;
 
     print STDERR $err if defined $err && length $err;
     exit( $is_usage ? 2 : 1 );
@@ -201,6 +209,11 @@ Shows the grouped board view.
 
 Finds the next suitable task and claims it for an agent.
 
+=item * L<App::karr::Cmd::Unlock>
+
+Shows the pick locks currently held on the board, and breaks them. The escape
+hatch for a lock left behind by an agent that died mid-pick.
+
 =item * L<App::karr::Cmd::Handoff>
 
 Moves work into review and optionally appends a timestamped note.
@@ -236,6 +249,12 @@ destructive and requires explicit confirmation flags.
 =item * L<App::karr::Cmd::Destroy>
 
 Deletes the whole board namespace from the repository.
+
+=item * L<App::karr::Cmd::Repair>
+
+Migrates a board written before 0.403 off double-encoded UTF-8. Reports by
+default; C<--yes> rewrites the affected refs. Idempotent, and a no-op on a
+board that is already current.
 
 =back
 

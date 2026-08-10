@@ -156,6 +156,7 @@ Important refs:
 |---------|------------|
 | `karr board` | grouped board view |
 | `karr pick` | atomic next-task selection with claim |
+| `karr unlock` | show or break pick locks left behind by a crashed agent |
 | `karr handoff` | move into review and append a note |
 | `karr context` | generate agent-facing board summary |
 | `karr log` | inspect per-agent or per-task activity |
