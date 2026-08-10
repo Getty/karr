@@ -1,0 +1,36 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:46:55Z
+id: 69
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- task
+- interop
+- data-loss
+title: unknown frontmatter fields are silently deleted on the first write
+updated: 2026-08-10T01:40:24Z
+---
+
+`Task.pm:152`/`:159` construct via `$class->new(%$fm, ...)` and Moo silently
+drops unknown constructor args. So anything in the frontmatter that karr does not
+model is gone on the next write:
+
+    # file with  custom_field: keep me  and  block_reason: upstream outage
+    karr import --yes
+    git show <ref>:data   -> both fields gone
+
+That breaks the interop promise in the sharpest possible way: karr does not just
+fail to understand a kanban-md field, it deletes it. Same for anything a human
+added by hand in an editor.
+
+Fix: keep unknown frontmatter keys in a passthrough slot on the Task object and
+write them back out in `to_markdown`, preserving order where practical.
+Fixed and merged into main (3dac607); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. Note the #68 trigger change: started is now stamped on the first move out
+of the FIRST CONFIGURED status, per kanban-md lifecycle.go, not out of the
+literal in-progress.
