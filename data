@@ -1,0 +1,29 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T02:19:16Z
+id: 99
+priority: low
+status: done
+tags:
+- cli
+- context
+title: karr context recently-completed is always empty
+updated: 2026-08-10T03:55:17Z
+---
+
+Found while fixing #67, pre-existing and unrelated to it.
+
+Cmd/Context.pm:121 builds its "recently completed" section by grepping for
+terminal statuses inside @active_tasks -- but @active_tasks is defined as the
+NON-terminal tasks. The intersection is empty by construction, so the section
+has never had a single entry in any board.
+
+Not a regression from the terminal-status work: it was equally empty when the
+terminal statuses were hardcoded. It just becomes visible once you go looking at
+how terminal status is used.
+
+Fix is to grep the full task list instead, and decide what "recently" means --
+kanban-md bounds it by completion timestamp. Note the completed stamp itself is
+unreliable on a board with custom statuses; see the empty-strings ticket.
+Geschlossen durch cd4d043/58f0fc7: recently-completed scannt jetzt das ganze Board, tagesgranular geboundet durch --days. Haengt am completed-stamp-Fix (#67-Leftover) aus demselben Commit. t/108.
