@@ -1,0 +1,44 @@
+---
+claimed_at: 2026-08-10T16:46:19Z
+claimed_by: changes-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T16:32:55Z
+id: 110
+priority: medium
+started: 2026-08-10
+status: done
+tags:
+- changes
+- release
+- docs
+title: 'Changes: stale ''not caught'' caveat in the total-wipe entry, contradicted
+  by the board-identity fix (#95) later in the same {{$NEXT}} block'
+updated: 2026-08-10T17:07:38Z
+---
+
+Found during the 0.500 pre-release audit (karr-release-checker).
+
+Changes lines 387-402 ("Fixed a remote that is empty for the wrong reason
+reconciling the whole board away...") ends: "Only the total wipe is guarded:
+a pull that leaves at least one board ref standing still reconciles
+unattended, so a remote swapped for a different, non-empty board is not
+caught."
+
+That is exactly the gap ticket #95 was filed for -- and #95 is already closed:
+Changes lines 167-183 ("Fixed the wipe guard's blind spot...") documents the
+fix, via refs/karr/meta/board-id: "it caught a remote that had lost every
+board ref, but not one swapped for a DIFFERENT non-empty board ... Boards now
+carry an identity ... A pull where both sides have an id and they differ is
+refused before any reconciliation."
+
+So within the current unreleased {{$NEXT}} block, one entry states a
+limitation as still open while another entry, earlier in the same block,
+closes exactly that limitation. Same shape as the #38/#105 contradiction that
+was already cleaned up today. The stale sentence at Changes:400-402 should be
+removed or updated (e.g. point at the #95 fix instead of restating the old
+gap) before release.
+
+Not a code bug -- a Changes-file accuracy issue. Blocks release only in the
+sense that the changelog should not contradict itself.
+Landed on main as 9f0c38b. Full suite green: 114 files, 775 tests, no warnings. dzil build clean, App-karr-0.500.tar.gz produced.
