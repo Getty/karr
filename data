@@ -1,0 +1,46 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:45:07Z
+id: 62
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+- init
+title: write commands silently create a half-board, then init is locked out forever
+updated: 2026-08-10T01:27:58Z
+---
+
+Any write command creates a partial board, and that partial board then locks
+`init` out permanently:
+
+    mkdir p && cd p && git init -q . && git commit -q --allow-empty -m init
+    karr create "oops wrong dir"    -> rc=0, "Created task 1"
+    git for-each-ref refs/karr/     -> meta/next-id + tasks/1/data, but NO refs/karr/config
+    karr init --name "My Real Board"-> rc=1 "Board already exists in refs/karr/"
+    karr config get board.name      -> "Kanban Board"   # can never be set now
+
+`board_exists` (`BoardStore.pm:38-41`) accepts `meta/next-id` on its own, so the
+half-board blocks `init` forever and the user never gets the `.gitignore`
+entries `init` writes. The only way out is `karr destroy --yes`.
+
+Every other command (`board`, `context`, `config`, `materialize`, `pick`, `move`,
+`disable`) also happily operates on a nonexistent board and returns 0. Typing
+`karr create` in the wrong directory is an easy mistake, and it leaves refs
+behind in an unrelated repo.
+
+kanban-md refuses: `internal/config/config.go:19` — `"no kanban board found (run
+'kanban-md init' to create one)"`.
+
+Fix: require `refs/karr/config` for a board to count as existing; make write
+commands refuse with that message when it is absent; make `init` complete a
+half-board instead of refusing.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
