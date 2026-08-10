@@ -40,12 +40,6 @@ END {
     App::karr::SyncGuard->flush_armed;
 }
 
-if (@ARGV) {
-    $ARGV[0] = 'setrefs' if $ARGV[0] eq 'set-refs';
-    $ARGV[0] = 'getrefs' if $ARGV[0] eq 'get-refs';
-    $ARGV[0] = 'agentname' if $ARGV[0] eq 'agent-name';
-}
-
 my $ran = eval { App::karr->new_with_cmd; 1 };
 if ( !$ran ) {
     my $err = $@;
@@ -59,22 +53,21 @@ if ( !$ran ) {
     #   "Unknown command:"          the dispatch guard in App::karr
     #   "unexpected extra argument"  surplus positionals (Role::CliArgs)
     #   "Usage:"                     a missing required positional
-    #   "Invalid <field>: <value>"   a rejected option or positional value
-    # Any new usage-error die must start with one of these. Everything else --
-    # task not found, board missing, a Git/sync failure, a refused destructive
-    # operation -- is a runtime failure (1).
+    #   "Usage error:"               anything a command rejects as misuse that
+    #                                is not one of the shapes above -- raised
+    #                                via App::karr::Role::ExitCodes'
+    #                                usage_error(), which is the generic entry
+    #                                point for e.g. an out-of-range option value
+    # Any new usage-error die must start with one of these; prefer usage_error()
+    # over inventing a fifth marker. Everything else -- task not found, board
+    # missing, a Git/sync failure, a refused destructive operation -- is a
+    # runtime failure (1).
     #
-    # The "Invalid <field>: " marker is what App::karr::Config's validators and
-    # `karr config set` raise for a bad status, priority, class, due date,
-    # duration or boolean (ticket #54). The trailing colon is load-bearing: it
-    # is what keeps "Invalid task format", a corrupt stored document rather than
-    # a mistyped argument, on the runtime-failure side.
-    #
-    # Option-parse errors (unknown option, invalid option value) never reach
+    # Option-parse errors (unknown option, unparseable option value) never reach
     # here: MooX::Options exits 2 directly via App::karr::Role::ExitCodes (and
     # the root's _print_help), so those exits bypass this eval.
     my $is_usage = defined $err
-        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:|Invalid [a-z ]+: )/;
+        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:|Usage error:)/;
 
     print STDERR $err if defined $err && length $err;
     exit( $is_usage ? 2 : 1 );
@@ -216,6 +209,11 @@ Shows the grouped board view.
 
 Finds the next suitable task and claims it for an agent.
 
+=item * L<App::karr::Cmd::Unlock>
+
+Shows the pick locks currently held on the board, and breaks them. The escape
+hatch for a lock left behind by an agent that died mid-pick.
+
 =item * L<App::karr::Cmd::Handoff>
 
 Moves work into review and optionally appends a timestamped note.
@@ -290,8 +288,7 @@ a Git or sync operation failed, a destructive command was refused for want of
 C<--yes>, or a batch committed partial work but at least one item failed.
 
 =item * B<2> — usage error: an unknown command, an unknown option, an invalid
-option or argument value (an unconfigured status, priority or class, a due date
-that is not C<YYYY-MM-DD>), or a surplus or missing positional argument.
+option value, or a surplus or missing positional argument.
 
 =back
 

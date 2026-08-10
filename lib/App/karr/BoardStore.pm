@@ -37,9 +37,40 @@ L<App::karr::Config>
 
 sub board_exists {
     my ($self) = @_;
-    return $self->git->ref_exists('refs/karr/config')
-        || $self->git->ref_exists('refs/karr/meta/next-id');
+    return $self->git->ref_exists('refs/karr/config');
 }
+
+=head2 board_exists
+
+True when this repository holds an initialized board, which means exactly one
+thing: C<refs/karr/config> is there. It used to accept C<refs/karr/meta/next-id>
+on its own as well, and that is how a stray C<karr create> in the wrong
+directory produced a board that C<karr init> then refused to touch for good --
+the half-board counted as existing, so the name, the statuses and the
+F<.gitignore> entries could never be written (#62).
+
+    die "No karr board found. Run 'karr init' to create one.\n"
+        unless $store->board_exists;
+
+=cut
+
+sub has_board_refs {
+    my ($self) = @_;
+    my @refs = $self->list_karr_refs;
+    return @refs ? 1 : 0;
+}
+
+=head2 has_board_refs
+
+True when anything at all lives under C<refs/karr/>, initialized board or not.
+This is the question the commands that clean up or read raw refs
+(C<backup>, C<destroy>, C<materialize>, C<repair>) actually have: refusing them
+on a half-board would strand the refs a pre-fix karr already left behind, with
+no way to remove them from inside karr.
+
+    my $anything_here = $store->has_board_refs;
+
+=cut
 
 sub load_config_overrides {
     my ($self) = @_;
@@ -201,6 +232,32 @@ sub set_next_id {
     return $self->git->write_next_id_ref($next_id);
 }
 
+sub ensure_next_id {
+    my ($self) = @_;
+    my ($max) = sort { $b <=> $a } $self->git->list_task_refs;
+    my $floor = defined $max ? $max + 1 : 1;
+
+    # A board with no counter yet gets one; a board that already has one only
+    # ever moves forward.
+    return $self->set_next_id($floor)
+        unless $self->git->ref_exists('refs/karr/meta/next-id');
+    return 1 if $self->peek_next_id >= $floor;
+    return $self->set_next_id($floor);
+}
+
+=head2 ensure_next_id
+
+Seeds the id counter without ever handing out an id that is already taken. On a
+fresh board that is C<1>; on a board C<init> is completing rather than creating
+it is one past the highest task ref, and an existing counter that is already
+further ahead is left alone. C<init> used to write C<1> unconditionally, which
+on a half-board (see L</board_exists>) meant the next C<karr create> reused id 1
+and overwrote the task that was already there.
+
+    $store->ensure_next_id;
+
+=cut
+
 sub stamp_encoding_version {
     my ($self) = @_;
     return $self->git->write_encoding_version;
@@ -217,16 +274,36 @@ C<karr repair --yes>, and the import path below.
 
 =cut
 
+# The grep is not redundant with the /data-only match in list_task_refs: a ref
+# that exists but holds no parseable card still loads as undef, and every
+# consumer of this list calls methods on each element. One undef in here took
+# out list, board, materialize and pick at once (#45), so the board list is
+# filtered at the single point that produces it rather than at each of them.
 sub load_tasks {
     my ($self) = @_;
     my @ids = $self->git->list_task_refs;
-    return map { $self->git->load_task_ref($_) } @ids;
+    return grep { defined } map { $self->git->load_task_ref($_) } @ids;
 }
 
 sub find_task {
     my ( $self, $id ) = @_;
     return $self->git->load_task_ref($id);
 }
+
+sub find_task_with_oid {
+    my ( $self, $id ) = @_;
+    return $self->git->load_task_ref_with_oid($id);
+}
+
+=head2 find_task_with_oid
+
+Returns C<< ($oid, $task) >> for one task: the card, plus the OID of the commit
+it was read from. Pair it with L</save_task_cas> to write the card back only if
+nobody else has touched it in between.
+
+    my ( $oid, $task ) = $store->find_task_with_oid(7);
+
+=cut
 
 sub save_task {
     my ( $self, $task ) = @_;
@@ -238,6 +315,33 @@ sub save_task {
     $task->updated( gmtime->datetime . 'Z' ) if $self->git->ref_exists($ref);
     return $self->git->save_task_ref($task);
 }
+
+sub save_task_cas {
+    my ( $self, $task, $expected_oid ) = @_;
+    # The card came from find_task_with_oid, so the ref exists by construction
+    # and the `updated` bump is unconditional (see save_task above).
+    $task->updated( gmtime->datetime . 'Z' );
+    return $self->git->save_task_ref_cas( $task, $expected_oid );
+}
+
+=head2 save_task_cas
+
+Writes a card back only if its ref still points at C<$expected_oid>, the OID
+L</find_task_with_oid> read it from. Returns true when the write landed and
+false when another agent changed the card first -- at which point the caller
+must re-read and decide again, never retry with the value that already lost.
+
+This is what makes C<karr pick> exclusive. The lock ref serialises agents but
+cannot bind them: its holder identity is the clone's C<user.email>, which every
+agent on one machine shares, so twelve parallel picks were all told they owned
+the lock and all wrote their claim over each other's (#86). The compare-and-swap
+is on the card itself and does not care who thinks it holds what.
+
+    my ( $oid, $task ) = $store->find_task_with_oid(7);
+    $task->claimed_by('agent-fox');
+    $store->save_task_cas( $task, $oid ) or ...;  # someone else got there first
+
+=cut
 
 sub delete_task {
     my ( $self, $id ) = @_;
@@ -255,23 +359,80 @@ sub delete_all_karr_refs {
 }
 
 sub materialize_to {
-    my ( $self, $board_dir ) = @_;
+    my ( $self, $board_dir, %args ) = @_;
     $board_dir = path($board_dir);
-    my $tasks_dir = $board_dir->child('tasks');
+    my $tasks_dir   = $board_dir->child('tasks');
+    my $config_file = $board_dir->child('config.yml');
+
+    my @stale = $self->_materialized_cards($tasks_dir);
+
+    # Ticket #48: the view is written into the working tree, and `tasks/` and
+    # `config.yml` at a repository root are perfectly ordinary names for a
+    # project to already use. Overwriting or deleting a file Git tracks is data
+    # loss from a command that only reads the board, so check before writing
+    # anything at all -- not even the directories are created on this path.
+    unless ( $args{force} ) {
+        my @tracked = grep { $self->git->is_tracked($_) } $config_file, @stale;
+        die "Refusing to materialize into $board_dir: "
+            . scalar(@tracked)
+            . " file(s) there are tracked by git and would be overwritten or deleted:\n"
+            . join( '', map { '  ' . $_->relative($board_dir) . "\n" } @tracked )
+            . "The file view is disposable board state, not project content. Move those files\n"
+            . "aside, or re-run with --force to replace them.\n"
+            if @tracked;
+    }
+
     $board_dir->mkpath;
     $tasks_dir->mkpath;
 
-    DumpFile( $board_dir->child('config.yml')->stringify, $self->load_config );
-
-    for my $old_file ( $tasks_dir->children(qr/\.md$/) ) {
-        $old_file->remove;
+    {
+        # kanban-md's schema types several config keys as Go bools and rejects
+        # the integers Perl uses for them; JSON::PP is YAML::XS's mode name for
+        # "dump JSON::PP::Boolean as a real YAML boolean" (ticket #60).
+        local $YAML::XS::Boolean = 'JSON::PP';
+        DumpFile(
+            $config_file->stringify,
+            App::karr::Config->file_view_config(
+                $self->load_config,
+                next_id => $self->peek_next_id,
+            ),
+        );
     }
+
+    $_->remove for @stale;
 
     for my $task ( $self->load_tasks ) {
         $task->save($tasks_dir);
     }
 
     return $board_dir;
+}
+
+=head2 materialize_to
+
+Writes the board out to C<$board_dir> as a kanban-md file view: a F<config.yml>
+plus a F<tasks/> directory of cards. Stale cards from an earlier run are swept
+first, but only files named the way karr and kanban-md name them
+(C<NNN-slug.md>) -- anything else in F<tasks/> belongs to the project.
+
+Dies without writing anything when the view would overwrite or delete a file
+Git tracks, naming each one; C<< force => 1 >> proceeds anyway (ticket #48).
+
+    $store->materialize_to( $git_root );
+    $store->materialize_to( $git_root, force => 1 );
+
+=cut
+
+# The files in tasks/ that a previous materialization could have written, i.e.
+# everything shaped like App::karr::Task::filename -- which is also kanban-md's
+# own task-filename prefix (`^(\d+)-` in internal/task/find.go). Anything else
+# in the directory belongs to the project, not to karr, and is never swept
+# (ticket #48).
+sub _materialized_cards {
+    my ( $self, $tasks_dir ) = @_;
+    return () unless $tasks_dir->exists;
+    return sort { $a->basename cmp $b->basename }
+        $tasks_dir->children(qr/\A\d+-.*\.md\z/);
 }
 
 sub file_view_gitignore_entries {
@@ -322,23 +483,64 @@ sub ensure_gitignore {
 sub serialize_from {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);
+
+    # Ticket #70: parse the entire view before a single ref is touched, so one
+    # malformed card leaves the board exactly as it was instead of half
+    # imported with the prune never reached. Reading the config here rather
+    # than writing it keeps that promise for the config too.
+    my $tasks_dir = $board_dir->child('tasks');
+    my @files     = $tasks_dir->exists
+        ? sort { $a->basename cmp $b->basename } $tasks_dir->children(qr/\.md$/)
+        : ();
+
+    my ( @tasks, @rejected );
+    for my $file (@files) {
+        my $task = eval { App::karr::Task->from_file($file) };
+        if   ($task) { push @tasks, $task }
+        else         { push @rejected, ( $@ || "unknown error\n" ) }
+    }
+    # kanban-md skips malformed files and carries on, but import cannot: a
+    # skipped card's ref would be pruned below, turning an unreadable file into
+    # a deleted task. All or nothing -- and every rejected file is named, which
+    # a bare "Invalid task format" never was.
+    if (@rejected) {
+        die "Refusing to import from $board_dir: "
+            . scalar(@rejected)
+            . " of " . scalar(@files) . " task file(s) could not be parsed:\n"
+            . join( '', map { my $why = $_; chomp $why; "  $why\n" } @rejected )
+            . "No refs were changed. Fix or remove those files and import again.\n";
+    }
+
     my $config_file = $board_dir->child('config.yml');
-    if ( $config_file->exists ) {
-        my $config = LoadFile( $config_file->stringify );
+    my $config = $config_file->exists
+        ? ( LoadFile( $config_file->stringify ) // {} )
+        : undef;
+    if ( defined $config ) {
+        # next_id belongs to refs/karr/meta/next-id, not to the config; the
+        # seeding below owns it. materialize writes it into the view purely
+        # because kanban-md refuses a config without it (ticket #60).
         delete $config->{next_id};
+    }
+
+    # Nothing above this line wrote anything.
+    if ( defined $config ) {
         $self->save_config($config);
+    }
+    elsif ( !$self->board_exists ) {
+        # Import is a bootstrap path (#30), so it has to leave a board karr
+        # will actually write to. A kanban-md tasks/ view with no config.yml
+        # otherwise produced tasks and a counter but no refs/karr/config --
+        # exactly the half-board every write command now refuses (#62), which
+        # made `karr create` right after a successful import impossible.
+        $self->save_config( App::karr::Config->default_config );
     }
 
     my %seen;
-    my $tasks_dir = $board_dir->child('tasks');
-    if ( $tasks_dir->exists ) {
-        for my $file ( $tasks_dir->children(qr/\.md$/) ) {
-            my $task = App::karr::Task->from_file($file);
-            # Restore/import path: persist verbatim so the original `updated`
-            # timestamps survive, even when overwriting pre-existing refs.
-            $self->git->save_task_ref($task);
-            $seen{ $task->id } = 1;
-        }
+    for my $task (@tasks) {
+        # Restore/import path: persist verbatim so the original `updated`
+        # timestamps survive, even when overwriting pre-existing refs.
+        $self->git->save_task_ref($task);
+        $seen{ $task->id } = 1;
     }
 
     for my $id ( $self->git->list_task_refs ) {
@@ -367,6 +569,22 @@ sub serialize_from {
     return 1;
 }
 
+=head2 serialize_from
+
+Reads a file view at C<$board_dir> back into C<refs/karr/*>: task refs are
+replaced by the cards, refs the view does not mention are pruned, and
+C<next_id> is seeded past the highest imported id when the stored counter is
+missing or stale.
+
+All or nothing. Every card is parsed before the first ref is written, so a
+malformed file aborts the whole import -- listing each rejected file and its
+reason -- with the board left exactly as it was (ticket #70). Refusing an empty
+view is the caller's job; see L<App::karr::Cmd::Import>.
+
+    $store->serialize_from( $git_root );
+
+=cut
+
 sub snapshot {
     my ($self) = @_;
     my %snapshot;
@@ -381,13 +599,19 @@ sub snapshot {
 
 sub restore_snapshot {
     my ( $self, $snapshot ) = @_;
-    my $refs = $snapshot->{refs} || {};
-    $self->delete_all_karr_refs;
-    for my $ref ( sort keys %$refs ) {
-        $self->git->write_ref( $ref, $refs->{$ref} );
-    }
-    return 1;
+    return $self->git->replace_board_refs( $snapshot->{refs} || {} );
 }
+
+=head2 restore_snapshot
+
+Makes the board consist of exactly the refs in the snapshot. Every ref name is
+checked and every commit object built before the first ref moves, so a snapshot
+karr cannot write is refused with the board untouched instead of destroying it
+on the way through (#47). See L<App::karr::Git/replace_board_refs>.
+
+    $store->restore_snapshot( $snapshot );
+
+=cut
 
 sub _diff_hashes {
     my ( $defaults, $effective ) = @_;

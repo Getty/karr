@@ -75,19 +75,19 @@ subtest '#54 invalid values are rejected with exit 2 and change nothing' => sub 
     is( _run_karr( $repo, 'create', 'First task' )->{exit}, 0, 'setup: a task exists' );
 
     my @cases = (
-        [ 'move to an unknown status',   qr/Invalid status: totally-invalid/,
+        [ 'move to an unknown status',   qr/Usage error: invalid status "totally-invalid"/,
             [ 'move', '1', 'totally-invalid' ] ],
-        [ 'create --status',   qr/Invalid status: bogus/,   [ 'create', 'x', '--status',   'bogus' ] ],
-        [ 'create --priority', qr/Invalid priority: bogus/, [ 'create', 'x', '--priority', 'bogus' ] ],
-        [ 'create --class',    qr/Invalid class: bogus/,    [ 'create', 'x', '--class',    'bogus' ] ],
-        [ 'create --due',      qr/Invalid due date: not-a-date/,
+        [ 'create --status',   qr/Usage error: invalid status "bogus"/,   [ 'create', 'x', '--status',   'bogus' ] ],
+        [ 'create --priority', qr/Usage error: invalid priority "bogus"/, [ 'create', 'x', '--priority', 'bogus' ] ],
+        [ 'create --class',    qr/Usage error: invalid class "bogus"/,    [ 'create', 'x', '--class',    'bogus' ] ],
+        [ 'create --due',      qr/Usage error: invalid due date "not-a-date"/,
             [ 'create', 'x', '--due', 'not-a-date' ] ],
-        [ 'create --due with an impossible day', qr/Invalid due date: 2026-02-30/,
+        [ 'create --due with an impossible day', qr/Usage error: invalid due date "2026-02-30"/,
             [ 'create', 'x', '--due', '2026-02-30' ] ],
-        [ 'edit --status',   qr/Invalid status: bogus/,   [ 'edit', '1', '--status',   'bogus' ] ],
-        [ 'edit --priority', qr/Invalid priority: bogus/, [ 'edit', '1', '--priority', 'bogus' ] ],
-        [ 'edit --due',      qr/Invalid due date: nope/,  [ 'edit', '1', '--due',      'nope' ] ],
-        [ 'pick --move',     qr/Invalid status: bogus/,
+        [ 'edit --status',   qr/Usage error: invalid status "bogus"/,   [ 'edit', '1', '--status',   'bogus' ] ],
+        [ 'edit --priority', qr/Usage error: invalid priority "bogus"/, [ 'edit', '1', '--priority', 'bogus' ] ],
+        [ 'edit --due',      qr/Usage error: invalid due date "nope"/,  [ 'edit', '1', '--due',      'nope' ] ],
+        [ 'pick --move',     qr/Usage error: invalid status "bogus"/,
             [ 'pick', '--claim', 'agent-fox', '--move', 'bogus' ] ],
     );
 
@@ -296,6 +296,19 @@ subtest '#78 karr create --body 0 keeps the body' => sub {
 subtest '#78 import refuses a config that does not validate' => sub {
     my $repo = _board_repo();
     path($repo)->child('tasks')->mkpath;
+    # A real card, because import refuses an empty file view outright now --
+    # that guard would otherwise mask the config check this is about.
+    path($repo)->child('tasks/001-a-card.md')->spew_utf8( <<'END' );
+---
+id: 1
+title: A card
+status: backlog
+priority: medium
+class: standard
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+---
+END
     path($repo)->child('config.yml')->spew_utf8( <<'END' );
 version: 1
 board:
@@ -322,7 +335,7 @@ subtest '#78 karr config set claim_timeout takes a compound duration' => sub {
 
     my $bad = _run_karr( $repo, 'config', 'set', 'claim_timeout', '7d' );
     is( $bad->{exit}, 2, '7d rejected with exit 2 (Go has no day unit either)' );
-    like( $bad->{stderr}, qr/Invalid timeout format: 7d/, 'and says why' );
+    like( $bad->{stderr}, qr/Usage error: invalid claim_timeout "7d"/, 'and says why' );
 };
 
 subtest '#78 config show survives a board whose schema is broken' => sub {

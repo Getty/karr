@@ -8,7 +8,7 @@ use App::karr::Task;
 use App::karr::Config;
 
 # Data-model regressions, all against App::karr::Task / App::karr::Config
-# directly -- the CLI half of the same tickets is in t/86.
+# directly -- the CLI half of the same tickets is in t/91.
 #
 #   #58  blocked was free text; kanban-md has a bool plus block_reason
 #   #68  completed survived a reopen, started was a bare date
@@ -347,17 +347,17 @@ subtest '#54 the validators are the ones the write paths call' => sub {
   is( App::karr::Config->validate_due('2026-03-15'), '2026-03-15', 'valid due' );
 
   for my $case (
-    [ 'status',   sub { $c->validate_status('bogus') },   qr/\AInvalid status: bogus \(valid: / ],
-    [ 'priority', sub { $c->validate_priority('bogus') }, qr/\AInvalid priority: bogus \(valid: / ],
-    [ 'class',    sub { $c->validate_class('bogus') },    qr/\AInvalid class: bogus \(valid: / ],
+    [ 'status',   sub { $c->validate_status('bogus') },   qr/\AUsage error: invalid status "bogus" \(valid: / ],
+    [ 'priority', sub { $c->validate_priority('bogus') }, qr/\AUsage error: invalid priority "bogus" \(valid: / ],
+    [ 'class',    sub { $c->validate_class('bogus') },    qr/\AUsage error: invalid class "bogus" \(valid: / ],
     [ 'due',      sub { App::karr::Config->validate_due('not-a-date') },
-      qr/\AInvalid due date: not-a-date \(expected YYYY-MM-DD\)/ ],
+      qr/\AUsage error: invalid due date "not-a-date" \(expected YYYY-MM-DD\)/ ],
     [ 'impossible due', sub { App::karr::Config->validate_due('2026-02-30') },
-      qr/\AInvalid due date: 2026-02-30/ ],
+      qr/\AUsage error: invalid due date "2026-02-30"/ ],
     ) {
     my ( $label, $code, $re ) = @$case;
     ok( !eval { $code->(); 1 }, "$label is rejected" );
-    like( $@, $re, "  ...with the Invalid <field>: marker bin/karr maps to 2" );
+    like( $@, $re, "  ...with the Usage error: marker bin/karr maps to 2" );
   }
 };
 

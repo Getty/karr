@@ -4,6 +4,7 @@ package App::karr::Config;
 our $VERSION = '0.403';
 use Moo;
 use YAML::XS qw( LoadFile DumpFile );
+use JSON::MaybeXS qw( JSON );
 use Path::Tiny;
 
 =head1 SYNOPSIS
@@ -217,16 +218,22 @@ of the interop boundary (ticket #78).
 
 =cut
 
-# The "Invalid <field>: <value>" shape is the CLI's usage-error marker (ADR
-# 0002): F<bin/karr> maps a die starting that way to exit 2, so every rejected
-# option value -- from `karr config set` and from the task write paths alike --
-# has to be phrased through these.
+# Every rejection here is a usage error (ADR 0002), so it carries the same
+# "Usage error:" marker L<App::karr::Role::ExitCodes/usage_error> emits and
+# F<bin/karr> maps to exit 2. These are plain class/instance methods rather than
+# calls to that role's method because App::karr::Config is not a command and
+# does not consume it -- the marker is the contract, not the caller.
+sub _usage_error {
+  my ($field, $value, $detail) = @_;
+  die sprintf "Usage error: invalid %s %s (%s)\n",
+    $field, defined $value ? qq{"$value"} : '(none)', $detail;
+}
+
 sub validate_status {
   my ($self, $value) = @_;
   my @statuses = $self->statuses;
   return $value if defined $value && grep { $_ eq $value } @statuses;
-  die "Invalid status: " . ( $value // '' )
-    . " (valid: " . join(', ', @statuses) . ")\n";
+  _usage_error( 'status', $value, 'valid: ' . join(', ', @statuses) );
 }
 
 =head2 validate_status
@@ -242,8 +249,7 @@ sub validate_priority {
   my ($self, $value) = @_;
   my @priorities = $self->priorities;
   return $value if defined $value && grep { $_ eq $value } @priorities;
-  die "Invalid priority: " . ( $value // '' )
-    . " (valid: " . join(', ', @priorities) . ")\n";
+  _usage_error( 'priority', $value, 'valid: ' . join(', ', @priorities) );
 }
 
 =head2 validate_priority
@@ -256,8 +262,7 @@ sub validate_class {
   my ($self, $value) = @_;
   my @classes = $self->classes;
   return $value if defined $value && grep { $_ eq $value } @classes;
-  die "Invalid class: " . ( $value // '' )
-    . " (valid: " . join(', ', @classes) . ")\n";
+  _usage_error( 'class', $value, 'valid: ' . join(', ', @classes) );
 }
 
 =head2 validate_class
@@ -268,12 +273,12 @@ Dies unless the value is one of the board's configured classes of service.
 
 sub validate_due {
   my ($class, $value) = @_;
-  die "Invalid due date: " . ( $value // '' ) . " (expected YYYY-MM-DD)\n"
+  _usage_error( 'due date', $value, 'expected YYYY-MM-DD' )
     unless defined $value && $value =~ /\A(\d{4})-(\d{2})-(\d{2})\z/;
   my ( $y, $m, $d ) = ( $1, $2, $3 );
   # Calendar-correct, not just well-shaped: Go's time.Parse rejects 2026-02-30
   # and so must karr, or the date sorts fine and means nothing.
-  die "Invalid due date: $value (expected YYYY-MM-DD)\n"
+  _usage_error( 'due date', $value, 'expected YYYY-MM-DD' )
     unless $m >= 1
     && $m <= 12
     && $d >= 1
@@ -490,6 +495,13 @@ sub default_config {
       { name => 'intangible' },
     ],
     claim_timeout => '1h',
+    # Deliberately not claim_timeout. A claim says "an agent owns this work"
+    # and has to outlive a whole session; a lock only covers the few
+    # milliseconds `karr pick` spends deciding on and writing one card, and it
+    # is the thing an agent that dies mid-pick leaves behind. Reusing the 1h
+    # claim window here would leave that task unpickable for an hour (#45).
+    # Accepts Nh / Nm / Ns; an explicit zero (`0s`) disables lock expiry.
+    lock_timeout => '5m',
     # Board-level switch for automated agent runs (karr-foundation). Boards are
     # enabled by default; `karr disable` writes enabled => 0 (plus an optional
     # reason) into refs/karr/config so the opt-out syncs with the board.
@@ -502,6 +514,52 @@ sub default_config {
       class    => 'standard',
     },
   };
+}
+
+# The config keys kanban-md's Go schema types as `bool`
+# (internal/config/config.go): StatusConfig.RequireClaim / .ShowDuration,
+# ClassConfig.BypassColumnWIP, TUIConfig.HideEmptyColumns -- plus karr's own
+# foundation.enabled, which kanban-md ignores but which is a boolean all the
+# same. Listed here, next to default_config, so the two stay in step.
+my %BOOLEAN_KEY = map { $_ => 1 }
+  qw( require_claim show_duration bypass_column_wip hide_empty_columns enabled );
+
+sub file_view_config {
+  my ($class, $effective, %args) = @_;
+  my $view = _booleanize($effective);
+  # kanban-md validates next_id >= 1 and refuses a config without it. karr keeps
+  # the counter in refs/karr/meta/next-id instead, so materialize copies it into
+  # the view; import drops it again and leaves the ref authoritative.
+  my $next_id = $args{next_id};
+  $view->{next_id} = ( defined $next_id && $next_id >= 1 ) ? $next_id : 1;
+  return $view;
+}
+
+=head2 file_view_config
+
+Returns the effective config reshaped for the materialized kanban-md file view:
+boolean-typed keys become real YAML booleans instead of Perl's C<1>/C<0>, and
+C<next_id> is filled in from the C<next_id> argument. Both are load-bearing --
+go-yaml refuses to unmarshal C<1> into a C<bool> and kanban-md rejects a config
+whose C<next_id> is below C<1>, so without either the whole board is unreadable
+to kanban-md (ticket #60). The caller has to dump it under
+C<local $YAML::XS::Boolean = 'JSON::PP'> for the booleans to survive.
+
+    my $view = App::karr::Config->file_view_config( $effective, next_id => 7 );
+
+=cut
+
+sub _booleanize {
+  my ($data, $key) = @_;
+  my $ref = ref $data;
+  return { map { $_ => _booleanize( $data->{$_}, $_ ) } keys %$data } if $ref eq 'HASH';
+  # No key is passed down into array elements: boolean keys only ever name a
+  # hash value, and a list member is a status/class hash or a plain string.
+  return [ map { _booleanize($_) } @$data ] if $ref eq 'ARRAY';
+  return $data if $ref;
+  return $data unless defined $key && $BOOLEAN_KEY{$key};
+  return $data unless defined $data;
+  return $data ? JSON->true : JSON->false;
 }
 
 sub _merge_hashes {

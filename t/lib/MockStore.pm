@@ -20,6 +20,9 @@ sub new {
 }
 
 sub effective_config { $_[0]{ec} }
+# The mock stands for a board that is there: the writing commands ask before
+# they touch anything (App::karr::Role::BoardDiscovery::require_board).
+sub board_exists { 1 }
 
 sub save_config {
   my ($self, $effective) = @_;

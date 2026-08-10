@@ -105,6 +105,16 @@ karr pick --claim agent-1 --tags backend
 
 Atomically finds and claims the next available task. Respects claim timeouts, blocked state, and class-of-service priority ordering (expedite > fixed-date > standard > intangible).
 
+### Unlock a stuck task
+
+```bash
+karr unlock                                  # list the pick locks currently held
+karr unlock ID                               # break one
+karr unlock --all                            # break all of them
+```
+
+`karr pick` takes a lock ref and gives it back inside the same command, so normally there is nothing here to see. An agent that dies mid-pick leaves one behind. Locks expire on their own after `lock_timeout` (default `5m`, board config); this is how you look at what is stuck and clear it now instead of waiting.
+
 ### Handoff task for review
 
 ```bash
@@ -124,7 +134,7 @@ karr config set KEY VALUE                    # set a writable value
 karr config --json                           # JSON output
 ```
 
-Writable keys: `board.name`, `board.description`, `defaults.status`, `defaults.priority`, `defaults.class`, `claim_timeout`, `foundation.enabled`, `foundation.reason`.
+Writable keys: `board.name`, `board.description`, `defaults.status`, `defaults.priority`, `defaults.class`, `claim_timeout`, `lock_timeout`, `foundation.enabled`, `foundation.reason`.
 
 ### Disable / enable automated agent runs
 

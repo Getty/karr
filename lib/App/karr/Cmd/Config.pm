@@ -43,6 +43,13 @@ Default values applied by L<App::karr::Cmd::Create>.
 
 Claim expiry duration in C<Nh> or C<Nm> format.
 
+=item * C<lock_timeout>
+
+How long a C<karr pick> lock ref may be held before another agent may break it,
+in C<Nh>, C<Nm>, or C<Ns> format. This is not C<claim_timeout>: a claim covers a
+work session, a lock covers one pick. Defaults to C<5m>; C<0s> disables expiry,
+leaving L<App::karr::Cmd::Unlock> as the only way to clear a stale lock.
+
 =item * C<foundation.enabled>, C<foundation.reason>
 
 Board-level switch for automated agent runs (L<App::karr::Foundation>) and the
@@ -62,7 +69,7 @@ L<App::karr::Cmd::Context>, L<App::karr::Config>
 my %WRITABLE = map { $_ => 1 } qw(
   board.name board.description
   defaults.status defaults.priority defaults.class
-  claim_timeout
+  claim_timeout lock_timeout
   foundation.enabled foundation.reason
 );
 
@@ -76,7 +83,12 @@ sub execute {
   my %arity = ( show => 1, get => 2, set => 3 );
   $self->check_positional_args($args_ref, $arity{$action}) if $arity{$action};
 
-  $self->sync_before if $action eq 'set';
+  # Only `set` writes, and only `set` needs a board: `get` and `show` fall
+  # back to the code defaults, which is a useful answer even without one.
+  if ( $action eq 'set' ) {
+    $self->sync_before;
+    $self->require_board;
+  }
 
   my $config = App::karr::Config->from_merged($self->store->effective_config);
 
@@ -130,6 +142,7 @@ sub _display_keys {
   push @out, ['defaults.priority',  $defaults->{priority}] if $defaults->{priority};
   push @out, ['defaults.class',     $defaults->{class}]    if $defaults->{class};
   push @out, ['claim_timeout',      $d->{claim_timeout}];
+  push @out, ['lock_timeout',       $d->{lock_timeout}];
   push @out, ['classes',            [$c->classes]];
   push @out, ['foundation.enabled', $c->foundation_enabled];
   push @out, ['foundation.reason',  $d->{foundation}{reason}]
@@ -165,7 +178,14 @@ sub _set_key {
   } elsif ($key eq 'defaults.class') {
     $config->validate_class($val) if $val ne '';
   } elsif ($key eq 'claim_timeout') {
-    die "Invalid timeout format: $val (use e.g. 1h, 30m, 1h30m)\n"
+    # Both timeouts through the one Go-grammar parser, so `1h30m` means ninety
+    # minutes here and in kanban-md (ticket #78). usage_error rather than a bare
+    # die: an option value that parses but is not a duration is misuse, and the
+    # exit-code contract says 2.
+    $self->usage_error(qq{invalid claim_timeout "$val" (use e.g. 1h, 30m, 1h30m)})
+      unless defined App::karr::Config->parse_duration($val);
+  } elsif ($key eq 'lock_timeout') {
+    $self->usage_error(qq{invalid lock_timeout "$val" (use e.g. 5m, 30s, 0s to disable)})
       unless defined App::karr::Config->parse_duration($val);
   } elsif ($key eq 'foundation.enabled') {
     # A bare "false" from the command line is true in Perl -- coerce here so the

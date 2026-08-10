@@ -65,7 +65,7 @@ sub execute {
   $self->sync_before;
 
   die "No karr board found. Run 'karr init' to create one.\n"
-    unless $store->board_exists;
+    unless $store->has_board_refs;
 
   $store->delete_all_karr_refs;
 

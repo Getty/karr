@@ -1,5 +1,157 @@
 {{$NEXT}}
 
+    - Fixed `karr materialize` silently deleting and overwriting tracked
+      project files. It wrote its file view straight into the working tree —
+      replacing `config.yml` and removing every `tasks/*.md` — so a repository
+      that already kept its own `tasks/` directory or `config.yml` lost them,
+      from a command that only reads the board. Materialize now refuses to run
+      when it would overwrite or delete anything Git tracks, names each such
+      path, and writes nothing on that path; `--force` overrides it. The sweep
+      of stale cards is also limited to files named the way karr and kanban-md
+      name them (`NNN-slug.md`), so unrelated files in `tasks/` are left alone.
+    - Fixed `karr import --yes` wiping the board when `tasks/` exists but holds
+      no cards. The guard only checked that the directory was there, so an
+      empty view imported zero tasks, deleted every task ref and exited 0
+      reporting success. An empty view is now refused.
+    - Fixed `karr import` leaving the board half-written when one file is
+      malformed. Refs were written as files were parsed, so a bad card aborted
+      the run mid-way with some tasks updated, the prune never reached, and a
+      bare "Invalid task format" that named no file. The whole view is now
+      parsed before any ref is touched: the import either applies completely or
+      changes nothing, and every rejected file is listed with its reason.
+      `App::karr::Task::from_file` names the file in all its errors.
+    - Fixed `karr materialize` writing a `config.yml` that kanban-md refuses to
+      load, which defeated the purpose of the file view. Perl's `1`/`0` were
+      dumped as YAML integers where kanban-md's schema wants booleans
+      (`require_claim`, `bypass_column_wip`), and `next_id`, which it validates
+      as `>= 1`, was never written at all. The view now carries real YAML
+      booleans and `next_id`; the counter itself stays in
+      `refs/karr/meta/next-id` and import continues to ignore the file's copy.
+    - Fixed `karr edit --status` bypassing every rule `karr move` applies.
+      `karr move 1 in-progress` refused without `--claim`, while `karr edit 1
+      --status in-progress` set the field and exited 0 — so `require_claim`,
+      the guarantee karr's multi-agent coordination rests on, was one flag
+      away from optional, by accident as easily as on purpose. `edit --status`
+      also skipped the `started`/`completed` lifecycle stamps that `move`
+      writes. Both commands now change a status through one shared path and
+      behave identically, including the status-name check described below.
+    - Fixed `karr move`, `karr edit` and `karr delete` taking over another
+      agent's live claim without a word. None of the three asked who held the
+      claim, so `karr move 1 review --claim mallory` on a task alice was
+      working on simply reassigned it, and `karr delete 1 --yes` removed it.
+      All three now apply the same claim rule `karr handoff` and `karr pick`
+      already applied: an unclaimed task is free, the holder may proceed, an
+      expired claim blocks nobody, and anything else is refused with "Task N
+      is claimed by X". `karr edit --release` stays exempt, because it is the
+      only way to break a claim a crashed agent left behind. `karr delete`
+      refuses on any live claim whoever holds it, matching kanban-md, which
+      gives delete no `--claim` either. For move and edit the check and the
+      write are now one compare-and-swap against the task ref, so a claim
+      taken between the two no longer loses; delete re-checks immediately
+      before removing the ref, which is as close as libgit2's unguarded ref
+      delete allows.
+    - Fixed claim expiry misreading every timestamp that carries a UTC offset.
+      kanban-md stamps claims as RFC3339 with the agent's local offset and
+      nanoseconds (`2026-08-09T17:28:46.449764553+02:00`) and karr discarded
+      both, reading the stamp as if it were UTC. A claim stamped `+02:00`
+      never expired, so `karr pick` would not take over stale work; one
+      stamped `-05:00` expired five hours early, so pick stole claims whose
+      owners were still working. Every call also printed "Garbage at end of
+      string in strptime" to stderr, on every single `karr pick`. Offsets and
+      fractional seconds are now parsed and normalised to UTC, and the
+      warnings are gone with them.
+    - Fixed `karr delete` without `--yes` printing "Use of uninitialized value
+      $answer" twice when stdin reaches EOF without an answer — which is every
+      agent and CI invocation that forgets the flag — and then silently
+      skipping the task with exit 0. When there is no answer and stdin is not
+      a terminal it now refuses with "No answer on stdin and stdin is not a
+      terminal. Re-run with --yes." and exits 1, the way karr's other
+      destructive commands already refuse without `--yes`. Ctrl-D at a real
+      terminal still means "no", and piping `y` or `n` into the prompt still
+      works.
+    - Fixed `karr move , todo`, `karr edit ,` and `karr delete ,` — an id list
+      that contains no ids — doing nothing at all and exiting 0. The comma got
+      past the "an id is required" check because it is a non-empty string, and
+      then split to an empty list, so the per-id loop never ran and no error
+      was raised for the exit-code contract to classify. All three now report
+      a usage error and exit 2.
+    - Fixed a push the remote rejected being reported as a completed sync.
+      libgit2 returns success from `git_remote_push` even when the server
+      refused every ref — a pre-receive hook, a protected ref, a
+      non-fast-forward on a non-forced refspec — so the refusal exists only in
+      the per-ref result Git::Native 0.004 hands back, which karr discarded.
+      The board then diverged from the remote with no signal at all. A push
+      with rejected refs now fails, naming every refused ref with the reason
+      the server gave, on both transports: the git-CLI fallback pushes with
+      `--porcelain` and reports the same refs and reasons. Such a push is no
+      longer retried — the remote was reached and gave its answer — except
+      from the insurance push that fires when a command dies mid-body, which
+      still makes its three attempts and still ends with the generic "run
+      karr sync to retry" advice.
+    - Sync failures are no longer repeated once per retry attempt. Both retry
+      loops printed the error on every attempt, so one failed sync produced
+      three copies of it — and with the per-ref rejection message above, three
+      copies of a block several lines long. An error identical to the one just
+      shown is now dropped; an error that differs still gets its own line.
+      `--quiet` is unchanged: it silences the retry announcements, never the
+      errors.
+    - Fixed a remote that is empty for the wrong reason reconciling the whole
+      board away. Pulls are reconciled against a tracking mirror, so "the
+      remote had these refs at the last sync and does not have them now" is
+      acted on — which is what makes a delete propagate between clones, and
+      also exactly what a re-created origin, a remote URL edited to point
+      somewhere else, or a rolled-back hosting-side restore look like. In
+      those, a routine writing command deleted the entire board in one step,
+      silently. A reconciliation that would remove every remaining board ref
+      is now refused: the command stops, the mirror is left as it was so the
+      next command refuses again rather than quietly republishing, and the
+      message points at `karr sync --push` to republish this board or at the
+      new `karr sync --prune` to accept the deletion (which is how a
+      `karr destroy` on another clone now reaches this one). Only the total
+      wipe is guarded: a pull that leaves at least one board ref standing
+      still reconciles unattended, so a remote swapped for a different,
+      non-empty board is not caught.
+    - Fixed a failed `karr restore` destroying the board instead of restoring
+      it. Restore deleted `refs/karr/*` first and wrote the snapshot back
+      afterwards, so a snapshot karr could not write took the board with it: a
+      single unusable ref name left the board empty locally, and then on the
+      remote too, because the push insurance faithfully mirrored the
+      half-executed destruction. Every ref name is now validated and every
+      commit object built before the first ref moves, so a snapshot karr cannot
+      apply is refused with the board untouched, and the refs it can apply are
+      overwritten in place instead of starting from an empty namespace. The ref
+      updates themselves are still a loop rather than one transaction — an I/O
+      failure part-way through can still leave a board holding a mix of old and
+      new refs — but the board is no longer emptied before the first write, so
+      no failure can leave it with nothing in it. A snapshot may also no longer
+      address refs outside `refs/karr/`, which previously let a hand-edited
+      backup overwrite a branch.
+    - Fixed any write command silently seeding a partial board in whichever
+      repository it was run in, and that partial board then locking `karr init`
+      out of it for good — `karr create` typed in the wrong directory was
+      enough, and `karr destroy --yes` was the only way back. A board now
+      counts as existing only when `refs/karr/config` is present; the commands
+      that write to the board refuse with "No karr board found" when it is
+      absent, and `karr init` completes a half-board (keeping its ID counter,
+      so existing tasks are not overwritten) instead of refusing. `backup`,
+      `destroy`, `materialize` and `repair` still work on whatever is under
+      `refs/karr/`, so a half-board an older karr left behind can still be
+      inspected and removed. `karr import --yes` is still allowed to bootstrap
+      a board from a bare kanban-md `tasks/` view, and now writes the default
+      config ref when the view has no `config.yml`, so the board it leaves
+      behind is one the writing commands accept. The read-only commands
+      (`list`, `board`, `show`, `context`, `log`, `config get`) are unchanged:
+      they still report an empty board with the default config rather than
+      refusing.
+    - Fixed a ref deletion that did not happen reporting success. `delete_ref`
+      discarded the libgit2 error and always incremented the write counter
+      SyncGuard reads to decide whether local refs still need pushing, so a
+      failed or no-op delete both claimed success and left the push insurance
+      believing there was unpushed work. It now returns false when nothing was
+      removed, counts only deletes that landed, and retries lock contention
+      like every other ref write; clearing a whole namespace re-reads it
+      afterwards, so `karr destroy` can no longer report success over refs that
+      are still there.
     - Fixed every task write path accepting a status, priority, class or due
       date that does not exist. `karr move 1 totally-invalid`, `karr create x
       --priority bogus`, `karr edit 1 --status bogus` and `karr pick --move
@@ -7,12 +159,14 @@
       no column — invisible on `karr board`, still counted in the total, and
       `karr move --next` died on it. Those values are now checked against the
       board config before anything is written and rejected with exit 2, the
-      usage-error code from ADR 0002. A due date must be a real calendar date
-      in `YYYY-MM-DD`, so `2026-02-30` is refused as well. A batch `edit` or
-      `move` is checked once up front, so a bad value cannot update half the
-      ids, and a rejected `create` no longer consumes a task id. Validation is
-      on the write path only: a board that already carries a bad value stays
-      readable so `karr move` can put it back.
+      usage-error code from ADR 0002. Status names are checked in the one
+      shared status-change path, so `move` and `edit --status` cannot drift
+      apart. A due date must be a real calendar date in `YYYY-MM-DD`, so
+      `2026-02-30` is refused as well. A batch `edit` or `move` writes nothing
+      at all rather than updating half the ids, and a rejected `create` no
+      longer consumes a task id. Validation is on the write path only: a board
+      that already carries a bad value stays readable so `karr move` can put it
+      back.
     - Fixed `blocked` being incompatible with kanban-md. karr stored the
       blocking reason as free text in `blocked`; kanban-md has a boolean
       `blocked` plus a `block_reason` string, and its parser refuses a string
@@ -71,10 +225,49 @@
       in a race passed the check and all 16 were told they had acquired it,
       while the ref could only hold one. Acquisition is now an atomic
       create-if-absent: exactly one agent wins and the rest get the usual
-      "locked by ..." answer. Note this does not on its own make `karr pick`
-      safe for concurrent agents — pick still decides which task to take from a
-      snapshot read before the lock, so it can hand out a task another agent
-      has already claimed. That is a separate fix.
+      "locked by ..." answer. On its own that does not make `karr pick` safe —
+      see the entry below, which is what actually fixes concurrent picking.
+    - Fixed `karr pick` handing the same task to several agents. Pick ranked
+      candidates from a snapshot of the board read before any lock existed and
+      never looked at the card again, so it claimed tasks that had been taken
+      in the meantime: 12 parallel picks on a fresh 12-task board told nine
+      agents they owned task 1, while the card named only the last of them. The
+      lock was not the hole — its holder identity is the clone's `user.email`,
+      which every agent on one machine shares, so all 12 acquired it quite
+      legitimately. Each candidate is now re-read from its ref under its lock,
+      re-tested with the same predicate, and written back under a
+      compare-and-swap on the OID it was read from; an agent that loses that
+      swap picks nothing and moves on. Verified with 12 forked contenders
+      behind a barrier: 12 picks, 12 different tasks, and every agent named on
+      the card it was told it got.
+    - Fixed one orphaned lock ref bricking every command on the board.
+      `list_task_refs` matched `refs/karr/tasks/N/lock` as well as `.../data`,
+      so a lock left behind by an agent that died mid-pick made its task id
+      exist after the card was deleted; `load_tasks` mapped that id to undef
+      and `list`, `board`, `materialize` and `pick` all died on it, with no way
+      out short of `git update-ref -d`. Only the data ref makes a task exist
+      now, and the board list never contains undef.
+    - `karr pick` no longer publishes its lock to the remote or strands its log
+      entry. The lock was released, and the pick logged, after the push, so the
+      remote kept the lock ref forever and the activity-log entry never left
+      the clone. Both now happen before the push.
+    - Locks expire. An agent that died between acquiring and releasing left a
+      lock nothing could ever clear, and its task stayed unpickable forever. A
+      lock older than the new `lock_timeout` board setting (default `5m`) may
+      be taken over, itself by compare-and-swap against the revision whose age
+      was judged, so a holder that refreshes in between is never silently
+      evicted. This is deliberately not `claim_timeout` (default `1h`): a claim
+      covers a work session, a lock covers one pick.
+    - New command `karr unlock`: with no arguments it lists the pick locks
+      currently held, with their holder, age, and whether they have expired;
+      given task ids or `--all` it breaks them. The manual escape hatch for a
+      stuck board, and the only one on a board that sets `lock_timeout` to
+      `0s`. Breaking a lock cannot corrupt a concurrent pick — the claim is
+      bound by the compare-and-swap on the card, not by the lock.
+    - Board ref commits carry the time they were written. The git signature was
+      built once and cached for the life of the process, so every ref a
+      long-running driver (`karr-foundation`) wrote was stamped with the time
+      of its first write.
     - Fixed ordinary ref contention aborting commands with a raw libgit2 error
       ("failed to lock file '.../lock.lock' for writing") followed by a stack
       trace of module paths and line numbers. Losing the race for a ref's lock
@@ -201,6 +394,114 @@
       streams are drained together now, and a run is bounded by a wall-clock
       timeout (120s by default, `KARR_TRANSPORT_TIMEOUT` overrides, `0` disables)
       after which the child is killed and the transport reported as failed.
+    - `set-refs`, `get-refs` and `agent-name` are reachable again with `--dir`.
+      The dashed spellings were rewritten to their internal command names only
+      at `$ARGV[0]`, so `karr --dir PATH get-refs REF` — the shape an
+      orchestrator driving karr from outside the target repository uses — died
+      with "Unknown command: get-refs". They are now registered as command names
+      in their own right, which also means a payload or title that merely spells
+      one (`karr set-refs REF set-refs`) is stored verbatim. `get-refs` and
+      `set-refs` additionally accept `--dir` after the command, matching every
+      other command and the documented "either position" rule; `agent-name`
+      still does not, since it touches no repository.
+    - `--` now works as the end-of-options separator, so an option-shaped
+      positional can be passed without a named option: `karr create -- --json`
+      creates a task titled "--json" instead of reporting "Title is required".
+      Getopt::Long always honoured the separator, but karr's own positional
+      extraction re-read the escaped tokens as options and dropped them. Applies
+      to every command that takes a positional argument.
+    - `karr get-refs` no longer reports success for a ref that does not exist.
+      It printed an empty line, said "Fetched ..." and exited 0, so the
+      documented `karr get-refs spec.md > spec.md` shape silently truncated the
+      file it was meant to fill. A missing ref is now a runtime failure: "Ref
+      refs/... not found" on stderr, nothing on stdout, exit 1. A ref that
+      exists with an empty payload is still a success.
+    - `karr show --last 0` (and any negative count) is a usage error, exit 2,
+      instead of being clamped to 1 and answering with a task at exit 0.
+      Commands can now raise that class of error through `usage_error` in
+      App::karr::Role::ExitCodes. The other rows from the same report — `karr
+      list --sort <bogus>`, `karr skill <bogus>`, `karr skill check --agent
+      <bogus>` and `karr move , todo` — are covered by the entries below.
+    - `karr list --sort FIELD` no longer turns the field name from the command
+      line into a method call. `$a->$field` meant any method on
+      App::karr::Task was reachable from argv — `--sort slug` and `--sort
+      to_markdown` both ran — and anything else died with "Can't locate object
+      method ... at List.pm line 204", but only on a board with two or more
+      tasks, since a shorter list never reaches the comparator. The field is
+      now looked up in an explicit table of the six documented keys, and
+      anything outside it is a usage error (exit 2, ADR 0002) on every board
+      size.
+    - Three `karr list --sort` orders now match kanban-md
+      (internal/board/sort.go) instead of deviating from it. **This changes
+      existing output.** `--sort status` follows the board config's status
+      order rather than the alphabet (backlog, todo, review — not backlog,
+      review, todo). `--sort priority` follows the config's `priorities` list,
+      which it previously ignored in favour of a hardcoded critical-first
+      table, so the default order is now low, medium, high, critical —
+      **exactly reversed** from before; use `--reverse` for the old reading.
+      `--sort due` puts tasks without a due date last instead of first. Ties
+      are broken by id so the order no longer depends on Perl's sort being
+      stable.
+    - `karr skill show --json` emits JSON. It used to print the raw skill
+      Markdown, byte for byte identical to `karr skill show`, so the flag was
+      silently ignored and the output was not parseable — while its siblings
+      `skill check --json` and `skill install --json` were correct. The content
+      now comes back as a JSON object under `content`, handed to Role::Output
+      as characters like every other payload, so the CLI's output layer encodes
+      it exactly once.
+    - `karr skill <unknown-action>` and `karr skill --agent <unknown-name>`
+      exit 2 instead of 1, joining the rest of the exit-code contract. Neither
+      is reachable by MooX::Options — the action is a positional and `--agent`
+      takes free-form text — so both were plain runtime dies. A scripting agent
+      can now tell "I called this wrong" from "the operation failed" on the
+      skill command too.
+    - New App::karr::Error: one place that turns an internal error into a
+      single user-facing line, with `user_error` (a plain `die`, which honours
+      the trailing-newline convention that Carp's `croak` ignores) and
+      `clean_error` (strips the "at FILE line N." suffix and any trailing
+      backend chatter). Applied to the file I/O in `karr skill install`,
+      `skill check` and `skill update`, whose Path::Tiny failures used to
+      report a karr source location at the user: an unwritable target now says
+      "Could not write PATH: Permission denied" and nothing else. This is the
+      mechanism plus one command — the rest of the sweep is NOT done here.
+      `App::karr::Git::_ref_write_error` already does the identical reduction
+      inline and should collapse onto `clean_error`. Still leaking a call site:
+      the `croak` in App::karr::Role::BoardDiscovery
+      ("Not a git repository"), both sync failures in
+      App::karr::Role::SyncLifecycle (which also prints the same git error once
+      per attempt and lets `--quiet` silence only the retry banners), the
+      croaks in App::karr::Foundation and App::karr::Foundation::Runner, and
+      the raw Path::Tiny errors from `karr restore`, `karr backup`, `karr init`
+      and `karr context`.
+    - Fix the activity log dying on ordinary mail addresses. The Git email was
+      folded into a ref name with `s/[^a-zA-Z0-9._-]/_/g`, which is not the
+      grammar git actually enforces: `a..b@example.com` produced
+      `refs/karr/log/user/a..b_example.com`, libgit2 refused it, and the
+      command died *after* it had already written — the task stayed claimed and
+      its lock ref stayed behind. An address ending in `.lock` or starting with
+      a dot hit the same wall, KARR_ROLE went through the same mapping, and
+      `a b@x`, `a-b@x`, `a+b@x` and `a/b@x` all collapsed onto one shared log
+      while every non-ASCII byte became `_`. Each identity component is now
+      percent-encoded (`user/getty%40conflict.industries`): legal by
+      construction, injective, reversible through
+      `App::karr::ActivityLog->decode_identity`, and UTF-8 safe. Logs written
+      under either older naming scheme are read alongside the new ref, so no
+      history is orphaned and no entry is counted twice. A log that still
+      cannot be written warns and is dropped instead of taking its command down
+      mid-write.
+    - The activity log is now written by every mutating command, not only by
+      `pick`. `karr create`, `move`, `edit`, `handoff`, `archive` and `delete`
+      wrote nothing, so `karr log` stayed empty and `karr show --me/--agent`
+      resolved against an almost empty history. Logging hangs off
+      `App::karr::Role::BoardAccess`'s save_task/delete_task — the funnel every
+      mutating command already writes through — so a command is recorded
+      because it wrote, not because it remembered to log: the action comes from
+      the command name and the actor from its `--claim`, the task's holder, or
+      the Git identity. Bulk paths that reinstate state verbatim (`import`,
+      `restore`) sit below that funnel and stay unlogged, and `pick`, which
+      also logs explicitly, still produces exactly one entry. Not covered by
+      this: `karr context` summarises task state only and reads no log entries,
+      so it is unaffected either way.
 
 0.402     2026-08-04 04:46:25Z
 

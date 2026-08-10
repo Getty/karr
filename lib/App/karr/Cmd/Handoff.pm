@@ -90,22 +90,18 @@ sub execute {
   $self->check_positional_args($args_ref, 1);
 
   $self->sync_before;
+  $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
   my $id = $pos[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";
 
-  my $ec = $self->store->effective_config;
-
   my $task = $self->find_task($id);
   die "Task $id not found\n" unless $task;
 
-  # Validate claim ownership
-  if ($task->has_claimed_by && $task->claimed_by ne $self->claim) {
-    my $timeout = $self->_parse_timeout($ec->{claim_timeout} // '1h');
-    unless ($self->_claim_expired($task, $timeout)) {
-      die sprintf "Task %d is claimed by %s\n", $task->id, $task->claimed_by;
-    }
-  }
+  # The one claim-ownership rule, shared with move/edit/delete rather than
+  # reimplemented here. Byte-identical message and behaviour to the copy this
+  # replaces, and it picks up check_claim's RFC3339 stamp handling for free.
+  $self->check_claim($task, $self->claim);
 
   # Move to review
   my $old_status = $task->status;

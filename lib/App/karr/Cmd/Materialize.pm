@@ -5,7 +5,7 @@ our $VERSION = '0.403';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr materialize [--dir PATH] [--json]',
+  usage_string => 'USAGE: karr materialize [--dir PATH] [--force] [--json]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -17,6 +17,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr materialize
     karr materialize --dir path/to/repo
     karr materialize --json
+    karr materialize --force
 
 =head1 DESCRIPTION
 
@@ -27,12 +28,24 @@ you want to grep the board as files or hand it to kanban-md tooling. It is never
 the source of truth, and writing through it only takes effect via C<karr import>.
 
 The refs are read but never modified, so this command performs no remote sync.
-Stale F<tasks/*.md> files from a previous materialization are removed before the
-current tasks are written.
+Stale cards from a previous materialization -- the F<tasks/> files named the way
+karr and kanban-md name them, C<NNN-slug.md> -- are removed before the current
+tasks are written. Any other file in F<tasks/> is left alone.
+
+F<tasks/> and F<config.yml> at a repository root are ordinary names for a
+project to already use, so the command refuses to run at all when it would
+overwrite or delete something Git tracks, and names every such path. Nothing is
+written on that path. Pass C<--force> once you are sure those files are yours to
+replace.
 
 =head1 OPTIONS
 
 =over 4
+
+=item * C<--force>
+
+Materialize even though git-tracked files at the destination will be
+overwritten or deleted.
 
 =item * C<--json>
 
@@ -48,6 +61,11 @@ L<App::karr::Task>
 
 =cut
 
+option force => (
+  is => 'ro',
+  doc => 'Replace git-tracked config.yml / tasks cards at the destination',
+);
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
@@ -57,9 +75,12 @@ sub execute {
   # syncs nothing (matching the reading commands list/show/board).
   my $store = $self->store;
   die "No karr board found. Run 'karr init' to create one.\n"
-    unless $store->board_exists;
+    unless $store->has_board_refs;
 
-  my $board_dir = $store->materialize_to( $self->git_root->stringify );
+  my $board_dir = $store->materialize_to(
+    $self->git_root->stringify,
+    force => $self->force,
+  );
 
   # The file view we just wrote must never be committed; ensure the board-root
   # .gitignore covers it (idempotent -- a no-op once init or a prior run added

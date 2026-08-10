@@ -387,9 +387,23 @@ sub from_string {
 sub from_file {
   my ($class, $file) = @_;
   $file = path($file);
-  my ($fm, $body) = $class->_parse_content($file->slurp_utf8);
-  my ( $args, $extra ) = $class->_split_frontmatter($fm);
-  return $class->new(%$args, extra => $extra, body => $body, file_path => $file);
+  # Every failure names the file. `karr import` parses a whole directory in one
+  # go, and a bare "Invalid task format" -- which is also what a CRLF card gets,
+  # since _parse_content requires a literal "\A---\n" for kanban-md parity --
+  # left the user to guess which card it came from (ticket #70).
+  my $task = eval {
+    my ($fm, $body) = $class->_parse_content($file->slurp_utf8);
+    my ( $args, $extra ) = $class->_split_frontmatter($fm);
+    $class->new(%$args, extra => $extra, body => $body, file_path => $file);
+  };
+  return $task if $task;
+  my $why = $@ || 'unknown error';
+  chomp $why;
+  # Moo's "Missing required arguments: id, title" carries an "at <file> line N"
+  # pointing into generated constructor code, which only buries the filename
+  # that matters.
+  $why =~ s/ at .+ line \d+\.?\z//s;
+  die "$why ($file)\n";
 }
 
 sub save {

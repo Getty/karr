@@ -97,6 +97,10 @@ sub _board_repo {
 
     my $old = getcwd();
     chdir $repo or die "chdir $repo: $!";
+    # init first: a write command in a repository without a board is refused
+    # (#62), so `create` alone no longer conjures one.
+    system( $^X, "-I$ROOT/lib", $BIN, 'init', '--name', 'Guard Board' ) == 0
+        or die 'karr init failed';
     system( $^X, "-I$ROOT/lib", $BIN, 'create', 'probe ticket' ) == 0
         or die 'karr create failed';
     chdir $old or die "chdir $old: $!";

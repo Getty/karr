@@ -26,6 +26,12 @@ Replaces the complete C<refs/karr/*> namespace with a previously exported YAML
 snapshot. This is intentionally destructive: refs currently present but absent
 from the snapshot are deleted as part of the restore.
 
+It is not destructive on the way in, though. Every ref name in the snapshot is
+checked and every commit object written before the first ref moves, so a
+snapshot karr cannot apply -- an unusable ref name, or one outside
+C<refs/karr/> -- is refused with the board exactly as it was. Nothing is
+deleted up front, so a restore that fails can no longer leave the board empty.
+
 =head1 OPTIONS
 
 =over 4
