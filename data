@@ -1,0 +1,21 @@
+---
+claimed_at: 2026-08-10T14:39:05Z
+claimed_by: materialize-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T03:55:54Z
+id: 100
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- cli
+- interop
+title: materialize adds the file-view gitignore entries without the tracked-path check
+  init got
+updated: 2026-08-10T14:58:09Z
+---
+
+Follow-up to #89, which fixed this for init only. karr materialize still appends tasks/ and config.yml to .gitignore unconditionally, even when the project already tracks content at those paths -- the exact state #48 then makes materialize refuse to write into. The check init grew (_project_owned_view_paths in Cmd/Init.pm) is the shape of the answer; it just needs to live somewhere both commands share.
+Fixed. The tracked-path check init grew for #89 now lives on App::karr::BoardStore as project_owned_view_paths($board_dir), next to file_view_gitignore_entries and ensure_gitignore -- it needs git (is_tracked) and the entry list, both of which are BoardStore's, and no command state. Cmd/Init.pm is a pure extraction: one call site rewritten, the two private helpers deleted, behaviour identical. Cmd/Materialize.pm is the second consumer and skips ensure_gitignore when the project owns a path, reporting what it left alone the way init does. The question is asked before materialize_to writes, so a tracked card that --force sweeps away cannot make the path look unowned afterwards. Regression tests in t/109 (3 subtests, verified to fail against pre-fix lib); full prove -lr t/ green at 109 files / 741 tests, checked both in the live tree and in an isolated clone carrying only this patch. Changes entry added under {{$NEXT}}, and the '#89 not yet fixed' sentence dropped since both ship in the same release. NOT committed -- changes are in the working tree for review. Note: repeat materialize on a 300-card board costs ~180ms more (1190 -> 1370ms), one is_tracked per file under tasks/.
+Landed on main as a9ec82a (combined commit with the other three tickets). Full suite green over the combined tree: 112 files, 756 tests.
