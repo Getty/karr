@@ -12,7 +12,9 @@ that argv still holds every original token -- option flags, the values they
 consumed, and the positionals -- in their original order. C<positional_args>
 subtracts the option tokens back out (using the consuming command's own
 C<_options_data>) to yield the positionals, and C<check_positional_args> rejects
-surplus positionals before a command does any work.
+surplus positionals before a command does any work. A bare C<--> ends option
+processing, so everything after it is a positional however option-shaped it
+looks.
 
 Command classes provide C<_options_data> and C<_options_config> via MooX::Options.
 
@@ -39,6 +41,14 @@ Command classes provide C<_options_data> and C<_options_config> via MooX::Option
 # typo would already have been rejected upstream by MooX::Options, so the only
 # accepted-but-unmatched shape here is a Getopt::Long abbreviation, and karr's
 # abbreviatable flags (e.g. --jso for --json) consume nothing anyway.
+#
+# A bare "--" is the POSIX end-of-options separator: everything after it is a
+# positional, however option-shaped it looks. Getopt::Long already honours it
+# when parsing (so `karr create -- --json` never tries to parse --json as a
+# flag), but protect_argv hands the ORIGINAL argv -- separator included -- back
+# to execute(), so without this branch the walk below re-read the escaped tokens
+# as options and dropped them, leaving no positional at all. That was ticket
+# #72: an option-shaped title could only be passed via --title.
 sub positional_args {
     my ($self, $args_ref) = @_;
 
@@ -55,6 +65,10 @@ sub positional_args {
     my @args = @$args_ref;
     while (@args) {
         my $arg = shift @args;
+        if ($arg eq '--') {
+            push @positional, @args;
+            last;
+        }
         if ($arg =~ /^-/) {
             (my $name = $arg) =~ s/^-+//;        # drop leading dashes
             my $has_inline = $name =~ s/=.*//s;  # --opt=value carries its value

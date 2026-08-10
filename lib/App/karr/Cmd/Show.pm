@@ -115,7 +115,7 @@ sub _select_tasks {
     return ($task);
   }
 
-  my $limit = $self->last > 0 ? $self->last : 1;
+  my $limit = $self->last;
 
   if ($self->me) {
     my @tasks = grep { defined } map { $self->find_task($_) } $self->_my_recent_ids($limit);
@@ -136,6 +136,13 @@ sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
   $self->check_positional_args($args_ref, 1);
+
+  # --last is a count, so 0 and negatives are invalid values, not requests for
+  # a smaller board. They used to be clamped silently to 1, so `--last 0`
+  # answered with one task and exit 0 -- indistinguishable from a correct call
+  # (ticket #76). ADR 0002 classifies an invalid option value as a usage error.
+  $self->usage_error( sprintf '--last must be 1 or greater (got %d)', $self->last )
+    if $self->last < 1;
 
   my @pos = $self->positional_args($args_ref);
   my @tasks = $self->_select_tasks($pos[0]);
