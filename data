@@ -1,0 +1,37 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:25Z
+id: 55
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- validation
+- drift
+title: edit --status bypasses require_claim and every other move rule
+updated: 2026-08-10T01:27:58Z
+---
+
+`Cmd/Edit.pm:156` writes the status directly; `Cmd/Move.pm:103` enforces
+`require_claim` first. Two code paths for "change the status", and they
+contradict each other:
+
+    karr move 1 in-progress          -> "Status 'in-progress' requires --claim"  rc=1
+    karr edit 1 --status in-progress -> "Updated task 1"                          rc=0
+    karr edit 1 --status ZZZ         -> "Updated task 1"                          rc=0
+
+The `require_claim` guarantee that the whole multi-agent coordination rests on
+is bypassable in one line, by accident as easily as on purpose.
+
+Fix: funnel both through one status-change path that applies the same rules
+(validation, require_claim, lifecycle timestamps, WIP once that exists). This is
+the drift-between-duplicated-concepts pattern; the fix should remove the
+duplicate rather than copy the checks into `edit`.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
