@@ -1,0 +1,37 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:28:52Z
+id: 90
+priority: medium
+status: done
+tags:
+- interop
+- import
+- data-loss
+title: import ignores next_id from the file view, so a kanban-md session can hand
+  out duplicate ids
+updated: 2026-08-10T03:49:03Z
+---
+
+Existing behaviour, pinned by t/58-import-next-id-seed.t, surfaced by the #60 work.
+
+The counter lives in refs/karr/meta/next-id. `karr materialize` now writes
+next_id into the view as well, because kanban-md validates it and refuses a file
+without it (#60). But `karr import` deliberately ignores the file's copy and
+seeds the counter from the highest task id it sees instead.
+
+That is safe as long as the view only ever loses tasks. It is not safe when
+kanban-md advanced the counter past the highest id — which it does whenever a
+task is created and then deleted in a kanban-md session. karr then re-seeds
+below kanban-md's counter, and the next `karr create` hands out an id that
+kanban-md considers already used.
+
+Note this is not the #44 race, which is fixed. This is the two tools
+disagreeing about the counter across a bridge crossing.
+
+Fix direction: seed from max(highest task id + 1, next_id from the view), so
+the counter can move forward across the bridge but never backwards. The
+existing test pins the current behaviour, so it has to be updated deliberately
+rather than worked around.
+Geschlossen durch bc3b87e/306180d: Counter-Floor ist max(hoechste id + 1, next_id aus der View), nie rueckwaerts. t/103.
