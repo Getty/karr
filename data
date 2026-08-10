@@ -1,0 +1,52 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T01:27:19Z
+id: 97
+priority: high
+started: 2026-08-10
+status: done
+tags:
+- claim
+- multi-agent
+- drift
+title: archive and handoff are unguarded doors into a task write
+updated: 2026-08-10T02:39:53Z
+---
+
+Split out of #56, whose stated scope -- move, edit and delete -- is fixed.
+
+Two write paths were left outside that fix and both are the same bug class:
+
+- Cmd/Archive.pm sets the status to archived and saves, with no claim check at
+  all. It is a third door into a status change next to move and edit --status,
+  which #55 just spent its whole diff collapsing into one guarded path. archived
+  has no require_claim, so #55 does not apply, but the claim takeover does: it
+  can archive a task another agent is holding.
+- Cmd/Handoff.pm carries its own copy of the claim rule rather than calling
+  Role::ClaimTimeout::check_claim, and it is still an unguarded read-then-write.
+  The lane that fixed #56 deliberately made check_claim emit a byte-identical
+  message so adopting it is a zero-user-visible-change edit; it left the file
+  alone only to avoid a merge conflict.
+
+Work: route both through the shared path. Role::TaskMutation::update_task_guarded
+and apply_status_change already exist and already do the compare-and-swap, so
+this is adoption, not new mechanism. Handoff losing its private copy of the rule
+is the point -- a rule that exists twice drifts, which is how #55 happened.
+
+Check while there: Role::BoardAccess::save_task is now the single door for task
+writes (it takes an optional expected OID and becomes the CAS). Anything that
+still calls store->save_task_cas directly is another bypass waiting to happen.
+Fixed and merged into main (228fffa); full suite green at 98 files / 670 tests.
+
+#61: the exit-code half of my earlier note was my own measurement error (see the
+correction above) -- the real defect was the loop dying on the first bad id and
+the resulting order-dependence. Contract now: per-id runtime failures warn,
+continue, and exit 1 with an "N of M ids failed" summary; a usage error aborts
+the batch at exit 2 with nothing written, because it is wrong for every id at
+once and collecting it would demote a 2 to a 1.
+
+#97: archive is on the guarded path; handoff had already adopted check_claim in
+an earlier merge, but its read-then-write was still unguarded and is now a
+compare-and-swap. Verified afterwards that store->save_task_cas has exactly one
+caller, Role::BoardAccess::save_task -- no command reaches around the door.
