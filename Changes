@@ -493,15 +493,19 @@
       `pick`. `karr create`, `move`, `edit`, `handoff`, `archive` and `delete`
       wrote nothing, so `karr log` stayed empty and `karr show --me/--agent`
       resolved against an almost empty history. Logging hangs off
-      `App::karr::Role::BoardAccess`'s save_task/delete_task — the funnel every
-      mutating command already writes through — so a command is recorded
-      because it wrote, not because it remembered to log: the action comes from
-      the command name and the actor from its `--claim`, the task's holder, or
-      the Git identity. Bulk paths that reinstate state verbatim (`import`,
-      `restore`) sit below that funnel and stay unlogged, and `pick`, which
-      also logs explicitly, still produces exactly one entry. Not covered by
-      this: `karr context` summarises task state only and reads no log entries,
-      so it is unaffected either way.
+      `App::karr::Role::BoardAccess`'s save_task/delete_task — the two doors a
+      command changes a task through — so a command is recorded because it
+      wrote, not because it remembered to log: the action comes from the
+      command name and the actor from its `--claim`, the task's holder, or the
+      Git identity. Guarded writes go through the same door: `save_task` takes
+      the OID the card was read from and becomes a compare-and-swap, so the
+      one-writer-wins paths in `move`, `edit` and `pick` are logged by the same
+      line of code as the unguarded ones, and a write that loses its race is
+      not logged at all. Bulk paths that reinstate state verbatim (`import`,
+      `restore`, `repair`) sit below that door and stay unlogged, and `pick`,
+      which also logs explicitly, still produces exactly one entry. Not covered
+      by this: `karr context` summarises task state only and reads no log
+      entries, so it is unaffected either way.
 
 0.402     2026-08-04 04:46:25Z
 

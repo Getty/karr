@@ -260,7 +260,7 @@ sub _claim_under_lock {
         ( $self->store->all_status_names )[0] );
     }
 
-    return () unless $self->store->save_task_cas($task, $oid);
+    return () unless $self->save_task($task, $oid);
     return $task;
   });
 }

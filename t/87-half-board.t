@@ -58,6 +58,18 @@ sub _karr_refs {
     return sort @refs;
 }
 
+# The board's own refs, without the activity log. Every write leaves an entry
+# under refs/karr/log/<role>/<identity> (#64), which says nothing about whether
+# the board is whole -- and the identity in that name depends on the git
+# user.email of whoever runs the suite. The half-board assertion below is about
+# structure: tasks and a counter present, config absent. The two assertions
+# that a repository holds *nothing* stay on _karr_refs, because there a stray
+# log ref would be a real finding.
+sub _board_refs {
+    my ($repo) = @_;
+    return grep { !m{^refs/karr/log/} } _karr_refs($repo);
+}
+
 sub _bare_repo {
     my $repo = tempdir( CLEANUP => 1 );
     _git_ok( 'git', 'init', '-q', $repo );
@@ -105,7 +117,7 @@ subtest 'write commands refuse in a repository with no board' => sub {
 subtest 'init completes a half-board instead of refusing forever' => sub {
     my $repo = _half_board();
 
-    is_deeply( [ _karr_refs($repo) ],
+    is_deeply( [ _board_refs($repo) ],
         [ 'refs/karr/meta/next-id', 'refs/karr/tasks/1/data', 'refs/karr/tasks/2/data' ],
         'setup: the half-board has tasks and a counter but no config' );
 

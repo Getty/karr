@@ -21,16 +21,23 @@ and similar. No temporary directory is created.
 
 =head2 Activity logging
 
-C<save_task> and C<delete_task> are the funnel every mutating command writes
-through, so they are also where the activity log is written. A command is
-recorded because it wrote, not because it remembered to call C<append_log> --
-before that, C<pick> was the only command that remembered, and C<karr log> and
-C<karr show --me> ran on an almost empty log (#64).
+C<save_task> and C<delete_task> are the two doors a command changes a task
+through, guarded writes included, so they are also where the activity log is
+written. A command is recorded because it wrote, not because it remembered to
+call C<append_log> -- before that, C<pick> was the only command that
+remembered, and C<karr log> and C<karr show --me> ran on an almost empty log
+(#64).
+
+Every command write goes through one of the two, which is the point:
+L<App::karr::Role::TaskMutation> and C<pick> hand their compare-and-swap
+through C<save_task>'s optional expected-OID argument instead of reaching past
+it to L<App::karr::BoardStore/save_task_cas>, so there is no second write path
+to keep in step.
 
 The action name comes from the command class (L</log_action>) and the actor
 from its C<--claim>, the task's holder, or the Git identity (L</log_agent>).
-Bulk paths that deliberately reinstate state verbatim -- C<import>, C<restore> --
-reach L<App::karr::BoardStore> directly and stay unlogged.
+Bulk paths that deliberately reinstate state verbatim -- C<import>, C<restore>,
+C<repair> -- reach L<App::karr::BoardStore> directly and stay unlogged.
 
 =cut
 
@@ -52,10 +59,20 @@ sub find_task {
 }
 
 sub save_task {
-    my ($self, $task) = @_;
-    my $result = $self->store->save_task($task);
+    my ( $self, $task, $expected_oid ) = @_;
+    # One door, guarded or not, so the activity log has exactly one place to
+    # hang off. Handed the OID the card was read from (find_task_with_oid /
+    # read_ref_with_oid) this is a compare-and-swap and returns false when
+    # another agent got there first -- the caller re-reads and decides again,
+    # and a write that never landed is never logged. Splitting the guarded path
+    # off into its own method is what let move/edit/pick slip out of the log
+    # once App::karr::Role::TaskMutation arrived (#64 again).
+    my $wrote = @_ > 2
+        ? $self->store->save_task_cas( $task, $expected_oid )
+        : $self->store->save_task($task);
+    return $wrote unless $wrote;
     $self->log_task_write( $task->id, $task->status, $task );
-    return $result;
+    return $wrote;
 }
 
 sub delete_task {
