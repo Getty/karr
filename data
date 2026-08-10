@@ -1,0 +1,40 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:37:34Z
+id: 50
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- storage
+- data-loss
+- import
+title: karr import --yes wipes the board when tasks/ exists but is empty
+updated: 2026-08-10T01:27:58Z
+---
+
+`lib/App/karr/BoardStore.pm:312-314`, with the guard in `Cmd/Import.pm`.
+
+The guard only checks that `tasks/` **exists**. An empty `tasks/` means "there
+is no file view to import", but it takes the deletion path instead:
+
+    karr materialize
+    rm -f tasks/*.md
+    karr import --yes
+    -> Imported 0 task(s) ...    EXIT=0
+    karr list -> 0 task(s)
+
+The whole board is gone and the command reports success. This gets more likely
+in combination with the materialize ticket: `tasks/` at repo root is a plausible
+pre-existing project directory, and one that karr will happily empty.
+
+Fix: treat an empty `tasks/` as "nothing to import" and refuse, or require an
+explicit flag to mean "yes, import zero tasks and delete everything".
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
