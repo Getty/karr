@@ -1,0 +1,47 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:28:15Z
+id: 87
+priority: high
+status: done
+tags:
+- interop
+- config
+- data-loss
+title: kanban-md round trip drops karr's foundation config, silently re-enabling a
+  disabled board
+updated: 2026-08-10T03:48:51Z
+---
+
+Found by the #60 fix, verified against a kanban-md binary built from ../kanban-md.
+
+Loading a karr-materialized view with kanban-md rewrites config.yml on the spot:
+it migrates version 1 to version 10 and re-saves the file. karr's `foundation`
+key is not in the Go schema, so it does not survive that round trip.
+
+Consequence: a board turned off with `karr disable` is silently turned back on.
+The sequence is ordinary interop usage, not an edge case:
+
+    karr disable            # foundation.enabled = 0 in refs/karr/config
+    karr materialize        # view carries foundation: enabled: 0
+    kanban list             # kanban-md migrates and re-saves config.yml
+    karr import --yes       # foundation key is gone -> defaults -> enabled
+
+karr-foundation then starts running agents on a board the maintainer switched
+off. Nothing warns at any step.
+
+Pre-existing, but only reachable since #60 made the view loadable by kanban-md
+at all. Related: #82 in the sense that both are "the other side was empty for
+the wrong reason".
+
+Options, none obviously right:
+- import preserves keys the file view cannot represent, by diffing against the
+  ref config rather than replacing it (also fixes the sibling ticket about
+  config pollution)
+- materialize writes karr-only keys somewhere kanban-md will not touch
+- import refuses when the view's config lost keys the board had, and says so
+
+Whichever way, `karr disable` must not be undoable by a tool that never heard
+of it.
+Geschlossen durch bc3b87e/306180d: import reconciled die View gegen refs/karr/config statt sie zu ersetzen; foundation/lock_timeout ueberleben den kanban-md-Roundtrip. Verifiziert gegen kanban-md-Binary, t/102.
