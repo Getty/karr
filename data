@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-08-10T20:09:07Z
+claimed_by: melvin-briefest
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T15:46:32Z
+id: 109
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- testing
+- infrastructure
+title: MockGit's AUTOLOAD answers 1 to every unknown method, so tests go blind on
+  new Git API
+updated: 2026-08-10T20:23:25Z
+---
+
+Found while doing #92. The worker fixed the instance it hit; this is the class of bug behind it.
+
+t/lib/MockStore.pm ends MockGit with:
+
+    sub AUTOLOAD {
+      our $AUTOLOAD;
+      return if $AUTOLOAD =~ /::DESTROY$/;
+      return 1;
+    }
+
+So every method nobody thought to stub answers a true scalar. Not "unimplemented", not an error -- a plausible-looking success value.
+
+What that cost in #92: the new context activity section calls list_refs and read_ref. AUTOLOAD handed it the scalar 1 as if it were a list of one ref, and then again as that refs content, which the section then tried to decode as a log entry. The section had to be given explicit stubs (sub list_refs { () }, sub read_ref { undef }) before its tests meant anything.
+
+The same trap is armed for the next Git method a command class starts calling. #104 has just added one (is_tracked_under); any future test that drives a command through MockStore will get 1 from it -- "yes, the project owns this path" -- and pass while asserting the opposite of the truth. Note that is a plausible answer, not an obviously broken one, which is what makes it dangerous.
+
+Fix direction, same shape as the KNOWN_LEAK allow-list t/121 grew for #38: make the double explicit about what it answers. Either drop AUTOLOAD entirely and stub what is actually used, or keep it as a croak ("MockGit has no stub for X -- add one") so a missing stub fails loudly at the call instead of silently succeeding. Whichever way, check the existing stubs while there: pull/push/fetch returning bare 1 is the same shape of guess, it just happens to be the right answer today.
+
+Worth checking whether any current test passes only because of an AUTOLOAD answer. That is the part that decides whether this is cleanup or a real hole.
