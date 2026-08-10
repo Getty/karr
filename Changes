@@ -1,5 +1,49 @@
 {{$NEXT}}
 
+    - Finished the sweep that stopped karr's own source locations reaching the
+      user (ticket #77). `croak` appends " at Some/Module.pm line 42." even to a
+      message that already ends in a newline, so anyone who ran `karr list`
+      outside a repository was told "Not a git repository. karr requires Git."
+      and then handed the file and line of the builder that said so; every
+      remote failure ended with a line number in whichever `Cmd/*` had called
+      the sync; and `karr-foundation` reported a broken config the same way.
+      Those, plus the pipe/fork/log-open failures in the foundation runner, now
+      go through `App::karr::Error::user_error` and print the message alone. The
+      four commands that let a Path::Tiny error out raw — `karr restore
+      --input` on an unreadable file, `karr backup --output` and `karr context
+      --write` into a directory karr may not write, `karr init --claude-skill`
+      into an unwritable `.claude` — now name the path the user typed and the
+      reason the OS gave, and nothing else. Two errors deliberately keep their
+      call site, because there it is the useful part: saving an unpersisted
+      ref-backed task, which is a programming error, and `croak` in
+      App::karr::Foundation's YAML report, whose parser message names its own
+      document, line and column and is passed through whole rather than reduced
+      to one line.
+    - A failed sync now shows git's error once instead of twice. The message
+      that ended the command embedded another copy of the multi-line error that
+      had already been printed the moment it happened — so one failed pull put
+      the same "does not appear to be a git repository" block on the screen
+      twice, and `--quiet`, which suppresses the retry banners and never the
+      errors (that is deliberate, ticket #27), made no difference to the
+      duplicate. `sync_before` now ends on the verdict alone, the way
+      `sync_after` always has: "Pull failed after 3 attempts. Nothing was
+      changed. / Run 'karr sync' to retry." A cause that *changes* between
+      attempts is still reported each time.
+    - App::karr::Role::BoardDiscovery and App::karr::Role::SyncLifecycle no
+      longer compose their imports into the ~20 command classes that consume
+      them (ticket #38). A Moo::Role copies every sub in its package into its
+      consumers, imported ones included, so `use Path::Tiny;` and
+      `use Carp qw( croak );` in a role made `$cmd->path(...)` and
+      `$cmd->croak(...)` callable on every command. Nothing called them, so
+      nothing was broken — but the first command class to want an attribute
+      named `path` would have fought an inherited Path::Tiny constructor for it,
+      silently. Both roles now load what they need with an empty import list and
+      qualify the call, which is what App::karr::Role::Output and
+      App::karr::Role::TaskMutation already did. Still leaking, and out of scope
+      here: `use Time::Piece;` in App::karr::Role::ClaimTimeout and
+      App::karr::Role::TaskMutation puts its `localtime`/`gmtime` on the
+      mutating commands, and MooX::Cmd::Role composes `croak` into every command
+      class from upstream, which karr cannot fix from here.
     - Fixed an ordinary kanban-md round trip silently switching a disabled
       board back on. kanban-md rewrites `config.yml` the moment it loads one —
       it migrates the schema version and re-serialises the file from its own
@@ -73,8 +117,7 @@
       while telling every later reader that karr owned paths the project owns —
       and they said so right where `karr materialize` refuses to write, for
       that very reason. init now leaves .gitignore alone in that case and
-      reports what it did not do. Not yet fixed: `karr materialize` still adds
-      the entries without that check.
+      reports what it did not do.
     - Changed `karr list --sort priority` to open with the most urgent task —
       critical down to low on a default board — instead of following the
       config's priority order ascending (ticket #91). Ascending order opened
@@ -83,8 +126,12 @@
       disagreeing about which end is urgent was a trap: the list now reads
       urgency the way pick and `karr context` already did. `--reverse` gives
       the least-urgent-first view, and every other sort key keeps its
-      direction. This deliberately deviates from kanban-md, whose
-      `list --sort priority` still follows the config order ascending.
+      direction. This deviated from kanban-md when it landed; kanban-md has
+      since made the same change (upstream `c783157`, "sort priority lists
+      highest first"), so the two agree again. It gets there differently —
+      kanban-md flips the reverse flag in `cmd/list.go` and leaves its
+      comparator ascending, karr reads the config list backwards — but the
+      resulting order is the same.
     - Fixed the wipe guard's blind spot: it caught a remote that had lost
       every board ref, but not one swapped for a DIFFERENT non-empty board —
       a stale clone, a re-initialised origin, a typo'd remote URL — which a
@@ -672,17 +719,10 @@
       backend chatter). Applied to the file I/O in `karr skill install`,
       `skill check` and `skill update`, whose Path::Tiny failures used to
       report a karr source location at the user: an unwritable target now says
-      "Could not write PATH: Permission denied" and nothing else. This is the
-      mechanism plus one command — the rest of the sweep is NOT done here.
-      `App::karr::Git::_ref_write_error` already does the identical reduction
-      inline and should collapse onto `clean_error`. Still leaking a call site:
-      the `croak` in App::karr::Role::BoardDiscovery
-      ("Not a git repository"), both sync failures in
-      App::karr::Role::SyncLifecycle (which also prints the same git error once
-      per attempt and lets `--quiet` silence only the retry banners), the
-      croaks in App::karr::Foundation and App::karr::Foundation::Runner, and
-      the raw Path::Tiny errors from `karr restore`, `karr backup`, `karr init`
-      and `karr context`.
+      "Could not write PATH: Permission denied" and nothing else. This was the
+      mechanism plus one command; the entry above finishes the sweep across the
+      rest of the CLI, and App::karr::Git's inline copy of the same reduction
+      has collapsed onto `clean_error`.
     - Fix the activity log dying on ordinary mail addresses. The Git email was
       folded into a ref name with `s/[^a-zA-Z0-9._-]/_/g`, which is not the
       grammar git actually enforces: `a..b@example.com` produced
@@ -738,6 +778,18 @@
       last non-terminal status, by the same rule the terminal statuses already
       follow. A board with no working column at all still cannot hand off, and
       now says so by name.
+    - Fixed `karr materialize` claiming `tasks/` and `config.yml` in .gitignore
+      even when the project already tracks content at those paths — the other
+      half of the hole `karr init` had just closed (ticket #100). init declines
+      to write those entries for a path the project owns; materialize appended
+      them anyway, so the very next command put the untrue claim straight back.
+      Git applies no ignore rule to a file it already tracks, so the entry could
+      do nothing except tell a later reader that karr owns a path the project
+      owns — and it said so right where `karr materialize` refuses to write, for
+      that very reason. Both commands now ask the same question, and materialize
+      reports what it left alone the way init does. The question is asked before
+      the view is written, so a tracked card that `--force` sweeps away does not
+      make the path look unowned on the way out.
 
 0.402     2026-08-04 04:46:25Z
 

@@ -38,6 +38,11 @@ overwrite or delete something Git tracks, and names every such path. Nothing is
 written on that path. Pass C<--force> once you are sure those files are yours to
 replace.
 
+For the same reason the F<.gitignore> entries for the view are only topped up
+when the project has nothing of its own at those paths -- the check C<karr init>
+makes. Git applies no ignore rule to a file it already tracks, so an entry there
+would be inert and would claim a path the project owns.
+
 =head1 OPTIONS
 
 =over 4
@@ -77,6 +82,12 @@ sub execute {
   die "No karr board found. Run 'karr init' to create one.\n"
     unless $store->has_board_refs;
 
+  # Asked before materialize_to runs, so the answer is about the working tree
+  # as the project left it: with --force a tracked card the sweep is about to
+  # delete is still on disk to be found, and none of the cards we are about to
+  # write (all untracked) can be mistaken for the project's.
+  my @owned = $store->project_owned_view_paths( $self->git_root->stringify );
+
   my $board_dir = $store->materialize_to(
     $self->git_root->stringify,
     force => $self->force,
@@ -86,7 +97,13 @@ sub execute {
   # .gitignore covers it (idempotent -- a no-op once init or a prior run added
   # the entries). Done regardless of --json so the guard never depends on the
   # output format.
-  my @ignored = $store->ensure_gitignore( $self->git_root->stringify );
+  #
+  # Unless the project got there first, which is the one thing that stops it:
+  # init already declines to claim paths the project tracks, and materialize
+  # appending them anyway put back the exact untrue claim init had just refused
+  # to make (tickets #89, #100). The entry would be inert -- git applies no
+  # ignore rule to a tracked file -- so all it can do is mislead.
+  my @ignored = @owned ? () : $store->ensure_gitignore( $self->git_root->stringify );
 
   my @tasks = $store->load_tasks;
 
@@ -97,6 +114,10 @@ sub execute {
   printf STDERR "Materialized %d task(s) to %s\n", scalar @tasks, $board_dir;
   printf STDERR "Added .gitignore entries for the file view: %s\n", join( ', ', @ignored )
     if @ignored;
+  printf STDERR "Left .gitignore alone: git already tracks content at %s.\n"
+    . "Those paths belong to the project, not to karr's file view, so karr is not\n"
+    . "claiming them here.\n", join( ', ', @owned )
+    if @owned;
 }
 
 1;

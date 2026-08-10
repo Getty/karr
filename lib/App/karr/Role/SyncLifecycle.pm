@@ -4,7 +4,11 @@ package App::karr::Role::SyncLifecycle;
 our $VERSION = '0.403';
 use Moo::Role;
 use MooX::Options;
-use Carp qw( croak );
+# Loaded without importing, and every call below is qualified: a Moo::Role
+# composes every sub in its package into its consumers, imported ones included,
+# so an imported user_error would become a method on every syncing command
+# (#38). App::karr::Role::Output and App::karr::Role::TaskMutation say the same.
+use App::karr::Error ();
 use App::karr::SyncGuard;
 
 option quiet => (
@@ -51,7 +55,9 @@ by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
 Pulls refs from remote with up to 3 attempts. Output is retry-only: the first
 attempt is silent, retries are announced from attempt 2 ("Pull retry 2 of
 3..."), and errors always reach STDERR. C<--quiet> additionally suppresses the
-retry announcements but never the errors. Creates a L<App::karr::SyncGuard>,
+retry announcements but never the errors. Each distinct error is shown once:
+neither a repeat of the previous attempt's error nor the message that ends the
+command prints it again. Creates a L<App::karr::SyncGuard>,
 retains it on the object (so it outlives the call and covers the command body),
 and also returns it for callers that want to manage it explicitly. C<sync_after>
 clears it on a successful push.
@@ -85,7 +91,14 @@ sub sync_before {
         $shown = $err;
         sleep 1 if $attempt < 3;
     }
-    croak "Pull failed after 3 attempts: $err\n" unless $ok;
+    # The git error is not repeated here. It was printed above the moment it
+    # happened, and embedding a copy in the terminal message meant one failed
+    # sync showed the same multi-line git output twice -- under --quiet too,
+    # which silences the retry banners and nothing else (#27, #77). This half
+    # now matches sync_after, which has always ended on the verdict alone.
+    App::karr::Error::user_error(
+        "Pull failed after 3 attempts. Nothing was changed.\n"
+      . "Run 'karr sync' to retry." ) unless $ok;
 
     # Stash the guard on the object so it outlives sync_before's return and
     # covers the whole command body; sync_after neutralises it on success.
@@ -150,7 +163,7 @@ sub sync_after {
     # the command body returns (#28).
     #
     # On failure: the three attempts the insurance would make have just been
-    # made and the croak below carries the same "run karr sync" guidance, so
+    # made and the error below carries the same "run karr sync" guidance, so
     # leaving the guard armed would only make the END flush in bin/karr (#37)
     # repeat the identical failing push, doubling both the delay and the noise
     # on an already-failing command. On a per-ref rejection the attempts were
@@ -159,12 +172,14 @@ sub sync_after {
 
     return if $ok;
 
-    croak "Push rejected by the remote. Local refs are intact.\n"
+    App::karr::Error::user_error(
+        "Push rejected by the remote. Local refs are intact.\n"
       . "The refs above were refused, not lost in transit, so pushing again "
-      . "would only be refused again.\n" if $rejected;
+      . "would only be refused again." ) if $rejected;
 
-    croak "Push failed after 3 attempts. Local refs are intact.\n"
-      . "Run 'karr sync' to retry.\n";
+    App::karr::Error::user_error(
+        "Push failed after 3 attempts. Local refs are intact.\n"
+      . "Run 'karr sync' to retry." );
 }
 
 sub _release_guard {

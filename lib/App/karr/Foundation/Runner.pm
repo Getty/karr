@@ -3,7 +3,7 @@
 package App::karr::Foundation::Runner;
 our $VERSION = '0.403';
 use Moo;
-use Carp qw( croak );
+use App::karr::Error qw( user_error );
 use Encode ();
 use IO::Select;
 use IO::Handle ();
@@ -64,10 +64,12 @@ sub _run_command {
   # streaming), and an in-memory buffer for error scanning. No external tee
   # process to race, and the run's output is captured directly (no re-slurping
   # the log via byte offsets).
-  pipe( my $reader, my $writer ) or croak "pipe failed: $!";
+  # A resource the OS refused is the operator's problem, not a bug report, so
+  # these three carry the errno and no call site into this file (#77).
+  pipe( my $reader, my $writer ) or user_error("pipe failed: $!");
 
   my $pid = fork;
-  croak "fork failed: $!" unless defined $pid;
+  user_error("fork failed: $!") unless defined $pid;
 
   if ( $pid == 0 ) {
     # child
@@ -80,7 +82,7 @@ sub _run_command {
 
   # parent
   close $writer;
-  open( my $log_fh, '>>', "$log_file" ) or croak "open log: $!";
+  open( my $log_fh, '>>', "$log_file" ) or user_error("open log $log_file: $!");
   $log_fh->autoflush(1);
 
   my $started   = time;

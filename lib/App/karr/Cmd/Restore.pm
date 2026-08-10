@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use Path::Tiny;
 use App::karr::Encoding qw( yaml_load from_octets );
+use App::karr::Error qw( user_error clean_error );
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::SyncLifecycle;
 
@@ -98,7 +99,12 @@ sub _load_payload {
   my ($self) = @_;
 
   if ( $self->input ) {
-    return path( $self->input )->slurp_utf8;
+    # An unreadable --input is the user's path, not karr's: Path::Tiny's own
+    # error would hand them this file and line instead (#77).
+    my $content = eval { path( $self->input )->slurp_utf8 };
+    defined $content
+      or user_error( "Could not read ", $self->input, ": ", clean_error($@) );
+    return $content;
   }
 
   # STDIN is the one input edge App::karr::Encoding leaves without a PerlIO

@@ -71,10 +71,10 @@ C<status> follows the board config's own order. C<priority> deliberately
 reads the config list the other way, most urgent first: C<--sort priority>
 lists C<critical> before C<low> with the default C<priorities> setting, so
 the top of a priority-sorted list is the task L<App::karr::Cmd::Pick> would
-hand out, and C<--reverse> gives the least-urgent-first view. This direction
-is a documented deviation from kanban-md, whose ascending config order opens
-the list with the least urgent task -- the opposite of its own pick. Tasks
-without a C<due> date sort last. Ties are broken by C<id>.
+hand out, and C<--reverse> gives the least-urgent-first view. kanban-md's
+ascending config order opened the list with the least urgent task when karr
+took this direction; it has since made the same change, so the two agree.
+Tasks without a C<due> date sort last. Ties are broken by C<id>.
 
 =back
 
@@ -268,7 +268,10 @@ sub _sort {
 # urgent task -- the last name in priorities, critical on a default board --
 # sorts first and the top of the list agrees with what pick would take.
 # kanban-md's ascending order (sort.go:29) put the least urgent task on top,
-# the exact opposite of pick. A value that is not in the config still gets
+# the exact opposite of pick; it has since taken the same direction (upstream
+# c783157), one layer up -- cmd/list.go flips the reverse flag for this one key
+# and sort.go:29 stays ascending -- so the comparators differ but the order a
+# user sees does not. A value that is not in the config still gets
 # index -1, as kanban-md's IndexOf does; descending, that keeps it at the
 # least-urgent end, the same end the ascending order gave it.
 sub _comparators {

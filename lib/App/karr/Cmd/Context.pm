@@ -8,6 +8,7 @@ use MooX::Options (
   usage_string => 'USAGE: karr context [--write-to FILE] [--sections LIST] [--days N] [--json]',
 );
 use Path::Tiny ();
+use App::karr::Error qw( user_error clean_error );
 use Time::Piece;
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -200,18 +201,26 @@ sub _write_to_file {
   my ($self, $md) = @_;
   my $file = Path::Tiny::path($self->write_to);
 
+  # Decide the whole file first, then write it once. --write into a directory
+  # karr may not write is the user's path, not karr's, and Path::Tiny's error
+  # would otherwise report this file and line at them (#77). A merely
+  # read-only target file still goes through: spew renames into place.
+  my $out = $md;
   if ($file->exists) {
-    my $content = $file->slurp_utf8;
+    my $content = eval { $file->slurp_utf8 };
+    defined $content
+      or user_error( "Could not read $file: ", clean_error($@) );
     if ($content =~ /<!-- BEGIN kanban-md context -->.*<!-- END kanban-md context -->/s) {
       $content =~ s/<!-- BEGIN kanban-md context -->.*<!-- END kanban-md context -->\n?/$md/s;
-      $file->spew_utf8($content);
+      $out = $content;
     } else {
       my $sep = $content =~ /\n$/ ? "\n" : "\n\n";
-      $file->spew_utf8($content . $sep . $md);
+      $out = $content . $sep . $md;
     }
-  } else {
-    $file->spew_utf8($md);
   }
+
+  eval { $file->spew_utf8($out); 1 }
+    or user_error( "Could not write $file: ", clean_error($@) );
 
   printf "Context written to %s\n", $self->write_to;
 }

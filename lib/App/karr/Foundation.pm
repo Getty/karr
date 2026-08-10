@@ -6,7 +6,7 @@ use Moo;
 use MooX::Options (
   usage_string => 'USAGE: karr-foundation [options]',
 );
-use Carp qw( croak );
+use App::karr::Error qw( user_error );
 use Path::Tiny;
 use YAML::XS ();
 use Time::Piece;
@@ -78,12 +78,17 @@ sub _build_config_data {
     return {};
   }
 
+  # Both of these are "your config is wrong", not "karr is wrong", so neither
+  # gets a Carp call site pointing into this file (#77). YAML::XS's own error
+  # names the document, line and column and carries no call site of its own, so
+  # it goes through whole rather than through clean_error, which would keep
+  # only its "YAML::XS::Load Error: The problem:" header.
   my $data = try {
     YAML::XS::LoadFile("$cfg_path");
   } catch {
-    croak "Cannot parse config $cfg_path: $_";
+    user_error("Cannot parse config $cfg_path: $_");
   };
-  croak "Config must be a YAML mapping" unless ref $data eq 'HASH';
+  user_error("Config must be a YAML mapping") unless ref $data eq 'HASH';
   return $data;
 }
 

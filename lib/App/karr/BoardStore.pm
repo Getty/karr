@@ -480,6 +480,56 @@ sub file_view_gitignore_entries {
     return ( 'tasks/', 'config.yml' );
 }
 
+sub project_owned_view_paths {
+    my ( $self, $board_dir ) = @_;
+    $board_dir = path($board_dir);
+    return grep { $self->_path_is_tracked( $board_dir->child( $_ =~ s{/\z}{}r ) ) }
+        $self->file_view_gitignore_entries;
+}
+
+=head2 project_owned_view_paths
+
+Which of the C<file_view_gitignore_entries> the project already has content of
+its own at, named exactly as F<.gitignore> would have named them. Empty is the
+ordinary case, and means the file view owns those paths.
+
+    my @owned = $store->project_owned_view_paths($git_root);
+    $store->ensure_gitignore($git_root) unless @owned;
+
+F<tasks/> and F<config.yml> at a repository root are perfectly ordinary names
+for a project to already use, and git applies no ignore rule to a file it
+already tracks. An entry for such a path would therefore change nothing at all
+while telling every later reader that karr owns a path the project owns -- and
+it would say so right where L</materialize_to> refuses to write, for that very
+reason (tickets #48, #89). C<init> asks before writing the entries, and
+C<materialize> asks before topping them up (#100).
+
+L<App::karr::Git/is_tracked> answers for a file: libgit2's C<status_for_path>
+has nothing to say about a directory, so F<tasks/> is answered by its contents,
+recursively -- a project's F<tasks/notes/old.md> counts every bit as much as a
+F<tasks/README.md>. A path git tracks but that is currently missing from the
+working tree is not found this way, which is the one gap.
+
+=cut
+
+sub _path_is_tracked {
+    my ( $self, $path ) = @_;
+    my $git = $self->git;
+    return $git->is_tracked($path) ? 1 : 0 unless $path->is_dir;
+
+    my $tracked = 0;
+    $path->visit(
+        sub {
+            my ($child) = @_;
+            return if $child->is_dir || !$git->is_tracked($child);
+            $tracked = 1;
+            return \0;   # a false ref stops the walk
+        },
+        { recurse => 1 },
+    );
+    return $tracked;
+}
+
 sub ensure_gitignore {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);

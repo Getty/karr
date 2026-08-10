@@ -21,13 +21,13 @@ use App::karr::Error qw( user_error clean_error );
 #   /.../lib/App/karr/Cmd/Skill.pm line 134.
 #
 # App::karr::Error is the single place that turns such an error into one clean
-# line. This file pins the mechanism and its use in App::karr::Cmd::Skill.
-# It does NOT cover the rest of the sweep -- App::karr::Role::BoardDiscovery
-# and App::karr::Role::SyncLifecycle still croak, App::karr::Foundation and
-# App::karr::Foundation::Runner too, and `karr restore` / `backup` / `init` /
-# `context` still let Path::Tiny's call site through.
-# App::karr::Git::_ref_write_error does this same reduction inline and is the
-# obvious first thing to collapse onto clean_error.
+# line. This file pins the mechanism and its use in App::karr::Cmd::Skill; the
+# rest of the sweep -- App::karr::Role::BoardDiscovery, the two sync failures in
+# App::karr::Role::SyncLifecycle, App::karr::Foundation, its Runner, and the
+# raw Path::Tiny errors from `karr restore` / `backup` / `init` / `context` --
+# is pinned in t/120-error-message-sweep.t. App::karr::Git::_ref_error, which
+# used to carry its own inline copy of the same reduction, now calls
+# clean_error.
 
 subtest 'croak really does ignore the trailing-newline convention' => sub {
     # The premise of the whole ticket. If this ever stops being true, the

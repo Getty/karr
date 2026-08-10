@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use Path::Tiny;
 use App::karr::Encoding qw( yaml_dump );
+use App::karr::Error qw( user_error clean_error );
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::SyncLifecycle;
 
@@ -71,8 +72,10 @@ sub execute {
 
   if ( $self->output ) {
     my $file = path( $self->output );
-    $file->parent->mkpath;
-    $file->spew_utf8($yaml);
+    # An --output karr cannot write is the user's path, not karr's: Path::Tiny
+    # would otherwise report this file and line at them (#77).
+    eval { $file->parent->mkpath; $file->spew_utf8($yaml); 1 }
+      or user_error( "Could not write $file: ", clean_error($@) );
     print STDERR "Wrote backup to $file\n";
     return;
   }

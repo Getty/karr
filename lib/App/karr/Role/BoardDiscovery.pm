@@ -4,8 +4,13 @@ package App::karr::Role::BoardDiscovery;
 our $VERSION = '0.403';
 use Moo::Role;
 use MooX::Options;
-use Path::Tiny;
-use Carp qw( croak );
+# Both loaded without importing, and every call below is qualified. A Moo::Role
+# composes every sub in its package into its consumers, imported ones included,
+# so `use Path::Tiny;` here made Path::Tiny's path() a method on ~20 command
+# classes -- a silent collision waiting for the first command that wants an
+# attribute called `path` (#38). App::karr::Role::Output states the same rule.
+use Path::Tiny ();
+use App::karr::Error ();
 use App::karr::Role::ExitCodes;
 use App::karr::Git;
 use App::karr::BoardStore;
@@ -106,8 +111,8 @@ sub _build_git_root {
 
     my $dir = $self->_effective_dir;
     my $start = defined $dir
-        ? path($dir)->absolute
-        : path('.')->absolute;
+        ? Path::Tiny::path($dir)->absolute
+        : Path::Tiny::path('.')->absolute;
 
     while (1) {
         my $git = App::karr::Git->new( dir => $start->stringify );
@@ -116,7 +121,10 @@ sub _build_git_root {
         last if $start->is_rootdir;
         $start = $start->parent;
     }
-    croak "Not a git repository. karr requires Git.\n";
+    # Not croak: this is the first thing anyone who runs karr outside a
+    # repository sees, and Carp would append this builder's own file and line
+    # to it (#77). Where karr keeps its source is not the reader's problem.
+    App::karr::Error::user_error("Not a git repository. karr requires Git.");
 }
 
 sub _build_store {

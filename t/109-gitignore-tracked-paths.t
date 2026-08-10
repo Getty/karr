@@ -1,4 +1,4 @@
-# t/109-init-gitignore-tracked-paths.t
+# t/109-gitignore-tracked-paths.t
 #
 # Ticket #89: `karr init` appended `tasks/` and `config.yml` to .gitignore
 # unconditionally. Both are perfectly ordinary names for a project to already
@@ -13,6 +13,11 @@
 # `tasks/` is a directory, and App::karr::Git::is_tracked answers for files --
 # libgit2's status_for_path has nothing to say about a directory -- so init
 # answers it by its contents.
+#
+# Ticket #100: `karr materialize` writes the same two entries after writing the
+# view, and went on doing it unconditionally -- putting back the exact claim
+# init had just declined to make. Both commands now ask the one question, via
+# App::karr::BoardStore::project_owned_view_paths.
 
 use strict;
 use warnings;
@@ -157,6 +162,61 @@ subtest 'no .gitignore rule contradicts what materialize will do' => sub {
   isnt( $rc, 0, 'git ignores nothing at that path' );
   unlike( gitignore_of($repo) // '', qr{^config\.yml$}m,
     'so karr never claimed it in .gitignore either' );
+};
+
+# --------------------------------------------------------------- ticket #100
+
+subtest 'materialize does not claim a tasks/ the project tracks' => sub {
+  # The project file is not card-shaped, so the #48 refusal has nothing to say
+  # about it: materialize runs to completion, which is exactly the path on
+  # which it used to append the entries init had refused to write.
+  my $repo = repo_with('tasks/deploy-runbook.md');
+  is( run_karr( $repo, 'init', '--name', 'Collide' )->{exit}, 0, 'board initialized' );
+  is( run_karr( $repo, 'create', 'A task' )->{exit}, 0, 'task created' );
+  is( gitignore_of($repo), undef, 'init claimed nothing, as of #89' );
+
+  my $rv = run_karr( $repo, 'materialize' );
+  is( $rv->{exit}, 0, 'materialize succeeds' ) or diag( $rv->{stderr} );
+  is( gitignore_of($repo), undef, 'and did not claim the path either' );
+  like( $rv->{stderr}, qr/Left \.gitignore alone/,
+    'materialize says what it did not do' )
+    or diag( $rv->{stderr} );
+  like( $rv->{stderr}, qr{tasks/}, 'naming the path the project owns' );
+
+  is( path($repo)->child('tasks/deploy-runbook.md')->slurp_utf8, "project content\n",
+    "the project's own file is untouched" );
+};
+
+subtest 'materialize still writes the entries when the paths are karr\'s' => sub {
+  # The ordinary case, and the one an over-eager fix would break. init has
+  # already written the entries here, so remove them first: what is under test
+  # is materialize's own append, not an idempotent no-op.
+  my $repo = repo_with();
+  is( run_karr( $repo, 'init', '--name', 'Clean' )->{exit}, 0, 'board initialized' );
+  path($repo)->child('.gitignore')->remove;
+
+  my $rv = run_karr( $repo, 'materialize' );
+  is( $rv->{exit}, 0, 'materialize succeeds' ) or diag( $rv->{stderr} );
+  like( gitignore_of($repo), qr{^tasks/$}m,      'tasks/ is ignored' );
+  like( gitignore_of($repo), qr{^config\.yml$}m, 'config.yml is ignored' );
+  like( $rv->{stderr}, qr/Added \.gitignore entries/, 'and materialize says so' )
+    or diag( $rv->{stderr} );
+};
+
+subtest 'a tracked card that --force sweeps away is still the project\'s' => sub {
+  # This one pins the ordering. --force deletes the tracked card before
+  # .gitignore is touched, so a check made afterwards walks an emptied tasks/
+  # and concludes the project owns nothing there -- while git still tracks the
+  # path and would still apply no ignore rule to it.
+  my $repo = repo_with('tasks/001-legacy-card.md');
+  is( run_karr( $repo, 'init', '--name', 'Forced' )->{exit}, 0, 'board initialized' );
+  is( run_karr( $repo, 'create', 'A task' )->{exit}, 0, 'task created' );
+
+  my $rv = run_karr( $repo, 'materialize', '--force' );
+  is( $rv->{exit}, 0, 'materialize --force goes through' ) or diag( $rv->{stderr} );
+  ok( !path($repo)->child('tasks/001-legacy-card.md')->exists,
+    'the tracked card was swept, which is what --force asks for' );
+  is( gitignore_of($repo), undef, 'and karr still claimed nothing' );
 };
 
 done_testing;
