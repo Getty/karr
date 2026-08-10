@@ -77,6 +77,42 @@
       then split to an empty list, so the per-id loop never ran and no error
       was raised for the exit-code contract to classify. All three now report
       a usage error and exit 2.
+    - Fixed a push the remote rejected being reported as a completed sync.
+      libgit2 returns success from `git_remote_push` even when the server
+      refused every ref — a pre-receive hook, a protected ref, a
+      non-fast-forward on a non-forced refspec — so the refusal exists only in
+      the per-ref result Git::Native 0.004 hands back, which karr discarded.
+      The board then diverged from the remote with no signal at all. A push
+      with rejected refs now fails, naming every refused ref with the reason
+      the server gave, on both transports: the git-CLI fallback pushes with
+      `--porcelain` and reports the same refs and reasons. Such a push is no
+      longer retried — the remote was reached and gave its answer — except
+      from the insurance push that fires when a command dies mid-body, which
+      still makes its three attempts and still ends with the generic "run
+      karr sync to retry" advice.
+    - Sync failures are no longer repeated once per retry attempt. Both retry
+      loops printed the error on every attempt, so one failed sync produced
+      three copies of it — and with the per-ref rejection message above, three
+      copies of a block several lines long. An error identical to the one just
+      shown is now dropped; an error that differs still gets its own line.
+      `--quiet` is unchanged: it silences the retry announcements, never the
+      errors.
+    - Fixed a remote that is empty for the wrong reason reconciling the whole
+      board away. Pulls are reconciled against a tracking mirror, so "the
+      remote had these refs at the last sync and does not have them now" is
+      acted on — which is what makes a delete propagate between clones, and
+      also exactly what a re-created origin, a remote URL edited to point
+      somewhere else, or a rolled-back hosting-side restore look like. In
+      those, a routine writing command deleted the entire board in one step,
+      silently. A reconciliation that would remove every remaining board ref
+      is now refused: the command stops, the mirror is left as it was so the
+      next command refuses again rather than quietly republishing, and the
+      message points at `karr sync --push` to republish this board or at the
+      new `karr sync --prune` to accept the deletion (which is how a
+      `karr destroy` on another clone now reaches this one). Only the total
+      wipe is guarded: a pull that leaves at least one board ref standing
+      still reconciles unattended, so a remote swapped for a different,
+      non-empty board is not caught.
     - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
       out by reading a counter ref and writing it back, so two agents that read
       it at the same time were given the same ID and the second task ref
