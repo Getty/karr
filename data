@@ -1,0 +1,48 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:46:29Z
+id: 65
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- json
+- cli
+title: karr pick --json prints a plain sentence when there is nothing to pick
+updated: 2026-08-10T02:25:30Z
+---
+
+Both no-result paths in `Cmd/Pick.pm` (`:134` and `:165`) print a sentence and
+ignore `--json`:
+
+    karr pick --claim me --json        -> "No available tasks to pick."  rc=0
+    karr pick --claim me --json | jq . -> parse error
+
+Every other command honours it: `list --json` on an empty board prints `[]`,
+`archive` on an already-archived task prints `{"note":"already archived",...}`,
+`show`/`log` print `[]`.
+
+`pick` is *the* agent-facing command, so the one place JSON is guaranteed to be
+machine-parsed is the one place it breaks.
+
+Fix: emit `{"picked":null}` (or `null`) on the empty path. Worth a parity
+decision at the same time: kanban-md returns a `NothingToPick` error with a
+nonzero exit; karr returns 0, so an agent currently has to parse stdout to tell
+"nothing to do" from "picked something".
+Fixed and merged into main; full suite green at 96 files / 654 tests.
+Reproduced first, regression test verified to fail against the pre-fix code.
+
+#59: the predicate asked whether an attribute was SET, not whether it held
+anything. Two further instances of the same root cause were found and fixed on
+the way (list rendering an empty assignee, context reporting an empty due as
+overdue); five more are split out as #98 with the one-line fix and the reason it
+needs a deliberate decision.
+
+#67 resolved as interop-robustness only: terminal status now follows kanban-md
+(last configured status, or the one before it when the last is archived).
+statuses stays CLI-read-only -- making the list settable means deciding what
+happens to tasks parked in a dropped column, which is migration, not this
+ticket. list still hides done AND archived by default (t/42 pins that as
+intended); the missing --archived flag was added and the POD corrected.
