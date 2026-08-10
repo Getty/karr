@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-08-10T04:24:28Z
+claimed_by: claude-main
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T03:55:59Z
+id: 101
+priority: medium
+started: 2026-08-10
+status: done
+tags:
+- cli
+- config
+title: pick --move stamps started/completed against the literal done/archived pair
+updated: 2026-08-10T04:58:05Z
+---
+
+Left over from #67, named in the cd4d043 Changes entry. apply_status_change in Role/TaskMutation now hands the board's own config to update_timestamps, so move/edit/archive/handoff stamp completed against this board's final column. pick --move does not pass a config, so on a board ending in e.g. shipped a picked-and-moved card still stamps against done/archived. One caller, same treatment.
+Geschlossen durch cebc64c + Merge: pick --move reicht die Board-Config an update_timestamps durch, wie alle anderen Statuswechsel. t/111.
