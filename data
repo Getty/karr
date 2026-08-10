@@ -1,0 +1,88 @@
+---
+claimed_at: 2026-08-10T14:47:32Z
+claimed_by: error-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:49:20Z
+id: 77
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+- output
+title: croak leaks module paths and line numbers into user-facing error messages
+updated: 2026-08-10T14:57:44Z
+---
+
+Carp appends the call site even when the message ends in a newline, so
+user-facing errors leak module paths:
+
+    cd /tmp/not-a-repo && karr list
+    Not a git repository. karr requires Git.
+     at /storage/raid/home/getty/dev/perl/p5-app-karr/lib/App/karr/Role/BoardDiscovery.pm line 124.
+
+(`perl -MCarp -e 'eval { croak "msg\n" }; print $@'` confirms Carp ignores the
+trailing-newline convention that `die` honours.)
+
+Affected: `Role/BoardDiscovery.pm:119` and both sync failures in
+`Role/SyncLifecycle.pm`, so **every** remote failure ends with
+`at .../Cmd/Create.pm line 116.`. Meanwhile `die "Task N not found\n"` is clean,
+so the CLI's error style is inconsistent depending on which code path you hit.
+
+Related noise on the same path: a failing pull prints the identical multi-line
+git error four times (once per attempt plus the final croak), and `--quiet`
+suppresses the "Pull retry 2 of 3" lines but not the repeated error bodies.
+
+Fix: `die` for user-facing messages, keep `croak` for programming errors; print
+the underlying git error once.
+Partially done. The mechanism exists: lib/App/karr/Error.pm with user_error
+(plain die, honours the trailing newline Carp ignores) and clean_error (strips
+"at FILE line N." plus trailing backend lines, reads ->message on libgit2-style
+objects). App::karr::Git::_ref_write_error should fold into clean_error — the
+->message branch was written so that fold is a pure deletion.
+
+Applied only in Cmd/List.pm and Cmd/Skill.pm; the rest was under concurrent edit.
+Remaining sites, each reproduced against the tree, not inferred:
+
+croak leaking a call site:
+- Role/BoardDiscovery.pm:119   "Not a git repository. karr requires Git."
+- Role/SyncLifecycle.pm:81,:136  pull/push failure -- and note the ticket also
+  names two further defects here: the multi-line git error prints once per
+  attempt AND again in the croak (4x for one failed sync), and --quiet
+  suppresses only the "Pull retry N of 3" banners, not the error bodies.
+  Fixing the message without collapsing the repetition leaves it half-done.
+  (Handed to the sync lane; confirm before redoing it.)
+- Foundation.pm:84,:86  config parse failures (:84 also lacks a trailing newline)
+- Foundation/Runner.pm:66,:69,:82  pipe/fork/open failures
+- Task.pm:164  KEEP as croak. Calling save on an unpersisted ref-backed task is
+  a programming error, and there the call site is the useful part.
+
+Unguarded Path::Tiny calls handing the user a karr source location:
+- Cmd/Restore.pm:95   karr restore --input /nonexistent
+- Cmd/Backup.pm:72    karr backup --output into an unwritable dir
+- Cmd/Context.pm:202  karr context --write when the PARENT dir is unwritable
+                      (a read-only target file alone still succeeds -- spew
+                      renames atomically)
+- Cmd/Init.pm:109     karr init --claude-skill into an unwritable .claude
+
+Each is a two-line change now: wrap in eval, user_error("...: ", clean_error($@)).
+Sweep complete, uncommitted in the working tree for maintainer review (no commit refs yet -- explicitly asked not to commit).
+
+Every site reproduced against the tree before the change, after-output verified:
+- Role/BoardDiscovery.pm  croak -> App::karr::Error::user_error. 'Not a git repository. karr requires Git.' is now one line, no BoardDiscovery.pm line 124.
+- Role/SyncLifecycle.pm   all three croaks -> user_error, and sync_before no longer embeds a copy of $err in the terminal message. That was the whole of the 'printed 4x' defect that survived the loop dedup from #84: loop printed once, croak printed it again, --quiet changed nothing about the second copy. sync_before now ends on the verdict alone, like sync_after always has: 'Pull failed after 3 attempts. Nothing was changed. / Run karr sync to retry.' --quiet still never suppresses the error body (that is #27's decision, t/56 pins it).
+- Foundation.pm :84/:86   -> user_error. YAML::XS's message is passed through whole, NOT through clean_error: clean_error keeps only the first line, which here is the useless 'YAML::XS::Load Error: The problem:' header and drops the document/line/column diagnostic.
+- Foundation/Runner.pm    pipe/fork/open-log -> user_error. open-log now names the log file (it said only 'open log: $!').
+- Task.pm                 untouched, kept as croak per the ticket; pinned by a test so nobody sweeps it later.
+- Cmd/Restore, Backup, Context, Init: eval + user_error(..., clean_error($@)), matching Cmd/Skill.pm's pattern. Context was restructured to decide the whole file first and write once, so there is one guarded write instead of three.
+
+Git::_ref_write_error: already folded. It is now _ref_error and calls clean_error; landed in fa79722 with the other lane's work. Nothing left to do there.
+
+Regression tests: t/120-error-message-sweep.t (10 subtests, 8 fail against HEAD -- verified in a throwaway worktree at 4552be7; the 2 that pass are the two 'must not change' pins: read-only context target still writable, Task croak kept), t/122-foundation-runner-errors.t (fork via CORE::GLOBAL override, log-open via a directory in the log's place; both red pre-fix). The pipe(2) case has no test: forcing EMFILE needs the fd table exhausted and the soft limit here is 1048576.
+t/81-error-messages.t's header comment updated -- it claimed the sweep was undone and pointed at _ref_write_error.
+
+Full suite green: 112 files / 756 tests. Changes entries added under {{$NEXT}}.
+The --quiet half of this ticket's 'related noise' was NOT a defect: #27 decided on 2026-07-02 that --quiet suppresses retry announcements and errors are NEVER suppressed, and t/56 pins exactly that. Fixed here is the repetition only -- the same git error printed once per attempt AND again in the terminating message. Do not re-file the --quiet part.
+Landed on main as a9ec82a (combined commit with the other three tickets). Full suite green over the combined tree: 112 files, 756 tests.
