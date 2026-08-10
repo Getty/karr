@@ -115,11 +115,22 @@ sub execute {
         grep { $self->_is_overdue($_, $now) }
         @active_tasks;
     } elsif ($sec eq 'recently-completed') {
+      # Over every task, not @active_tasks: that list is by definition the
+      # non-terminal ones, so intersecting it with the terminal statuses was
+      # empty by construction and this section had never once had an entry on
+      # any board (ticket #99). kanban-md's buildRecentlyCompletedSection scans
+      # the whole task list too.
+      #
+      # "Recently" is bounded by the completion stamp, as it is there, but to
+      # the day rather than to the second: `completed` is a string here and an
+      # interop card can carry it as a bare `YYYY-MM-DD`, as an RFC3339 stamp
+      # in UTC, or as one with a local offset, and a day-granular cutoff is the
+      # coarsest bound all three compare correctly against.
       my $cutoff = (gmtime() - ($self->days * 86400))->strftime('%Y-%m-%d');
       @items = map { $self->_task_item($_, 'completed ' . ($_->completed // '')) }
         sort { ($b->completed // '') cmp ($a->completed // '') }
         grep { $self->store->is_terminal_status($_->status) && $_->status ne 'archived' && $_->has_completed && $_->completed ge $cutoff }
-        @active_tasks;
+        @tasks;
     }
 
     push @section_data, { name => $sec, items => \@items } if @items;

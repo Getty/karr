@@ -176,7 +176,11 @@ sub execute {
       if ($t->priority && $t->priority ne 'medium') {
         push @meta, $c->('priority:' . $t->priority, $PRIORITY_COLOR{$t->priority} // 'white');
       }
-      if ($t->has_claimed_by && $t->status ne 'done' && $t->status ne 'archived') {
+      # A claim is only worth showing while the work is still live, and which
+      # columns count as finished is the board's decision -- a board imported
+      # from kanban-md can end in `shipped`, and every finished card there
+      # still carried its claimant into the board (ticket #98, following #67).
+      if ($t->has_claimed_by && !$self->store->is_terminal_status($t->status)) {
         push @meta, $c->('@' . $t->claimed_by, 'cyan');
       }
       if ($t->has_blocked) {
@@ -201,7 +205,9 @@ sub execute {
 
   # Summary footer
   my $blocked = grep { $_->has_blocked } @tasks;
-  my $claimed = grep { $_->has_claimed_by && $_->status ne 'done' && $_->status ne 'archived' } @tasks;
+  # Same test as the per-card `@claimant` token above, so the footer can never
+  # count a claim the board itself does not show.
+  my $claimed = grep { $_->has_claimed_by && !$self->store->is_terminal_status($_->status) } @tasks;
   my $done_hidden = $self->done ? 0 : scalar @{ $by_status{done} // [] };
   my $total_label = scalar(@tasks) . ' tasks';
   $total_label .= " ($done_hidden done hidden)" if $done_hidden;

@@ -101,13 +101,63 @@ sub execute {
   # The materialized file view (config.yml + tasks/) is a disposable view of the
   # canonical refs and must never be committed. Ensure the board-root .gitignore
   # covers it, appending idempotently -- kanban-md does the same at init time.
-  my @ignored = $store->ensure_gitignore( $root->stringify );
-  print "Added .gitignore entries for the file view: " . join( ', ', @ignored ) . "\n"
-    if @ignored;
+  #
+  # Unless the project got there first: `tasks/` and `config.yml` at a
+  # repository root are perfectly ordinary names for a project to already use,
+  # and git applies no ignore rule to a file it already tracks. The entry would
+  # therefore change nothing at all while telling every later reader that karr
+  # owns a path the project owns -- and it would say so right where `karr
+  # materialize` refuses to write, for that very reason (tickets #48, #89). Say
+  # nothing rather than something untrue.
+  my @owned = $self->_project_owned_view_paths($root);
+  if (@owned) {
+    print "Left .gitignore alone: git already tracks content at "
+      . join( ', ', @owned ) . ".\n"
+      . "Those paths belong to the project, not to karr's file view, so karr is "
+      . "not\nclaiming them here.\n";
+  }
+  else {
+    my @ignored = $store->ensure_gitignore( $root->stringify );
+    print "Added .gitignore entries for the file view: " . join( ', ', @ignored ) . "\n"
+      if @ignored;
+  }
 
   if ($self->claude_skill) {
     $self->_install_claude_skill($root);
   }
+}
+
+# Which of the file-view paths the project already has content of its own at,
+# named exactly as .gitignore would have named them.
+#
+# App::karr::Git::is_tracked answers for a file: libgit2's status_for_path has
+# nothing to say about a directory, so `tasks/` is answered by its contents,
+# recursively -- a project's tasks/notes/old.md counts every bit as much as a
+# tasks/README.md. A path git tracks but that is currently missing from the
+# working tree is not found this way, which is the one gap: init would then
+# ignore it as before.
+sub _project_owned_view_paths {
+  my ( $self, $root ) = @_;
+  return grep { $self->_path_is_tracked( $root->child( $_ =~ s{/\z}{}r ) ) }
+    $self->store->file_view_gitignore_entries;
+}
+
+sub _path_is_tracked {
+  my ( $self, $path ) = @_;
+  my $git = $self->git;
+  return $git->is_tracked($path) ? 1 : 0 unless $path->is_dir;
+
+  my $tracked = 0;
+  $path->visit(
+    sub {
+      my ($child) = @_;
+      return if $child->is_dir || !$git->is_tracked($child);
+      $tracked = 1;
+      return \0;   # a false ref stops the walk
+    },
+    { recurse => 1 },
+  );
+  return $tracked;
 }
 
 sub _install_claude_skill {
