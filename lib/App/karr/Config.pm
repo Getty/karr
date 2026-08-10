@@ -588,6 +588,80 @@ C<local $YAML::XS::Boolean = 'JSON::PP'> for the booleans to survive.
 
 =cut
 
+# The board-config keys a file view is allowed to speak for on the way back in,
+# i.e. the ones karr itself models. `version` is deliberately absent: it is
+# karr's own numbering, and kanban-md rewrites the view's to its own on every
+# load. So are `tui` and `wip_limits` -- kanban-md regenerates those from its
+# defaults whenever it migrates a config, and `karr config` can neither show nor
+# set them, so adopting them would freeze another tool's defaults into
+# refs/karr/config as invisible, uneditable overrides (ticket #88).
+my %VIEW_KEY = map { $_ => 1 } qw(
+  board tasks_dir statuses priorities classes
+  claim_timeout lock_timeout foundation defaults
+);
+
+# The same question one level down, inside a status or class entry.
+my %VIEW_STATUS_KEY = map { $_ => 1 } qw( name require_claim );
+my %VIEW_CLASS_KEY  = map { $_ => 1 } qw( name wip_limit bypass_column_wip );
+
+sub reconcile_view_config {
+  my ( $class, $overrides, $view ) = @_;
+  return _merge_hashes( $overrides // {}, _view_overrides($view) );
+}
+
+=head2 reconcile_view_config
+
+Folds a file view's F<config.yml> into the board's existing sparse overrides and
+returns the reconciled overrides. The view wins for every key it carries and
+karr models; every other key keeps whatever C<refs/karr/config> already said.
+
+Import used to replace the board config with the file view outright, which only
+works if the view can express everything the board holds -- and it cannot.
+kanban-md rewrites F<config.yml> the moment it loads one, migrating it to its
+own schema version and re-serializing it from its Go structs, so every key that
+schema does not know is simply gone: karr's C<foundation> and C<lock_timeout>
+among them. A board turned off with C<karr disable> came back B<on> from an
+ordinary C<karr materialize> / C<kanban list> / C<karr import --yes> round trip
+(ticket #87). Reading the view as "here is what changed" rather than "here is
+the whole config" is what makes a key kanban-md never heard of survive it.
+
+The same reconciliation is what keeps the migration itself out of the board
+config: the view's keys are pruned to what karr models and normalized to the
+shape L</default_config> uses, so kanban-md's migrated defaults compare equal to
+karr's and are not recorded as deliberate per-board overrides (ticket #88).
+
+    my $overrides = App::karr::Config->reconcile_view_config(
+      $store->load_config_overrides, $file_config );
+
+=cut
+
+sub _view_overrides {
+  my ($view) = @_;
+  return {} unless ref $view eq 'HASH';
+  my %kept = map { $_ => $view->{$_} } grep { $VIEW_KEY{$_} } keys %$view;
+  $kept{statuses} = [ map { _view_entry( $_, \%VIEW_STATUS_KEY, 1 ) } @{ $kept{statuses} } ]
+    if ref $kept{statuses} eq 'ARRAY';
+  $kept{classes} = [ map { _view_entry( $_, \%VIEW_CLASS_KEY, 0 ) } @{ $kept{classes} } ]
+    if ref $kept{classes} eq 'ARRAY';
+  return \%kept;
+}
+
+# Prune one status or class entry to the keys karr models and -- for statuses --
+# collapse a mapping that says nothing beyond its name back to the bare string
+# L</default_config> uses in exactly that case. Both halves are needed to make a
+# kanban-md config compare equal to karr's defaults instead of being stored as
+# an override: kanban-md writes every status as a mapping, and its v7->v8
+# migration decorates half of them with `show_duration`, which karr does not
+# model. Classes are never collapsed -- karr's default classes stay mappings
+# even when `name` is all they carry.
+sub _view_entry {
+  my ( $entry, $allowed, $collapse ) = @_;
+  return $entry unless ref $entry eq 'HASH';
+  my %kept = map { $_ => $entry->{$_} } grep { $allowed->{$_} } keys %$entry;
+  return $kept{name} if $collapse && keys(%kept) == 1 && defined $kept{name};
+  return \%kept;
+}
+
 sub _booleanize {
   my ($data, $key) = @_;
   my $ref = ref $data;

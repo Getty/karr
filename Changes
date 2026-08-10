@@ -1,5 +1,43 @@
 {{$NEXT}}
 
+    - Fixed an ordinary kanban-md round trip silently switching a disabled
+      board back on. kanban-md rewrites `config.yml` the moment it loads one —
+      it migrates the schema version and re-serialises the file from its own
+      structs — so afterwards every key that schema does not know is gone from
+      the view, karr's `foundation` among them. `karr import --yes` then
+      replaced `refs/karr/config` with what was left, and a board switched off
+      with `karr disable` came back enabled, with karr-foundation resuming
+      agent runs on it; nothing warned at any step. Import now reconciles the
+      view against the board config instead of replacing it — the view speaks
+      for the keys it carries and karr models, and every other key keeps what
+      the board already said. `lock_timeout`, karr's other own key, was being
+      reset to the default by the same route and is preserved likewise.
+    - Fixed that same round trip recording kanban-md's migrated defaults as
+      deliberate per-board overrides. Its rewritten `config.yml` carries
+      `version: 10`, a fully expanded `statuses` list decorated with the
+      `show_duration` flag karr does not model, and a whole `tui` block —
+      diffed against karr's defaults, all of it looked changed, so the board
+      froze a copy of another tool's defaults and stopped following karr's own.
+      The view's keys are now pruned to what karr models and normalised to the
+      shape karr writes them in, so a migrated config compares equal to the
+      defaults and is not stored as an override. Two consequences worth
+      knowing: a kanban-md `tui` or `wip_limits` block is no longer carried
+      across the bridge, since it is not karr board config and `karr config`
+      can neither show nor set it; and a board already polluted by an earlier
+      import keeps its stale `version` until something rewrites the config.
+    - Fixed `karr import` walking the task id counter backwards. `karr
+      materialize` writes `next_id` into the file view because kanban-md
+      requires it, but import threw that copy away and re-seeded purely from
+      the highest card it could see. A kanban-md board that has ever lost a
+      card carries a counter ahead of its highest id and holds it there on
+      purpose — max(stored, highest id + 1) is kanban-md's own rule for the
+      same value — so importing one retired ids it had already handed out, and
+      the next `karr create` produced an id kanban-md considers used. The
+      counter now takes the higher of the two and still never moves backwards,
+      so a healthy board's counter stays untouched.
+    - `karr import` now names a `config.yml` that is not a mapping, instead of
+      dying with a bare `Not a HASH reference` and a line number in
+      BoardStore.pm — the same promise it already made for a malformed card.
     - Fixed `karr pick` being blind to a board imported from kanban-md. An
       optional frontmatter field set to the empty string counted as set,
       because a Moo predicate only knows whether the attribute was passed —

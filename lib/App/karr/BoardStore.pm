@@ -519,16 +519,37 @@ sub serialize_from {
     my $config = $config_file->exists
         ? ( LoadFile( $config_file->stringify ) // {} )
         : undef;
+    # A config.yml that is not a mapping is a broken view, and the import path
+    # names what is wrong with a view rather than dying inside a dereference --
+    # the same promise it already makes for a malformed card above. Reaching
+    # the delete below with a list here died with a bare "Not a HASH reference"
+    # and a line number.
+    die "Refusing to import from $board_dir: "
+        . "its config.yml is not a mapping.\nNo refs were changed.\n"
+        if defined $config && ref $config ne 'HASH';
+
+    my $view_next_id;
     if ( defined $config ) {
         # next_id belongs to refs/karr/meta/next-id, not to the config; the
         # seeding below owns it. materialize writes it into the view purely
-        # because kanban-md refuses a config without it (ticket #60).
-        delete $config->{next_id};
+        # because kanban-md refuses a config without it (ticket #60) -- but the
+        # value still carries information, so keep it for the floor below.
+        my $raw = delete $config->{next_id};
+        $view_next_id = $raw
+            if defined $raw && !ref $raw && $raw =~ /\A\d+\z/ && $raw >= 1;
     }
 
     # Nothing above this line wrote anything.
     if ( defined $config ) {
-        $self->save_config($config);
+        # Reconcile against what refs/karr/config already says instead of
+        # replacing it (tickets #87, #88). The file view is a lossy projection:
+        # kanban-md rewrites config.yml as soon as it loads one and drops every
+        # key its Go schema does not know, so a replace silently un-did
+        # `karr disable` and recorded kanban-md's migrated defaults as
+        # deliberate per-board overrides.
+        $self->save_config(
+            App::karr::Config->reconcile_view_config(
+                $self->load_config_overrides, $config ) );
     }
     elsif ( !$self->board_exists ) {
         # Import is a bootstrap path (#30), so it has to leave a board karr
@@ -557,10 +578,21 @@ sub serialize_from {
     # re-allocate an already-imported id. Seed next-id past the highest imported
     # id when the stored next-id is missing or stale, but never lower a next-id
     # that is already ahead of the view (an existing healthy board is untouched).
+    #
+    # The view's own next_id is part of that floor (ticket #90). Seeding from
+    # the highest card alone retired ids the other side of the bridge had
+    # already burned: a kanban-md board whose next_id ran ahead of its highest
+    # card -- which is every board that ever lost one -- handed the next
+    # `karr create` an id kanban-md considers used. Forward only, in both
+    # directions, which is kanban-md's own rule for this value
+    # (internal/task/consistency.go, syncNextID: max(stored, highest id + 1)).
+    my $floor = 1;
     if (%seen) {
         my ($max_id) = sort { $b <=> $a } keys %seen;
-        $self->set_next_id( $max_id + 1 ) if $self->peek_next_id <= $max_id;
+        $floor = $max_id + 1;
     }
+    $floor = $view_next_id if defined $view_next_id && $view_next_id > $floor;
+    $self->set_next_id($floor) if $self->peek_next_id < $floor;
 
     # Everything just written came from character-level file reads (LoadFile,
     # Task->from_file), so the refs now satisfy the current encoding contract
@@ -576,9 +608,16 @@ sub serialize_from {
 =head2 serialize_from
 
 Reads a file view at C<$board_dir> back into C<refs/karr/*>: task refs are
-replaced by the cards, refs the view does not mention are pruned, and
-C<next_id> is seeded past the highest imported id when the stored counter is
-missing or stale.
+replaced by the cards, refs the view does not mention are pruned, and the id
+counter is moved up to whichever is higher, the highest imported id plus one or
+the view's own C<next_id>. It is never moved down -- an id another tool has
+already handed out must not be handed out again (ticket #90).
+
+The config is reconciled rather than replaced. Tasks are the whole truth of the
+file view; its F<config.yml> is not, because anything that loads the view may
+rewrite it into a schema of its own. So the view speaks only for the keys it
+carries and karr models, and C<refs/karr/config> keeps the rest -- see
+L<App::karr::Config/reconcile_view_config>.
 
 All or nothing. Every card is parsed before the first ref is written, so a
 malformed file aborts the whole import -- listing each rejected file and its
