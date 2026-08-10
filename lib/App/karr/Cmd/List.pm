@@ -67,9 +67,13 @@ Sort by C<id>, C<status>, C<priority>, C<created>, C<updated>, or C<due>, and
 optionally reverse the result order. Any other field is a usage error (exit
 C<2>).
 
-C<status> and C<priority> follow the board config's own order, so C<--sort
-priority> lists C<low> before C<critical> with the default C<priorities>
-setting; reach for C<--reverse> to put the most urgent work first. Tasks
+C<status> follows the board config's own order. C<priority> deliberately
+reads the config list the other way, most urgent first: C<--sort priority>
+lists C<critical> before C<low> with the default C<priorities> setting, so
+the top of a priority-sorted list is the task L<App::karr::Cmd::Pick> would
+hand out, and C<--reverse> gives the least-urgent-first view. This direction
+is a documented deviation from kanban-md, whose ascending config order opens
+the list with the least urgent task -- the opposite of its own pick. Tasks
 without a C<due> date sort last. Ties are broken by C<id>.
 
 =back
@@ -256,11 +260,17 @@ sub _sort {
   return @sorted;
 }
 
-# One comparator per allowed --sort key. Status and priority follow the board
-# config's own order rather than the alphabet or a hardcoded table, matching
-# kanban-md's Sort/compareTasks (internal/board/sort.go) which indexes both
-# through cfg.StatusIndex / cfg.PriorityIndex. A value that is not in the
-# config gets index -1 and therefore sorts first, as kanban-md's IndexOf does.
+# One comparator per allowed --sort key. Status follows the board config's own
+# order rather than the alphabet or a hardcoded table, matching kanban-md's
+# Sort/compareTasks (internal/board/sort.go) which indexes both through
+# cfg.StatusIndex / cfg.PriorityIndex. Priority deliberately breaks that
+# symmetry (ticket #91): it walks the config list backwards, so the most
+# urgent task -- the last name in priorities, critical on a default board --
+# sorts first and the top of the list agrees with what pick would take.
+# kanban-md's ascending order (sort.go:29) put the least urgent task on top,
+# the exact opposite of pick. A value that is not in the config still gets
+# index -1, as kanban-md's IndexOf does; descending, that keeps it at the
+# least-urgent end, the same end the ascending order gave it.
 sub _comparators {
   my ($self) = @_;
   my %status   = $self->_index_of( $self->config->statuses );
@@ -268,7 +278,7 @@ sub _comparators {
   return {
     id       => sub { $_[0]->id <=> $_[1]->id },
     status   => sub { ($status{$_[0]->status}     // -1) <=> ($status{$_[1]->status}     // -1) },
-    priority => sub { ($priority{$_[0]->priority} // -1) <=> ($priority{$_[1]->priority} // -1) },
+    priority => sub { ($priority{$_[1]->priority} // -1) <=> ($priority{$_[0]->priority} // -1) },
     # created/updated are ISO-8601 UTC stamps, so a string compare is
     # chronological.
     created  => sub { $_[0]->created cmp $_[1]->created },
