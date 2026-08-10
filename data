@@ -1,0 +1,47 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:19Z
+id: 54
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- validation
+- cli
+title: no validation of status, priority, class or due on any write path
+updated: 2026-08-10T01:40:24Z
+---
+
+Found independently by two audit lanes. `status`, `priority`, `class` and `due`
+are never validated on any write path. All of these exit 0 and write an invalid
+board:
+
+    karr move 1 totally-invalid      # rc=0  "Moved task 1: backlog -> totally-invalid"
+    karr create "x" --status bogus   # rc=0
+    karr create "x" --priority bogus # rc=0
+    karr create "x" --class bogus    # rc=0
+    karr create "x" --due not-a-date # rc=0
+    karr edit 1 --status bogus       # rc=0
+    karr pick --claim a --move bogus # rc=0, moves the task to "bogus"
+
+The board then breaks in place: `karr move 1 --next` -> `Unknown status:
+totally-invalid` (rc=1) and the task sits in no column, invisible on `karr board`
+but counted in the total. `karr list` column alignment breaks too.
+
+kanban-md validates all of these in `internal/task/validate.go`
+(`ValidateStatus`/`ValidatePriority`/`ValidateClass`), called from `cmd/move.go:169`,
+`cmd/create.go:211,217,223`, `cmd/edit.go:287,294,325`, `cmd/handoff.go:107`,
+`cmd/pick.go:61,66`.
+
+Expected per ADR 0002: reject with **exit 2** (invalid option value). Note this
+is not on the CLAUDE.md roadmap the way WIP limits and dependency checking are —
+it is a plain gap.
+
+Related: `karr edit` cannot clear a `due` date at all once set.
+Fixed and merged into main (3dac607); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. Note the #68 trigger change: started is now stamped on the first move out
+of the FIRST CONFIGURED status, per kanban-md lifecycle.go, not out of the
+literal in-progress.
