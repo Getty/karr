@@ -1,0 +1,42 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:46:47Z
+id: 68
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- task
+- interop
+title: 'lifecycle timestamps: completed survives a reopen, started is date-only and
+  hardcoded'
+updated: 2026-08-10T01:40:24Z
+---
+
+`Cmd/Move.pm:116-121`, `Cmd/Pick.pm:154-156`, versus
+`../kanban-md/internal/task/lifecycle.go`:
+
+    karr move 1 done; karr move 1 todo
+    git show <ref>:data -> status: todo
+                           completed: 2026-08-09    # stays behind
+
+- `completed` is never cleared on reopen (Go clears it)
+- `started` is set only for the literal `'in-progress'` (Go: on the first move
+  out of the *first configured* status)
+- `completed` is set only for the literal `'done'` (Go: any terminal status)
+- a direct move to a terminal status sets `started` in Go, not in karr
+- karr writes `started: 2026-08-09` (date only) while `created`/`updated`/
+  `claimed_at` are full `...Z` timestamps
+
+The last one matters beyond parity: the planned `metrics` command (lead time,
+cycle time, flow efficiency) cannot compute anything meaningful from a date-only
+`started`, and a stale `completed` makes every reopened task look finished.
+
+Fix before metrics is built, or metrics will be built on wrong data.
+Fixed and merged into main (3dac607); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. Note the #68 trigger change: started is now stamped on the first move out
+of the FIRST CONFIGURED status, per kanban-md lifecycle.go, not out of the
+literal in-progress.
