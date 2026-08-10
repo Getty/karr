@@ -1,0 +1,70 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:46:41Z
+id: 67
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- config
+- interop
+title: 'terminal status is hardcoded: list hides done, pick hands out finished tasks,
+  handoff assumes review'
+updated: 2026-08-10T02:25:30Z
+---
+
+Three related deviations, all in how "which status is final" is decided.
+
+**1. `list` hides `done`, contradicting its own POD and kanban-md.**
+`Cmd/List.pm:159-161` filters on `is_terminal_status` (done + archived), while
+the POD at `Cmd/List.pm:27` says "Archived tasks are excluded by default".
+
+    karr list --compact  -> only #1 backlog     # #2 done is missing
+    kanban list          -> shows #1 AND #2 done
+
+kanban-md excludes only `archived` by default (`cmd/list.go:89`) and has an
+`--archived` flag that karr does not implement.
+
+**2. `is_terminal_status` is hardcoded** (`Config.pm:167-171`):
+
+    return 1 if $status eq 'done' || $status eq 'archived';
+
+On a board with columns `backlog, doing, shipped, archived`:
+
+    karr move 1 shipped; karr pick --claim a
+      -> "Picked task 1: t1 (claimed by a)"   # hands out a finished task
+    karr list --compact -> "#1 shipped t1"     # and does not hide it either
+
+kanban-md derives it from the config (`config.go:477`: the last status, or the
+second-to-last when the last is `archived`).
+
+**3. `handoff` hardcodes `'review'`** (`Cmd/Handoff.pm:59`) — on a board without
+that column it writes an invalid status.
+
+Fix: derive terminal status from the configured statuses, make the default
+exclusion match kanban-md (archived only) and the POD, add `--archived`, and let
+`handoff` take its target from the config.
+Note from re-verification against main at 3dac607: `karr config set statuses ...`
+answers "Key statuses is read-only", so custom statuses cannot be configured
+through the CLI at all. They can still arrive through the config ref via
+`karr import` of a kanban-md config.yml, which is the path that makes this
+ticket bite. Whoever takes it should decide whether statuses stay CLI-read-only
+(and this is purely an interop-robustness fix) or whether making the terminal
+status configurable implies making the status list settable too.
+Fixed and merged into main; full suite green at 96 files / 654 tests.
+Reproduced first, regression test verified to fail against the pre-fix code.
+
+#59: the predicate asked whether an attribute was SET, not whether it held
+anything. Two further instances of the same root cause were found and fixed on
+the way (list rendering an empty assignee, context reporting an empty due as
+overdue); five more are split out as #98 with the one-line fix and the reason it
+needs a deliberate decision.
+
+#67 resolved as interop-robustness only: terminal status now follows kanban-md
+(last configured status, or the one before it when the last is archived).
+statuses stays CLI-read-only -- making the list settable means deciding what
+happens to tasks parked in a dropped column, which is migration, not this
+ticket. list still hides done AND archived by default (t/42 pins that as
+intended); the missing --archived flag was added and the POD corrected.
