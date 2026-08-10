@@ -74,8 +74,14 @@ sub execute {
   my @ids = $self->parse_ids($id_str);
   die "Usage: karr delete ID[,ID,...] [--yes] [--json]\n" unless @ids;
 
-  my @results;
-  for my $id (@ids) {
+  # Every id is attempted, whatever the ones before it did. A missing id used to
+  # die from inside this loop, which on delete was the worst version of the bug
+  # in ticket #61: the ids already removed locally never reached sync_after, so
+  # the batch reported failure with the remote still holding cards karr had
+  # deleted.
+  my ($results, $failed) = $self->run_batch(\@ids, sub {
+    my ($id) = @_;
+
     my $task = $self->find_task($id);
     die "Task $id not found\n" unless $task;
 
@@ -112,20 +118,23 @@ sub execute {
       $answer = '' unless defined $answer;
       chomp $answer;
       unless ($answer =~ /^y/i) {
-        push @results, { id => $task->id, title => $task->title, deleted => \0 };
+        # Answering "n" is an answer, not a failure: the batch carries on and
+        # the command still exits 0 if nothing else went wrong.
         printf "Skipped task %d: %s\n", $task->id, $task->title unless $self->json;
-        next;
+        return { id => $task->id, title => $task->title, deleted => \0 };
       }
     }
 
     $self->delete_task_guarded($task->id, undef);
-    push @results, { id => $task->id, title => $task->title, deleted => \1 };
     printf "Deleted task %d: %s\n", $task->id, $task->title unless $self->json;
-  }
+    return { id => $task->id, title => $task->title, deleted => \1 };
+  });
 
   $self->sync_after;
 
-  $self->print_json_results(@results);
+  $self->print_json_results(@$results);
+
+  $self->report_batch_failure($failed, scalar @ids);
 }
 
 1;

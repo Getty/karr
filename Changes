@@ -43,6 +43,40 @@
       group by default where kanban-md excludes only `archived`: it is the
       agent's "what is open" view, and that difference is now documented
       rather than merely undocumented.
+    - Fixed `karr move`, `karr edit` and `karr delete` abandoning the rest of a
+      batch after one bad id. A missing id died from inside the loop, so every
+      id after it was skipped and the outcome depended on where the bad id sat
+      in the list: `karr move 1,999,2 todo` moved 1 and never looked at 2,
+      while `karr move 999,1,2 todo` moved nothing. All four id-list commands —
+      `archive` included, which already behaved this way — now share one batch
+      loop: every id is attempted, each failure is reported on STDERR with a
+      `N of M ids failed` summary, and the command exits 1 while keeping the
+      work that did succeed, which is the contract ADR 0002 already documented.
+      A usage error is deliberately not a per-id failure: `karr move 1,2,3
+      no-such-status` is wrong for every id at once, so it still rejects the
+      whole invocation with exit 2 and writes nothing. With `--json` the
+      results array is now printed even when part of the batch failed (`move`,
+      `edit` and `delete` previously printed no JSON at all in that case), and
+      a failed id appears in it as `{"id":999,"error":"Task 999 not found"}` —
+      `archive`, which already reported failures there, used to give the
+      shorter `"not found"` for the same field.
+    - Fixed `karr archive` ignoring claims. It set the status to `archived` and
+      saved with no claim check at all, so it could archive a card another
+      agent was holding — the one door into a status change that `karr move`
+      and `karr edit --status` did not cover. Archiving now applies the same
+      claim rule as `move`, `edit` and `delete`, with the same message, and is
+      refused while a live claim is on the card; release it with
+      `karr edit ID --release` or let `claim_timeout` expire it. Re-archiving
+      an already-archived task changes nothing and stays a success whatever its
+      claim says. Because archiving is now an ordinary status change, a board
+      whose configured `statuses` do not include `archived` will have
+      `karr archive` refuse rather than write a status the board does not have.
+    - Fixed `karr handoff` overwriting concurrent changes. It read the task,
+      changed it and saved it back without checking the card had not moved in
+      between, so a claim landing in that window was silently replaced instead
+      of obeyed. The handoff now goes through the same compare-and-swap and the
+      same status-change path as `karr move`, so the claim rule is applied to
+      the revision that actually gets written.
     - Fixed `karr pick` locks being published to the remote. Lock refs lived at
       `refs/karr/tasks/N/lock`, inside the namespace karr pushes, so any sync
       that fired while a lock was held put it on the remote; other clones then

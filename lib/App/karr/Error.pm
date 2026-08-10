@@ -7,7 +7,7 @@ use warnings;
 use Scalar::Util qw( blessed );
 use Exporter qw( import );
 
-our @EXPORT_OK = qw( user_error clean_error );
+our @EXPORT_OK = qw( user_error clean_error is_usage_error );
 
 =head1 SYNOPSIS
 
@@ -96,6 +96,39 @@ Raises a user-facing error whose message reaches STDERR exactly as written,
 with no module path or line number appended. Parts are concatenated, undef
 parts are dropped, and trailing whitespace is normalised to the single
 terminating newline. Never returns.
+
+=cut
+
+# The stable leading markers a usage-error die carries (ADR 0002). This used to
+# live only in the regex in bin/karr's central handler, which was fine while
+# that handler was the only reader. App::karr::Role::TaskMutation's batch runner
+# is the second: it has to tell a failure that belongs to one id apart from one
+# that condemns the whole invocation, and a second copy of the marker list would
+# drift the moment either side gained a marker -- the batch would then quietly
+# demote a usage error (2) to a runtime failure (1).
+my $USAGE_MARKERS = qr{
+    \A (?: Unknown\ command:          # the dispatch guard in App::karr
+         | unexpected\ extra\ argument # surplus positionals (Role::CliArgs)
+         | Usage:                      # a missing required positional
+         | Usage\ error:               # anything usage_error() raises
+      )
+}x;
+
+sub is_usage_error {
+  my ($err) = @_;
+  return 0 unless defined $err;
+  return "$err" =~ $USAGE_MARKERS ? 1 : 0;
+}
+
+=method is_usage_error
+
+    exit( is_usage_error($@) ? 2 : 1 );
+
+True when an exception is one of karr's usage errors -- "you called this wrong"
+rather than "the operation failed" -- decided by the stable leading markers
+listed in F<bin/karr>. Accepts a plain string or an exception object; a new
+usage-error die must start with one of those markers, and C<usage_error> in
+L<App::karr::Role::ExitCodes> is the generic way to emit one.
 
 =cut
 

@@ -9,11 +9,16 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::TaskMutation;
 use App::karr::Task;
 use App::karr::Config;
 use Time::Piece;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output', 'App::karr::Role::ClaimTimeout';
+# TaskMutation composes Role::ClaimTimeout, which is where check_claim comes
+# from; handoff no longer names it separately because it no longer applies the
+# claim rule on its own terms.
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::TaskMutation';
 
 =head1 SYNOPSIS
 
@@ -95,47 +100,54 @@ sub execute {
   my @pos = $self->positional_args($args_ref);
   my $id = $pos[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";
 
-  my $task = $self->find_task($id);
-  die "Task $id not found\n" unless $task;
+  # The status a handoff lands in. karr has assumed C<review> since it was
+  # written; ticket #67 is about letting a board configure it, and this is the
+  # one place that would read the setting.
+  my $target = 'review';
 
-  # The one claim-ownership rule, shared with move/edit/delete rather than
-  # reimplemented here. Byte-identical message and behaviour to the copy this
-  # replaces, and it picks up check_claim's RFC3339 stamp handling for free.
-  $self->check_claim($task, $self->claim);
+  # Handoff used to read the task, mutate it and save it back unguarded, so a
+  # claim landing in that window was overwritten rather than obeyed -- the same
+  # read-then-write #44/#46/#56 closed everywhere else. update_task_guarded is
+  # that closure: the claim rule below is applied to the revision this writes,
+  # and re-applied if another agent gets in first (ticket #97).
+  my $task = $self->update_task_guarded($id, sub {
+    my ($task) = @_;
 
-  # Move to review
-  my $old_status = $task->status;
-  if ($task->status ne 'review') {
-    $task->status('review');
-    $task->update_timestamps($old_status, 'review', ($self->store->all_status_names)[0]);
-  }
+    # The one claim-ownership rule, shared with move/edit/delete/archive rather
+    # than reimplemented here.
+    $self->check_claim($task, $self->claim);
 
-  # Refresh claim
-  $task->claimed_by($self->claim);
-  $task->claimed_at(gmtime->datetime . 'Z');
+    # And the one status-change path, so the handoff obeys the same
+    # require_claim, status validation and lifecycle stamps as `karr move`
+    # (tickets #54, #55, #68). --claim is required on this command, so a target
+    # status flagged require_claim is always satisfied.
+    $self->apply_status_change($task, $target, $self->claim);
 
-  # Block if requested
-  if ($self->block) {
-    $task->block($self->block);
-  }
+    # Refresh claim
+    $task->claimed_by($self->claim);
+    $task->claimed_at(gmtime->datetime . 'Z');
 
-  # Append note
-  if ($self->note) {
-    my $note_text = $self->note;
-    if ($self->timestamp) {
-      $note_text = gmtime->strftime('%Y-%m-%d %H:%M') . ' ' . $note_text;
+    # Block if requested
+    if ($self->block) {
+      $task->block($self->block);
     }
-    my $have = defined $task->body && length $task->body;
-    $task->body(($have ? $task->body . "\n" : '') . $note_text);
-  }
 
-  # Release claim if requested
-  if ($self->release) {
-    $task->clear_claimed_by;
-    $task->clear_claimed_at;
-  }
+    # Append note
+    if ($self->note) {
+      my $note_text = $self->note;
+      if ($self->timestamp) {
+        $note_text = gmtime->strftime('%Y-%m-%d %H:%M') . ' ' . $note_text;
+      }
+      my $have = defined $task->body && length $task->body;
+      $task->body(($have ? $task->body . "\n" : '') . $note_text);
+    }
 
-  $self->save_task($task);
+    # Release claim if requested
+    if ($self->release) {
+      $task->clear_claimed_by;
+      $task->clear_claimed_at;
+    }
+  });
 
   $self->sync_after;
 
@@ -144,7 +156,7 @@ sub execute {
     return;
   }
 
-  my $msg = sprintf "Handed off task %d -> review", $task->id;
+  my $msg = sprintf "Handed off task %d -> %s", $task->id, $target;
   $msg .= sprintf " (blocked: %s)", $self->block if $self->block;
   $msg .= " (claim released)" if $self->release;
   print "$msg\n";
