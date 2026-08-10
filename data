@@ -1,0 +1,46 @@
+---
+claimed_at: 2026-08-10T16:01:02Z
+claimed_by: timepiece-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T14:50:16Z
+id: 105
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- perl-core
+- cleanup
+title: ClaimTimeout and TaskMutation leak Time::Piece's localtime/gmtime into every
+  mutating command
+updated: 2026-08-10T16:14:51Z
+---
+
+Found while doing #38, which fixed the same hazard in Role/BoardDiscovery (Path::Tiny) and Role/SyncLifecycle (Carp).
+
+`App::karr::Role::ClaimTimeout` and `App::karr::Role::TaskMutation` both say `use Time::Piece;`, which installs its localtime/gmtime replacements into the role package -- and a Moo::Role composes every sub in its package into its consumers, imports included. So `$cmd->localtime` and `$cmd->gmtime` are callable on every mutating command class.
+
+Arguably worse than the #38 cases: these shadow builtins. A future `sub localtime` or an attribute of that name on a command class fights an inherited Time::Piece export, and the failure would look like a core function misbehaving.
+
+Same cure as #38, already the house rule in Role/Output, Role/BoardDiscovery and Role/SyncLifecycle: load with an explicit empty import list and qualify at the call site. Note Time::Piece is not a drop-in for that -- its whole point is replacing the builtins, so the call sites need `Time::Piece::localtime(...)` / `->strptime` style rather than the bare form, and each site must be checked for whether it wanted the overridden version or the builtin. That is why #38 did not sweep it in passing.
+
+Not urgent: latent, nothing calls them today. t/121-role-import-leakage.t records both in an explicit KNOWN_LEAK allow-list, so this does not rot silently and a NEW leak fails the test. Delete the entries there when this is done.
+Done, uncommitted in the working tree (parallel lane #108 holds Cmd/Context.pm and Foundation/* in the same tree).
+
+Role/ClaimTimeout.pm: use Time::Piece; -> use Time::Piece (); Two call sites, decided separately. ->strptime (line ~100) was already a qualified class method and needed no import. The gmtime in _claim_expired wants the OVERLOADED one: it is subtracted from the parsed Time::Piece stamp, and the builtin returns a string in that context, so it is now Time::Piece::gmtime(). Proven, not assumed -- reverting just that call to the bare builtin turns t/72-claim-timeout.t red (2 of 4 subtests), which is exactly the silent date bug the ticket warned about.
+
+Role/TaskMutation.pm: use Time::Piece; deleted outright. The role never asks for the time -- the lifecycle stamps are written by App::karr::Task::update_timestamps, which loads its own. The import was pure leak.
+
+Other localtime/gmtime sites read, none changed: Task.pm, BoardStore.pm, Cmd/Pick, Cmd/Move, Cmd/Edit, Cmd/Handoff all want Time::Piece objects and import into their own class package (self-inflicted only, the smaller problem #38 already noted). ActivityLog.pm:208 is the codebase counter-example and is correct as is -- POSIX::strftime with the BUILTIN gmtime() list, no Time::Piece in that file. Foundation.pm and Cmd/Context.pm belong to the #108 lane, untouched.
+
+t/121-role-import-leakage.t: %KNOWN_LEAK is now empty (both entries deleted, with a note saying #105 emptied it). Added two subtests in the #38 style: the role packages no longer hold gmtime/localtime while Time::Piece stays loaded, and a MutationConsumer test class has no ->gmtime/->localtime but still has run_batch/update_task_guarded/apply_status_change/check_claim. Mutation-checked: restoring use Time::Piece; in ClaimTimeout fails 3 of 5 subtests.
+
+Verified latent, not behavioural: nothing anywhere calls ->gmtime/->localtime (grep over lib/ bin/ t/), and a role-composed sub does not override a builtin for bare calls in the consumer -- only method calls and fully qualified ones see it. So no behaviour changed.
+
+Targeted runs, all green (no full prove -lr, parallel lane): t/121, t/72, t/77, t/00-load, t/03, t/04, t/101, t/111, t/112, t/16, t/38, t/42, t/44, t/48, t/83, t/88, t/91, t/92, t/97, t/39, t/100, t/107, t/98, t/57, t/51, t/94.
+
+Changes: entry under {{$NEXT}} for #105. Also trimmed the tail of the #38 entry, which still said "Still leaking: use Time::Piece in ClaimTimeout and TaskMutation" -- both ship in the same 0.500 release, so leaving it would have shipped a self-contradicting changelog. The MooX::Cmd::Role croak half of that sentence is kept; it is still true.
+
+Remaining leaks seen while reading, NOT fixed: MooX::Cmd::Role does a bare use Carp; upstream, so croak is on every command class and karr cannot fix it from here (namespace::clean ruled out). Class-level (self-only) imports: Cmd/Backup, Cmd/Restore, Cmd/Init import Path::Tiny::path; Cmd/List, Cmd/Skill and others import user_error/clean_error; Pick/Move/Edit/Handoff/Context import Time::Piece. Those are classes, not roles, so each affects only itself.
+Finding from the fix that corrects this ticket's own threat model, worth keeping for the #38 family: a Moo::Role-composed sub does NOT override a builtin for bare calls in the consumer -- probed directly, gmtime() inside a class composing ClaimTimeout still resolved to the builtin string. Only method calls ($cmd->gmtime) and fully-qualified calls ever saw the leak, and nothing in lib/ bin/ t/ calls either as a method. So the hazard was real but narrower than 'shadows builtins' suggests: it was a collision hazard, never a live miscomputation. The load-bearing half was the opposite direction -- (gmtime() - $claimed) in _claim_expired NEEDED Time::Piece's overloaded object, and reverting just that call to the builtin turns t/72 red in 2 of 4 subtests. A naive search-and-replace across both roles would have shipped a silent date bug.
+Landed on main as dff2dee. Full suite green: 114 files, 775 tests, no warnings.
