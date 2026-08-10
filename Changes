@@ -60,8 +60,7 @@
       recently-completed section and the cycle times `karr metrics` is meant to
       report, was empty for ever. `karr move`, `karr edit --status`,
       `karr archive` and `karr handoff` now hand the board's own configuration
-      to the lifecycle rules. Not yet fixed: `karr pick --move` still stamps
-      without one, so that one path keeps assuming `done`/`archived`.
+      to the lifecycle rules.
     - Fixed `karr context`'s recently-completed section, which had never
       produced a single entry on any board: it was selected out of the
       non-terminal tasks, so the terminal statuses it looked for could not be
@@ -719,6 +718,16 @@
       which also logs explicitly, still produces exactly one entry. Not covered
       by this: `karr context` summarises task state only and reads no log
       entries, so it is unaffected either way.
+    - Fixed `karr pick --move` never recording a completion on a board whose
+      final column is not named `done` — the last leftover of the
+      terminal-status sweep (ticket #101; sweep: tickets #67, #98). Pick has
+      its own compare-and-swap loop and does not go through the shared
+      status-change path, so its direct call to the lifecycle rules kept the
+      three-argument form when move, edit, archive and handoff started handing
+      the board's own configuration along, and "is this the final column" kept
+      being answered for the default board. A card picked straight into
+      `shipped` got its `started` stamp and no `completed` for ever. Pick now
+      hands the board config over like everywhere else.
 
 0.402     2026-08-04 04:46:25Z
 
