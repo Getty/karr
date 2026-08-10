@@ -1,0 +1,84 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:49Z
+id: 59
+priority: critical
+started: 2026-08-09
+status: done
+tags:
+- bug
+- task
+- multi-agent
+title: 'blocked: false and claimed_by: '''' make a task invisible to pick'
+updated: 2026-08-10T02:25:30Z
+---
+
+`Task.pm:64-71` — BUILD deletes optional fields only when `!defined`, so a
+defined-but-falsy value counts as "set". Consumers then treat it as truthy state
+(`Cmd/Pick.pm:108`/`:112`, `Cmd/List.pm:136`).
+
+    # task with  blocked: false   (i.e. explicitly NOT blocked)
+    karr list           -> "#1  backlog  Unblocked explicitly [medium, blocked]"
+    karr pick --claim x -> "No available tasks to pick."   rc=0
+
+    # task with  claimed_by: ""
+    karr show 1         -> "Claimed:  "      (empty)
+    karr pick --claim x -> "No available tasks to pick."   rc=0
+
+`blocked: false` is exactly what kanban-md writes, so this triggers on any
+imported board. The task silently disappears from the agent workflow — `pick`
+reports "nothing to do" while a perfectly available task sits there.
+
+Applies to every optional field with a defined falsy value: `assignee: ''`,
+`estimate: 0`, `parent: 0`.
+
+Fix: distinguish "absent" from "falsy" — check definedness and emptiness
+explicitly at the consumer sites, and stop treating `0`/`''`/`false` as set.
+Re-verified against main at 3dac607 (93 files / 630 tests green) with a sharper
+reproduction than the ticket had. This is an interop showstopper, not a corner
+case -- raising to critical.
+
+A kanban-md-written card:
+
+    ---
+    id: 1
+    title: kanban-written
+    status: backlog
+    priority: high
+    blocked: false
+    block_reason: ""
+    claimed_by: ""
+    ---
+
+imported with `karr import --yes`, is stored with block_reason and claimed_by as
+empty strings (blocked: false is dropped correctly by the #58/#69 work, the two
+empty strings are not), and then:
+
+    $ karr pick --claim bob
+    No available tasks to pick.
+
+on a board whose only task is unblocked, unclaimed and high priority. So after
+importing a kanban-md board, karr pick is blind to all of it -- which is the
+whole point of the bridge.
+
+karr itself no longer produces this shape (it omits the keys), so it only
+arrives through import, which is exactly the path that matters. The fix belongs
+in the one pickability predicate: Cmd/Pick.pm::_is_pickable (added by #86) --
+treat empty string as absent for claimed_by and block_reason, the same way an
+absent key is treated. Check Cmd/List.pm filtering for the same assumption.
+Fixed and merged into main; full suite green at 96 files / 654 tests.
+Reproduced first, regression test verified to fail against the pre-fix code.
+
+#59: the predicate asked whether an attribute was SET, not whether it held
+anything. Two further instances of the same root cause were found and fixed on
+the way (list rendering an empty assignee, context reporting an empty due as
+overdue); five more are split out as #98 with the one-line fix and the reason it
+needs a deliberate decision.
+
+#67 resolved as interop-robustness only: terminal status now follows kanban-md
+(last configured status, or the one before it when the last is archived).
+statuses stays CLI-read-only -- making the list settable means deciding what
+happens to tasks parked in a dropped column, which is migration, not this
+ticket. list still hides done AND archived by default (t/42 pins that as
+intended); the missing --archived flag was added and the POD corrected.
