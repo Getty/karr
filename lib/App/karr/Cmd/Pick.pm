@@ -302,8 +302,13 @@ sub _claim_under_lock {
       $task->status($self->move);
       # Same lifecycle rules as every other status change (ticket #68); the
       # implementation is on the task, mirroring kanban-md's lifecycle.go.
+      # The board's own config goes with it, the way apply_status_change hands
+      # it over everywhere else: without it the terminal question was answered
+      # for the default board, and a pick --move into this board's final
+      # column recorded no completion (ticket #101, the last #67 leftover).
+      my $config = App::karr::Config->from_merged( $self->store->effective_config );
       $task->update_timestamps( $old_status, $self->move,
-        ( $self->store->all_status_names )[0] );
+        ( $config->statuses )[0], $config );
     }
 
     return () unless $self->save_task($task, $oid);

@@ -28,9 +28,11 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
 
 =head1 DESCRIPTION
 
-Moves a task into C<review> and refreshes its claim so the next stage of work
-can see who handed it off. The command can append a note, add a blocker, and
-optionally release the claim after the handoff.
+Moves a task into the board's review column -- C<review> where the board
+configures one, the last non-terminal column where it does not
+(L<App::karr::Config/handoff_status>) -- and refreshes its claim so the next
+stage of work can see who handed it off. The command can append a note, add a
+blocker, and optionally release the claim after the handoff.
 
 =head1 OPTIONS
 
@@ -100,10 +102,13 @@ sub execute {
   my @pos = $self->positional_args($args_ref);
   my $id = $pos[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";
 
-  # The status a handoff lands in. karr has assumed C<review> since it was
-  # written; ticket #67 is about letting a board configure it, and this is the
-  # one place that would read the setting.
-  my $target = 'review';
+  # The status a handoff lands in: the board's review column when it has one,
+  # the derived last non-terminal column when it does not -- a literal
+  # C<review> here made handoff unusable on any board without that column
+  # (ticket #102). The derivation lives on the config, next to the
+  # terminal-status rule it builds on.
+  my $target = App::karr::Config->from_merged( $self->store->effective_config )
+    ->handoff_status;
 
   # Handoff used to read the task, mutate it and save it back unguarded, so a
   # claim landing in that window was overwritten rather than obeyed -- the same

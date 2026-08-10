@@ -17,9 +17,9 @@
 # recently-completed section (ticket #99) and the cycle-time arithmetic
 # `karr metrics` is meant to do.
 #
-# NOT covered here, and still open: App::karr::Cmd::Pick calls
-# update_timestamps directly for `karr pick --move`, without a config, so that
-# one path keeps the default-board answer.
+# The one caller this did not go through -- App::karr::Cmd::Pick, which calls
+# update_timestamps directly for `karr pick --move` -- got the same config
+# under ticket #101; t/111-pick-move-terminal-status.t covers that path.
 
 use strict;
 use warnings;

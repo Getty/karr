@@ -494,6 +494,45 @@ through C<karr import> of a kanban-md F<config.yml>.
 
 =cut
 
+sub handoff_status {
+  my ($self) = @_;
+  # Asked on the class there is no board to derive from, so answer for the
+  # default one -- the same convention is_terminal_status documents.
+  $self = $self->from_merged( $self->default_config ) unless ref $self;
+
+  # kanban-md's handoff targets the literal `review` and refuses a board that
+  # does not configure one (cmd/handoff.go:105-110: "board has no 'review'
+  # status; add one to use handoff"). Where the board has a review column
+  # karr targets exactly that, so every board kanban-md itself can hand off on
+  # behaves the same here; where it has none the target is derived rather
+  # than refused -- the column a card sits in right before it is finished,
+  # i.e. the last non-terminal status (ticket #102).
+  my @statuses = $self->statuses;
+  return 'review' if grep { $_ eq 'review' } @statuses;
+
+  my %terminal = map { $_ => 1 } $self->terminal_statuses;
+  my @open = grep { !$terminal{$_} } @statuses;
+  return $open[-1] if @open;
+
+  _usage_error( 'status', 'review',
+    'board configures no review column and has no non-terminal column to hand off to' );
+}
+
+=head2 handoff_status
+
+Returns the status C<karr handoff> moves a task to on this board.
+
+    my $target = $config->handoff_status;   # 'review' on the default board
+
+That is C<review> whenever the board configures such a column -- kanban-md's
+own target, which it validates rather than derives
+(F<cmd/handoff.go>:105-110) -- and the last non-terminal status otherwise, so
+a handoff always lands in the column a card sits in right before it is
+finished. Called on the class it answers for the default board. Dies as a
+usage error on a board with no working column at all.
+
+=cut
+
 sub status_requires_claim {
   my ($self, $status_name) = @_;
   my ($sc) = grep {
