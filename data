@@ -1,0 +1,61 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:49:26Z
+id: 78
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- bug
+- task
+- config
+- interop
+title: 'small task and config parity gaps: body 0, trailing newline, claim_timeout,
+  slug, config validation'
+updated: 2026-08-10T01:40:24Z
+---
+
+Small parity and correctness gaps found across two audits, grouped because each
+is a few lines and they all live in `Task.pm`/`Config.pm`.
+
+**Body "0" is swallowed** — `Task.pm:135` and `:126` both test `if $self->body`,
+so a body of `0` is falsy and dropped:
+
+    karr create "Zero body" --body 0
+    karr show 1        -> no body
+    karr show 1 --json -> no "body" key
+
+kanban-md tests `t.Body != ""` (`internal/task/file.go:52`).
+
+**Body loses a trailing newline per ref round trip** — `Git.pm:263` chomps the
+blob and `Task.pm:145` additionally strips `s/\n$//`. The `save`/`from_file` path
+does not chomp, so the two storage paths are not equivalent.
+
+**`claim_timeout` silently becomes 1h for compound durations** —
+`Role/ClaimTimeout.pm:15-21` only understands `^\d+h$` and `^\d+m$`, everything
+else falls back to 3600. kanban-md uses `time.ParseDuration`, so an imported
+config with `claim_timeout: 1h30m` means 90 minutes there and 60 here.
+
+**Slug truncation differs** — `Task.pm:78` cuts hard at 50 characters; Go trims
+to the last word boundary and strips leftover dashes
+(`internal/task/slug.go:22-30`):
+
+    karr: 001-implement-the-new-authentication-subsystem-with-to.md
+    go:   001-implement-the-new-authentication-subsystem-with.md
+
+In a shared `tasks/` directory that means two files for the same task id.
+
+**No config validation on the import/restore path** — `karr config set` validates
+(`Cmd/Config.pm:98-105`), a config arriving through `import` does not:
+
+    # config.yml with  defaults: {status: nonexistent, priority: bogus}
+    karr create "X" -> rc=0;  karr show 1 -> Status: nonexistent / Priority: bogus
+
+And `karr config show` dies raw on a broken schema:
+`Can't use string ("42") as an ARRAY ref while "strict refs" in use at Cmd/Config.pm line 121`.
+Fixed and merged into main (3dac607); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. Note the #68 trigger change: started is now stamped on the first move out
+of the FIRST CONFIGURED status, per kanban-md lifecycle.go, not out of the
+literal in-progress.
