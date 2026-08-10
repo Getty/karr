@@ -8,7 +8,7 @@ use App::karr::Task;
 use App::karr::Config;
 
 # Data-model regressions, all against App::karr::Task / App::karr::Config
-# directly -- the CLI half of the same tickets is in t/77.
+# directly -- the CLI half of the same tickets is in t/86.
 #
 #   #58  blocked was free text; kanban-md has a bool plus block_reason
 #   #68  completed survived a reopen, started was a bare date
