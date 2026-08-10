@@ -61,21 +61,49 @@ sub is_terminal_status {
 sub git { $_[0]{git} //= MockGit->new }
 
 package MockGit;
+use Carp qw( croak );
 sub new { bless {}, shift }
+
+# Every method a command reaches on this double while driven through
+# MockStore gets an explicit, considered answer here. Nothing falls back to a
+# blanket "true" any more (ticket #109) -- a mock that answers 1 to anything
+# it wasn't told about is not standing in for "unimplemented", it is handing
+# out a plausible-looking success/ownership/content value that the caller has
+# no way to tell apart from a real one. That already cost #92 a crash (see
+# list_refs/read_ref below) and #104's is_tracked_under is armed the same way:
+# unstubbed, it would tell a caller "yes, the project owns this path" and let
+# a test pass while asserting the opposite of the truth.
+#
+# sync_before/sync_after (App::karr::Role::SyncLifecycle) only ever drive this
+# double down the success path -- no test here needs a failing pull/push --
+# so `1` is the deliberate answer, not a guess standing in for one.
 sub pull { 1 }
 sub push { 1 }
-sub fetch { 1 }
-sub has_remote { 0 }
+
 # A board double has no refs/karr/log/* of its own -- explicit rather than
-# left to AUTOLOAD, whose blanket `return 1` would otherwise hand
+# left to AUTOLOAD, whose old blanket `return 1` handed
 # App::karr::Cmd::Context's activity section a bogus single "ref" (the
 # scalar 1) to read as if it were a log entry.
 sub list_refs { () }
 sub read_ref { undef }
+
+# App::karr::Cmd::Context's activity section builds its own identity (to
+# exclude the invoking agent's entries) via
+# App::karr::ActivityLog->identity, which calls this. Every MockStore-driven
+# `karr context` run reaches it -- t/07, t/108 and t/123 all exercise it with
+# the default section set -- so this was silently answered by AUTOLOAD's
+# scalar `1` until now, not merely a theoretical gap.
+sub git_user_email { 'mockstore@example.com' }
+
+# Anything else -- is_tracked_under (#104) included -- has no considered
+# answer here and must not get one by accident. Fail loudly at the call site
+# instead of handing back a plausible-looking `1`, so the next Git method a
+# command starts calling forces a real stub instead of a silent pass.
+our $AUTOLOAD;
 sub AUTOLOAD {
-  our $AUTOLOAD;
   return if $AUTOLOAD =~ /::DESTROY$/;
-  return 1;
+  ( my $method = $AUTOLOAD ) =~ s/.*:://;
+  croak "MockGit has no stub for $method -- add one";
 }
 
 1;
