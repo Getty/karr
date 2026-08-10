@@ -1,0 +1,43 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:34:59Z
+id: 94
+priority: medium
+status: done
+tags:
+- git
+- race
+- refs
+title: delete_ref has no compare-and-swap, so every guarded delete has a race window
+updated: 2026-08-10T01:40:24Z
+---
+
+Found while fixing #56.
+
+App::karr::Git::delete_ref goes through libgit2 git_reference_remove(repo, name),
+which takes no expected-old OID. So a delete cannot be guarded: whatever karr
+checked before calling it may have changed by the time it runs.
+
+That matters for the claim guards added in #56. Deleting a task re-checks the
+claim immediately before the delete, which closes the minutes-long window behind
+the confirmation prompt, but leaves a microsecond one. Same shape as #44/#46
+before the CAS work, just much smaller.
+
+The guarded form already exists upstream: Git::Native::Reference->delete
+operates on a looked-up reference, and libgit2 refuses it when the ref no longer
+matches what was looked up. It is simply not wired into App::karr::Git, which
+only exposes the name-based removal.
+
+Work: add a CAS delete alongside write_ref_cas -- read_ref_with_oid, then delete
+via the looked-up reference, reporting the same retryable outcome
+(is_not_matched / GIT_ELOCKED) that retry_contended already understands. Then
+move the guarded delete paths onto it.
+
+Note #51 (delete_ref discards its error and increments WRITES regardless) is the
+same function; whoever takes either should take both.
+Fixed and merged into main (fa79722); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. #94 additionally confirmed empirically that libgit2 lookup-based delete
+really does guard: moving the ref underneath it answers "old reference value
+does not match".
