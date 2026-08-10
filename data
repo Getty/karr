@@ -1,0 +1,47 @@
+---
+claimed_at: 2026-08-10T15:52:04Z
+claimed_by: encoding-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T15:44:07Z
+id: 108
+priority: medium
+started: 2026-08-10
+status: done
+tags:
+- bug
+- encoding
+- output
+title: 'Em dash literals in code are double-encoded: users see a stray ''a-circumflex'''
+updated: 2026-08-10T16:14:39Z
+---
+
+Found while doing #92 (the worker flagged one site; two more turned up when I swept for it).
+
+No file under lib/ or bin/ says `use utf8`, which is right: the house rule is that non-ASCII belongs in data, not in source literals, and App::karr::Encoding owns every crossing. Three string literals break that rule by carrying a literal em dash (U+2014, bytes e2 80 94) in executable code. Without `use utf8` Perl reads those three bytes as three Latin-1 characters (U+00E2, U+0080, U+0094); the `:encoding(UTF-8)` layer that enable_std_utf8 installs then encodes each of them again, emitting c3 a2 c2 80 c2 94. The user sees a stray a-circumflex followed by two control characters.
+
+Verified by bytes against the tree, and reproduced on committed HEAD before any of todays work, so none of it is new:
+
+- lib/App/karr/Cmd/Context.pm:231 -- `$md .= " -- $item->{note}"` with the literal dash. USER-FACING and the worst of the three: it renders on every noted item in every section (blocked, overdue, recently-completed), on stdout, through `--write`, and through `--json`.
+- lib/App/karr/Foundation/State.pm:105 -- the cooldown message handed to _say_verbose, which prints to stdout under --verbose.
+- lib/App/karr/Foundation/Runner.pm:130 -- the TIMEOUT/SIGTERM message handed to _append_log, which both prints it and appends it to .karr.log through append_utf8. So this one also corrupts a file on disk, not just a terminal.
+
+Correction to the #92 report, which said Context.pm was "the only such literal in executable code": it is the only one in lib/App/karr/Cmd, not in the distribution. Every other non-ASCII hit in lib/ and bin/ is POD or a comment, where it is harmless -- PodWeaver output is a separate path and comments are never printed.
+
+Fix direction: no `use utf8`. Write the character explicitly (`\x{2014}`) or use a plain ASCII `--`, matching how the rest of the codebase writes user-facing text. Whichever is chosen, apply it to all three sites, and add a regression test that greps lib/ and bin/ for non-ASCII outside POD and comments -- this is a class of bug, and it recurred three times without anyone noticing.
+
+Note for the fixer: check whether a board in the wild already has a corrupted .karr.log line from Runner.pm before deciding whether anything needs migrating. Almost certainly not worth a migration, but worth one look rather than an assumption.
+Scope correction: the sweep found 11 literals in executable code, not 3. lib/App/karr/Foundation.pm was missed entirely by the ticket and holds 8 of them: the two warns at :77 (config not found) and :258 (no repos found), and the six _say_verbose calls at :363, :381, :387, :394, :418 and :498. Same mechanism, same c3 a2 c2 80 c2 94 on the wire, verified by running each. Confirmed by PPI token classification rather than grep, which is what turned them up: the ticket's non-ASCII sweep could not separate the warn/_say_verbose lines from the comments and POD around them.
+
+Also a correction the other way: --json is NOT affected. The dash lives only in Context.pm's Markdown renderer; _task_item puts the note in a structured field, so 'karr context --json' was always clean. stdout and --write-to were both corrupt.
+
+Fix: \x{2014} at all 11 sites, no use utf8. Chosen over ASCII '--' because (a) lib/App/karr/Config.pm:176-177 already establishes \x{...} as the way this dist spells a needed non-ASCII character in code, (b) kanban-md's internal/board/context.go:260 emits a real U+2014 at exactly the corresponding spot, so Context.pm:231 needs the character for context-block interop, not a lookalike.
+
+.karr.log check (asked for in the ticket): no migration needed, confirmed by inspection. 32 real .karr.log files under dev/perl/dbio-dev and dbio-dev-copy, 502 lines total, zero occurrences of c3 a2 c2 80 c2 94 and zero TIMEOUT lines at all -- Runner.pm:130 has never fired in the wild. The non-ASCII that is in those logs (em dash, arrow, check marks, German umlauts) is well-formed UTF-8 teed from agent output, not a corrupt literal.
+
+Regression test: t/124-source-ascii-only.t, PPI-based so POD and comments are exempt by token class instead of by regex. Proven both ways before it is pointed at the dist: a fixture with an em dash in a string and in a here-doc body must yield 2 findings, a fixture with one in a comment, in POD and after __END__ must yield 0. Verified it fails on the real bug by reintroducing Context.pm:231 and watching it name file, line, token class and bytes. The 62 POD/comment non-ASCII lines across 12 files in the tree raise nothing. PPI added to cpanfile under 'on test'.
+
+Note for whoever reviews: \x{2014} makes these genuine wide characters, which surfaced a latent defect in three tests that captured STDOUT without the :encoding(UTF-8) layer App::karr::Encoding's POD tells in-process callers to install (the old Latin-1 mojibake was <256 and never warned). t/07, t/108, t/123 now open their capture handles with the layer; t/30's 'missing config warns' subtest now traps the warning it is named after instead of leaking it. Real CLI was never affected -- bin/karr and bin/karr-foundation call enable_std_utf8.
+
+Left in the working tree uncommitted, per the coordinating agent, which holds the full-suite run.
+Landed on main as dff2dee. Full suite green: 114 files, 775 tests, no warnings.
