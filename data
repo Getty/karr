@@ -1,0 +1,46 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T02:19:10Z
+id: 98
+priority: high
+status: done
+tags:
+- interop
+- task
+- data
+title: empty strings from kanban-md are still read as values in five more places
+updated: 2026-08-10T03:55:11Z
+---
+
+Follow-up to #59, which fixed the pickability predicate, list rendering and
+context overdue. The root cause -- an attribute that is set to the empty string
+counts as having a value -- is still live elsewhere. Each verified, not inferred:
+
+- Cmd/Board.pm:179,204  counts claims against literal done/archived, and treats
+                        claimed_by: "" as claimed
+- Cmd/Show.pm:78        prints "Claimed:  " with nothing after it
+- Role/TaskMutation.pm:161  reads claimed_by: "" as a live claim
+- Foundation.pm:523     same
+
+The clean fix is one line rather than five, and was deliberately left out of #59
+because it changes the bytes written for every imported card and two lanes were
+running in those files at the time. In App::karr::Task::BUILD, replacing the
+!defined test:
+
+    next unless $self->$has;
+    my $v = $self->$attr;
+    $self->$clearer if !defined $v || !length $v;   # 0 and "0" keep length 1
+
+That matches Go`s omitempty, which is where the asymmetry comes from in the
+first place. It needs a deliberate decision because it is a storage change:
+a card imported from kanban-md then written back by karr loses the empty keys.
+That is almost certainly right -- kanban-md re-adds them on its own writes -- but
+it should be someone`s decision, with a round-trip test.
+
+Related and NOT covered by the one-liner: Task::update_timestamps stamps
+completed only on a move into a literal "done", so on a board whose terminal
+status is "shipped" no completion is ever recorded. Verified. Fixing it changes
+the method signature, which Move, Edit, Archive, Handoff and TaskMutation all
+call.
+Geschlossen durch cd4d043/58f0fc7: optionale Felder ohne Laenge laden als unset, einmal im Task-Modell (BUILD) -- deckt show, board, require_claim und Foundation-Engagement auf einmal ab. t/96 absichtlich invertiert, t/106 neu.
