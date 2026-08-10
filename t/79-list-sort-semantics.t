@@ -110,7 +110,13 @@ subtest '--sort status follows the config order, not the alphabet' => sub {
 };
 
 subtest '--sort status honours a board that reorders its statuses' => sub {
-  my $store = _board( statuses => [ 'review', 'todo', 'backlog' ] );
+  # The three columns under test are followed by done + archived so that none
+  # of them is the board's *last* status. Since ticket #67 the last column is
+  # the terminal one and `list` hides it by default, so a bare
+  # [review todo backlog] would have made `backlog` mean "finished" and drop
+  # task 2 from the output -- correctly, but for reasons that have nothing to
+  # do with the sort order this subtest is about.
+  my $store = _board( statuses => [qw( review todo backlog done archived )] );
   mk( $store, id => 1, title => 'in review',  status => 'review' );
   mk( $store, id => 2, title => 'in backlog', status => 'backlog' );
   mk( $store, id => 3, title => 'in todo',    status => 'todo' );

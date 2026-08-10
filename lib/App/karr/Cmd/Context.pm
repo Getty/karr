@@ -112,7 +112,7 @@ sub execute {
     } elsif ($sec eq 'overdue') {
       my $now = gmtime->strftime('%Y-%m-%d');
       @items = map { $self->_task_item($_, 'due ' . $_->due) }
-        grep { $_->has_due && $_->due lt $now && !$self->store->is_terminal_status($_->status) }
+        grep { $self->_is_overdue($_, $now) }
         @active_tasks;
     } elsif ($sec eq 'recently-completed') {
       my $cutoff = (gmtime() - ($self->days * 86400))->strftime('%Y-%m-%d');
@@ -212,7 +212,13 @@ sub _task_item {
     title    => $task->title,
     status   => $task->status,
     priority => $task->priority,
-    ($task->has_assignee ? (assignee => $task->assignee) : ()),
+    # Empty means absent, as in pick and list (ticket #59): an `assignee: ""`
+    # from kanban-md must not become an "assignee":"" key in the --json
+    # payload. The Markdown renderer already tested truth rather than the
+    # predicate, so only --json ever saw it.
+    ( $task->has_assignee && length $task->assignee
+      ? ( assignee => $task->assignee )
+      : () ),
     ($note ? (note => $note) : ()),
   };
 }
@@ -226,7 +232,21 @@ sub _pri_order {
 sub _count_overdue {
   my ($self, $tasks) = @_;
   my $now = gmtime->strftime('%Y-%m-%d');
-  return scalar grep { $_->has_due && $_->due lt $now && !$self->store->is_terminal_status($_->status) } @$tasks;
+  return scalar grep { $self->_is_overdue($_, $now) } @$tasks;
+}
+
+# One overdue test for the count and the section, so the header can never
+# disagree with the list under it.
+#
+# `due: ""` satisfies the predicate but is not a date, and the empty string
+# sorts before every real one -- so a kanban-md card carrying it was reported
+# overdue for ever, with "due " and nothing after it. Empty means absent, as it
+# does in pick (ticket #59).
+sub _is_overdue {
+  my ($self, $task, $now) = @_;
+  return 0 unless $task->has_due && length $task->due;
+  return 0 unless $task->due lt $now;
+  return !$self->store->is_terminal_status($task->status);
 }
 
 sub _load_tasks {

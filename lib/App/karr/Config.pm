@@ -426,32 +426,71 @@ Returns a hash for sorting tasks by class of service.
 
 =cut
 
+# The status kanban-md calls "archived": always terminal, and the one name it
+# hardcodes (internal/config/config.go, ArchivedStatus).
+use constant ARCHIVED_STATUS => 'archived';
+
+# What a class-method call answers with, i.e. when there is no board config to
+# derive from. It is the default board's own pair, so nothing that has always
+# asked App::karr::Config->is_terminal_status changes its answer.
+use constant DEFAULT_TERMINAL_STATUSES => ( 'done', ARCHIVED_STATUS );
+
 sub is_terminal_status {
-  my ($class, $status) = @_;
-  return 1 if $status eq 'done' || $status eq 'archived';
-  return 0;
+  my ($self, $status) = @_;
+  return 0 unless defined $status;
+  return ( grep { $_ eq $status } $self->terminal_statuses ) ? 1 : 0;
 }
 
 =head2 is_terminal_status
 
-Returns true if the given status is terminal (done or archived).
+Returns true if the given status is terminal for this board.
 
-    if (App::karr::Config->is_terminal_status($task->status)) {
+    if ($config->is_terminal_status($task->status)) {
         # task is in a terminal state
     }
+
+Called on the class it answers for the default board, C<done> and C<archived>;
+call it on an instance to have the board's own C<statuses> decide. See
+L</terminal_statuses> for why that matters (ticket #67).
 
 =cut
 
 sub terminal_statuses {
-  my ($class) = @_;
-  return ('done', 'archived');
+  my ($self) = @_;
+  # No instance, no configured statuses: the default board's pair.
+  return ( DEFAULT_TERMINAL_STATUSES ) unless ref $self;
+
+  my @names = $self->statuses;
+  # kanban-md returns false for every status, archived included, when the board
+  # configures none (internal/config/config.go, IsTerminalStatus).
+  return () unless @names;
+
+  # kanban-md's rule: the last configured status is terminal, unless that is
+  # `archived`, in which case the one before it is. `archived` is terminal
+  # either way, whether or not the board lists it.
+  my $last = $names[-1];
+  my $final = ( $last eq ARCHIVED_STATUS && @names > 1 ) ? $names[-2] : $last;
+
+  my %seen;
+  return grep { !$seen{$_}++ } ( $final, ARCHIVED_STATUS );
 }
 
 =head2 terminal_statuses
 
-Returns a list of terminal status names.
+Returns the board's terminal status names, C<done>-equivalent first.
 
-    my @terminal = App::karr::Config->terminal_statuses;
+    my @terminal = $config->terminal_statuses;   # ('shipped', 'archived')
+
+karr used to hardcode C<done> and C<archived> here, which is right only for the
+default board. A board imported from kanban-md may name its final column
+anything at all, and on such a board C<list> did not hide finished work and
+C<pick> handed it straight back out (ticket #67). The rule is kanban-md's, from
+C<Config.IsTerminalStatus>: the last configured status is terminal, or the one
+before it when the last is C<archived>, and C<archived> is terminal regardless.
+
+Note that karr's C<statuses> are not settable from the CLI -- C<karr config set
+statuses> refuses the key -- so a non-default status list only ever arrives
+through C<karr import> of a kanban-md F<config.yml>.
 
 =cut
 

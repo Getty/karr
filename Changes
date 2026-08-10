@@ -1,5 +1,48 @@
 {{$NEXT}}
 
+    - Fixed `karr pick` being blind to a board imported from kanban-md. An
+      optional frontmatter field set to the empty string counted as set,
+      because a Moo predicate only knows whether the attribute was passed —
+      and `claimed_by: ""` is exactly what a kanban-md card carries once it has
+      been read and rewritten, or written by hand. `karr import` stored it
+      verbatim, `karr pick` read it as a claim by somebody, and so on a freshly
+      imported board pick answered "No available tasks to pick." while
+      `karr list` showed the very same work sitting in backlog. An empty
+      `claimed_by` is now no claim, the same test `karr move`/`edit`/`delete`
+      already applied. Three more of the same: `karr list` printed a bare "@"
+      for `assignee: ""`, `karr context` counted `due: ""` as overdue for ever
+      (the empty string sorting before every real date), and `karr context
+      --json` emitted an `assignee` key with nothing in it. Not yet fixed: the
+      same assumption still stands in `karr show`, `karr board` and the
+      no-claim test the mutating commands share.
+    - Fixed `karr pick --json` printing an English sentence when there is
+      nothing to pick, on both of its empty paths, so the one karr command
+      certain to be machine-parsed handed its consumer a JSON decode error
+      instead of an empty result. It now prints `{"picked":null}`. A successful
+      pick still prints the task object itself, and the exit status stays 0 on
+      both paths — "nothing for you right now" is the normal answer to a poll,
+      not a failure, so a drain loop must not stop on it.
+    - Fixed "finished" being hardcoded to the `done` and `archived` columns. A
+      board imported from kanban-md may end anywhere, and on one whose columns
+      ran backlog / doing / shipped / archived, `karr pick` handed shipped
+      cards straight back out as available work and `karr list` did not hide
+      them. Terminal statuses are now read from the board's own `statuses`,
+      by kanban-md's rule: the last configured status, or the one before it
+      when the last is `archived`, with `archived` terminal either way. Nothing
+      changes on a default board, and `statuses` remains read-only from the
+      CLI, so a custom list still only arrives through `karr import` of a
+      kanban-md config.yml. Not yet fixed: `karr handoff` still moves to a
+      hardcoded `review` without checking the board has such a column,
+      `karr board` still counts claims against a literal `done`/`archived`,
+      and the `completed` stamp is still only written on a move into a literal
+      `done`.
+    - New `karr list --archived`, which shows the archive and only the
+      archive, matching kanban-md's flag of the same name. It replaces the
+      other status filtering rather than narrowing it, so it wins over
+      `--status`. Note that `karr list` still excludes the whole terminal
+      group by default where kanban-md excludes only `archived`: it is the
+      agent's "what is open" view, and that difference is now documented
+      rather than merely undocumented.
     - Fixed `karr pick` locks being published to the remote. Lock refs lived at
       `refs/karr/tasks/N/lock`, inside the namespace karr pushes, so any sync
       that fired while a lock was held put it on the remote; other clones then

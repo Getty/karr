@@ -48,9 +48,12 @@ sub status_requires_claim {
   return $sc->{require_claim} ? 1 : 0;
 }
 
+# Derived from the mock's own config, exactly as App::karr::BoardStore derives
+# it from the board's -- a double that hardcoded done/archived would answer
+# differently from the real store on any board with custom statuses.
 sub is_terminal_status {
   my ($self, $name) = @_;
-  return ($name eq 'done' || $name eq 'archived') ? 1 : 0;
+  return App::karr::Config->from_merged( $self->{ec} )->is_terminal_status($name);
 }
 
 # Commands reach for ->store->git via SyncLifecycle; a no-op git double keeps
