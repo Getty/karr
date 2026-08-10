@@ -1,0 +1,48 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T21:12:12Z
+id: 86
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- race
+- pick
+title: 'karr pick hands the same task to several agents: the pick decision is made
+  on a pre-lock snapshot'
+updated: 2026-08-10T01:27:58Z
+---
+
+Found while verifying the #46 lock fix. `Lock::acquire` is now genuinely
+exclusive (t/75-ref-cas-contention.t proves exactly-one-winner across 12
+forked contenders), but `karr pick` still hands one task to several agents.
+
+12 parallel `karr pick --move in-progress` on a fresh 12-task board:
+
+    1 x Picked task 1
+    4 x Picked task 2
+    7 x Picked task 3
+
+Root cause is not the lock. `Cmd/Pick.pm:94` snapshots `@tasks` via
+`load_tasks` and filters out claimed ones at line 107 -- all of that happens
+*before* any lock is taken. After `acquire` succeeds at line 146 the task is
+never re-read, so its `claimed_by` is never re-checked under the lock. The
+lock is then released at line 181, and the next agent -- still holding a
+snapshot in which the task looked unclaimed -- acquires the now-free lock and
+claims the same task again.
+
+So the lock serialises the agents but does not stop any of them from acting
+on a stale decision. Fix is to re-read the task ref after acquiring its lock
+and skip it if it has been claimed (or its status changed) in the meantime,
+i.e. move the "is this pickable" check inside the locked region.
+
+Out of scope for #46, which was about acquire being atomic and write_ref not
+leaking raw libgit2 errors -- both of which are done.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
