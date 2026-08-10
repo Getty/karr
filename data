@@ -1,0 +1,44 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:37Z
+id: 57
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- claim
+- interop
+title: claim expiry ignores UTC offsets in RFC3339 timestamps, and warns on every
+  pick
+updated: 2026-08-10T01:27:58Z
+---
+
+`lib/App/karr/Role/ClaimTimeout.pm:26`:
+
+    Time::Piece->strptime($task->claimed_at =~ s/Z$//r, '%Y-%m-%dT%H:%M:%S')
+
+Only a trailing `Z` is stripped. kanban-md writes RFC3339 with a real offset and
+fractional seconds — verified against the actual binary:
+`2026-08-09T17:28:46.449764553+02:00`. The offset and the fraction are silently
+discarded, so the timestamp is read as if it were UTC.
+
+    # claim genuinely 2.5 h old, stamped +02:00, timeout 1h
+    karr pick --claim thief -> "No available tasks to pick."   # expired claim never expires
+    # claim genuinely 10 min old, stamped -05:00, timeout 1h
+    karr pick --claim thief -> "Picked task 1 ... (claimed by thief)"  # live claim stolen
+
+On top of that, every call prints to STDERR:
+
+    Garbage at end of string in strptime: .123456789+02:00 at Time/Piece.pm line 598
+
+So a karr agent working next to a kanban-md agent either never releases stale
+claims or robs live ones, and warns on every pick. Fix: parse full RFC3339
+(offset + fractional seconds) and normalise to UTC before comparing.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
