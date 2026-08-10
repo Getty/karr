@@ -1,0 +1,40 @@
+---
+claimed_at: 2026-08-10T03:58:28Z
+claimed_by: claude-main
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:35:05Z
+id: 95
+priority: medium
+started: 2026-08-10
+status: done
+tags:
+- sync
+- git
+- data-loss
+title: the wholesale-wipe guard only catches an empty remote, not a swapped one
+updated: 2026-08-10T04:50:23Z
+---
+
+Follow-up to #82, stated by the fix rather than found after it.
+
+pull now refuses to reconcile when the plan would leave zero board refs, and
+rolls the tracking mirror back before refusing, so "the remote is empty for the
+wrong reason" no longer wipes the board. accept_wipe / karr sync --prune is the
+deliberate way through.
+
+What is still not caught: a remote that was replaced by a DIFFERENT non-empty
+board. Point karr at the wrong origin -- a stale clone, a fresh board someone
+else init-ed at the same URL, a typo in the remote -- and reconciliation treats
+it as the truth and converges the local board onto it. The zero-ref check does
+not fire because the ref count is not zero.
+
+A board identity would fix it properly: stamp something durable at init
+(refs/karr/meta/board-id), compare it on pull, and refuse when the remote board
+is a different one than the local board was last reconciled against. That also
+gives a clean answer for the empty case -- absent id plus zero refs is a fresh
+remote, absent id plus refs is a foreign board.
+
+Not urgent while everyone points at one remote, but the failure is silent and
+total, which is the same property that made #82 worth fixing.
+Geschlossen durch 9f03821 + Merge: board-id in refs/karr/meta/board-id, Vergleich vor jeder Reconciliation, Refusal mit Mirror-Rollback; --accept-foreign-board ist der bewusste Weg. Migration: Bestandsboards werden beim ersten Pull gestempelt. t/99 + t/104.
