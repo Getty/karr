@@ -1,0 +1,42 @@
+---
+claimed_at: 2026-08-10T03:58:22Z
+claimed_by: claude-main
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:29:18Z
+id: 91
+priority: medium
+started: 2026-08-10
+status: done
+tags:
+- cli
+- config
+- consistency
+title: list --sort priority and pick disagree about which end is urgent
+updated: 2026-08-10T04:23:40Z
+---
+
+Surfaced by the #66 fix, which corrected `list --sort priority` to follow the
+configured priority order instead of alphabetical. Before the fix the output
+happened to read critical-first, by accident of the alphabet. After it, the sort
+follows config order — low, medium, high, critical — so the output flipped.
+
+That is correct for a sort key, and it matches kanban-md. But it leaves a
+visible asymmetry inside karr: `Cmd/Pick.pm` and `Cmd/Context.pm` still order by
+`App::karr::Config->priority_order`, which is critical-first, because for
+picking, urgency-first is the point.
+
+So `karr list --sort priority` puts the least urgent task at the top while
+`karr pick` takes the most urgent. Both defensible in isolation; together they
+are a trap for anyone reading a list and assuming the top line is what pick
+would take.
+
+Decide one of:
+- leave it, and document that --sort is ascending by the configured order while
+  pick is urgency-first (cheapest, needs a doc line in the POD for list)
+- make --sort priority descending by default, deviating from kanban-md
+- give list an urgency-first shorthand so the intent is explicit
+
+Whoever takes this: also check `--reverse` interacts sanely with the choice, and
+that `karr board` (which groups by status) is not affected.
+Geschlossen durch 3370503 + Merge: priority-Comparator liest die Config-Liste rueckwaerts (critical zuerst), POD dokumentiert die kanban-md-Abweichung mit sort.go:29-Zitat, --reverse deckt die alte Sicht ab. t/79 umgepinnt, t/110 neu.
