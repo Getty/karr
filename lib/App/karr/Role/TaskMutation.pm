@@ -53,12 +53,11 @@ sub update_task_guarded {
 
         $mutate->($task);
 
-        # What BoardStore::save_task does centrally for the unguarded path: an
-        # existing task gets a fresh `updated` on every mutation. The ref was
-        # just read, so it exists by definition and the stamp is unconditional.
-        $task->updated( gmtime->datetime . 'Z' );
-
-        return () unless $git->write_ref_cas( $ref, $task->to_markdown, $oid );
+        # Through the role's own door rather than straight at write_ref_cas:
+        # BoardAccess::save_task is where the `updated` bump and the activity
+        # log entry live for every command write, guarded or not, and reaching
+        # past it is what dropped move and edit out of `karr log` (#64).
+        return () unless $self->save_task( $task, $oid );
         return $task;
     } );
 }
