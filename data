@@ -1,0 +1,38 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:47:01Z
+id: 70
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- import
+- storage
+title: 'import is neither atomic nor lenient: one bad file leaves the board half-written'
+updated: 2026-08-10T01:27:58Z
+---
+
+`BoardStore.pm:290-328`. One malformed file aborts the import mid-write:
+
+    # tasks/: 3 valid files + 1 broken
+    karr import --yes   -> "Invalid task format"   rc=1
+    karr list --compact -> #1, #2          # #3 missing, prune never ran
+
+The board is left half-imported with stale refs, and the error message does not
+name the offending file, so the user has to guess which one it was.
+
+kanban-md uses `ReadAllLenient` and reports `Warning: skipping malformed file
+<name>: <reason>`, then carries on.
+
+Fix: parse everything first, report every bad file by name, and only then write —
+so the board is either fully updated or untouched. The same "name the file"
+point applies to the CRLF rejection path (`Task.pm:141` requires `\A---\n`,
+which is correct parity, but the message is a bare "Invalid task format").
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
