@@ -396,10 +396,10 @@
       next command refuses again rather than quietly republishing, and the
       message points at `karr sync --push` to republish this board or at the
       new `karr sync --prune` to accept the deletion (which is how a
-      `karr destroy` on another clone now reaches this one). Only the total
-      wipe is guarded: a pull that leaves at least one board ref standing
-      still reconciles unattended, so a remote swapped for a different,
-      non-empty board is not caught.
+      `karr destroy` on another clone now reaches this one). This guard
+      catches the total wipe only; the remote swapped for a different,
+      non-empty board — which leaves refs standing and so slips past it — is
+      caught by the board identity described above (ticket #95).
     - Fixed a failed `karr restore` destroying the board instead of restoring
       it. Restore deleted `refs/karr/*` first and wrote the snapshot back
       afterwards, so a snapshot karr could not write took the board with it: a

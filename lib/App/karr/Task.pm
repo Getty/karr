@@ -319,6 +319,29 @@ sub to_frontmatter {
   return \%fm;
 }
 
+=method to_frontmatter
+
+  my $fm = $task->to_frontmatter;
+
+Returns the task as a plain hash reference in kanban-md's frontmatter shape:
+C<id>, C<title>, C<status>, C<priority>, C<created>, C<updated>, and C<class>
+are always present, every other modelled field (C<assignee>, C<due>,
+C<claimed_by>, and so on) only when its predicate is true, and whatever is
+left in L</extra> fills in the rest verbatim.
+
+This is the one place karr and kanban-md agree on what a frontmatter document
+looks like. C<to_markdown> feeds the result straight to L<YAML::XS> for the
+on-disk and ref form; L</to_json_hash> layers a C<body> key and a real JSON
+boolean for C<blocked> on top of it for C<--json> output; C<karr board
+--json> and C<karr list --json> use it the same way.
+
+A modelled field always wins the slot it owns, and a field that has since
+been cleared cannot be resurrected by a stale copy in C<extra> either --
+every key karr models is stripped out of C<extra> before the modelled values
+are laid on top of what remains.
+
+=cut
+
 =method to_json_hash
 
   my $data = $task->to_json_hash;

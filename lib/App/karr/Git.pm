@@ -806,6 +806,35 @@ sub push_rejections {
     return $self->{_push_rejections} || [];
 }
 
+=method push_rejections
+
+    my $rejected = $git->push_rejections;
+    # [ { ref => 'refs/karr/tasks/12/data', reason => 'stale info' }, ... ]
+
+Returns the per-ref rejections from the most recent C<push> or C<push_ref>,
+as an array reference of C<< { ref => $name, reason => $text } >> hashes.
+Empty when the last push succeeded, and empty when it failed as a whole --
+no connection, a killed transport -- rather than ref by ref: a rejection is
+the server's final answer, not a transport failure, and the two are kept
+apart. Reset to empty at the start of every push attempt, so a rejection from
+an earlier call never lingers into the read after a later one succeeds.
+
+libgit2's C<git_remote_push> returns success even when the far side refused
+every single ref -- a pre-receive hook, a protected ref, a non-fast-forward on
+a non-forced refspec. The per-ref outcome only exists in the
+L<Git::Native::Remote::Result> C<push> hands back, and karr used to throw
+that away, so a push that landed nothing was reported as a completed sync and
+the board diverged in silence (ticket #84). This is where that outcome
+survives the call; the CLI fallback parses C<--porcelain> output into the
+same shape, so both transports answer the same way.
+
+L<App::karr::Role::SyncLifecycle> and L<App::karr::SyncGuard> both check this
+after a failed push and stop retrying once it is non-empty: the remote was
+reached and gave its answer, so further attempts would only collect the same
+refusal again.
+
+=cut
+
 # libgit2 returns 0 from git_remote_push even when the server refused every
 # single ref -- a pre-receive hook, a protected ref, a non-ff on a non-forced
 # refspec. The per-ref status only exists in the Result Git::Native 0.004

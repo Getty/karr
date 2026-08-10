@@ -69,6 +69,20 @@ sub statuses {
   } $self->_list('statuses');
 }
 
+=method statuses
+
+  my @statuses = $config->statuses;
+
+Returns the configured status names in board order, accepting both the
+mapping form C<< { name => 'in-progress', require_claim => 1 } >> and a bare
+string. L</classes> follows the same convention over the classes list.
+
+This is the list L</validate> checks for a minimum of two entries and no
+duplicates, and that L</validate_status> and C<status_requires_claim> look a
+single name up against.
+
+=cut
+
 sub status_config {
   my ($self, $name) = @_;
   for my $s ($self->_list('statuses')) {
@@ -593,6 +607,33 @@ sub default_config {
     },
   };
 }
+
+=method default_config
+
+    my $defaults = App::karr::Config->default_config;
+    my $defaults = App::karr::Config->default_config( name => 'My Board' );
+
+Returns the hash reference of built-in defaults a board starts from: the
+status/priority/class-of-service lists, C<claim_timeout> and
+C<lock_timeout>, C<foundation.enabled>, and the C<defaults.status> /
+C<defaults.priority> / C<defaults.class> triple new tasks are created with.
+C<name> is the only override taken, for C<karr init --name>; everything else
+is the fixed starting point.
+
+C<effective_config> layers a board's sparse C<refs/karr/config> overrides on
+top of this to answer what the board actually uses, and
+L<App::karr::BoardStore> diffs against it the other way -- C<save_config>
+only ever writes the keys that differ from these defaults, so a board that
+never touched C<lock_timeout> does not carry a frozen copy of it forever.
+C<BoardStore> also calls it directly to seed a fresh board on C<karr init>
+and, on C<karr import> of a kanban-md tree with no F<config.yml>, to
+bootstrap one that is not half a board (ticket #30).
+
+It also stands in for a real board wherever a class-level call has none to
+derive from -- L</handoff_status> is one such caller -- the same
+class-vs-instance convention L</is_terminal_status> documents.
+
+=cut
 
 # The config keys kanban-md's Go schema types as `bool`
 # (internal/config/config.go): StatusConfig.RequireClaim / .ShowDuration,

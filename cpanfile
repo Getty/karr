@@ -4,7 +4,6 @@ requires 'MooX::Options';
 requires 'YAML::XS';
 requires 'Path::Tiny';
 requires 'JSON::MaybeXS';
-requires 'Text::Table::Tiny';
 requires 'Term::ANSIColor';
 requires 'Time::Piece';
 requires 'File::ShareDir';
@@ -21,7 +20,6 @@ requires 'Git::Libgit2', '0.005';
 on test => sub {
     requires 'Test::More';
     requires 'File::Temp';
-    requires 'Test::Exception';
     # t/124-source-ascii-only.t classifies every token in lib/ and bin/ so that
     # POD and comments stay exempt; a regex over lines cannot tell a `#` opening
     # a comment from one inside a string.
