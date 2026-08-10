@@ -1,0 +1,34 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:49:02Z
+id: 74
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+- refs
+title: get-refs reports success for a ref that does not exist, emitting an empty file
+updated: 2026-08-10T01:27:58Z
+---
+
+`Cmd/GetRefs.pm:55-60` never checks whether `read_ref` returned anything:
+
+    karr get-refs does/not/exist.md
+    # stderr: Fetched refs/does/not/exist.md
+    # stdout: one empty line
+    # rc=0
+
+So `karr get-refs spec.md > spec.md` silently produces an empty file and reports
+success — a data-destroying shape for the documented "helper refs outside the
+board" workflow.
+
+Expected per ADR 0002: exit 1 with "ref not found" (runtime failure).
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
