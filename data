@@ -1,0 +1,34 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:28:22Z
+id: 88
+priority: medium
+status: done
+tags:
+- interop
+- config
+title: a kanban-md round trip pollutes refs/karr/config with migrated defaults as
+  overrides
+updated: 2026-08-10T03:48:57Z
+---
+
+Sibling of the foundation-key ticket, same round trip, opposite direction.
+
+`serialize_from` diffs whatever config.yml holds against the code defaults and
+stores the difference as overrides in refs/karr/config. After kanban-md has
+loaded and re-saved the view, that file contains kanban-md's migrated shape:
+version 10 instead of 1, plus its full statuses, classes and tui blocks written
+out explicitly.
+
+So the import records all of that as deliberate per-board overrides, when in
+fact the user changed nothing. The board config grows a copy of another tool's
+defaults, and karr can no longer tell an intentional override from a migration
+artefact — the next time karr's own defaults change, the board will not follow
+them because it now has a frozen copy.
+
+Fix direction: import should reconcile against the ref config instead of
+replacing it, and should ignore keys whose value equals the effective default.
+That is the same mechanism the foundation-key ticket needs, so the two are
+probably one change.
+Geschlossen durch bc3b87e/306180d: View-Keys werden auf karrs Modell gepruned/normalisiert, migrierte Defaults vergleichen gleich statt Overrides zu werden. t/102.
