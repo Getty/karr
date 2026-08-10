@@ -1,0 +1,43 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:43Z
+id: 58
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- interop
+- task
+title: blocked is a string in karr but a bool plus block_reason in kanban-md
+updated: 2026-08-10T01:40:24Z
+---
+
+karr models `blocked` as a free-text string; kanban-md models it as
+`Blocked bool` plus `BlockReason string` (`../kanban-md/internal/task/task.go`).
+Affected: `Task.pm:53/106`, `Cmd/Edit.pm:188`, `Cmd/Handoff.pm:122`.
+
+karr -> kanban-md (real binary):
+
+    Warning: skipping malformed file 002-blocked-task.md:
+      ... cannot unmarshal !!str `waiting...` into bool
+    kanban list -> task missing entirely;  kanban show 2 -> rc=1
+
+kanban-md -> karr (file with `blocked: true` / `block_reason: upstream outage`):
+
+    karr show 1 -> "Blocked:  1"          # reason gone
+    git show <ref>:data -> block_reason absent   # destroyed on karr's first write
+
+Side effect inside karr: `--json` reports `blocked` sometimes as a string
+(`"waiting on API"`), sometimes as a boolean (`true`) — an unstable field type
+for anything parsing it.
+
+Fix: adopt the kanban-md shape (`blocked` boolean + `block_reason`), migrate
+existing string values on read, and keep `--block "reason"` as the CLI spelling
+that sets both.
+Fixed and merged into main (3dac607); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. Note the #68 trigger change: started is now stamped on the first move out
+of the FIRST CONFIGURED status, per kanban-md lifecycle.go, not out of the
+literal in-progress.
