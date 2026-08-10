@@ -1,0 +1,43 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:48:50Z
+id: 72
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+title: -- as end-of-options separator is not honoured, so option-shaped titles need
+  --title
+updated: 2026-08-10T01:27:58Z
+---
+
+Found while filing another ticket: a title starting with `--` cannot be passed
+positionally, and the POSIX escape hatch for exactly that does not work.
+
+    karr create "--dir makes set-refs unreachable"
+      -> usage dump, rc=2                      # parsed as options
+    karr create -- "--dir positional after separator"
+      -> "Title is required. Use --title or pass as argument."   # -- not honoured
+    karr create --title "--dir makes set-refs unreachable"
+      -> works
+
+Being unable to pass an option-shaped positional is normal; having no `--` is
+not. Every CLI is expected to honour it, and an agent generating task titles
+from arbitrary text (error messages, flags, diffs) will hit this. The workaround
+exists but is undiscoverable — the error message does mention `--title`, which
+is the one saving grace.
+
+Affects every command that takes a positional, not just `create`.
+
+Fix: let MooX::Options/Getopt see `--` as the end of options (`getopt_conf` with
+`require_order`/`pass_through` as appropriate), and add a test that a title of
+`--json` survives a round trip.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
