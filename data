@@ -1,0 +1,33 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:28:46Z
+id: 89
+priority: low
+status: done
+tags:
+- cli
+- init
+- interop
+title: karr init gitignores tasks/ and config.yml even when those paths are already
+  tracked
+updated: 2026-08-10T03:55:23Z
+---
+
+Found while fixing #48.
+
+`karr init` appends `tasks/` and `config.yml` to .gitignore unconditionally. If
+the repository already tracks files at those paths, git ignores the ignore rule
+for them — tracked files stay tracked — so nothing breaks. But the .gitignore
+now claims something that is not true, and anyone reading it concludes karr owns
+those paths when the project does.
+
+It also interacts with the #48 fix: materialize now refuses to overwrite what
+git tracks, so a repo in this state gets a refusal from a command whose
+.gitignore entry suggests the path is karr-owned. The error is correct and the
+.gitignore is what misleads.
+
+Fix: only add an entry when nothing is tracked at that path, or word it so the
+situation is visible. `App::karr::Git::is_tracked` (added for #48) already
+answers the question.
+Geschlossen durch cd4d043/58f0fc7: init laesst .gitignore in Ruhe, wenn das Projekt die Pfade schon trackt, und sagt das auch. Offen geblieben (im Ticket-Text vermerkt): materialize macht denselben Check noch nicht. t/109.
