@@ -1,0 +1,29 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T15:10:05Z
+id: 106
+priority: medium
+status: done
+tags:
+- docs
+- release
+title: Docs point users at 0.403, a version that will never exist on CPAN
+updated: 2026-08-10T15:51:54Z
+---
+
+Surfaced by the 0.403 -> 0.500 version decision (2026-08-10, ticket #39). The encoding rewrite and the blocked-shape change both landed while $VERSION read 0.403, and the prose that documents them says so. 0.403 was never released and now never will be: CPAN has 0.402, the next release is 0.500. A user reading `karr repair` is told to check whether their board predates a version they cannot have run.
+
+Each site verified against the tree:
+
+- lib/App/karr/Cmd/Repair.pm:1 (ABSTRACT) -- "Migrate a pre-0.403 board off double-encoded UTF-8"
+- lib/App/karr.pm:228 -- the same sentence in the command list, i.e. in `karr --help`
+- bin/karr:260 -- "Migrates a board written before 0.403 off double-encoded UTF-8"
+- lib/App/karr/Encoding.pm:118 -- "keeps the pre-0.403 byte-in/byte-out behaviour"
+- lib/App/karr/Task.pm:122 -- "karr up to 0.403 stored the blocking *reason* in `blocked` as free text". Also wrong on its own terms: `_normalize_blocked` landed 2026-08-10 in 64d92c0, after the 0.402 release of 2026-08-04, so the last version with the old behaviour is 0.402, not 0.403.
+- CLAUDE.md:92 -- the same claim in the command table
+
+Fix direction: name the affected boards by the version that wrote them -- "0.402 or earlier" -- rather than by the version that fixed it. That stays true whatever number the next release carries, which "pre-0.500" would not. Where the number carries no information for the reader (Encoding.pm describes a fallback, not a migration), drop it and say what actually changed.
+
+No behaviour change. Worth doing before the release, since three of the six sites are user-facing output.
+Landed on main as 2b29403 (combined with the 0.500 version bump and the other tickets in that commit). Full suite green: 113 files, 767 tests.
