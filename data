@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-08-10T16:46:26Z
+claimed_by: changes-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T16:45:54Z
+id: 111
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- release
+- cleanup
+title: cpanfile declares two dependencies nothing uses
+updated: 2026-08-10T17:07:51Z
+---
+
+Found by the 0.500 pre-release audit (ticket #39), verified independently against the tree.
+
+- cpanfile:7  requires Text::Table::Tiny  -- no reference anywhere in lib/, bin/ or t/. Present since the initial commit 08e987f; almost certainly a leftover from the coloured-dashboard board renderer that the 0.302 entry in Changes says was replaced by the current plaintext one.
+- cpanfile:24 requires Test::Exception (on test) -- no Test::Exception, dies_ok, throws_ok or lives_ok anywhere in t/. Also present since the initial commit.
+
+Both make every installer pull a distribution karr does not use. Neither is a correctness problem, which is why the audit filed it as cosmetic rather than release-blocking.
+
+Delete both lines. Before deleting, re-run the grep rather than trusting this ticket -- a dependency that becomes used between filing and fixing is exactly the kind of thing a stale ticket gets wrong.
+Landed on main as 9f0c38b. Full suite green: 114 files, 775 tests, no warnings. dzil build clean, App-karr-0.500.tar.gz produced.
