@@ -18,6 +18,7 @@ my @modules = qw(
   App::karr::Cmd::Delete
   App::karr::Cmd::Board
   App::karr::Cmd::Pick
+  App::karr::Cmd::Unlock
   App::karr::Cmd::Archive
   App::karr::Cmd::Handoff
   App::karr::Cmd::Destroy
