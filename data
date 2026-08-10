@@ -1,0 +1,46 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T20:59:22Z
+id: 85
+priority: medium
+status: done
+tags:
+- upstream
+- git-native
+title: 'upstream: Git::Native::Error has no is_locked, so every CAS retry loop has
+  to hardcode -14'
+updated: 2026-08-10T15:07:58Z
+---
+
+Found while probing the new CAS API for #44 / #46.
+
+Git::Native::Error carries predicates for is_not_found, is_exists, is_auth,
+is_certificate, is_conflict, is_not_fast_forward, is_unborn_branch,
+is_invalid_spec and is_not_matched — but not for GIT_ELOCKED.
+
+That is the one that matters most for compare-and-swap. libgit2 takes a
+refs/<name>.lock file for the duration of a ref write, so under real contention
+a concurrent writer does NOT come back with GIT_EMODIFIED / is_not_matched — it
+comes back with GIT_ELOCKED (-14), "failed to lock file ... for writing" or
+"failed to create locked file: File exists". A retry loop written against the
+documented is_not_matched predicate alone therefore still loses writes.
+
+Measured, 16 forked processes doing read-modify-write CAS on one ref:
+- retry on is_not_matched only  -> 12/16 processes survived, counter 13 of 17
+- retry on is_not_matched OR code == GIT_ELOCKED, with randomised backoff
+                                -> 16/16, counter 17
+
+The workaround is available today: GIT_ELOCKED is exported from Git::Libgit2
+(not from Git::Libgit2::FFI), so a caller can `use Git::Libgit2 qw( GIT_ELOCKED )`
+and compare $e->code. karr does that. But every consumer of the CAS API will hit
+this, and comparing a numeric code next to a row of named predicates is exactly
+the sharp edge the predicates exist to remove.
+
+Ask upstream: add is_locked (and while there, consider documenting on
+reference_create/reference_set_target that a correct retry covers both codes —
+the current POD mentions only is_not_matched, which reads as if it were the
+whole story).
+
+Not a blocker for karr: the numeric comparison works.
+Maintainer takes this to Git::Native directly (2026-08-10). Correction to the ticket's framing: 'upstream' is misleading -- Git::Native is the same author's own distribution at /storage/raid/home/getty/dev/perl/p5-git-native (released 0.004, with its own agent fleet), not a third party. Verified there: lib/Git/Native/Error.pm:31 has is_not_matched via GIT_EMODIFIED and no is_locked; Repository.pm:590,607 document only is_not_matched on reference_create/reference_set_target. Nothing to do in karr -- its GIT_ELOCKED comparison keeps working. Reopen a karr-side ticket to replace the numeric compare once Git::Native ships is_locked.
