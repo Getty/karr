@@ -168,7 +168,10 @@ sub execute {
     $task->body($self->body)         if defined $self->body;
 
     if ($self->append_body) {
-      $task->body(($task->body ? $task->body . "\n" : '') . $self->append_body);
+      # length, not truth: appending to a body of "0" must not replace it
+      # (ticket #78).
+      my $have = defined $task->body && length $task->body;
+      $task->body(($have ? $task->body . "\n" : '') . $self->append_body);
     }
 
     if ($self->add_tag) {

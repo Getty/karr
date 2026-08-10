@@ -129,7 +129,8 @@ sub execute {
     if ($self->timestamp) {
       $note_text = gmtime->strftime('%Y-%m-%d %H:%M') . ' ' . $note_text;
     }
-    $task->body(($task->body ? $task->body . "\n" : '') . $note_text);
+    my $have = defined $task->body && length $task->body;
+    $task->body(($have ? $task->body . "\n" : '') . $note_text);
   }
 
   # Release claim if requested
