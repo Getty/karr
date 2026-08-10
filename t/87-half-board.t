@@ -118,8 +118,9 @@ subtest 'init completes a half-board instead of refusing forever' => sub {
     my $repo = _half_board();
 
     is_deeply( [ _board_refs($repo) ],
-        [ 'refs/karr/meta/next-id', 'refs/karr/tasks/1/data', 'refs/karr/tasks/2/data' ],
-        'setup: the half-board has tasks and a counter but no config' );
+        [ 'refs/karr/meta/board-id', 'refs/karr/meta/next-id',
+          'refs/karr/tasks/1/data', 'refs/karr/tasks/2/data' ],
+        'setup: the half-board has tasks, a counter and an identity but no config' );
 
     my $git   = App::karr::Git->new( dir => $repo );
     my $store = App::karr::BoardStore->new( git => $git );

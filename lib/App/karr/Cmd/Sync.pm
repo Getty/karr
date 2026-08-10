@@ -6,7 +6,7 @@ use Moo;
 use MooX::Cmd;
 use feature 'say';
 use MooX::Options (
-    usage_string => 'USAGE: karr sync [--push] [--pull] [--prune]',
+    usage_string => 'USAGE: karr sync [--push] [--pull] [--prune] [--accept-foreign-board]',
 );
 use App::karr::Role::BoardAccess;
 
@@ -46,6 +46,16 @@ re-created origin, an edited remote URL, a rolled-back hosting-side restore --
 look exactly alike from here. Use it to let a C<karr destroy> performed on
 another clone take effect on this one; check C<git remote -v> first.
 
+=item * C<--accept-foreign-board>
+
+Accepts a pull whose remote presents a different board identity than the one
+this clone has been syncing with. Any other pull refuses that before
+reconciling anything, because a swapped remote -- a re-initialised origin, an
+edited remote URL, a stale clone pointed at the wrong repository -- would
+otherwise replace this board with a stranger's, silently and totally. Use it
+when the remote's board really is the one you want from now on; check
+C<git remote -v> first.
+
 =back
 
 =head1 SEE ALSO
@@ -61,6 +71,11 @@ option prune => (
     is      => 'ro',
     default => 0,
     doc     => 'Accept a pull that deletes every remaining board ref',
+);
+option accept_foreign_board => (
+    is      => 'ro',
+    default => 0,
+    doc     => 'Accept a pull whose remote presents a different board identity',
 );
 
 sub execute {
@@ -88,8 +103,12 @@ sub execute {
     unless ($push_only) {
         print STDERR "Pulling refs/karr/ from remote...\n" unless $self->quiet;
         # --prune is the one place that may reconcile the board down to
-        # nothing; everywhere else App::karr::Git refuses and says so (#82).
-        $git->pull( undef, accept_wipe => $self->prune )
+        # nothing, and --accept-foreign-board the one place that may adopt a
+        # remote whose board identity is not this board's; everywhere else
+        # App::karr::Git refuses and says so (#82, #95).
+        $git->pull( undef,
+            accept_wipe    => $self->prune,
+            accept_foreign => $self->accept_foreign_board )
             or die "Pull failed: " . ( $git->last_error // 'unknown error' ) . "\n";
     }
 

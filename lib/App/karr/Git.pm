@@ -69,6 +69,15 @@ equally what a re-created origin or a mis-edited remote URL looks like.
 C<< pull( $remote, accept_wipe => 1 ) >> -- reached from C<karr sync --prune>
 -- is the only way through.
 
+The ref count alone cannot tell a swapped remote from the right one, though:
+a re-initialised origin or a mis-edited remote URL can present a whole
+I<different>, non-empty board, which reconciliation would happily converge
+onto (#95). Boards therefore carry an identity in C<refs/karr/meta/board-id>,
+stamped at init and compared on every pull before any reconciliation. A
+mismatch is refused the same way as a wholesale wipe, mirror rolled back and
+all, and C<< pull( $remote, accept_foreign => 1 ) >> -- C<karr sync
+--accept-foreign-board> -- is the deliberate way through.
+
 C<push> fails when the far side rejects refs, even though libgit2 returns
 success in that case: the per-ref outcome only exists in the
 L<Git::Native::Remote::Result> it hands back, and L</push_rejections> carries
@@ -638,6 +647,12 @@ use constant BOARD_REFSPEC => '+refs/karr/*:refs/karr/*';
 
 use constant BOARD_ROOT => 'refs/karr/';
 
+# The board's identity (#95): stamped once at board birth, compared on every
+# pull before any reconciliation -- see _check_board_identity. Declared with
+# the other namespace constants because use constant is only visible from its
+# textual point on, and _check_board_identity needs it.
+use constant BOARD_ID_REF => 'refs/karr/meta/board-id';
+
 # Remote-tracking mirror: refs/karr-remote/<remote>/<X> holds the remote's
 # refs/karr/<X> as of the last successful fetch or push from this clone.
 #
@@ -819,9 +834,11 @@ sub push {
     return 1;
 }
 
-# %opt: accept_wipe => bool, the caller's answer to _refuse_wholesale_wipe.
-# Only `karr sync --prune` sets it; every other pull refuses to reconcile the
-# whole board out of existence (#82).
+# %opt: accept_wipe => bool, the caller's answer to _refuse_wholesale_wipe;
+# accept_foreign => bool, its answer to _check_board_identity. Only
+# `karr sync --prune` sets the first and `karr sync --accept-foreign-board`
+# the second; every other pull refuses to reconcile the whole board out of
+# existence, or onto a different board (#82, #95).
 sub pull {
     my ( $self, $remote, %opt ) = @_;
     $remote //= 'origin';
@@ -849,8 +866,80 @@ sub pull {
     };
     return 0 unless $ok;
 
+    $self->_check_board_identity( $remote, $tracked, $opt{accept_foreign} );
     $self->_reconcile_with_mirror( $remote, $tracked, $opt{accept_wipe} );
     return 1;
+}
+
+# The identity half of the pull guards (#95), run after the fetch and before
+# any reconciliation. The wipe guard cannot see this case at all: a remote
+# swapped for a DIFFERENT non-empty board -- a stale clone, a re-initialised
+# origin, a typo in the remote URL -- has plenty of refs, just not this
+# board's, and reconciliation used to converge the local board onto it in one
+# step, silently and totally. The four shapes a pull can meet:
+#
+#   both sides stamped, ids differ   the remote was swapped -> refuse, mirror
+#                                    rolled back, unless the caller opted in
+#                                    with accept_foreign
+#   remote stamped, local not        a clone's first pull -> reconciliation
+#                                    adopts the id ref along with the board
+#   local stamped, remote not        a pre-change remote (or one an old karr
+#                                    pruned the stamp off with its forced,
+#                                    pruning push) -> keep the local id; the
+#                                    next push re-arms the remote
+#   neither stamped                  a pre-change board -> stamp it now, and
+#                                    the ordinary push path arms the remote
+#
+# An absent id is never a refusal by itself: an empty remote remains the wipe
+# guard's case, and a non-empty one a board from before identities existed.
+sub _check_board_identity {
+    my ( $self, $remote, $tracked, $accept_foreign ) = @_;
+    my $prefix    = $self->_mirror_prefix($remote);
+    my $remote_id = $self->_read_id_ref( $prefix . 'meta/board-id' );
+    my $local_id  = $self->read_board_id_ref;
+
+    if ( defined $remote_id && defined $local_id && $remote_id ne $local_id ) {
+        return if $accept_foreign;
+        # Same rule as the wipe guard: put the mirror back first, or the
+        # refusal is a one-shot -- the next pull would read the foreign board
+        # as already-reconciled state and walk straight through.
+        $self->_restore_mirror( $remote, $tracked );
+        die "karr: refusing to sync: the remote '$remote' is a different board.\n"
+          . "This clone has been syncing with board $local_id, but the remote "
+          . "now presents board $remote_id.\n"
+          . "That is what a re-initialised origin, an edited remote URL, or a "
+          . "stale clone pointed at the wrong repository looks like.\n"
+          . "Check the remote first (git remote -v). Then either republish this "
+          . "board over it with 'karr sync --push', or -- if the remote's board "
+          . "really is the one you want now -- adopt it with 'karr sync "
+          . "--accept-foreign-board'.\n";
+    }
+
+    if ( defined $local_id && !defined $remote_id ) {
+        # A pre-change karr's forced, pruning push drops the stamp off the
+        # remote while the rest of the board stays. That remote is still this
+        # board, so keep the identity continuous: point the mirror's stamp
+        # slot back at the local stamp, or reconciliation would read the
+        # missing ref as "the remote deleted the id" and strip it here too.
+        # Only while the remote still IS a board -- an empty one is the wipe
+        # guard's case, and the stamp must not count as a survivor there.
+        my $remote_now = $self->ref_oids($prefix) || {};
+        if ( %$remote_now ) {
+            my ( $oid ) = $self->read_ref_with_oid(BOARD_ID_REF);
+            $self->_write_ref_untracked( $prefix . 'meta/board-id', $oid )
+                if defined $oid;
+        }
+        return;
+    }
+
+    if ( !defined $remote_id && !defined $local_id ) {
+        # Only when there is a board to name at all: an empty clone pulling
+        # an empty remote gets no stray meta ref.
+        my $remote_now = $self->ref_oids($prefix)    || {};
+        my $local      = $self->ref_oids(BOARD_ROOT) || {};
+        $self->ensure_board_id_ref if %$remote_now || %$local;
+    }
+    return;
 }
 
 # Bring the local board in line with the remote, one ref at a time, using
@@ -1378,6 +1467,53 @@ sub maybe_repair_legacy {
     my ( $self, $data ) = @_;
     return $data unless $self->board_is_legacy_encoded;
     return repair_mojibake($data);
+}
+
+# ----- Board identity (ticket #95) -----
+
+# The wipe guard can only see ref counts, so a remote swapped for a different
+# non-empty board sailed straight through it. The board-id ref is the
+# discriminator the refs otherwise lacked: stamped once at board birth,
+# compared on every pull (see _check_board_identity).
+
+# Meta refs are plain text with a trailing newline; both sides of the
+# comparison go through this one normalization, or a formatting difference
+# would read as a foreign board.
+sub _read_id_ref {
+    my ( $self, $ref ) = @_;
+    my $raw = $self->read_ref($ref) // '';
+    $raw =~ s/\s+//g;
+    return length $raw ? $raw : undef;
+}
+
+sub read_board_id_ref {
+    my ($self) = @_;
+    return $self->_read_id_ref(BOARD_ID_REF);
+}
+
+sub write_board_id_ref {
+    my ( $self, $id ) = @_;
+    return $self->write_ref( BOARD_ID_REF, "$id\n" );
+}
+
+# 128 bits of hex. This is an accident guard, not a secret, and rand is the
+# same source App::karr::Cmd::AgentName uses; modern perls seed it from OS
+# entropy.
+sub new_board_id {
+    my ($self) = @_;
+    return join '', map { sprintf '%02x', int rand 256 } 1 .. 16;
+}
+
+# Read-before-write on purpose: an existing id is never re-keyed. That is
+# what makes re-init of a half-board safe -- re-keying would make every other
+# clone read this board as a foreign one.
+sub ensure_board_id_ref {
+    my ($self) = @_;
+    my $id = $self->read_board_id_ref;
+    return $id if defined $id;
+    $id = $self->new_board_id;
+    $self->write_board_id_ref($id);
+    return $id;
 }
 
 # ----- Task / config refs (sit on top of write_ref/read_ref) -----

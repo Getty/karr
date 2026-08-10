@@ -86,6 +86,23 @@
       the least-urgent-first view, and every other sort key keeps its
       direction. This deliberately deviates from kanban-md, whose
       `list --sort priority` still follows the config order ascending.
+    - Fixed the wipe guard's blind spot: it caught a remote that had lost
+      every board ref, but not one swapped for a DIFFERENT non-empty board —
+      a stale clone, a re-initialised origin, a typo'd remote URL — which a
+      pull then faithfully converged the local board onto, silently and
+      totally, because the ref count was not zero. Boards now carry an
+      identity in `refs/karr/meta/board-id` (#95). `karr init` and `karr
+      import` stamp it for boards they create (and never re-key an existing
+      one); a board from before this change is stamped by the first pull that
+      finds no id on either side, with the ordinary push path carrying the
+      stamp to the remote; a clone meeting a stamped remote for the first
+      time adopts that id. A pull where both sides have an id and they differ
+      is refused before any reconciliation, naming what happened and the two
+      ways through: `karr sync --push` to republish this board over the wrong
+      remote, or the new `karr sync --accept-foreign-board` to adopt the
+      remote's board. `karr restore` keeps the board's standing identity when
+      the snapshot predates the stamp, so restoring a backup onto its own
+      board never looks like a foreign takeover.
     - Fixed `karr pick` being blind to a board imported from kanban-md. An
       optional frontmatter field set to the empty string counted as set,
       because a Moo predicate only knows whether the attribute was passed —

@@ -95,6 +95,11 @@ sub execute {
   # A board born here is written under the current encoding contract, so mark
   # it and spare it the legacy-mojibake repair (ticket #53).
   $store->stamp_encoding_version;
+  # And stamp its identity, the thing a pull compares against the remote's to
+  # recognise a swapped board (#95). ensure_, not set_: init also completes
+  # half-boards (#62), and re-keying one that already carries an id would
+  # make every other clone read this board as a foreign one.
+  $store->ensure_board_id;
 
   print "Initialized karr board in refs/karr/\n";
 
