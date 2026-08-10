@@ -75,6 +75,7 @@ sub execute {
   $self->check_positional_args($args_ref, 0);
 
   $self->sync_before;
+  $self->require_board;
   $self->store->set_foundation_enabled( 0, $self->reason );
   $self->sync_after;
 

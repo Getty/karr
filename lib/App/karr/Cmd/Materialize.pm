@@ -75,7 +75,7 @@ sub execute {
   # syncs nothing (matching the reading commands list/show/board).
   my $store = $self->store;
   die "No karr board found. Run 'karr init' to create one.\n"
-    unless $store->board_exists;
+    unless $store->has_board_refs;
 
   my $board_dir = $store->materialize_to(
     $self->git_root->stringify,

@@ -97,7 +97,7 @@ sub execute {
   $guard->done unless $self->yes;
 
   die "No karr board found. Run 'karr init' to create one.\n"
-    unless $store->board_exists;
+    unless $store->has_board_refs;
 
   if ( !$git->board_is_legacy_encoded ) {
     my $version = $git->board_encoding_version;

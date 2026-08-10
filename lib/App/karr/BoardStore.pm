@@ -37,9 +37,40 @@ L<App::karr::Config>
 
 sub board_exists {
     my ($self) = @_;
-    return $self->git->ref_exists('refs/karr/config')
-        || $self->git->ref_exists('refs/karr/meta/next-id');
+    return $self->git->ref_exists('refs/karr/config');
 }
+
+=head2 board_exists
+
+True when this repository holds an initialized board, which means exactly one
+thing: C<refs/karr/config> is there. It used to accept C<refs/karr/meta/next-id>
+on its own as well, and that is how a stray C<karr create> in the wrong
+directory produced a board that C<karr init> then refused to touch for good --
+the half-board counted as existing, so the name, the statuses and the
+F<.gitignore> entries could never be written (#62).
+
+    die "No karr board found. Run 'karr init' to create one.\n"
+        unless $store->board_exists;
+
+=cut
+
+sub has_board_refs {
+    my ($self) = @_;
+    my @refs = $self->list_karr_refs;
+    return @refs ? 1 : 0;
+}
+
+=head2 has_board_refs
+
+True when anything at all lives under C<refs/karr/>, initialized board or not.
+This is the question the commands that clean up or read raw refs
+(C<backup>, C<destroy>, C<materialize>, C<repair>) actually have: refusing them
+on a half-board would strand the refs a pre-fix karr already left behind, with
+no way to remove them from inside karr.
+
+    my $anything_here = $store->has_board_refs;
+
+=cut
 
 sub load_config_overrides {
     my ($self) = @_;
@@ -193,6 +224,32 @@ sub set_next_id {
     my ( $self, $next_id ) = @_;
     return $self->git->write_next_id_ref($next_id);
 }
+
+sub ensure_next_id {
+    my ($self) = @_;
+    my ($max) = sort { $b <=> $a } $self->git->list_task_refs;
+    my $floor = defined $max ? $max + 1 : 1;
+
+    # A board with no counter yet gets one; a board that already has one only
+    # ever moves forward.
+    return $self->set_next_id($floor)
+        unless $self->git->ref_exists('refs/karr/meta/next-id');
+    return 1 if $self->peek_next_id >= $floor;
+    return $self->set_next_id($floor);
+}
+
+=head2 ensure_next_id
+
+Seeds the id counter without ever handing out an id that is already taken. On a
+fresh board that is C<1>; on a board C<init> is completing rather than creating
+it is one past the highest task ref, and an existing counter that is already
+further ahead is left alone. C<init> used to write C<1> unconditionally, which
+on a half-board (see L</board_exists>) meant the next C<karr create> reused id 1
+and overwrote the task that was already there.
+
+    $store->ensure_next_id;
+
+=cut
 
 sub stamp_encoding_version {
     my ($self) = @_;
@@ -459,7 +516,17 @@ sub serialize_from {
     }
 
     # Nothing above this line wrote anything.
-    $self->save_config($config) if defined $config;
+    if ( defined $config ) {
+        $self->save_config($config);
+    }
+    elsif ( !$self->board_exists ) {
+        # Import is a bootstrap path (#30), so it has to leave a board karr
+        # will actually write to. A kanban-md tasks/ view with no config.yml
+        # otherwise produced tasks and a counter but no refs/karr/config --
+        # exactly the half-board every write command now refuses (#62), which
+        # made `karr create` right after a successful import impossible.
+        $self->save_config( App::karr::Config->default_config );
+    }
 
     my %seen;
     for my $task (@tasks) {
@@ -525,13 +592,19 @@ sub snapshot {
 
 sub restore_snapshot {
     my ( $self, $snapshot ) = @_;
-    my $refs = $snapshot->{refs} || {};
-    $self->delete_all_karr_refs;
-    for my $ref ( sort keys %$refs ) {
-        $self->git->write_ref( $ref, $refs->{$ref} );
-    }
-    return 1;
+    return $self->git->replace_board_refs( $snapshot->{refs} || {} );
 }
+
+=head2 restore_snapshot
+
+Makes the board consist of exactly the refs in the snapshot. Every ref name is
+checked and every commit object built before the first ref moves, so a snapshot
+karr cannot write is refused with the board untouched instead of destroying it
+on the way through (#47). See L<App::karr::Git/replace_board_refs>.
+
+    $store->restore_snapshot( $snapshot );
+
+=cut
 
 sub _diff_hashes {
     my ( $defaults, $effective ) = @_;

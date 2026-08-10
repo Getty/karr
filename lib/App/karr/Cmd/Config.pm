@@ -83,7 +83,12 @@ sub execute {
   my %arity = ( show => 1, get => 2, set => 3 );
   $self->check_positional_args($args_ref, $arity{$action}) if $arity{$action};
 
-  $self->sync_before if $action eq 'set';
+  # Only `set` writes, and only `set` needs a board: `get` and `show` fall
+  # back to the code defaults, which is a useful answer even without one.
+  if ( $action eq 'set' ) {
+    $self->sync_before;
+    $self->require_board;
+  }
 
   my $config = App::karr::Config->from_merged($self->store->effective_config);
 

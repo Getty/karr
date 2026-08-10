@@ -120,6 +120,7 @@ sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
   $self->sync_before;
+  $self->require_board;
 
   my $ec = $self->store->effective_config;
   my $timeout = $self->_parse_timeout($ec->{claim_timeout} // '1h');

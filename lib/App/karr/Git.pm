@@ -441,7 +441,14 @@ sub _commit_for_content {
 sub write_ref {
     my ( $self, $ref, $content ) = @_;
     my $repo = $self->_repo or return;
-    my $commit_oid = $self->_commit_for_content( $repo, $content );
+    return $self->_write_ref_oid( $ref, $self->_commit_for_content( $repo, $content ) );
+}
+
+# The ref-moving half of write_ref, split out for replace_board_refs, which
+# has to build every commit in a restore before it moves the first ref.
+sub _write_ref_oid {
+    my ( $self, $ref, $commit_oid ) = @_;
+    my $repo = $self->_repo or return;
 
     return $self->retry_contended( "ref $ref", sub {
         my $wrote = try {
@@ -527,12 +534,36 @@ sub ref_exists {
     return $repo->reference_exists($ref) ? 1 : 0;
 }
 
+# Returns 1 only when this call actually removed the ref, 0 otherwise -- the
+# ref was not there, or libgit2 refused. It used to swallow the exception and
+# answer 1 regardless (#51), which made a delete that did nothing look like a
+# delete that worked, and bumped $WRITES either way. That counter is what
+# SyncGuard reads to decide whether local refs still need pushing, so it may
+# only ever count writes that landed.
+#
+# Contention retries on the same terms as write_ref: losing the race for
+# refs/<name>.lock is not a failed delete, it is one that has not been
+# attempted yet.
 sub delete_ref {
     my ( $self, $ref ) = @_;
     my $repo = $self->_repo or return 0;
-    try { $repo->reference_delete($ref) };
-    $WRITES++;
-    return 1;
+
+    return $self->retry_contended( "ref $ref", sub {
+        # Asking first keeps "nothing to delete" -- a no-op, not a write --
+        # apart from the failures below, which libgit2 reports the same way.
+        return 0 unless $repo->reference_exists($ref);
+
+        my $outcome = try {
+            $repo->reference_delete($ref);
+            'deleted';
+        } catch {
+            _is_contended_ref_error( $_, 0 ) ? 'contended' : 'failed';
+        };
+        return () if $outcome eq 'contended';
+        return 0  if $outcome eq 'failed';
+        $WRITES++;
+        return 1;
+    } );
 }
 
 # ----- Remote / network ops: native via Git::Native::Remote -----
@@ -1418,11 +1449,86 @@ sub allocate_next_id_ref {
     } );
 }
 
+# ----- Whole-board replacement (restore) -----
+
+# The mirror image of validate_helper_ref, which keeps helper refs out of the
+# board namespace: a snapshot may only address refs inside it. Without this a
+# hand-edited backup could point refs/heads/main at a parentless karr commit,
+# because restore fed whatever keys the YAML carried straight to
+# reference_create.
+sub validate_board_ref {
+    my ( $self, $ref ) = @_;
+    defined $ref && length $ref
+        or die "karr: snapshot contains a ref with no name\n";
+    die "karr: '$ref' is outside the board namespace " . BOARD_ROOT . "\n"
+        unless index( $ref, BOARD_ROOT ) == 0;
+    die "karr: '$ref' is not a valid git ref name\n"
+        unless Git::Native->reference_name_is_valid($ref);
+    return $ref;
+}
+
+# Make the board consist of exactly the refs in %$refs (name => content).
+#
+# `karr restore` used to delete refs/karr/* first and write the snapshot back
+# one ref at a time, so anything that failed on the way took the board with it.
+# A single unusable ref name in the snapshot -- one that sorts before
+# refs/karr/config is enough -- left the board empty locally and on the remote,
+# because the END-block push insurance faithfully mirrored the half-executed
+# destruction, prune and all (#47). The tool people reach for when they are
+# already in trouble is the one that must not be able to make it worse.
+#
+# Nothing destructive happens here until the whole restore is known to be
+# writable. Phase one validates every name and builds every commit object;
+# neither touches a ref, so a failure leaves the board exactly as it was.
+# Phase two then overwrites in place instead of starting from an empty
+# namespace, so the board is never empty in between.
+sub replace_board_refs {
+    my ( $self, $refs ) = @_;
+    my $repo = $self->_repo
+        or die "karr: no usable git repository: "
+             . ( $self->last_error // 'unknown error' ) . "\n";
+
+    my @wanted = sort keys %$refs;
+    for my $ref (@wanted) {
+        $self->validate_board_ref($ref);
+        die "karr: snapshot value for '$ref' is not text\n" if ref $refs->{$ref};
+    }
+
+    my %commit;
+    for my $ref (@wanted) {
+        $commit{$ref} =
+            $self->_commit_for_content( $repo, $refs->{$ref} // '' );
+    }
+
+    $self->_write_ref_oid( $_, $commit{$_} ) for @wanted;
+
+    # Only now the refs the snapshot does not carry. One left behind means the
+    # board holds more than the snapshot did -- worth saying out loud, but not
+    # worth failing a restore whose data is already in place.
+    my @stuck;
+    for my $ref ( $self->list_refs(BOARD_ROOT) ) {
+        next if exists $commit{$ref};
+        CORE::push @stuck, $ref unless $self->delete_ref($ref);
+    }
+    warn "karr: restored the snapshot, but could not remove "
+       . join( ', ', @stuck ) . "\n" if @stuck;
+
+    # The snapshot may carry a different meta/encoding than the board had.
+    delete $self->{_encoding_version};
+    return 1;
+}
+
 sub delete_refs {
     my ( $self, $prefix ) = @_;
-    for my $ref ( $self->list_refs($prefix) ) {
-        $self->delete_ref($ref);
-    }
+    $self->delete_ref($_) for $self->list_refs($prefix);
+
+    # Re-read rather than trust the loop. Now that delete_ref can say no
+    # (#51), swallowing that here would just move the old lie one level up and
+    # let `karr destroy` report success over refs that are still on disk. It is
+    # also the only answer that stays right when a ref vanished underneath us:
+    # gone is gone, whoever removed it.
+    my @left = $self->list_refs($prefix);
+    die "karr: could not delete " . join( ', ', @left ) . "\n" if @left;
     return 1;
 }
 

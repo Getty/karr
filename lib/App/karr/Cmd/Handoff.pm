@@ -90,6 +90,7 @@ sub execute {
   $self->check_positional_args($args_ref, 1);
 
   $self->sync_before;
+  $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
   my $id = $pos[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";

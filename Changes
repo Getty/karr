@@ -113,6 +113,47 @@
       wipe is guarded: a pull that leaves at least one board ref standing
       still reconciles unattended, so a remote swapped for a different,
       non-empty board is not caught.
+    - Fixed a failed `karr restore` destroying the board instead of restoring
+      it. Restore deleted `refs/karr/*` first and wrote the snapshot back
+      afterwards, so a snapshot karr could not write took the board with it: a
+      single unusable ref name left the board empty locally, and then on the
+      remote too, because the push insurance faithfully mirrored the
+      half-executed destruction. Every ref name is now validated and every
+      commit object built before the first ref moves, so a snapshot karr cannot
+      apply is refused with the board untouched, and the refs it can apply are
+      overwritten in place instead of starting from an empty namespace. The ref
+      updates themselves are still a loop rather than one transaction — an I/O
+      failure part-way through can still leave a board holding a mix of old and
+      new refs — but the board is no longer emptied before the first write, so
+      no failure can leave it with nothing in it. A snapshot may also no longer
+      address refs outside `refs/karr/`, which previously let a hand-edited
+      backup overwrite a branch.
+    - Fixed any write command silently seeding a partial board in whichever
+      repository it was run in, and that partial board then locking `karr init`
+      out of it for good — `karr create` typed in the wrong directory was
+      enough, and `karr destroy --yes` was the only way back. A board now
+      counts as existing only when `refs/karr/config` is present; the commands
+      that write to the board refuse with "No karr board found" when it is
+      absent, and `karr init` completes a half-board (keeping its ID counter,
+      so existing tasks are not overwritten) instead of refusing. `backup`,
+      `destroy`, `materialize` and `repair` still work on whatever is under
+      `refs/karr/`, so a half-board an older karr left behind can still be
+      inspected and removed. `karr import --yes` is still allowed to bootstrap
+      a board from a bare kanban-md `tasks/` view, and now writes the default
+      config ref when the view has no `config.yml`, so the board it leaves
+      behind is one the writing commands accept. The read-only commands
+      (`list`, `board`, `show`, `context`, `log`, `config get`) are unchanged:
+      they still report an empty board with the default config rather than
+      refusing.
+    - Fixed a ref deletion that did not happen reporting success. `delete_ref`
+      discarded the libgit2 error and always incremented the write counter
+      SyncGuard reads to decide whether local refs still need pushing, so a
+      failed or no-op delete both claimed success and left the push insurance
+      believing there was unpushed work. It now returns false when nothing was
+      removed, counts only deletes that landed, and retries lock contention
+      like every other ref write; clearing a whole namespace re-reads it
+      afterwards, so `karr destroy` can no longer report success over refs that
+      are still there.
     - Fixed parallel `karr create` silently losing tasks. Task IDs were handed
       out by reading a counter ref and writing it back, so two agents that read
       it at the same time were given the same ID and the second task ref
