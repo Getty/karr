@@ -1,7 +1,7 @@
 # ABSTRACT: Import a tasks/ file view back into the ref-backed board
 
 package App::karr::Cmd::Import;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

@@ -27,7 +27,8 @@ use App::karr::Encoding qw( BOARD_ENCODING_VERSION );
 #
 # The decision, and what this file pins:
 #
-#   * refs/karr/meta/encoding is the discriminator. Absent => a pre-0.403 board,
+#   * refs/karr/meta/encoding is the discriminator. Absent => a board written
+#     by 0.402 or earlier,
 #     read through App::karr::Encoding::repair_mojibake. Present and >= 2 =>
 #     hands off, no guessing, forever.
 #   * `karr init` and `karr import --yes` stamp it; `karr repair --yes` migrates

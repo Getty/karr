@@ -273,7 +273,8 @@ subtest 'the two entry points install the boundary' => sub {
 };
 
 subtest 'repair_mojibake only touches what is unambiguously double-encoded' => sub {
-  # The one heuristic in the encoding boundary, used for pre-0.403 boards.
+  # The one heuristic in the encoding boundary, used for boards written by
+  # 0.402 or earlier.
   # Its safety rests on these four cases.
   is( repair_mojibake('plain ascii'), 'plain ascii', 'ASCII is returned unchanged' );
   is( repair_mojibake($TITLE), $TITLE, 'text with a real wide character is left alone' );

@@ -66,6 +66,12 @@ sub pull { 1 }
 sub push { 1 }
 sub fetch { 1 }
 sub has_remote { 0 }
+# A board double has no refs/karr/log/* of its own -- explicit rather than
+# left to AUTOLOAD, whose blanket `return 1` would otherwise hand
+# App::karr::Cmd::Context's activity section a bogus single "ref" (the
+# scalar 1) to read as if it were a log entry.
+sub list_refs { () }
+sub read_ref { undef }
 sub AUTOLOAD {
   our $AUTOLOAD;
   return if $AUTOLOAD =~ /::DESTROY$/;

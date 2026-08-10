@@ -1,7 +1,7 @@
 # ABSTRACT: The character/octet boundary for karr
 
 package App::karr::Encoding;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use strict;
 use warnings;
 use Exporter qw( import );
@@ -115,8 +115,8 @@ sub to_octets {
 Decodes UTF-8 octets to a character string. A payload that is not valid UTF-8
 is returned B<unchanged> rather than being lossily substituted: karr ref blobs
 and command-line arguments are UTF-8 by contract, and passing a non-conforming
-payload through keeps the pre-0.403 byte-in/byte-out behaviour for it instead
-of quietly replacing bytes with U+FFFD.
+payload through keeps the byte-in/byte-out behaviour karr had before this
+boundary existed, instead of quietly replacing bytes with U+FFFD.
 
 =cut
 

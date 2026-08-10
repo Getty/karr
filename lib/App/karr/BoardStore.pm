@@ -1,7 +1,7 @@
 # ABSTRACT: Ref-backed board storage for karr
 
 package App::karr::BoardStore;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use Path::Tiny qw( path );
 use YAML::XS qw( DumpFile LoadFile );
@@ -483,7 +483,7 @@ sub file_view_gitignore_entries {
 sub project_owned_view_paths {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);
-    return grep { $self->_path_is_tracked( $board_dir->child( $_ =~ s{/\z}{}r ) ) }
+    return grep { $self->git->is_tracked_under( $board_dir->child( $_ =~ s{/\z}{}r ) ) }
         $self->file_view_gitignore_entries;
 }
 
@@ -504,31 +504,16 @@ it would say so right where L</materialize_to> refuses to write, for that very
 reason (tickets #48, #89). C<init> asks before writing the entries, and
 C<materialize> asks before topping them up (#100).
 
-L<App::karr::Git/is_tracked> answers for a file: libgit2's C<status_for_path>
-has nothing to say about a directory, so F<tasks/> is answered by its contents,
-recursively -- a project's F<tasks/notes/old.md> counts every bit as much as a
-F<tasks/README.md>. A path git tracks but that is currently missing from the
-working tree is not found this way, which is the one gap.
+L<App::karr::Git/is_tracked_under> answers the whole question in one index
+read, for a file or a directory alike -- F<tasks/notes/old.md> makes
+F<tasks/> just as owned as F<tasks/README.md> would. It used to be answered by
+walking the working tree and asking L<App::karr::Git/is_tracked> per file
+found, which cost one status call per card and, more importantly, could not
+find a path git tracks but that is currently missing from the working tree --
+there is no file there to walk onto. Both are fixed by asking the index
+directly instead (#104).
 
 =cut
-
-sub _path_is_tracked {
-    my ( $self, $path ) = @_;
-    my $git = $self->git;
-    return $git->is_tracked($path) ? 1 : 0 unless $path->is_dir;
-
-    my $tracked = 0;
-    $path->visit(
-        sub {
-            my ($child) = @_;
-            return if $child->is_dir || !$git->is_tracked($child);
-            $tracked = 1;
-            return \0;   # a false ref stops the walk
-        },
-        { recurse => 1 },
-    );
-    return $tracked;
-}
 
 sub ensure_gitignore {
     my ( $self, $board_dir ) = @_;

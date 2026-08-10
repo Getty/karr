@@ -1,14 +1,16 @@
 # ABSTRACT: Generate board context summary for embedding
 
 package App::karr::Cmd::Context;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr context [--write-to FILE] [--sections LIST] [--days N] [--json]',
+  usage_string => 'USAGE: karr context [--write-to FILE] [--sections LIST] [--days N] '
+    . '[--activity-limit N] [--json]',
 );
 use Path::Tiny ();
 use App::karr::Error qw( user_error clean_error );
+use App::karr::Encoding qw( json_decode );
 use Time::Piece;
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -22,6 +24,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr context
     karr context --sections blocked,overdue
     karr context --write-to AGENTS.md --days 14
+    karr context --activity-limit 10
     karr context --json
 
 =head1 DESCRIPTION
@@ -32,9 +35,15 @@ JSON, or update an existing file between sentinel comments.
 
 =head1 SECTIONS
 
-The generated context can include C<in-progress>, C<blocked>, C<overdue>, and
-C<recently-completed>. Use C<--sections> with a comma-separated list to limit
-the output to a subset.
+The generated context can include C<in-progress>, C<blocked>, C<overdue>,
+C<recently-completed>, and C<activity>. Use C<--sections> with a
+comma-separated list to limit the output to a subset.
+
+C<activity> is the board's activity log (see L<App::karr::Cmd::Log>), filtered
+to entries written by identities other than the one invoking C<context> and
+bounded by C<--activity-limit> (default 5). An agent reading its own briefing
+already knows what it just did -- C<karr show --me> is the tool for that --
+so what belongs in a briefing is what everyone *else* has been doing.
 
 =head1 FILE UPDATE MODE
 
@@ -45,7 +54,7 @@ already present; otherwise it appends the generated block to the file.
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::Board>, L<App::karr::Cmd::List>,
-L<App::karr::Cmd::Config>, L<App::karr::Cmd::Skill>
+L<App::karr::Cmd::Config>, L<App::karr::Cmd::Skill>, L<App::karr::Cmd::Log>
 
 =cut
 
@@ -58,7 +67,7 @@ option write_to => (
 option sections => (
   is => 'ro',
   format => 's',
-  doc => 'Comma-separated section filter (in-progress,blocked,overdue,recently-completed)',
+  doc => 'Comma-separated section filter (in-progress,blocked,overdue,recently-completed,activity)',
 );
 
 option days => (
@@ -68,8 +77,26 @@ option days => (
   doc => 'Lookback days for recently-completed (default: 7)',
 );
 
+option activity_limit => (
+  is => 'ro',
+  format => 'i',
+  default => sub { 5 },
+  doc => "Other agents' recent log entries to include in activity (default: 5)",
+);
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
+
+  # --activity-limit is a count, so 0 and negatives are invalid values rather
+  # than requests for a differently sized section -- and here the wrong answer
+  # is worse than usual: the falsy guard in _recent_activity reads 0 as "no
+  # bound at all", so the one option whose whole job is to keep the briefing
+  # short would silently pour the entire log into it, and a negative produced
+  # an empty section and exit 0, indistinguishable from "nobody else acted".
+  # Same rule and same reason as `show --last` (ticket #76, ADR 0002).
+  $self->usage_error(
+    sprintf '--activity-limit must be 1 or greater (got %d)', $self->activity_limit )
+    if $self->activity_limit < 1;
 
   my $ec = $self->store->effective_config;
   my @tasks = $self->load_tasks;
@@ -95,7 +122,7 @@ sub execute {
   }
 
   my @section_data;
-  my @all_sections = qw(in-progress blocked overdue recently-completed);
+  my @all_sections = qw(in-progress blocked overdue recently-completed activity);
 
   for my $sec (@all_sections) {
     next if $self->sections && !$wanted_sections{$sec};
@@ -132,6 +159,8 @@ sub execute {
         sort { ($b->completed // '') cmp ($a->completed // '') }
         grep { $self->store->is_terminal_status($_->status) && $_->status ne 'archived' && $_->has_completed && $_->completed ge $cutoff }
         @tasks;
+    } elsif ($sec eq 'activity') {
+      @items = $self->_recent_activity;
     }
 
     push @section_data, { name => $sec, items => \@items } if @items;
@@ -179,16 +208,29 @@ sub _render_markdown {
     'blocked'            => 'Blocked',
     'overdue'            => 'Overdue',
     'recently-completed' => 'Recently Completed',
+    'activity'           => 'Recent Activity',
   );
 
   for my $sec (@$sections) {
     $md .= "### " . ($section_title{$sec->{name}} // $sec->{name}) . "\n\n";
-    for my $item (@{$sec->{items}}) {
-      $md .= sprintf "- **#%d** %s (%s", $item->{id}, $item->{title}, $item->{priority};
-      $md .= ", \@$item->{assignee}" if $item->{assignee};
-      $md .= ")";
-      $md .= " — $item->{note}" if $item->{note};
-      $md .= "\n";
+    if ($sec->{name} eq 'activity') {
+      # An activity item is a log event, not a task -- it has no priority or
+      # assignee to report, so it gets its own line shape instead of being
+      # forced into _task_item's.
+      for my $item (@{$sec->{items}}) {
+        $md .= sprintf "- %s **%s** %s task#%s", $item->{ts} // '?',
+          $item->{agent} // '?', $item->{action} // '?', $item->{task_id} // '?';
+        $md .= " ($item->{detail})" if defined $item->{detail} && length $item->{detail};
+        $md .= "\n";
+      }
+    } else {
+      for my $item (@{$sec->{items}}) {
+        $md .= sprintf "- **#%d** %s (%s", $item->{id}, $item->{title}, $item->{priority};
+        $md .= ", \@$item->{assignee}" if $item->{assignee};
+        $md .= ")";
+        $md .= " — $item->{note}" if $item->{note};
+        $md .= "\n";
+      }
     }
     $md .= "\n";
   }
@@ -241,6 +283,54 @@ sub _task_item {
       : () ),
     ($note ? (note => $note) : ()),
   };
+}
+
+# Cross-agent recent activity (ticket #92). #64 put every mutating command
+# through the log, but context read none of it -- the log was still summarised
+# purely from task state. Read via the same merged-refs walk `karr log` does,
+# but bounded, because this is a briefing meant to stay short, not the log
+# viewer: the whole log is what `karr log` is for.
+#
+# The bound excludes the invoking identity's own entries rather than
+# truncating a merged view blindly. An agent about to pick up work already
+# knows what it itself just did -- `karr show --me` is the tool for that --
+# so what changes its decision is what *other* identities have been doing.
+# Only the current-scheme ref is excluded; entries left on a pre-#75 legacy
+# ref (see App::karr::ActivityLog) are rare enough, and old enough, that
+# counting them as "someone else" costs nothing in practice.
+sub _recent_activity {
+  my ($self) = @_;
+  my $git = $self->git;
+  my $self_ref = 'refs/karr/log/' . $self->activity_log->identity;
+
+  my @entries;
+  for my $ref ($git->list_refs('refs/karr/log/')) {
+    next if $ref eq $self_ref;
+    my $content = $git->read_ref($ref);
+    next unless defined $content && length $content;
+    for my $line (split /\n/, $content) {
+      next unless length $line;
+      my $decoded = eval { json_decode($line) };
+      push @entries, $git->maybe_repair_legacy($decoded) if $decoded;
+    }
+  }
+
+  @entries = sort { ($a->{ts} // '') cmp ($b->{ts} // '') } @entries;
+  my $limit = $self->activity_limit;
+  @entries = @entries[-$limit .. -1] if $limit && @entries > $limit;
+
+  # Newest first, like recently-completed -- the point of a briefing is that
+  # the most relevant items are the ones on top.
+  return map {
+    my $e = $_;
+    {
+      ts      => $e->{ts},
+      agent   => $e->{agent},
+      action  => $e->{action},
+      task_id => $e->{task_id},
+      ( defined $e->{detail} && length $e->{detail} ? ( detail => $e->{detail} ) : () ),
+    }
+  } reverse @entries;
 }
 
 sub _pri_order {

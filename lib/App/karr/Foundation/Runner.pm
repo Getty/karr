@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation command execution — fork/pipe/select tee + error classification
 
 package App::karr::Foundation::Runner;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use App::karr::Error qw( user_error );
 use Encode ();

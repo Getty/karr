@@ -1,7 +1,7 @@
 # ABSTRACT: List tasks with filtering and sorting
 
 package App::karr::Cmd::List;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

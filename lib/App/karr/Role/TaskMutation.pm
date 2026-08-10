@@ -1,7 +1,7 @@
 # ABSTRACT: The one guarded path for changing an existing task
 
 package App::karr::Role::TaskMutation;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo::Role;
 use Time::Piece;
 use App::karr::Task;

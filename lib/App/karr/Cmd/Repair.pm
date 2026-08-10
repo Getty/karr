@@ -1,7 +1,7 @@
-# ABSTRACT: Migrate a pre-0.403 board off double-encoded UTF-8
+# ABSTRACT: Migrate a board written by 0.402 or earlier off double-encoded UTF-8
 
 package App::karr::Cmd::Repair;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

@@ -3,7 +3,7 @@
 # ABSTRACT: Single-shot foundation daemon for periodic karr agent execution
 use strict;
 use warnings;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use App::karr::Foundation;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
 

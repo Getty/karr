@@ -89,7 +89,7 @@ storage backend.
 | `skill` | implemented | `skill` |
 | `materialize` | implemented | — (refs→files bridge) |
 | `import` | implemented | — (files→refs bridge) |
-| `repair` | implemented | — (migrates a pre-0.403 board off double-encoded UTF-8) |
+| `repair` | implemented | — (migrates a 0.402-or-earlier board off double-encoded UTF-8) |
 | `sync` | implemented | — (explicit refs pull/push) |
 | `backup` | implemented | — (board snapshot to YAML) |
 | `restore` | implemented | — (snapshot→refs, destructive) |

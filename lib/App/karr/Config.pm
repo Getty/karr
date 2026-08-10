@@ -1,7 +1,7 @@
 # ABSTRACT: Board configuration management
 
 package App::karr::Config;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use YAML::XS qw( LoadFile DumpFile );
 use JSON::MaybeXS qw( JSON );

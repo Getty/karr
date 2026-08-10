@@ -1,7 +1,7 @@
 # ABSTRACT: Kanban Assignment & Responsibility Registry
 
 package App::karr;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options;
@@ -225,7 +225,7 @@ my @COMMANDS = (
   [ restore   => 'Replace refs/karr/* from YAML' ],
   [ materialize => 'Write refs/karr/* out as a tasks/ file view' ],
   [ import    => 'Import a tasks/ file view into refs/karr/*' ],
-  [ repair    => 'Migrate a pre-0.403 board off double-encoded UTF-8' ],
+  [ repair    => 'Migrate a 0.402-or-earlier board off double-encoded UTF-8' ],
   [ sync      => 'Sync board with remote' ],
   [ 'agent-name' => 'Generate a random agent name' ],
   [ skill     => 'Install/update agent skills' ],

@@ -753,9 +753,7 @@
       line of code as the unguarded ones, and a write that loses its race is
       not logged at all. Bulk paths that reinstate state verbatim (`import`,
       `restore`, `repair`) sit below that door and stay unlogged, and `pick`,
-      which also logs explicitly, still produces exactly one entry. Not covered
-      by this: `karr context` summarises task state only and reads no log
-      entries, so it is unaffected either way.
+      which also logs explicitly, still produces exactly one entry.
     - Fixed `karr pick --move` never recording a completion on a board whose
       final column is not named `done` — the last leftover of the
       terminal-status sweep (ticket #101; sweep: tickets #67, #98). Pick has
@@ -790,6 +788,56 @@
       reports what it left alone the way init does. The question is asked before
       the view is written, so a tracked card that `--force` sweeps away does not
       make the path look unowned on the way out.
+    - `karr context` gained a fifth, optional section: `activity`, the
+      board's recent activity log (ticket #92). #64 put every mutating
+      command through the log but left `context` reading none of it, still
+      summarising task state only — the claim in #64 that `context` already
+      read the log was wrong, which is what #92 was filed to correct.
+      Selectable and omittable through the existing `--sections` filter like
+      the other four. It is bounded, and the bound is not "last N entries of
+      the log": it is the last C<--activity-limit> entries (default 5)
+      written by identities *other* than the one invoking C<context>. An
+      agent about to pick up work already knows what it itself just did —
+      `karr show --me` is the tool for that — so the entries that actually
+      change what it decides are what everybody else has been doing; the
+      whole log, unbounded, is what `karr log` is for. Entries render newest
+      first, like `recently-completed`. In `--json`, the section is wrapped
+      the same way the other four are (`{"name":"activity","items":[...]}`
+      inside `sections`), but its items are shaped like `karr log --json`'s
+      own entries (`ts`/`agent`/`action`/`task_id`, `detail` when present)
+      rather than the task-shaped `id`/`title`/`priority`/`assignee` the
+      other four use — an activity entry is a historical event, not a task,
+      and forcing it into the task shape would have meant inventing a
+      priority and an assignee for something that has neither.
+      `--activity-limit` below 1 is a usage error rather than a silent
+      surprise, by the rule `show --last` already follows (ticket #76,
+      ADR 0002): the two out-of-range values failed in opposite directions
+      and neither was visible, `0` reading as "no bound at all" and so
+      pouring the whole log into the very section the option exists to keep
+      short, and a negative rendering an empty section with exit 0 —
+      indistinguishable from "nobody else has acted on this board".
+    - Replaced the linear, per-file walk behind `project_owned_view_paths`
+      with a single index read (ticket #104, follow-up to #100). The old
+      check walked the file-view directory and asked git one `is_tracked`
+      per file found on disk, so a repeat `karr materialize` on a 300-card
+      board spent roughly 180ms of its ~1.4s confirming the project owned
+      nothing under `tasks/` before writing — O(card count), and the cheap
+      "only ask when an entry would actually be added" guard cannot help,
+      because in the case this check exists for the entry never gets added
+      regardless. It also had a gap the old POD documented as known: a path
+      git tracks but that is currently missing from the working tree — rm'd,
+      not yet committed — has no file on disk for a directory walk to find,
+      so it read as unowned and karr claimed a path the project still
+      tracked. `App::karr::Git` gained `is_tracked_under`, which asks the
+      index directly instead of the working tree (via `git ls-files`, since
+      Git::Native's libgit2 binding exposes no index API of its own to ask
+      natively) and matches a directory as a prefix over everything under
+      it, so one call answers for a file or a directory alike and closes the
+      gap in the same step that drops the per-file loop. Both `karr init`
+      and `karr materialize` share the helper, so both pick up the fix
+      without their own code changing. Isolated, the check itself dropped
+      from roughly 135ms to 10ms per call on a 300-card board; the whole
+      `karr materialize` command roughly 150ms.
 
 0.402     2026-08-04 04:46:25Z
 

@@ -18,6 +18,13 @@
 # view, and went on doing it unconditionally -- putting back the exact claim
 # init had just declined to make. Both commands now ask the one question, via
 # App::karr::BoardStore::project_owned_view_paths.
+#
+# Ticket #104: that question used to be answered by walking the working tree
+# and asking git one is_tracked per file found -- linear in card count, and
+# blind to a path git tracks but that is currently missing from the working
+# tree (rm'd, not yet committed), because there is no file there to walk onto.
+# project_owned_view_paths now asks the index directly, via
+# App::karr::Git::is_tracked_under, which answers both problems in one call.
 
 use strict;
 use warnings;
@@ -217,6 +224,62 @@ subtest 'a tracked card that --force sweeps away is still the project\'s' => sub
   ok( !path($repo)->child('tasks/001-legacy-card.md')->exists,
     'the tracked card was swept, which is what --force asks for' );
   is( gitignore_of($repo), undef, 'and karr still claimed nothing' );
+};
+
+# --------------------------------------------------------------- ticket #104
+
+subtest 'a tracked file removed from disk, uncommitted, still stops init claiming tasks/' => sub {
+  # The gap the old check documented as known: the project tracks
+  # tasks/deploy-runbook.md, but it has been rm'd from the working tree
+  # without staging or committing the deletion. A directory walk has no file
+  # to find it through -- there is nothing on disk under tasks/ at all -- so
+  # the old is_tracked-per-walked-file check saw an empty directory and
+  # concluded the project owned nothing there. The index still has the entry.
+  my $repo = repo_with('tasks/deploy-runbook.md');
+  path($repo)->child('tasks/deploy-runbook.md')->remove;
+  ok( !path($repo)->child('tasks/deploy-runbook.md')->exists,
+    'the file is gone from the working tree' );
+  is( scalar path($repo)->child('tasks')->children, 0,
+    'nothing at all is left on disk to walk onto under tasks/' );
+
+  my $rv = run_karr( $repo, 'init', '--name', 'Deleted' );
+  is( $rv->{exit}, 0, 'init still succeeds' ) or diag( $rv->{stderr} );
+  is( gitignore_of($repo), undef, 'no .gitignore was invented' );
+  like( $rv->{stdout}, qr{tasks/},
+    'init names tasks/ as the project\'s, despite the missing file' )
+    or diag( $rv->{stdout} );
+};
+
+subtest 'a tracked config.yml removed from disk, uncommitted, still stops init claiming it' => sub {
+  my $repo = repo_with('config.yml');
+  path($repo)->child('config.yml')->remove;
+  ok( !path($repo)->child('config.yml')->exists, 'nothing is left on disk' );
+
+  my $rv = run_karr( $repo, 'init', '--name', 'DeletedFile' );
+  is( $rv->{exit}, 0, 'init still succeeds' ) or diag( $rv->{stderr} );
+  is( gitignore_of($repo), undef, 'no .gitignore was invented' );
+  like( $rv->{stdout}, qr/config\.yml/, 'naming the path the project owns' );
+};
+
+subtest 'materialize does not claim tasks/ when a tracked card was deleted, uncommitted' => sub {
+  # Pairs with the plain #100 case above, but the project's file is not just
+  # untouched by materialize -- it is not even there for materialize_to's own
+  # overwrite guard to see. That guard is unaffected (there is nothing on disk
+  # to overwrite), but the .gitignore claim must still be refused, because git
+  # still tracks the path.
+  my $repo = repo_with('tasks/deploy-runbook.md');
+  path($repo)->child('tasks/deploy-runbook.md')->remove;
+  is( run_karr( $repo, 'init', '--name', 'Collide' )->{exit}, 0, 'board initialized' );
+  is( run_karr( $repo, 'create', 'A task' )->{exit}, 0, 'task created' );
+  is( gitignore_of($repo), undef, 'init claimed nothing' );
+
+  my $rv = run_karr( $repo, 'materialize' );
+  is( $rv->{exit}, 0, 'materialize succeeds' ) or diag( $rv->{stderr} );
+  is( gitignore_of($repo), undef, 'and did not claim the path either' );
+  like( $rv->{stderr}, qr/Left \.gitignore alone/,
+    'materialize says what it did not do' )
+    or diag( $rv->{stderr} );
+  like( $rv->{stderr}, qr{tasks/}, 'naming the path the project owns' );
 };
 
 done_testing;

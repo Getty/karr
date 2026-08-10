@@ -1,7 +1,7 @@
 # ABSTRACT: Git operations for karr sync (native via Git::Native + libgit2, with a git-CLI transport fallback)
 
 package App::karr::Git;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use strict;
 use warnings;
 use Path::Tiny qw( path );
@@ -238,19 +238,27 @@ sub repo_root {
 use constant GIT_STATUS_WT_NEW  => 0x0080;
 use constant GIT_STATUS_IGNORED => 0x4000;
 
+# Resolve $path to a string relative to the work tree, the form both
+# status_for_path (is_tracked) and a git-CLI pathspec (is_tracked_under) want.
+# Both ends go through the containing directory -- the path itself may not
+# exist yet -- so a symlinked work tree does not make every path look like it
+# escapes. Undef when the repo has no work tree, or $path resolves outside it.
+sub _relative_to_root {
+    my ( $self, $path ) = @_;
+    my $root = $self->repo_root or return undef;
+    $path = path($path)->absolute;
+    my $parent = try { $path->parent->realpath } catch { undef } or return undef;
+    my $base   = try { $root->realpath }        catch { $root };
+    my $rel    = $parent->child( $path->basename )->relative($base)->stringify;
+    return undef if $rel =~ m{\A\.\.(?:/|\z)};   # outside the work tree
+    return $rel;
+}
+
 sub is_tracked {
     my ( $self, $file ) = @_;
-    my $repo = $self->_repo   or return 0;
-    my $root = $self->repo_root or return 0;
-
-    # status_for_path wants a path relative to the work tree. Resolve both ends
-    # through the containing directory (the file itself may not exist yet) so a
-    # symlinked work tree does not make every path look like it escapes.
-    $file = path($file)->absolute;
-    my $parent = try { $file->parent->realpath } catch { undef } or return 0;
-    my $base   = try { $root->realpath }        catch { $root };
-    my $rel    = $parent->child( $file->basename )->relative($base)->stringify;
-    return 0 if $rel =~ m{\A\.\.(?:/|\z)};   # outside the work tree
+    my $repo = $self->_repo or return 0;
+    my $rel  = $self->_relative_to_root($file);
+    return 0 unless defined $rel;
 
     # Throws GIT_ENOTFOUND for a path git has never heard of and that is not on
     # disk either; that is simply "not tracked".
@@ -267,6 +275,43 @@ tree, and anything in a repository that cannot be opened all return false.
 
     if ( $git->is_tracked($file) ) {
         # deleting or overwriting it would be data loss
+    }
+
+=cut
+
+sub is_tracked_under {
+    my ( $self, $path ) = @_;
+    my $rel = $self->_relative_to_root($path);
+    return 0 unless defined $rel;
+
+    # Answers against the index and against $path as a prefix, neither of
+    # which is_tracked above can do. libgit2's status_for_path takes one file
+    # and, being a working-tree comparison, cannot see a path git tracks but
+    # that is currently missing from disk -- rm'd, not yet committed (#104).
+    # `git ls-files` reads the index directly and matches a bare directory
+    # name as a prefix over everything under it, so one call answers for a
+    # file or a directory alike, tracked-and-present or tracked-and-deleted.
+    #
+    # Git::Native (libgit2) exposes no index API at all in the version karr
+    # depends on -- Git::Native::Repository has no `index` method, and the raw
+    # FFI binding for git_index_find_prefix is not attached either -- so there
+    # is no native path to prefer here. This goes through the git CLI
+    # unconditionally, not as a fallback from a native attempt.
+    my $run = $self->_run_git( 'ls-files', '-z', '--', $rel );
+    return 0 unless $run->{failure} eq '' && ( $run->{status} >> 8 ) == 0;
+    return length $run->{out} ? 1 : 0;
+}
+
+=head2 is_tracked_under
+
+Returns true when the index has an entry at C<$path>, or -- when C<$path> is a
+directory -- anywhere under it. Unlike L</is_tracked>, this asks the index
+rather than the working tree, so it also answers true for a path git tracks
+but that is currently missing from disk. Paths outside the work tree, and
+anything in a repository that cannot be opened, return false.
+
+    if ( $git->is_tracked_under($dir) ) {
+        # the project already owns content under $dir
     }
 
 =cut

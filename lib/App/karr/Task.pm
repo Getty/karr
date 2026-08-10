@@ -1,7 +1,7 @@
 # ABSTRACT: Task object representing a single kanban card
 
 package App::karr::Task;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use Path::Tiny;
 use Time::Piece;
@@ -119,7 +119,7 @@ sub BUILD {
   $self->_normalize_blocked;
 }
 
-# karr up to 0.403 stored the blocking *reason* in `blocked` as free text;
+# karr up to 0.402 stored the blocking *reason* in `blocked` as free text;
 # kanban-md has always had `blocked: bool` plus `block_reason: string`, and its
 # YAML decoder refuses a string there outright ("cannot unmarshal !!str into
 # bool" -- the task then vanishes from its board). This pulls a legacy document

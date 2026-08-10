@@ -1,7 +1,7 @@
 # ABSTRACT: Re-enable automated agent runs on this board
 
 package App::karr::Cmd::Enable;
-our $VERSION = '0.403';
+our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
