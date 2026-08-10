@@ -1,0 +1,36 @@
+---
+claimed_at: 2026-08-10T15:08:03Z
+claimed_by: context-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:29:25Z
+id: 92
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- log
+- context
+- multi-agent
+title: karr context shows no activity, though the log it would need now exists
+updated: 2026-08-10T15:51:30Z
+---
+
+Split out of #64, whose ticket text claimed `karr context` reads the activity log.
+It does not — verified: Cmd/Context.pm summarises task state only and contains no
+reference to the log. `karr show --me` / `--agent` is what reads it.
+
+That claim is why #64 was worded around context being near-empty. The real
+situation after #64: the log is now written by every mutating command instead of
+only by pick, so `karr log` is genuinely useful, and `karr show --me` benefits.
+`karr context` still shows none of it.
+
+Whether it should is a design question, not a bug. context is meant to be the
+briefing an agent reads when it picks up work — recent activity on the board is
+plausibly part of that, but so is keeping it short enough to be read. If it gets
+an activity section, it needs a bound (last N entries, or entries since the
+agent last acted) rather than the whole log.
+
+Not urgent. Filed so the claim in #64 does not get rediscovered as a bug later.
+Dogfood note from the review (2026-08-10): the new activity section renders empty on karr's own board, and that is not a defect in this ticket. There are no refs/karr/log/* here at all -- 'karr log' says 'No log entries'. Every karr invocation in this repo has gone through the INSTALLED 0.402 on PATH, and per-command activity logging (#64) is unreleased, so nothing has ever written a log entry here. The section cannot be exercised in practice on this board until 0.500 ships or the checkout is used directly; t/123-context-activity-section.t covers it against a fixture board with two identities. Concrete instance of what #39 is about.
+Landed on main as 2b29403 (combined with the 0.500 version bump and the other tickets in that commit). Full suite green: 113 files, 767 tests.
