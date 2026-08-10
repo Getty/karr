@@ -1,0 +1,53 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T17:54:30Z
+id: 82
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- sync
+- git
+- data-loss
+title: a remote that is empty for the wrong reason reconciles the whole board away
+updated: 2026-08-10T01:27:58Z
+---
+
+Left open deliberately by the tracking-mirror fix (commit bea4a8d), recorded so
+the trade-off is visible rather than forgotten.
+
+With the mirror in place, "the remote had these refs at the last sync and does
+not have them now" is a well-founded observation, and acting on it is what makes
+a `karr delete` propagate and a `karr destroy` take effect across clones. But it
+is indistinguishable from a remote that is empty for the wrong reason:
+
+  * origin re-created or re-initialised
+  * the remote URL edited to point somewhere else
+  * a hosting-side restore that rolled the namespace back
+
+In each of those a routine writing command reconciles the local board down to
+nothing, in one step, silently — it looks exactly like the legitimate case.
+
+Not a regression: before the mirror, pull could not delete anything at all,
+because it never applied a remote change in the first place (the bug that fix
+addressed). So this is a new failure mode introduced together with a much larger
+one being removed. Bounded, but worth a net.
+
+Options, roughly in order of how much they cost:
+
+  * refuse a wholesale wipe — if reconciliation would delete *every* task ref,
+    stop and require `--yes` or an explicit `karr sync --prune`
+  * scale it: refuse when more than N% of the board would disappear at once
+  * park deletions the way case 4 parks overwritten refs
+    (`refs/karr-conflict/<remote>/<name>`), so a mistaken wipe is recoverable
+
+The first is probably enough and is a few lines in the reconciliation loop.
+Whatever is chosen needs a test for the legitimate path too: `karr destroy` on
+one clone must still propagate to another.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
