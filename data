@@ -1,0 +1,36 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:49:14Z
+id: 76
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+- exit-codes
+title: several commands return the wrong exit code for invalid option values
+updated: 2026-08-10T01:27:58Z
+---
+
+Several commands miss the 0/1/2 contract from ADR 0002 ("2 = usage error /
+invalid option value"):
+
+| command | observed | expected |
+|---|---|---|
+| `karr list --sort bogus` (>=2 tasks) | 1 + `Can't locate object method "bogus" via package "App::karr::Task" at List.pm line 204.` | 2, "invalid sort field" |
+| `karr skill check --agent bogus` | 1 `Unknown agent: bogus` | 2 |
+| `karr skill bogus` | 1 `Unknown action: bogus` | 2 |
+| `karr move , todo` | **0**, no output at all | 2 (empty id list) |
+| `karr show --last 0` / `--last -1` | 0, returns 1 task | 0 tasks, or 2 |
+
+The `--sort` row leaks a raw Perl method-resolution error to the user and is
+covered in more depth by the list --sort ticket; the rest are plain exit-code
+classification.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
