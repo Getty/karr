@@ -33,6 +33,12 @@ use App::karr::Cmd::List;
 #   --sort <1 task>     exit 0 -- the comparator never ran, so nothing rejected
 #
 # Everything below pins the fixed behaviour and fails on all of the above.
+#
+# Note (ticket #91): the probe's priority row matches the current output again
+# in direction, but for the opposite reason -- urgency-first is now deliberate
+# (the top of the list is what pick would take) and still read from the config,
+# so the hardcoded-table failure mode stays pinned by the reordered-board
+# subtest, and t/110-list-priority-urgency-first.t pins the pick agreement.
 
 sub _init_repo {
   my $repo = tempdir( CLEANUP => 1 );
@@ -125,31 +131,32 @@ subtest '--sort status honours a board that reorders its statuses' => sub {
     'the board config decides the order, so review sorts first here';
 };
 
-subtest '--sort priority follows the config order (low first), not a hardcoded table' => sub {
+subtest '--sort priority is urgency-first, agreeing with pick (ticket #91)' => sub {
   my $store = _board();
   mk( $store, id => 1, title => 'crit', priority => 'critical' );
   mk( $store, id => 2, title => 'low',  priority => 'low' );
   mk( $store, id => 3, title => 'high', priority => 'high' );
   mk( $store, id => 4, title => 'med',  priority => 'medium' );
 
-  is_deeply list_ids( $store, sort => 'priority' ), [ 2, 4, 3, 1 ],
-    'low, medium, high, critical -- the config priorities order (kanban-md PriorityIndex)'
-    or diag 'the old hardcoded table produced critical, high, medium, low';
+  is_deeply list_ids( $store, sort => 'priority' ), [ 1, 3, 4, 2 ],
+    'critical, high, medium, low -- most urgent first, the config order read backwards'
+    or diag 'the #66 ordering produced low, medium, high, critical';
 
-  is_deeply list_ids( $store, sort => 'priority', reverse => 1 ), [ 1, 3, 4, 2 ],
-    '--reverse still puts the most urgent first';
+  is_deeply list_ids( $store, sort => 'priority', reverse => 1 ), [ 2, 4, 3, 1 ],
+    '--reverse gives least-urgent-first';
 };
 
-subtest '--sort priority honours a board that reorders its priorities' => sub {
-  # Deliberately an order no hardcoded critical..low table can produce.
+subtest '--sort priority reads urgency from a reordered board, not a hardcoded table' => sub {
+  # Deliberately an order no hardcoded critical..low table can produce, in
+  # either direction: the last name in the config list is the most urgent.
   my $store = _board( priorities => [qw( high low critical medium )] );
   mk( $store, id => 1, title => 'crit', priority => 'critical' );
   mk( $store, id => 2, title => 'low',  priority => 'low' );
   mk( $store, id => 3, title => 'high', priority => 'high' );
   mk( $store, id => 4, title => 'med',  priority => 'medium' );
 
-  is_deeply list_ids( $store, sort => 'priority' ), [ 3, 2, 1, 4 ],
-    'the board config decides the order, exactly as declared';
+  is_deeply list_ids( $store, sort => 'priority' ), [ 4, 1, 2, 3 ],
+    'medium sorts first here -- it is the last name in this board\'s priorities';
 };
 
 subtest '--sort due puts tasks without a due date last' => sub {

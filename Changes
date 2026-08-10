@@ -76,6 +76,16 @@
       that very reason. init now leaves .gitignore alone in that case and
       reports what it did not do. Not yet fixed: `karr materialize` still adds
       the entries without that check.
+    - Changed `karr list --sort priority` to open with the most urgent task —
+      critical down to low on a default board — instead of following the
+      config's priority order ascending (ticket #91). Ascending order opened
+      the list with the least urgent task, the exact opposite of what `karr
+      pick` would hand out from the same board, and the two commands
+      disagreeing about which end is urgent was a trap: the list now reads
+      urgency the way pick and `karr context` already did. `--reverse` gives
+      the least-urgent-first view, and every other sort key keeps its
+      direction. This deliberately deviates from kanban-md, whose
+      `list --sort priority` still follows the config order ascending.
     - Fixed `karr pick` being blind to a board imported from kanban-md. An
       optional frontmatter field set to the empty string counted as set,
       because a Moo predicate only knows whether the attribute was passed —
