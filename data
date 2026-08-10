@@ -1,0 +1,45 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:37:22Z
+id: 48
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- storage
+- data-loss
+- materialize
+title: karr materialize silently deletes and overwrites tracked project files
+updated: 2026-08-10T01:27:58Z
+---
+
+`lib/App/karr/BoardStore.pm:232` and `:234-236`. `materialize_to` unconditionally
+`DumpFile`s `config.yml` and removes **every** `tasks/*.md` in the target
+directory — and the target is the git root, with no prompt, no `--yes` and no
+warning.
+
+Reproduced in a repo that has a committed `tasks/deploy-runbook.md` and a
+committed `config.yml` of its own:
+
+    karr materialize
+    -> Materialized 1 task(s)
+    git status --short
+     M config.yml
+     D tasks/deploy-runbook.md
+
+`tasks/` and `config.yml` at repo root are not unusual names for a project to
+already use. Worse, `karr init` has by then added both paths to `.gitignore`, so
+the deletion is hidden from a later `git add` and the user may not notice until
+the files are needed.
+
+Fix direction: refuse to materialize into a directory whose `tasks/*.md` or
+`config.yml` are tracked by git or were not written by karr, unless an explicit
+`--force`/`--yes` is given. At minimum, do not delete files karr did not create.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
