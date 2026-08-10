@@ -124,7 +124,20 @@ subtest 'edit --status obeys the same rules as move (#55)' => sub {
     my $task = _task($repo);
     is( $task->status,     'in-progress', 'status changed' );
     is( $task->claimed_by, 'alice',       'claim recorded' );
-    ok( $task->has_started, 'edit --status in-progress stamps started, like move does' );
+
+    # Parity with `move` is what this subtest is for, so assert it against
+    # `move` rather than against a hardcoded expectation. Ticket #68 replaced
+    # the old "stamp whenever the new status is literally in-progress" rule
+    # with kanban-md's -- `started` on the first move out of the *first
+    # configured* status -- so a task seeded in `todo` no longer gets one here.
+    # What has to stay true is that both doors do the same thing.
+    my $seed2 = _run_karr( $repo, undef, 'create', '--title', 'Task 2', '--status', 'todo' );
+    is( $seed2->{exit}, 0, 'seed task 2 created' ) or diag $seed2->{stderr};
+    my $via_move = _run_karr( $repo, undef, 'move', 2, 'in-progress', '--claim', 'alice' );
+    is( $via_move->{exit}, 0, 'move 2 in-progress --claim alice succeeds' )
+        or diag $via_move->{stderr};
+    is( ( _task( $repo, 2 )->has_started ? 1 : 0 ), ( $task->has_started ? 1 : 0 ),
+        'edit --status and move stamp started identically' );
 
     my $done = _run_karr( $repo, undef, 'edit', 1, '--status', 'done', '--claim', 'alice' );
     is( $done->{exit}, 0, 'edit --status done succeeds' ) or diag $done->{stderr};

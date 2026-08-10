@@ -125,6 +125,14 @@ sub execute {
   my $ec = $self->store->effective_config;
   my $timeout = $self->_parse_timeout($ec->{claim_timeout} // '1h');
 
+  # Before any lock is taken: --move is a plain option value, and a bad one used
+  # to be discovered only after a task had already been locked and claimed, so
+  # the pick parked it in a status that is not a column (ticket #54). Pick does
+  # not go through apply_status_change -- it has its own compare-and-swap loop --
+  # so the check is here.
+  App::karr::Config->from_merged($ec)->validate_status($self->move)
+    if defined $self->move;
+
   # A ranking, not a decision. Every one of these is re-read and re-tested under
   # its own lock before anything is written (see EXCLUSIVITY above).
   my @tasks = grep { $self->_is_pickable($_, $timeout) } $self->load_tasks;
@@ -244,10 +252,12 @@ sub _claim_under_lock {
     $task->claimed_at(gmtime->datetime . 'Z');
 
     if ($self->move) {
+      my $old_status = $task->status;
       $task->status($self->move);
-      if ($self->move eq 'in-progress' && !$task->has_started) {
-        $task->started(gmtime->strftime('%Y-%m-%d'));
-      }
+      # Same lifecycle rules as every other status change (ticket #68); the
+      # implementation is on the task, mirroring kanban-md's lifecycle.go.
+      $task->update_timestamps( $old_status, $self->move,
+        ( $self->store->all_status_names )[0] );
     }
 
     return () unless $self->save_task($task, $oid);

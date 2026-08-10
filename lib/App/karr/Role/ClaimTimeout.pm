@@ -4,6 +4,7 @@ package App::karr::Role::ClaimTimeout;
 our $VERSION = '0.403';
 use Moo::Role;
 use Time::Piece;
+use App::karr::Config;
 
 =head1 DESCRIPTION
 
@@ -21,14 +22,22 @@ L<App::karr::Role::TaskMutation/update_task_guarded>.
 # hour, which is right for claim_timeout but far too long for lock_timeout --
 # a lock covers one pick transaction, not a work session, so App::karr::Cmd::Pick
 # passes its own (see LOCK_TIMEOUT_FALLBACK there).
+#
+# The whole Go duration grammar, not just ^\d+[hms]$: kanban-md writes
+# claim_timeout with time.ParseDuration, so an imported `1h30m` has to mean
+# ninety minutes here too instead of silently collapsing to the fallback
+# (ticket #78). Anything unparseable -- including "7d", which Go rejects as
+# well -- falls back. An explicit zero is not a failure and is honoured: `0s`
+# is how a board says "locks never expire" (see App::karr::Cmd::Unlock), and
+# swapping it for the default would silently turn that off. A bare `0` with no
+# unit is caught by the falsy guard above and keeps its historical fallback.
 sub _parse_timeout {
     my ($self, $timeout_str, $fallback) = @_;
     $fallback //= 3600;
     return $fallback unless $timeout_str;
-    if ($timeout_str =~ /^(\d+)h$/) { return $1 * 3600; }
-    if ($timeout_str =~ /^(\d+)m$/) { return $1 * 60; }
-    if ($timeout_str =~ /^(\d+)s$/) { return $1; }
-    return $fallback;
+    my $secs = App::karr::Config->parse_duration($timeout_str);
+    return $fallback unless defined $secs && $secs >= 0;
+    return $secs;
 }
 
 # The board's configured claim timeout in seconds, so callers do not each have

@@ -180,7 +180,7 @@ sub execute {
         push @meta, $c->('@' . $t->claimed_by, 'cyan');
       }
       if ($t->has_blocked) {
-        my $reason = $t->blocked;
+        my $reason = $t->has_block_reason ? $t->block_reason : undef;
         $reason = substr($reason, 0, 40) . '...' if defined $reason && length $reason > 43;
         push @meta, $c->(
           defined $reason && length $reason ? "blocked:$reason" : 'blocked', 'bold red');

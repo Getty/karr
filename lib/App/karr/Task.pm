@@ -6,7 +6,12 @@ use Moo;
 use Path::Tiny;
 use Time::Piece;
 use Carp qw( croak );
+use App::karr::Config;
 use App::karr::Encoding qw( yaml_dump yaml_load repair_mojibake );
+# Imported empty on purpose: App::karr::Encoding owns every JSON crossing, so
+# the encode_json/decode_json this module would otherwise pull in must not be
+# reachable here. Only the boolean singletons are wanted -- see L</to_json_hash>.
+use JSON::MaybeXS ();
 
 =head1 SYNOPSIS
 
@@ -33,26 +38,54 @@ L<App::karr::Config>
 
 =cut
 
-has id         => ( is => 'ro', required => 1 );
-has title      => ( is => 'rw', required => 1 );
-has status     => ( is => 'rw', default => sub { 'backlog' } );
-has priority   => ( is => 'rw', default => sub { 'medium' } );
-has assignee   => ( is => 'rw', predicate => 1, clearer => 1 );
-has tags       => ( is => 'rw', default => sub { [] } );
-has due        => ( is => 'rw', predicate => 1, clearer => 1 );
-has estimate   => ( is => 'rw', predicate => 1, clearer => 1 );
-has class      => ( is => 'rw', default => sub { 'standard' } );
-has parent     => ( is => 'rw', predicate => 1, clearer => 1 );
-has depends_on => ( is => 'rw', default => sub { [] } );
-has body       => ( is => 'rw', default => sub { '' } );
-has created    => ( is => 'ro', default => sub { gmtime->datetime . 'Z' } );
-has updated    => ( is => 'rw', default => sub { gmtime->datetime . 'Z' } );
-has claimed_by => ( is => 'rw', predicate => 1, clearer => 1 );
-has claimed_at => ( is => 'rw', predicate => 1, clearer => 1 );
-has blocked    => ( is => 'rw', predicate => 1, clearer => 1 );
-has started    => ( is => 'rw', predicate => 1, clearer => 1 );
-has completed  => ( is => 'rw', predicate => 1, clearer => 1 );
-has file_path  => ( is => 'rw', predicate => 1 );
+has id           => ( is => 'ro', required => 1 );
+has title        => ( is => 'rw', required => 1 );
+has status       => ( is => 'rw', default => sub { 'backlog' } );
+has priority     => ( is => 'rw', default => sub { 'medium' } );
+has assignee     => ( is => 'rw', predicate => 1, clearer => 1 );
+has tags         => ( is => 'rw', default => sub { [] } );
+has due          => ( is => 'rw', predicate => 1, clearer => 1 );
+has estimate     => ( is => 'rw', predicate => 1, clearer => 1 );
+has class        => ( is => 'rw', default => sub { 'standard' } );
+has parent       => ( is => 'rw', predicate => 1, clearer => 1 );
+has depends_on   => ( is => 'rw', default => sub { [] } );
+has body         => ( is => 'rw', default => sub { '' } );
+has created      => ( is => 'ro', default => sub { gmtime->datetime . 'Z' } );
+has updated      => ( is => 'rw', default => sub { gmtime->datetime . 'Z' } );
+has claimed_by   => ( is => 'rw', predicate => 1, clearer => 1 );
+has claimed_at   => ( is => 'rw', predicate => 1, clearer => 1 );
+has blocked      => ( is => 'rw', predicate => 1, clearer => 1 );
+has block_reason => ( is => 'rw', predicate => 1, clearer => 1 );
+has started      => ( is => 'rw', predicate => 1, clearer => 1 );
+has completed    => ( is => 'rw', predicate => 1, clearer => 1 );
+has extra        => ( is => 'rw', default => sub { {} } );
+has file_path    => ( is => 'rw', predicate => 1 );
+
+=attr extra
+
+Frontmatter keys karr does not model, kept verbatim so they survive a write.
+kanban-md unmarshals into a struct and drops anything unknown; karr does not,
+because the field it would delete is just as likely to be a hand-written note
+or a newer kanban-md field as it is to be junk (ticket #69).
+
+Keys are B<not> order-preserved: karr's YAML output is key-sorted, so a
+passthrough field lands in alphabetical position rather than where the author
+put it.
+
+    my $kept = $task->extra->{custom_field};
+
+=cut
+
+# Every frontmatter key karr models itself. Anything else read from a document
+# goes to L</extra> instead of being silently dropped.
+my @FRONTMATTER_FIELDS = qw(
+  id title status priority created updated started completed
+  assignee tags due estimate parent depends_on
+  blocked block_reason claimed_by claimed_at class
+);
+my %IS_FRONTMATTER_FIELD = map { $_ => 1 } @FRONTMATTER_FIELDS;
+
+use constant MAX_SLUG_LENGTH => 50;
 
 # Optional fields are addressed through their predicate everywhere (pick,
 # board, list, show, handoff all treat has_X as "is this set"). Clearing one
@@ -62,20 +95,159 @@ has file_path  => ( is => 'rw', predicate => 1 );
 # normalized back to "unset" instead of lingering as has_X-true-but-undef.
 sub BUILD {
   my ($self) = @_;
-  for my $attr (qw( assignee due estimate parent claimed_by claimed_at blocked started completed )) {
+  for my $attr (qw( assignee due estimate parent claimed_by claimed_at blocked block_reason started completed )) {
     my $clearer = "clear_$attr";
     my $has     = "has_$attr";
     $self->$clearer if $self->$has && !defined $self->$attr;
   }
+  $self->_normalize_blocked;
 }
+
+# karr up to 0.403 stored the blocking *reason* in `blocked` as free text;
+# kanban-md has always had `blocked: bool` plus `block_reason: string`, and its
+# YAML decoder refuses a string there outright ("cannot unmarshal !!str into
+# bool" -- the task then vanishes from its board). This pulls a legacy document
+# into the kanban-md shape on read, which is why no migration command is needed:
+# the next write of that task emits the new shape (ticket #58).
+#
+# The invariant everything downstream relies on: has_blocked is true if and only
+# if the task is blocked. "Blocked but false" is not representable, matching the
+# `omitempty` on kanban-md's Blocked field.
+sub _normalize_blocked {
+  my ($self) = @_;
+  return unless $self->has_blocked;
+  my $raw = $self->blocked;
+
+  # A boolean object from some other YAML loader.
+  return $self->_set_blocked_flag($raw) if ref $raw;
+
+  # YAML::XS loads `blocked: false` as the empty string, so this covers the
+  # honest boolean false as well as an explicitly empty value.
+  return $self->_set_blocked_flag(0) if !length $raw;
+
+  my $bool = eval { App::karr::Config->parse_bool($raw) };
+  return $self->_set_blocked_flag($bool) if defined $bool;
+
+  # Not a boolean spelling, so it is a legacy reason string.
+  $self->_set_blocked_flag(1);
+  $self->block_reason($raw) unless $self->has_block_reason;
+  return;
+}
+
+# Note the asymmetry with L</unblock>: a document that says `blocked: false`
+# while still carrying a `block_reason` keeps that reason, because dropping it
+# would be exactly the silent frontmatter deletion of ticket #69. Only an
+# explicit unblock throws the reason away.
+sub _set_blocked_flag {
+  my ( $self, $value ) = @_;
+  return $value ? $self->blocked(!!1) : $self->clear_blocked;
+}
+
+sub block {
+  my ( $self, $reason ) = @_;
+  $self->blocked(!!1);
+  if ( defined $reason && length $reason ) {
+    $self->block_reason($reason);
+  } else {
+    $self->clear_block_reason;
+  }
+  return $self;
+}
+
+=method block
+
+  $task->block('waiting on the upstream API');
+  $task->block;   # blocked, no reason recorded
+
+Marks the task blocked and records the optional reason, keeping C<blocked> and
+C<block_reason> consistent. This is the only supported way to set them: writing
+C<< $task->blocked($reason) >> is what ticket #58 was about.
+
+=cut
+
+sub unblock {
+  my ($self) = @_;
+  $self->clear_blocked;
+  $self->clear_block_reason;
+  return $self;
+}
+
+=method unblock
+
+  $task->unblock;
+
+Clears the blocked flag and any reason with it.
+
+=cut
+
+sub update_timestamps {
+  my ( $self, $old_status, $new_status, $first_status ) = @_;
+  my $now = gmtime->datetime . 'Z';
+
+  # First move out of the board's first status starts the clock, and never
+  # restarts it.
+  if ( !$self->has_started
+    && defined $first_status
+    && defined $old_status
+    && $old_status eq $first_status
+    && $new_status ne $first_status )
+  {
+    $self->started($now);
+  }
+
+  if ( App::karr::Config->is_terminal_status($new_status) ) {
+    $self->completed($now) unless $self->has_completed;
+    # A task dragged straight to done never passed through in-progress, so it
+    # has no start; without this its cycle time would be unmeasurable.
+    $self->started($now) unless $self->has_started;
+  } elsif ( defined $old_status
+    && App::karr::Config->is_terminal_status($old_status) )
+  {
+    # Reopening. `started` is deliberately kept: the work did begin then.
+    $self->clear_completed;
+  }
+
+  return $self;
+}
+
+=method update_timestamps
+
+  $task->update_timestamps( $old_status, $new_status, $first_status );
+
+Maintains C<started> and C<completed> across a status transition, the single
+place that logic lives (kanban-md keeps it in F<internal/task/lifecycle.go>).
+C<$first_status> is the board's first configured status; pass C<undef> when the
+caller has no config to hand and only the terminal-status rules should apply.
+
+Both stamps are full C<YYYY-MM-DDTHH:MM:SSZ> timestamps like C<created> and
+C<updated>. Before ticket #68 C<started> was a bare date, which is useless for
+the cycle-time arithmetic C<karr metrics> is meant to do.
+
+One deliberate difference from kanban-md: it re-stamps C<completed> on B<every>
+move into a terminal status, so C<done> -> C<archived> overwrites the real
+completion time. karr sets C<completed> only when it is not already set, so
+archiving a finished task keeps the date it was actually finished.
+
+=cut
 
 sub slug {
   my ($self) = @_;
   my $slug = lc($self->title);
   $slug =~ s/[^a-z0-9]+/-/g;
   $slug =~ s/^-|-$//g;
-  $slug = substr($slug, 0, 50);
-  return $slug;
+  return $slug if length($slug) <= MAX_SLUG_LENGTH;
+
+  # Truncate on a word boundary the way kanban-md's GenerateSlug does
+  # (internal/task/slug.go): cutting mid-word backs up to the last dash, and a
+  # cut that already landed on one keeps the whole final word. A hard cut at 50
+  # gave the same task two different filenames in a shared tasks/ directory.
+  my $truncated = substr( $slug, 0, MAX_SLUG_LENGTH );
+  if ( substr( $slug, MAX_SLUG_LENGTH, 1 ) ne '-' ) {
+    my $idx = rindex( $truncated, '-' );
+    $truncated = substr( $truncated, 0, $idx ) if $idx > 0;
+  }
+  $truncated =~ s/-+\z//;
+  return $truncated;
 }
 
 sub filename {
@@ -85,7 +257,14 @@ sub filename {
 
 sub to_frontmatter {
   my ($self) = @_;
-  my %fm = (
+  # Passthrough keys form the base so a modelled field always wins the slot it
+  # owns, and so a field that has since been cleared cannot be resurrected by a
+  # stale copy in extra.
+  my %fm = %{ $self->extra };
+  delete @fm{@FRONTMATTER_FIELDS};
+
+  %fm = (
+    %fm,
     id       => $self->id,
     title    => $self->title,
     status   => $self->status,
@@ -94,17 +273,18 @@ sub to_frontmatter {
     updated  => $self->updated,
     class    => $self->class,
   );
-  $fm{assignee}   = $self->assignee   if $self->has_assignee;
-  $fm{tags}       = $self->tags       if @{$self->tags};
-  $fm{due}        = $self->due        if $self->has_due;
-  $fm{estimate}   = $self->estimate   if $self->has_estimate;
-  $fm{parent}     = $self->parent     if $self->has_parent;
-  $fm{depends_on} = $self->depends_on if @{$self->depends_on};
-  $fm{claimed_by} = $self->claimed_by if $self->has_claimed_by;
-  $fm{claimed_at} = $self->claimed_at if $self->has_claimed_at;
-  $fm{blocked}    = $self->blocked    if $self->has_blocked;
-  $fm{started}    = $self->started    if $self->has_started;
-  $fm{completed}  = $self->completed  if $self->has_completed;
+  $fm{assignee}     = $self->assignee     if $self->has_assignee;
+  $fm{tags}         = $self->tags         if @{$self->tags};
+  $fm{due}          = $self->due          if $self->has_due;
+  $fm{estimate}     = $self->estimate     if $self->has_estimate;
+  $fm{parent}       = $self->parent       if $self->has_parent;
+  $fm{depends_on}   = $self->depends_on   if @{$self->depends_on};
+  $fm{claimed_by}   = $self->claimed_by   if $self->has_claimed_by;
+  $fm{claimed_at}   = $self->claimed_at   if $self->has_claimed_at;
+  $fm{blocked}      = $self->blocked      if $self->has_blocked;
+  $fm{block_reason} = $self->block_reason if $self->has_block_reason;
+  $fm{started}      = $self->started      if $self->has_started;
+  $fm{completed}    = $self->completed    if $self->has_completed;
   return \%fm;
 }
 
@@ -117,12 +297,21 @@ frontmatter fields from L</to_frontmatter> plus a C<body> key when the task has
 a non-empty body. Used by the C<show>, C<pick>, and C<handoff> commands to
 build their C<--json> payload.
 
+C<blocked> comes back as a JSON boolean, so an agent parsing C<--json> sees the
+same C<true> kanban-md emits and never the free-text reason it used to get
+there (ticket #58). A body of C<"0"> is included, because emptiness is tested by
+length and not by truth (ticket #78).
+
 =cut
 
 sub to_json_hash {
   my ($self) = @_;
   my $data = $self->to_frontmatter;
-  $data->{body} = $self->body if $self->body;
+  # to_frontmatter only ever puts a true value here, and it has to become a
+  # real JSON boolean rather than a Perl one: an older JSON backend would
+  # encode Perl's !!1 as the number 1.
+  $data->{blocked} = JSON::MaybeXS::true() if exists $data->{blocked};
+  $data->{body} = $self->body if defined $self->body && length $self->body;
   return $data;
 }
 
@@ -131,7 +320,14 @@ sub to_markdown {
   my $yaml = yaml_dump($self->to_frontmatter);
   $yaml =~ s/\A---\n//;
   my $md = "---\n${yaml}---\n";
-  $md .= "\n" . $self->body . "\n" if $self->body;
+  my $body = $self->body;
+  if ( defined $body && length $body ) {
+    $md .= "\n" . $body;
+    # kanban-md's Write terminates the body only when it is not already
+    # terminated (internal/task/file.go); matching it keeps a document karr
+    # rewrites byte-identical to the one kanban-md would have written.
+    $md .= "\n" unless $body =~ /\n\z/;
+  }
   return $md;
 }
 
@@ -149,8 +345,30 @@ sub _parse_content {
     or die "Invalid task format\n";
   $body //= '';
   $body =~ s/^\n//;
-  $body =~ s/\n$//;
+  # Every trailing newline, not one. The file path and the ref path disagreed
+  # otherwise: App::karr::Git::read_ref_with_oid chomps the blob before the
+  # document reaches us, so a single strip here left the ref round trip one
+  # newline shorter than the file round trip, and a body ending in blank lines
+  # lost one of them per save (ticket #78). Stripping greedily makes both paths
+  # agree on the same normal form -- a karr body never ends in a newline.
+  $body =~ s/\n+\z//;
   return (yaml_load($yaml), $body);
+}
+
+# Split a parsed frontmatter hash into constructor arguments and passthrough
+# keys. Moo drops unknown constructor arguments without a word, so anything not
+# separated out here is deleted from the board on the next write (ticket #69).
+sub _split_frontmatter {
+  my ($class, $fm) = @_;
+  my ( %args, %extra );
+  for my $key ( keys %$fm ) {
+    if ( $IS_FRONTMATTER_FIELD{$key} ) {
+      $args{$key} = $fm->{$key};
+    } else {
+      $extra{$key} = $fm->{$key};
+    }
+  }
+  return ( \%args, \%extra );
 }
 
 sub from_string {
@@ -162,7 +380,8 @@ sub from_string {
   # octets a second time. The body was concatenated onto the document verbatim
   # and is single-encoded, so touching it would corrupt it (ticket #53).
   $fm = repair_mojibake($fm) if $opt{repair_frontmatter};
-  return $class->new(%$fm, body => $body);
+  my ( $args, $extra ) = $class->_split_frontmatter($fm);
+  return $class->new(%$args, extra => $extra, body => $body);
 }
 
 sub from_file {
@@ -174,7 +393,8 @@ sub from_file {
   # left the user to guess which card it came from (ticket #70).
   my $task = eval {
     my ($fm, $body) = $class->_parse_content($file->slurp_utf8);
-    $class->new(%$fm, body => $body, file_path => $file);
+    my ( $args, $extra ) = $class->_split_frontmatter($fm);
+    $class->new(%$args, extra => $extra, body => $body, file_path => $file);
   };
   return $task if $task;
   my $why = $@ || 'unknown error';

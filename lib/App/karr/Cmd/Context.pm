@@ -106,7 +106,7 @@ sub execute {
         grep { $_->status ne $first_status && !$self->store->is_terminal_status($_->status) && !$_->has_blocked }
         @active_tasks;
     } elsif ($sec eq 'blocked') {
-      @items = map { $self->_task_item($_, 'blocked: ' . ($_->blocked // '')) }
+      @items = map { $self->_task_item($_, 'blocked: ' . ($_->has_block_reason ? $_->block_reason : '')) }
         grep { $_->has_blocked }
         @active_tasks;
     } elsif ($sec eq 'overdue') {

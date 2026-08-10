@@ -5,6 +5,7 @@ our $VERSION = '0.403';
 use Moo::Role;
 use Time::Piece;
 use App::karr::Task;
+use App::karr::Config;
 use App::karr::Role::ClaimTimeout;
 
 with 'App::karr::Role::ClaimTimeout';
@@ -139,12 +140,20 @@ meanwhile is reported as not found. Returns the deleted task.
 # The require_claim condition is move's, unchanged: a claim passed on the
 # command line satisfies it, and so does a claim the task already carries.
 #
-# Status *names* are still not validated here, on either path -- `move 1 ZZZ`
-# and `edit 1 --status ZZZ` both take ZZZ today. That is ticket #54 (no
-# validation of status, priority, class or due on any write path), and this is
-# now the single place its check has to go.
+# Being the one status-change path, this is also where the status *name* is
+# checked (ticket #54) and where the lifecycle stamps are maintained (ticket
+# #68) -- both for `move` and for `edit --status`.
 sub apply_status_change {
     my ($self, $task, $new_status, $claimant) = @_;
+
+    # First, so a batch dies on its first id having written nothing: the check
+    # runs inside update_task_guarded's callback, and a die there means the
+    # compare-and-swap write is never reached. `move 1 ZZZ` and `edit 1
+    # --status ZZZ` used to exit 0 and park the task in a column that does not
+    # exist -- invisible on `karr board`, still in the total, and fatal to the
+    # next `karr move --next`.
+    my $config = App::karr::Config->from_merged( $self->store->effective_config );
+    $config->validate_status($new_status);
 
     die "Status '$new_status' requires --claim\n"
         if $self->store->status_requires_claim($new_status)
@@ -153,22 +162,20 @@ sub apply_status_change {
 
     my $old_status = $task->status;
     $task->status($new_status);
-
-    # Lifecycle stamps, moved here verbatim from Cmd::Move so `edit --status`
-    # gets them too. The hardcoded 'in-progress'/'done' and the date-only
-    # `started` are ticket #68's, and are now in one place for it.
-    $task->started( gmtime->strftime('%Y-%m-%d') )
-        if $new_status eq 'in-progress' && !$task->has_started;
-    $task->completed( gmtime->strftime('%Y-%m-%d') )
-        if $new_status eq 'done' && !$task->has_completed;
+    # The lifecycle rules themselves live on the task, mirroring kanban-md's
+    # internal/task/lifecycle.go: `started` on the first move out of the first
+    # configured status, `completed` on any terminal status, and `completed`
+    # cleared again when a task is reopened.
+    $task->update_timestamps( $old_status, $new_status, ( $config->statuses )[0] );
 
     return $old_status;
 }
 
 =head2 apply_status_change
 
-The only place a task's status is assigned. Applies C<require_claim> and the
-lifecycle stamps, and returns the status the task had before the change.
+The only place a task's status is assigned. Rejects a status the board does not
+configure, applies C<require_claim> and the lifecycle stamps, and returns the
+status the task had before the change.
 
     my $old_status = $self->apply_status_change( $task, 'in-progress', $claimant );
 

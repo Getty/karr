@@ -122,6 +122,14 @@ sub execute {
 
   my $ec = $self->store->effective_config;
   my $defaults = $ec->{defaults} // {};
+  my $config = App::karr::Config->from_merged($ec);
+
+  # Validate before allocating an id, so a rejected create does not burn one
+  # (ticket #54).
+  $config->validate_status( $self->status )     if defined $self->status;
+  $config->validate_priority( $self->priority ) if defined $self->priority;
+  $config->validate_class( $self->class )       if defined $self->class;
+  App::karr::Config->validate_due( $self->due ) if defined $self->due;
 
   my %task_args = (
     id       => $self->allocate_next_id,
@@ -135,7 +143,8 @@ sub execute {
   $task_args{tags}     = [split /,/, $self->tags] if $self->tags;
   $task_args{due}      = $self->due if $self->due;
   $task_args{estimate} = $self->estimate if $self->estimate;
-  $task_args{body}     = $self->body if $self->body;
+  # length, not truth: --body 0 is a body (ticket #78).
+  $task_args{body}     = $self->body if defined $self->body && length $self->body;
 
   my $task = App::karr::Task->new(%task_args);
   $self->save_task($task);

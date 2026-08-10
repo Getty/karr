@@ -11,6 +11,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
 use App::karr::Task;
+use App::karr::Config;
 use Time::Piece;
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
@@ -160,6 +161,14 @@ sub execute {
   my @ids = $self->parse_ids($id_str);
   die "Usage: karr edit ID[,ID,...] [FLAGS]\n" unless @ids;
 
+  # Once, before any task is touched: these are plain option values, so a bad
+  # one must not update the first half of a batch (ticket #54). --status is not
+  # here because it goes through apply_status_change, which is the one place a
+  # status change happens and therefore the one place its name is checked.
+  my $config = App::karr::Config->from_merged( $self->store->effective_config );
+  $config->validate_priority( $self->priority ) if defined $self->priority;
+  App::karr::Config->validate_due( $self->due ) if defined $self->due;
+
   my @results;
   for my $id (@ids) {
     my $task = $self->update_task_guarded($id, sub {
@@ -180,7 +189,10 @@ sub execute {
       $task->body($self->body)         if defined $self->body;
 
       if ($self->append_body) {
-        $task->body(($task->body ? $task->body . "\n" : '') . $self->append_body);
+        # length, not truth: appending to a body of "0" must not replace it
+        # (ticket #78).
+        my $have = defined $task->body && length $task->body;
+        $task->body(($have ? $task->body . "\n" : '') . $self->append_body);
       }
 
       if ($self->add_tag) {
@@ -205,11 +217,11 @@ sub execute {
       }
 
       if ($self->block) {
-        $task->blocked($self->block);
+        $task->block($self->block);
       }
 
       if ($self->unblock) {
-        $task->clear_blocked;
+        $task->unblock;
       }
     });
 
