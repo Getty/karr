@@ -1,0 +1,36 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:48:56Z
+id: 73
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- cli
+title: karr delete without --yes prints Perl warnings when stdin is not a TTY
+updated: 2026-08-10T01:27:58Z
+---
+
+Exactly the class of bug ticket #33 was:
+
+    karr delete 2 < /dev/null
+    Use of uninitialized value $answer in scalar chomp at Cmd/Delete.pm line 70.
+    Use of uninitialized value $answer in pattern match (m//) at Cmd/Delete.pm line 71.
+    Delete task 2: d? [y/N] Skipped task 2: d
+    rc=0
+
+`my $answer = <STDIN>` (`Cmd/Delete.pm:69-71`) returns undef at EOF. Any agent or
+CI run that forgets `--yes` gets raw Perl diagnostics on stderr.
+
+Fix: treat EOF as "no" without warning — and consider refusing outright with a
+clear "not a terminal, use --yes" message, which is friendlier to the unattended
+agents karr is built for. Check the other interactive prompts for the same
+pattern (`restore`, `destroy`).
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
