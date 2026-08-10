@@ -1,0 +1,29 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T14:40:09Z
+id: 103
+priority: low
+status: done
+tags:
+- docs
+- cli
+- interop
+title: POD and Changes still call the priority sort direction a deviation from kanban-md
+updated: 2026-08-10T14:58:21Z
+---
+
+Follow-up to #91, which made `karr list --sort priority` read the config list backwards so the most urgent task opens the list, agreeing with what `karr pick` hands out. At the time that direction disagreed with kanban-md, so it was written up as a deliberate deviation.
+
+kanban-md has since taken the same change: commit c783157 "fix: sort priority lists highest first" (upstream main, reference checkout now at that commit). It solves it one layer up rather than in the comparator -- `cmd/list.go` flips `reverse` when the sort key is `priority`, leaving `internal/board/sort.go` ascending -- but the observable behaviour is now identical to karrs: `--sort priority` opens with the most urgent task, `--reverse` gives the least-urgent-first view. Their e2e coverage pins both directions, and their README documents it the same way.
+
+So the deviation is gone and only the prose claiming it is left. Stale wording, each verified against the tree:
+
+- lib/App/karr/Cmd/List.pm:74-77 (POD) -- "This direction is a documented deviation from kanban-md, whose ascending config order opens the list with the least urgent task -- the opposite of its own pick."
+- lib/App/karr/Cmd/List.pm:270 (comment above _comparators) -- "kanban-md ascending order (sort.go:29) put the least urgent task on top, the exact opposite of pick." Reads as a live divergence in context, even though the verb is past tense. Note sort.go:29 is still accurate as a description of their comparator; what changed sits in cmd/list.go.
+- Changes:129-130 -- "This deliberately deviates from kanban-md, whose `list --sort priority` still follows the config order ascending."
+
+No behaviour change: karr already does the right thing and keeps its own implementation (the comparator reads the list backwards; kanban-md flips the reverse flag). Only the claim of divergence is wrong. Worth keeping in the wording: karr breaks ties on id, which kanban-md does not, so identical-priority ordering is still karrs own.
+
+Decided with the maintainer while this was found: the default sort of `karr list` stays `id`. This ticket is about the `--sort priority` direction only.
+Landed on main as a9ec82a (combined commit with the other three tickets). Full suite green over the combined tree: 112 files, 756 tests.
