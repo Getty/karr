@@ -228,7 +228,7 @@ sub _render_markdown {
         $md .= sprintf "- **#%d** %s (%s", $item->{id}, $item->{title}, $item->{priority};
         $md .= ", \@$item->{assignee}" if $item->{assignee};
         $md .= ")";
-        $md .= " — $item->{note}" if $item->{note};
+        $md .= " \x{2014} $item->{note}" if $item->{note};
         $md .= "\n";
       }
     }

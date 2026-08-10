@@ -1,5 +1,38 @@
 {{$NEXT}}
 
+    - Fixed the em dash literals that reached users double-encoded (ticket
+      #108). No file under lib/ or bin/ says `use utf8`, deliberately: non-ASCII
+      belongs in data, and App::karr::Encoding owns every character/octet
+      crossing. Eleven string literals in executable code carried a pasted em
+      dash anyway, so Perl read its three bytes as three Latin-1 characters and
+      the `:encoding(UTF-8)` layer encoded each of them again — the user saw a
+      stray a-circumflex and two control characters where a dash belonged. The
+      worst was `karr context`, which renders one on every noted item in the
+      blocked, overdue and recently-completed sections, both on stdout and into
+      the file `--write-to` names; `karr-foundation` accounted for the other
+      ten, including the TIMEOUT notice App::karr::Foundation::Runner appends to
+      `.karr.log`, which corrupted a file on disk and not merely a terminal. All
+      eleven now spell the character `"\x{2014}"`, which also restores byte
+      compatibility with kanban-md's own context block. t/124-source-ascii-only.t
+      polices the class from here on, using PPI so that the em dashes in POD and
+      comments — harmless, and plentiful — raise nothing.
+    - Closed the last of the role import leaks: App::karr::Role::ClaimTimeout
+      and App::karr::Role::TaskMutation no longer compose Time::Piece's
+      `localtime` and `gmtime` into the commands that consume them — `move`,
+      `edit`, `delete`, `archive`, `handoff`, `pick` and `unlock` (ticket #105,
+      finishing #38). These were the worse half of that family, because the two
+      shadow builtins: a later `sub localtime` or an attribute of that name on a
+      command class would have fought an inherited Time::Piece export, and the
+      failure would have read as a core function misbehaving. Time::Piece is not
+      a drop-in for the usual cure — replacing the builtins is its whole point —
+      so the call sites were decided one at a time instead of swept.
+      ClaimTimeout keeps the module and spells its one live call
+      `Time::Piece::gmtime()`, because `_claim_expired` needs the overloaded
+      object and the builtin would hand that subtraction a string; TaskMutation
+      never asked for the time at all and drops the module, since the lifecycle
+      stamps are written by App::karr::Task. Nothing called either as a method,
+      so no behaviour changes, and t/121-role-import-leakage.t now runs with an
+      empty allow-list.
     - Finished the sweep that stopped karr's own source locations reaching the
       user (ticket #77). `croak` appends " at Some/Module.pm line 42." even to a
       message that already ends in a newline, so anyone who ran `karr list`
@@ -39,11 +72,10 @@
       named `path` would have fought an inherited Path::Tiny constructor for it,
       silently. Both roles now load what they need with an empty import list and
       qualify the call, which is what App::karr::Role::Output and
-      App::karr::Role::TaskMutation already did. Still leaking, and out of scope
-      here: `use Time::Piece;` in App::karr::Role::ClaimTimeout and
-      App::karr::Role::TaskMutation puts its `localtime`/`gmtime` on the
-      mutating commands, and MooX::Cmd::Role composes `croak` into every command
-      class from upstream, which karr cannot fix from here.
+      App::karr::Role::TaskMutation already did. The `use Time::Piece;` that was
+      out of scope here went with ticket #105 above. Still leaking, and not
+      karr's to fix: MooX::Cmd::Role composes `croak` into every command class
+      from upstream.
     - Fixed an ordinary kanban-md round trip silently switching a disabled
       board back on. kanban-md rewrites `config.yml` the moment it loads one —
       it migrates the schema version and re-serialises the file from its own

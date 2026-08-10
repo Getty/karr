@@ -47,15 +47,16 @@ my $FRAMEWORK = qr{
       ) \z
 }x;
 
-# Imports that leak today, are NOT part of this ticket, and are recorded here so
-# that a NEW one fails this test instead of joining them unnoticed:
-# App::karr::Role::ClaimTimeout and App::karr::Role::TaskMutation both say
-# `use Time::Piece;`, which puts its localtime/gmtime replacements on every
-# mutating command class. Delete the entry when a role stops leaking it.
-my %KNOWN_LEAK = (
-    'App::karr::Role::ClaimTimeout'  => { map { $_ => 'Time::Piece' } qw( gmtime localtime ) },
-    'App::karr::Role::TaskMutation'  => { map { $_ => 'Time::Piece' } qw( gmtime localtime ) },
-);
+# Imports that leak today, are NOT part of the ticket in hand, and are recorded
+# here so that a NEW one fails this test instead of joining them unnoticed. An
+# entry also has to describe reality: the loop below fails when a listed leak is
+# gone, so fixing one forces the entry out rather than leaving a licence behind
+# for a future import of the same name.
+#
+# Empty since #105 closed the last two: App::karr::Role::ClaimTimeout and
+# App::karr::Role::TaskMutation both said `use Time::Piece;`, which put its
+# localtime/gmtime replacements on every mutating command class.
+my %KNOWN_LEAK = ();
 
 my @ROLES = map { "App::karr::Role::$_" } qw(
     BoardAccess BoardDiscovery ClaimTimeout CliArgs
@@ -95,6 +96,30 @@ subtest 'the two imports named in the ticket are gone from the role packages' =>
     ok !exists $sync{user_error},  'SyncLifecycle did not either';
 };
 
+# Ticket #105: the same hazard in the two mutation roles, which both said
+# `use Time::Piece;`. That one shadows builtins, so it was the worse of the
+# family: a later `sub localtime` or an attribute of that name on move, edit,
+# delete, archive or handoff would have fought an inherited export, and the
+# failure would have read as a core function misbehaving.
+subtest 'the mutation roles no longer compose Time::Piece over the builtins' => sub {
+    my %claim = subs_with_origin('App::karr::Role::ClaimTimeout');
+    my %mut   = subs_with_origin('App::karr::Role::TaskMutation');
+
+    for my $name (qw( gmtime localtime )) {
+        ok !exists $claim{$name}, "ClaimTimeout no longer holds Time::Piece::$name";
+        ok !exists $mut{$name},   "TaskMutation no longer holds Time::Piece::$name";
+    }
+
+    # ClaimTimeout kept the dependency and lost only the import: _claim_expired
+    # still needs the overloaded object, because the builtin gmtime returns a
+    # string there and the subtraction against the parsed stamp would be
+    # nonsense. t/72-claim-timeout.t is what proves the arithmetic still works;
+    # this only proves the module is still there to do it.
+    ok $INC{'Time/Piece.pm'}, 'Time::Piece is still loaded';
+    is $claim{check_claim}, 'App::karr::Role::ClaimTimeout',
+        'ClaimTimeout still defines its own subs';
+};
+
 # Deliberately not a real command class: MooX::Cmd::Role does `use Carp;`
 # upstream and composes croak into every one of them, which karr cannot fix from
 # here and which would mask a regression in karr's own roles.
@@ -104,6 +129,23 @@ subtest 'the two imports named in the ticket are gone from the role packages' =>
     use MooX::Options;
     with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SyncLifecycle';
 }
+
+{
+    package MutationConsumer;
+    use Moo;
+    use MooX::Options;
+    with 'App::karr::Role::TaskMutation';
+}
+
+subtest 'a consumer of the mutation roles inherits no time function' => sub {
+    for my $leak (qw( gmtime localtime )) {
+        ok( !MutationConsumer->can($leak),
+            "a consumer of TaskMutation has no ->$leak" );
+    }
+
+    ok( MutationConsumer->can($_), "...but still has ->$_" )
+        for qw( run_batch update_task_guarded apply_status_change check_claim );
+};
 
 subtest 'a consumer of the board roles inherits none of it' => sub {
     for my $leak (qw( path croak user_error clean_error )) {

@@ -22,4 +22,8 @@ on test => sub {
     requires 'Test::More';
     requires 'File::Temp';
     requires 'Test::Exception';
+    # t/124-source-ascii-only.t classifies every token in lib/ and bin/ so that
+    # POD and comments stay exempt; a regex over lines cannot tell a `#` opening
+    # a comment from one inside a string.
+    requires 'PPI';
 };

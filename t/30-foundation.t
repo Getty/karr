@@ -70,9 +70,20 @@ subtest 'missing config warns and returns empty' => sub {
   # cannot resolve to a real file on the machine running the tests.
   local $ENV{HOME} = tempdir( CLEANUP => 1 );
   my $f = new_foundation();
-  my $cfg = $f->_config_data;
+  # The warning is the subject of this subtest, so catch it rather than let it
+  # through to the harness's STDERR. That handle has no :encoding(UTF-8) layer
+  # here -- bin/karr-foundation installs it via enable_std_utf8, an in-process
+  # caller does not -- so the em dash in the message (ticket #108) would print
+  # wide and warn about it on the way out.
+  my @warnings;
+  my $cfg = do {
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+    $f->_config_data;
+  };
   is ref $cfg, 'HASH', 'returns hashref';
   is scalar keys %$cfg, 0, 'empty when no config';
+  is scalar @warnings, 1, 'and says so exactly once';
+  like $warnings[0], qr/config not found/, '...naming the missing config';
 };
 
 subtest 'config file loaded' => sub {

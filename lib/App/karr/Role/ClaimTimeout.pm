@@ -3,7 +3,21 @@
 package App::karr::Role::ClaimTimeout;
 our $VERSION = '0.500';
 use Moo::Role;
-use Time::Piece;
+# Loaded without importing, and every call below is qualified. A Moo::Role
+# composes every sub in its package into its consumers, imported ones included,
+# so `use Time::Piece;` here put its localtime/gmtime replacements on every
+# command that composes this role (#105). Worse than the #38 cases, because
+# those two shadow builtins: a future `sub localtime` on a command class would
+# fight an inherited export and look like a core function misbehaving.
+# App::karr::Role::Output and App::karr::Role::BoardDiscovery state the rule.
+#
+# Time::Piece is not a drop-in for that treatment -- replacing the builtins is
+# its whole point -- so the two sites below were decided one at a time:
+# ->strptime was already a class method and needs no import, and the gmtime in
+# _claim_expired wants the overloaded object (the builtin returns a string in
+# that scalar context, and the subtraction would be nonsense), so it is spelled
+# Time::Piece::gmtime().
+use Time::Piece ();
 use App::karr::Config;
 
 =head1 DESCRIPTION
@@ -92,7 +106,7 @@ sub _claim_expired {
     return 0 unless $task->has_claimed_at;
     my $claimed = $self->_parse_claim_stamp( $task->claimed_at );
     return 0 unless defined $claimed;
-    return (gmtime() - $claimed) > $timeout_secs;
+    return (Time::Piece::gmtime() - $claimed) > $timeout_secs;
 }
 
 # The one claim-ownership rule, mirroring kanban-md's task.CheckClaim

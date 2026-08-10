@@ -49,7 +49,11 @@ sub render {
   my $buf = '';
   {
     local *STDOUT;
-    open STDOUT, '>', \$buf or die $!;
+    # Same layer bin/karr installs via enable_std_utf8: reopening STDOUT drops
+    # it, and App::karr::Encoding's POD makes putting it back the in-process
+    # capturer's job. Without it the em dash in a noted item (ticket #108)
+    # prints wide and warns.
+    open STDOUT, '>:encoding(UTF-8)', \$buf or die $!;
     $cmd->execute( [], [] );
   }
   return $buf;

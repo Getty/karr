@@ -74,7 +74,7 @@ sub _build_config_data {
     : path( $ENV{HOME} )->child( '.config', 'karr-foundation', 'config.yml' );
 
   unless ( $cfg_path->exists ) {
-    warn "karr-foundation: config not found at $cfg_path — nothing to do\n";
+    warn "karr-foundation: config not found at $cfg_path \x{2014} nothing to do\n";
     return {};
   }
 
@@ -255,7 +255,7 @@ sub run {
   my ( $self ) = @_;
   my @repos = $self->_discover_repos;
   unless ( @repos ) {
-    warn "karr-foundation: no repos found — check config\n";
+    warn "karr-foundation: no repos found \x{2014} check config\n";
     return 1;
   }
 
@@ -360,7 +360,7 @@ sub _process_repo {
   my $has_karr = $repo->child('.karr')->exists
               || App::karr::Git->new( dir => "$repo" )->ref_exists('refs/karr/config');
   unless ( $has_karr ) {
-    $self->_say_verbose("skip $repo — no karr board");
+    $self->_say_verbose("skip $repo \x{2014} no karr board");
     return;
   }
 
@@ -378,20 +378,20 @@ sub _process_repo {
   # is shown in the overview, not run.
   my $cmd = $self->_agent_command( $repo, $karr );
   unless ( defined $cmd ) {
-    $self->_say_verbose("skip $repo — no agent configured (see --status)");
+    $self->_say_verbose("skip $repo \x{2014} no agent configured (see --status)");
     return;
   }
 
   # Check lock — skip if another instance is running
   if ( $self->_lock_held( $repo ) ) {
-    $self->_say_verbose("skip $repo — locked by running agent");
+    $self->_say_verbose("skip $repo \x{2014} locked by running agent");
     return;
   }
 
   # Respect exponential cooldown left by a previous common-error run
   if ( $self->_cooldown_active( $repo ) ) {
     my $until = $self->_state_get( $repo, 'cooldown_until' ) // 0;
-    $self->_say_verbose( "skip $repo — in cooldown for " . ( $until - time ) . "s" );
+    $self->_say_verbose( "skip $repo \x{2014} in cooldown for " . ( $until - time ) . "s" );
     return;
   }
 
@@ -415,7 +415,7 @@ sub _process_repo {
   }
 
   unless ( $should_run ) {
-    $self->_say_verbose("skip $repo — no board change and no actionable tasks");
+    $self->_say_verbose("skip $repo \x{2014} no board change and no actionable tasks");
     return;
   }
 
@@ -495,7 +495,7 @@ sub _skip_disabled {
   my $off = $self->_board_disabled( $repo ) or return 0;
   my $reason = $off->{reason};
   $self->_say_verbose(
-    "skip $repo — board disabled" . ( defined $reason ? ": $reason" : '' ) );
+    "skip $repo \x{2014} board disabled" . ( defined $reason ? ": $reason" : '' ) );
   return 1;
 }
 

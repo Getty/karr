@@ -127,7 +127,7 @@ sub _run_command {
   my $exit_code;
   if ($timed_out) {
     my $elapsed = time - $started;
-    $self->foundation->_append_log( $repo, "TIMEOUT after ${elapsed}s — sending SIGTERM to $pid" );
+    $self->foundation->_append_log( $repo, "TIMEOUT after ${elapsed}s \x{2014} sending SIGTERM to $pid" );
     kill 'TERM', $pid;
     sleep 2;
     kill 'KILL', $pid;

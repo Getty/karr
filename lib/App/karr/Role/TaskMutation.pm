@@ -3,7 +3,10 @@
 package App::karr::Role::TaskMutation;
 our $VERSION = '0.500';
 use Moo::Role;
-use Time::Piece;
+# No Time::Piece here on purpose: this role never asks for the time itself --
+# the lifecycle stamps are set by App::karr::Task::update_timestamps, which
+# loads its own -- and `use Time::Piece;` composed its localtime/gmtime
+# replacements into move, edit, delete, archive and handoff for nothing (#105).
 use App::karr::Task;
 use App::karr::Config;
 # Loaded without importing, for the reason spelled out in
