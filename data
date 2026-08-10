@@ -1,0 +1,39 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:37:40Z
+id: 51
+priority: low
+started: 2026-08-09
+status: done
+tags:
+- bug
+- git
+title: 'delete_ref cannot fail: error discarded, WRITES incremented regardless'
+updated: 2026-08-10T01:27:58Z
+---
+
+`lib/App/karr/Git.pm:273-279`:
+
+    try { $repo->reference_delete($ref) };   # no catch, error discarded
+    $WRITES++;
+    return 1;
+
+Always reports success, and always increments the `$WRITES` gate that
+`SyncGuard`/`flush_armed` use to decide whether a push is needed — even when
+nothing was deleted.
+
+Reported as low because the auditor could not construct a case where this alone
+causes user-visible damage. It is on the list because it is exactly the shape of
+the already-fixed #31 (a return value that can only say yes), it feeds the push
+decision of the insurance guard, and it will be someone's confusing afternoon
+the first time a delete quietly does nothing.
+
+Fix: catch the error, return false on failure, and only count a write that
+happened.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
