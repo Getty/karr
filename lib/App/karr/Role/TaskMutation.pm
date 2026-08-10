@@ -265,7 +265,13 @@ sub apply_status_change {
     # internal/task/lifecycle.go: `started` on the first move out of the first
     # configured status, `completed` on any terminal status, and `completed`
     # cleared again when a task is reopened.
-    $task->update_timestamps( $old_status, $new_status, ( $config->statuses )[0] );
+    #
+    # The board's own config goes with it, so "terminal" means this board's
+    # last column and not the literal `done`: on a board that ends in
+    # `shipped`, move/edit/archive/handoff recorded no completion at all
+    # (left over from ticket #67).
+    $task->update_timestamps( $old_status, $new_status, ( $config->statuses )[0],
+        $config );
 
     return $old_status;
 }

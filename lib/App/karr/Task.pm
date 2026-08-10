@@ -90,15 +90,31 @@ use constant MAX_SLUG_LENGTH => 50;
 # Optional fields are addressed through their predicate everywhere (pick,
 # board, list, show, handoff all treat has_X as "is this set"). Clearing one
 # by assigning undef would leave the predicate true, so callers must use the
-# generated clear_X. This guards the load path: a file that carries an
-# explicit null (our own older writes, or an external kanban-md edit) is
-# normalized back to "unset" instead of lingering as has_X-true-but-undef.
+# generated clear_X. This guards the load path: a document that carries an
+# explicit null, or a value with no length at all, is normalized back to
+# "unset" instead of lingering as has_X-true-but-empty.
+#
+# The empty case is the interop one. Every optional field here is `omitempty`
+# in kanban-md's Go struct, so "absent" and "present but empty" are the same
+# state on that side of the boundary -- while on this side Moo's predicate
+# calls the second one set. A hand-written or third-party card carrying
+# `claimed_by: ""` therefore looked claimed to `board`, blocked a
+# require_claim move in `move`/`edit`, printed "Claimed:" with nothing after
+# it in `show`, and counted as an engaged card toward karr-foundation's
+# auto-block. #59 patched three of those readers one at a time; normalizing
+# once here is the same fix for all of them, including the ones nobody has
+# written yet (ticket #98).
+#
+# Emptiness is length, never truth: `0` and `"0"` are one character long and
+# have to survive, which is the trap that gave ticket #78 its "body 0" row.
 sub BUILD {
   my ($self) = @_;
   for my $attr (qw( assignee due estimate parent claimed_by claimed_at blocked block_reason started completed )) {
     my $clearer = "clear_$attr";
     my $has     = "has_$attr";
-    $self->$clearer if $self->$has && !defined $self->$attr;
+    next unless $self->$has;
+    my $value = $self->$attr;
+    $self->$clearer if !defined $value || !length $value;
   }
   $self->_normalize_blocked;
 }
@@ -181,8 +197,17 @@ Clears the blocked flag and any reason with it.
 =cut
 
 sub update_timestamps {
-  my ( $self, $old_status, $new_status, $first_status ) = @_;
+  my ( $self, $old_status, $new_status, $first_status, $config ) = @_;
   my $now = gmtime->datetime . 'Z';
+
+  # Called on the class, is_terminal_status answers for the default board --
+  # the literal `done` and `archived`. That is all this method could ever ask
+  # before the last #67 leftover fell, so a board whose final column is named
+  # anything else recorded no completion at all: `karr move 1 shipped` stamped
+  # `started` and left `completed` unset for ever, and every reader built on
+  # it (metrics, context's recently-completed) saw an empty set. Hand the
+  # board's own App::karr::Config in and its statuses decide instead.
+  $config //= 'App::karr::Config';
 
   # First move out of the board's first status starts the clock, and never
   # restarts it.
@@ -195,13 +220,13 @@ sub update_timestamps {
     $self->started($now);
   }
 
-  if ( App::karr::Config->is_terminal_status($new_status) ) {
+  if ( $config->is_terminal_status($new_status) ) {
     $self->completed($now) unless $self->has_completed;
     # A task dragged straight to done never passed through in-progress, so it
     # has no start; without this its cycle time would be unmeasurable.
     $self->started($now) unless $self->has_started;
   } elsif ( defined $old_status
-    && App::karr::Config->is_terminal_status($old_status) )
+    && $config->is_terminal_status($old_status) )
   {
     # Reopening. `started` is deliberately kept: the work did begin then.
     $self->clear_completed;
@@ -212,12 +237,18 @@ sub update_timestamps {
 
 =method update_timestamps
 
-  $task->update_timestamps( $old_status, $new_status, $first_status );
+  $task->update_timestamps( $old_status, $new_status, $first_status, $config );
 
 Maintains C<started> and C<completed> across a status transition, the single
 place that logic lives (kanban-md keeps it in F<internal/task/lifecycle.go>).
 C<$first_status> is the board's first configured status; pass C<undef> when the
 caller has no config to hand and only the terminal-status rules should apply.
+
+C<$config> is the board's L<App::karr::Config>, and it decides which statuses
+are terminal. Omit it and the default board's C<done>/C<archived> pair decides,
+which is wrong for any board that names its final column something else -- on
+such a board nothing is ever stamped C<completed> (a leftover from ticket #67).
+Every caller that has a config in hand should pass it.
 
 Both stamps are full C<YYYY-MM-DDTHH:MM:SSZ> timestamps like C<created> and
 C<updated>. Before ticket #68 C<started> was a bare date, which is useless for

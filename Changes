@@ -38,6 +38,44 @@
     - `karr import` now names a `config.yml` that is not a mapping, instead of
       dying with a bare `Not a HASH reference` and a line number in
       BoardStore.pm — the same promise it already made for a malformed card.
+    - Fixed the remaining readers that took an empty frontmatter value for a
+      real one, and stopped writing such values out. `claimed_by: ""` made
+      `karr show` print "Claimed:" with nothing after it and `karr board` draw
+      a bare "@" and count the card as claimed; it satisfied the `require_claim`
+      rule, so `karr move 1 in-progress` went through with no claimant at all;
+      and karr-foundation counted the card as one its agent had engaged, which
+      is what feeds the auto-block. Rather than a fifth per-reader test, an
+      optional field whose value has no length now loads as unset, once, in the
+      task model — which is what `omitempty` on kanban-md's Go struct means and
+      where the asymmetry came from. `0` and `"0"` are one character long and
+      stay values. This changes what karr writes: a card imported carrying
+      those empty keys loses them on its next write, which is exactly the shape
+      kanban-md's own writer produces, verified by a round trip through both
+      tools.
+    - Fixed `completed` never being recorded on a board whose final column is
+      not named `done`. Which move counts as finishing was decided against a
+      hardcoded pair rather than against the board, so on a board ending in
+      `shipped` `karr move 1 shipped` recorded the start of the work and never
+      its finish — and everything built on that stamp, `karr context`'s
+      recently-completed section and the cycle times `karr metrics` is meant to
+      report, was empty for ever. `karr move`, `karr edit --status`,
+      `karr archive` and `karr handoff` now hand the board's own configuration
+      to the lifecycle rules. Not yet fixed: `karr pick --move` still stamps
+      without one, so that one path keeps assuming `done`/`archived`.
+    - Fixed `karr context`'s recently-completed section, which had never
+      produced a single entry on any board: it was selected out of the
+      non-terminal tasks, so the terminal statuses it looked for could not be
+      among them. It now scans the whole board, bounded by the completion stamp
+      within `--days` (default 7), the way kanban-md bounds it. Cards in
+      `archived` stay out — those are filed away, not recent.
+    - Fixed `karr init` adding `tasks/` and `config.yml` to .gitignore even
+      when the project already tracks content at those paths. Git applies no
+      ignore rule to a file it tracks, so the entries changed nothing at all
+      while telling every later reader that karr owned paths the project owns —
+      and they said so right where `karr materialize` refuses to write, for
+      that very reason. init now leaves .gitignore alone in that case and
+      reports what it did not do. Not yet fixed: `karr materialize` still adds
+      the entries without that check.
     - Fixed `karr pick` being blind to a board imported from kanban-md. An
       optional frontmatter field set to the empty string counted as set,
       because a Moo predicate only knows whether the attribute was passed —
@@ -50,9 +88,10 @@
       already applied. Three more of the same: `karr list` printed a bare "@"
       for `assignee: ""`, `karr context` counted `due: ""` as overdue for ever
       (the empty string sorting before every real date), and `karr context
-      --json` emitted an `assignee` key with nothing in it. Not yet fixed: the
-      same assumption still stands in `karr show`, `karr board` and the
-      no-claim test the mutating commands share.
+      --json` emitted an `assignee` key with nothing in it. The same assumption
+      in `karr show`, `karr board` and the no-claim test the mutating commands
+      share is fixed too — see the entry above, which moves the rule into the
+      task model instead of into a fifth reader.
     - Fixed `karr pick --json` printing an English sentence when there is
       nothing to pick, on both of its empty paths, so the one karr command
       certain to be machine-parsed handed its consumer a JSON decode error
@@ -69,11 +108,10 @@
       when the last is `archived`, with `archived` terminal either way. Nothing
       changes on a default board, and `statuses` remains read-only from the
       CLI, so a custom list still only arrives through `karr import` of a
-      kanban-md config.yml. Not yet fixed: `karr handoff` still moves to a
-      hardcoded `review` without checking the board has such a column,
-      `karr board` still counts claims against a literal `done`/`archived`,
-      and the `completed` stamp is still only written on a move into a literal
-      `done`.
+      kanban-md config.yml. `karr board`'s claim counting and the `completed`
+      stamp followed — see the entries above. Not yet fixed: `karr handoff`
+      still moves to a hardcoded `review` without checking the board has such a
+      column.
     - New `karr list --archived`, which shows the archive and only the
       archive, matching kanban-md's flag of the same name. It replaces the
       other status filtering rather than narrowing it, so it wins over

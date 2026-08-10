@@ -113,21 +113,22 @@ sub run_execute {
   return ( $err, $out );
 }
 
-subtest 'the empty strings really do survive the import' => sub {
+subtest 'the empty strings do not survive the import' => sub {
   my $store = board_with_card($KANBAN_CARD);
   my ($task) = $store->load_tasks;
 
   ok( $task, 'the card is on the board' );
   ok( !$task->has_blocked, 'blocked: false is normalised away (ticket #58)' );
 
-  # Not an accident of this test: these two are what is actually stored, and
-  # they are the reason the bug exists. If a later change makes Task itself
-  # normalise empty strings to "absent" on load, this assertion is the one to
-  # revisit -- the behaviour assertions below must stay green either way.
-  ok( $task->has_claimed_by, 'claimed_by: "" is still present on the task' );
-  is( $task->claimed_by, '', '... and it is the empty string' );
-  ok( $task->has_block_reason, 'block_reason: "" is still present' );
-  is( $task->block_reason, '', '... and it is the empty string too' );
+  # This assertion is inverted from the one #59 left here, which recorded that
+  # the empty strings reached the task untouched and named itself "the one to
+  # revisit if a later change makes Task normalise them on load". Ticket #98 is
+  # that change: an optional field whose value has no length now loads as
+  # unset, which is the same fix for every reader at once. The behaviour
+  # assertions below are unchanged and stay green either way -- which is the
+  # point of having had them.
+  ok( !$task->has_claimed_by,   'claimed_by: "" loads as no claim at all' );
+  ok( !$task->has_block_reason, 'block_reason: "" loads as no reason at all' );
 };
 
 subtest 'pick claims a card whose claimed_by is the empty string' => sub {
