@@ -1,0 +1,41 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:44:55Z
+id: 60
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- interop
+- materialize
+title: materialize writes a config kanban-md refuses to load
+updated: 2026-08-10T01:27:58Z
+---
+
+`karr materialize` is documented as the bridge to kanban-md. The config it
+writes is rejected outright by the real binary:
+
+    karr materialize && kanban list
+      -> parsing config: yaml: unmarshal errors:
+           line  6: cannot unmarshal !!int `1` into bool   (bypass_column_wip)
+           line 27: cannot unmarshal !!int `1` into bool   (require_claim)
+           line 29: cannot unmarshal !!int `1` into bool   (require_claim)
+      # after hand-fixing the bools:
+      -> invalid config: next_id must be >= 1              (key absent entirely)
+
+Two independent blockers in `BoardStore.pm:232` (`DumpFile` of the merged config)
+and `Config.pm:214-247`: Perl's `1`/`0` are dumped as YAML integers where
+kanban-md expects `true`/`false`, and `next_id` is never materialized at all —
+`serialize_from` even strips it (`BoardStore.pm:296`).
+
+So the refs->files direction of the bridge does not work for its stated purpose.
+Fix: emit real YAML booleans (JSON::PP::true / YAML::XS boolean handling) for the
+boolean config keys, and write `next_id` into the materialized config.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
