@@ -1,0 +1,39 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:49:08Z
+id: 75
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- log
+- refs
+title: ActivityLog builds invalid ref names from ordinary email addresses
+updated: 2026-08-10T01:27:58Z
+---
+
+`ActivityLog.pm:58` sanitises the git email into a ref name but leaves `.`
+untouched, so `a..b@example.com` produces an invalid ref and the command dies
+**after** it has already written:
+
+    git config user.email 'a..b@example.com'
+    karr pick --claim x
+      -> libgit2 error -12 (klass 4): the given reference name
+         'refs/karr/log/user/a..b_example.com' is not valid      rc=1
+    git show refs/karr/tasks/1/data:data -> claimed_by: x    # claim written anyway
+    git for-each-ref | grep lock -> refs/karr/tasks/1/lock   # lock left behind
+
+Same for an address containing `.lock`. `KARR_ROLE` goes through the same
+sanitiser, so a role name can trigger it too.
+
+Two things to fix: sanitise against the actual git ref-name rules (no `..`, no
+trailing `.lock`, no leading/trailing `.`), and validate the ref name *before*
+doing any writing so a bad name cannot leave a half-applied command behind.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
