@@ -161,7 +161,11 @@ for my $transport (qw( native cli )) {
             "B's note is on the shared board";
 
         # #49 again, from the other side: B's push must not resurrect task 3.
-        is_deeply origin_board_refs($work), ['refs/karr/tasks/1/data'],
+        # (The board-id in these lists is the identity stamp #95 adds: B's
+        # first pull of this hand-built, unstamped board is the pre-change
+        # migration case, so B stamped it, and B's push armed the remote.)
+        is_deeply origin_board_refs($work),
+            [ 'refs/karr/meta/board-id', 'refs/karr/tasks/1/data' ],
             '#49: the deleted task stays deleted after a round trip through B';
 
         # The diverged-pull return value is in here on purpose: before the fix
@@ -200,6 +204,7 @@ for my $transport (qw( native cli )) {
         is_deeply [ sort $a->list_refs('refs/karr/') ],
             [ sort qw(
                 refs/karr/config
+                refs/karr/meta/board-id
                 refs/karr/meta/next-id
                 refs/karr/tasks/1/data
             ) ],
@@ -273,7 +278,8 @@ for my $transport (qw( native cli )) {
             fix_push( "$work/b", $work );
             ok $b->push, "B's retried push succeeds";
             is_deeply origin_board_refs($work),
-                [ 'refs/karr/tasks/1/data', 'refs/karr/tasks/2/data' ],
+                [ 'refs/karr/meta/board-id',
+                  'refs/karr/tasks/1/data', 'refs/karr/tasks/2/data' ],
                 'the rescued task reaches the remote';
         };
 
@@ -297,7 +303,8 @@ for my $transport (qw( native cli )) {
 
             fix_push( "$work/b", $work );
             ok $b->push, "B's retried push succeeds";
-            is_deeply origin_board_refs($work), ['refs/karr/tasks/1/data'],
+            is_deeply origin_board_refs($work),
+                [ 'refs/karr/meta/board-id', 'refs/karr/tasks/1/data' ],
                 'the deletion finally reaches the remote';
         };
 
@@ -327,7 +334,8 @@ for my $transport (qw( native cli )) {
                 "B's displaced version is recoverable, not just reported";
 
             ok $b->push, 'B pushes on';
-            is_deeply origin_board_refs($work), ['refs/karr/tasks/1/data'],
+            is_deeply origin_board_refs($work),
+                [ 'refs/karr/meta/board-id', 'refs/karr/tasks/1/data' ],
                 'the parked conflict is never pushed to the remote';
         };
 

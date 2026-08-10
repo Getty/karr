@@ -69,12 +69,15 @@ sub with_transport {
 }
 
 # A published board on A, synced once by B, so B's mirror holds the remote as
-# it was. Returns the pair plus the ref names B is carrying.
+# it was. Returns the pair plus the ref names B is carrying. The board carries
+# the identity stamp a current karr init writes (#95); B adopts it on the
+# first pull, which is why the ref count below is 6, not 5.
 sub published_board {
     my ($transport) = @_;
     my ( $work, $a, $b ) = two_clones();
-    $a->write_ref( 'refs/karr/config',       "board:\n  name: demo\n" );
-    $a->write_ref( 'refs/karr/meta/next-id', "4\n" );
+    $a->write_ref( 'refs/karr/config',        "board:\n  name: demo\n" );
+    $a->write_ref( 'refs/karr/meta/next-id',  "4\n" );
+    $a->write_ref( 'refs/karr/meta/board-id', 'a' x 32 . "\n" );
     $a->save_task_ref( task( $_, "Task $_" ) ) for 1 .. 3;
     $a->push or die 'A could not publish the board';
     with_transport( $transport, sub { $b->pull } ) or die 'B could not sync';
@@ -93,7 +96,7 @@ sub recreate_origin {
 for my $transport (qw( native cli )) {
     subtest "$transport transport: a re-created origin does not wipe the board" => sub {
         my ( $work, $a, $b, $before ) = published_board($transport);
-        is scalar(@$before), 5, 'B carries the whole board before the accident';
+        is scalar(@$before), 6, 'B carries the whole board before the accident';
 
         recreate_origin($work);
 

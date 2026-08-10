@@ -278,6 +278,40 @@ C<karr repair --yes>, and the import path below.
 
 =cut
 
+sub board_id {
+    my ($self) = @_;
+    return $self->git->read_board_id_ref;
+}
+
+=head2 board_id
+
+The board's identity from C<refs/karr/meta/board-id>, or undef when the board
+predates identities (or does not exist). The id is what a pull compares
+against the remote's to tell "this board, changed" apart from "a different
+board entirely" (#95).
+
+    my $id = $store->board_id;
+
+=cut
+
+sub ensure_board_id {
+    my ($self) = @_;
+    return $self->git->ensure_board_id_ref;
+}
+
+=head2 ensure_board_id
+
+Stamps the board's identity ref when it is missing and returns the id,
+existing or new. It never re-keys a board: changing the id under a live board
+would make every other clone read it as a foreign one (#95). Called by
+C<karr init> and the import path below, the two board-birth paths; boards
+from before identities existed are stamped by the first pull that finds no id
+on either side.
+
+    $store->ensure_board_id;
+
+=cut
+
 # The grep is not redundant with the /data-only match in list_task_refs: a ref
 # that exists but holds no parseable card still loads as undef, and every
 # consumer of this list calls methods on each element. One undef in here took
@@ -602,6 +636,12 @@ sub serialize_from {
     # current board would push a new one on every import for no reason.
     $self->stamp_encoding_version if $self->git->board_is_legacy_encoded;
 
+    # Import is a board-birth path like init (#30), so it stamps the board
+    # identity too (#95) rather than waiting for the first pull to notice the
+    # board has none. Read-before-write inside, same as the encoding marker
+    # above: an existing board keeps the id it has.
+    $self->ensure_board_id;
+
     return 1;
 }
 
@@ -642,7 +682,19 @@ sub snapshot {
 
 sub restore_snapshot {
     my ( $self, $snapshot ) = @_;
-    return $self->git->replace_board_refs( $snapshot->{refs} || {} );
+    my $refs = $snapshot->{refs} || {};
+    # A snapshot taken before board identities existed carries no board-id
+    # ref, and replace_board_refs makes the board exactly the snapshot -- so
+    # installing one verbatim would strip this board's identity, and the push
+    # that follows would prune it off the remote too, disarming the
+    # swapped-remote guard (#95) on every clone. Keep the standing id across
+    # such a content restore. A snapshot that does carry an id -- the board's
+    # own, or a foreign board's in a deliberate takeover -- is installed as is.
+    my $standing = $self->git->read_board_id_ref;
+    my $ok = $self->git->replace_board_refs($refs);
+    $self->git->write_board_id_ref($standing)
+        if defined $standing && !exists $refs->{'refs/karr/meta/board-id'};
+    return $ok;
 }
 
 =head2 restore_snapshot
