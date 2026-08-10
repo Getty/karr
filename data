@@ -1,0 +1,71 @@
+---
+claimed_at: 2026-08-10T14:48:04Z
+claimed_by: error-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T05:00:13Z
+id: 38
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- perl-core
+- cleanup
+title: Role imports leak into every command class as methods
+updated: 2026-08-10T16:02:12Z
+---
+
+Found while doing ticket #36.
+
+A `Moo::Role` composes *every* sub in its package into its consumers, including
+subs that only got there via an import. Two roles import functions unqualified:
+
+- `lib/App/karr/Role/BoardDiscovery.pm:7` — `use Path::Tiny;` (imports `path`)
+- `lib/App/karr/Role/BoardDiscovery.pm:8`, `lib/App/karr/Role/SyncLifecycle.pm:7` — `use Carp qw( croak );`
+
+Verified, not theorised:
+
+    perl -Ilib -e 'use App::karr::Cmd::List;
+      print App::karr::Cmd::List->can($_) ? "$_ YES\n" : "$_ no\n" for qw( path croak )'
+    path YES
+    croak YES
+
+So `$cmd->path(...)` and `$cmd->croak(...)` are callable on ~20 command classes.
+Nothing calls them today, so this is latent, not broken — but it is a live
+collision hazard: any future attribute or method named `path` on a command class
+silently fights an inherited Path::Tiny constructor, and `->croak` as a method is
+nonsense that will type-check fine.
+
+Ticket #36 already avoided adding a third case: `Role/Output.pm` loads
+`JSON::MaybeXS ()` with an explicit empty import list precisely so `encode_json`
+does not become a method, with a comment saying why. This ticket is about the two
+that predate that.
+
+Fix direction: same treatment — `use Path::Tiny ();` plus qualified
+`Path::Tiny::path(...)` at the call sites, and `Carp::croak(...)` instead of the
+imported `croak`. Note `namespace::clean` is NOT the answer here: CLAUDE.md rules
+it out in this dist because it is incompatible with MooX::Options, and the roles
+sit directly under classes that use it.
+
+Check while in there whether any consumer relies on the leaked `path` by accident
+(`grep -rn '->path(' lib/`) before removing the import.
+Done, uncommitted in the working tree alongside #77 (same files, so it followed it).
+
+Role/BoardDiscovery.pm: 'use Path::Tiny;' -> 'use Path::Tiny ();' with Path::Tiny::path() at both call sites; 'use Carp qw( croak );' deleted (no croak left in the package after #77).
+Role/SyncLifecycle.pm: 'use Carp qw( croak );' deleted, same reason.
+Both roles now load App::karr::Error with an empty import list and call App::karr::Error::user_error(...) qualified -- importing user_error there would have re-created the exact bug one name over. Comments at both use-lines say why, matching Role/Output.pm and Role/TaskMutation.pm.
+
+Verification (the ticket's own probe): 'path' is now no. 'croak' still reports YES on App::karr::Cmd::List -- but no longer from karr. MooX::Cmd::Role does a bare 'use Carp;' upstream and composes croak into every command class; karr cannot fix that from here (namespace::clean is ruled out by CLAUDE.md). Proof: a Moo class that composes only the two roles has neither, while 'package T2; use Moo; use MooX::Cmd;' has croak on its own.
+
+Nothing calls either as a method -- 'grep -rn "\->path(" lib/ bin/ t/' and the same for ->croak are both empty.
+
+Further leaks found while in there, NOT fixed (out of this ticket's scope, worth their own ticket):
+- Role/ClaimTimeout.pm and Role/TaskMutation.pm both say 'use Time::Piece;', which puts localtime and gmtime on every mutating command class (move, edit, delete, archive, handoff). Same class of hazard as path, arguably worse -- these shadow builtins.
+- Cmd/Backup.pm, Cmd/Restore.pm, Cmd/Init.pm import Path::Tiny's path into their own package, and Cmd/List, Cmd/Skill and now four more import user_error/clean_error. Those are classes, not roles, so each affects only itself -- a different, much smaller problem than a role multiplying an import across ~20 consumers.
+
+Regression test: t/121-role-import-leakage.t. It checks the role PACKAGES (that is where composition reads from), uses B to tell an import apart from a definition rather than matching names, exempts Moo/MooX sugar by origin package, and carries an explicit allow-list for the Time::Piece leaks above -- so a NEW import into any role fails the test, and fixing a listed one also fails until the entry is deleted. Red against HEAD 4552be7.
+
+Full suite green: 112 files / 756 tests.
+Note for whoever closes this: the ticket's acceptance snippet cannot reach 'no' for croak. After the fix karr no longer leaks it, but App::karr::Cmd::List->can('croak') still answers YES -- MooX::Cmd::Role does a bare 'use Carp;' upstream, and namespace::clean is ruled out in this dist. t/121-role-import-leakage.t therefore tests the ROLE packages (where the leak actually lives) instead of a command class. Time::Piece leaks in ClaimTimeout/TaskMutation split out as their own ticket.
+Landed on main as a9ec82a (combined commit with the other three tickets). Full suite green over the combined tree: 112 files, 756 tests.
+See #105 for a correction that also applies here: a Moo::Role-composed sub does not override a builtin for bare calls in the consumer, only for method and qualified calls. The leaked path/croak were therefore a collision hazard on the method namespace, never a silent rebinding of a bare call.
