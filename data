@@ -1,0 +1,40 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:46:23Z
+id: 64
+priority: medium
+started: 2026-08-09
+status: done
+tags:
+- bug
+- log
+- multi-agent
+title: the activity log is written only by pick, so karr log and context are near-empty
+updated: 2026-08-10T01:27:58Z
+---
+
+`grep -rn append_log lib/` finds exactly one call site: `Cmd/Pick.pm:173`. So
+the activity log is written by `pick` and by nothing else:
+
+    karr create a; karr move 1 todo; karr edit 1 -a note; karr archive 1
+    karr log   -> "No log entries."
+    karr pick --claim tester --move in-progress
+    karr log   -> 1 entry, the only one karr ever writes
+
+kanban-md logs from create, move, edit, delete, archive, handoff, pick and
+block/unblock/claim/release — 16 call sites via `cmd/root.go:168`.
+
+This matters beyond `karr log`: `karr show --me/--agent/--last` and `karr context`
+read the same log, so the agent-facing history surfaces are working off
+near-empty data and quietly look "correct". `karr backup` does not include
+`refs/karr/log/*` either, so what little exists is not in snapshots.
+
+Fix: log from every mutating command (one shared helper, not 8 copies), and
+include the log refs in backup/restore.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
