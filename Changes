@@ -135,9 +135,7 @@
       changes on a default board, and `statuses` remains read-only from the
       CLI, so a custom list still only arrives through `karr import` of a
       kanban-md config.yml. `karr board`'s claim counting and the `completed`
-      stamp followed — see the entries above. Not yet fixed: `karr handoff`
-      still moves to a hardcoded `review` without checking the board has such a
-      column.
+      stamp followed — see the entries above.
     - New `karr list --archived`, which shows the archive and only the
       archive, matching kanban-md's flag of the same name. It replaces the
       other status filtering rather than narrowing it, so it wins over
@@ -728,6 +726,18 @@
       being answered for the default board. A card picked straight into
       `shipped` got its `started` stamp and no `completed` for ever. Pick now
       hands the board config over like everywhere else.
+    - Fixed `karr handoff` being unusable on any board without a `review`
+      column: it moved the card to the literal status `review`, which the
+      status validation rejects as not configured, so the command died as a
+      usage error no matter what the agent typed (ticket #102). kanban-md's
+      handoff targets `review` too and merely refuses such a board
+      (`cmd/handoff.go:105-110`); karr derives the target instead. A board
+      that configures `review` keeps exactly that target, so every board
+      kanban-md itself can hand off on behaves the same here; any other board
+      hands off to the column a card sits in right before it is finished — the
+      last non-terminal status, by the same rule the terminal statuses already
+      follow. A board with no working column at all still cannot hand off, and
+      now says so by name.
 
 0.402     2026-08-04 04:46:25Z
 
