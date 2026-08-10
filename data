@@ -1,0 +1,46 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T20:48:59Z
+id: 84
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- sync
+- git-native
+title: sync ignores the per-ref outcomes Git::Native 0.004 now returns, so a rejected
+  push is still silent
+updated: 2026-08-10T01:27:58Z
+---
+
+Split out of #81, whose upstream half is done and released.
+
+Git::Native 0.004 makes fetch and push return a Git::Native::Remote::Result:
+
+    my $r = $remote->fetch(refspecs => [...]);
+    $r->updated    # [ { ref, from, to }, ... ]  accepted moves
+    $r->rejected   # [ { ref, reason }, ... ]    push rejections
+
+libgit2 still returns 0 from git_remote_fetch/git_remote_push even when the
+server rejected individual refs (pre-receive hook, protected ref, non-ff on a
+non-forced refspec), so that Result is the only place the rejection shows up.
+
+karr calls fetch/push in App::karr::Git and throws the return value away, so a
+push whose refs were all rejected is reported to the user as a successful sync.
+The board then diverges from the remote with no signal at all.
+
+Work: consume the Result on both paths. A non-empty ->rejected must fail the
+sync with the per-ref reason in the message, not a generic one. Decide what
+->updated on fetch is worth: it can tell the reconcile path which refs actually
+moved instead of re-reading everything.
+
+Also relevant: karr keeps a git-CLI fallback for remote transport. Whatever
+error contract the native path grows here, the CLI path has to match it, or the
+failure stays invisible for anyone on the fallback.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
