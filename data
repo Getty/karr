@@ -1,0 +1,49 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T15:37:16Z
+id: 47
+priority: high
+started: 2026-08-09
+status: done
+tags:
+- bug
+- storage
+- data-loss
+- restore
+title: "a failed karr restore destroys the board â\x80\x94 locally and on the remote"
+updated: 2026-08-10T01:27:58Z
+---
+
+`lib/App/karr/BoardStore.pm:342-350`. `restore_snapshot` calls
+`delete_all_karr_refs` **first** and then writes the refs back one by one.
+`write_ref` is unguarded and there is no rollback, so any write that fails
+leaves the board partially — or, if it fails early, completely — destroyed.
+`Cmd/Restore.pm` validates the snapshot's version and shape but never the ref
+names it contains.
+
+Reproduced with a genuine `karr backup` snapshot plus one extra key
+`refs/karr/bad name` (which sorts first):
+
+    karr restore --yes --input bad.yml
+    -> libgit2 error -12 (klass 4): the given reference name
+       'refs/karr/bad name' is not valid    EXIT=1
+    local  AFTER: 0 refs   (was 5)
+    origin AFTER: 0 refs   (was 5)
+
+The remote wipe is the END-block push insurance from #37 doing its job — it
+faithfully mirrors the half-executed destruction, `--prune` and all. The user
+gets one cryptic libgit2 line (with no trailing newline, so it runs into the
+next output) and no indication that the board is gone, locally and remotely.
+
+The disaster-recovery tool is the thing that causes the disaster. Fix: validate
+every ref name in the snapshot **before** deleting anything, and write into the
+live board only after all writes can be known to succeed — or stage the new
+refs under a temporary namespace and swap, so a failure leaves the old board
+intact.
+Fixed and merged into main; full suite green at 88 files / 566 tests.
+
+Every one of these was reproduced before it was fixed and left a regression test
+that was verified to fail against the pre-fix code -- not a test that merely
+passes now. Details and what was deliberately NOT fixed are in the merge commit
+that names this ticket.
