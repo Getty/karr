@@ -1,0 +1,30 @@
+---
+claimed_at: 2026-08-10T15:12:43Z
+claimed_by: index-lane
+class: standard
+completed: 2026-08-10
+created: 2026-08-10T14:40:45Z
+id: 104
+priority: low
+started: 2026-08-10
+status: done
+tags:
+- perf
+- git
+- interop
+title: project_owned_view_paths walks the card directory with one is_tracked per file
+updated: 2026-08-10T15:51:42Z
+---
+
+Found while doing #100, which gave `karr materialize` the tracked-path check init got under #89, via a new `BoardStore::project_owned_view_paths`.
+
+The check walks the file-view directory and asks git one `is_tracked` per file. Measured on a 300-card board, repeat materialize: 1190ms -> 1370ms, ~0.6ms per card, linear, short-circuiting on the first tracked file.
+
+Deliberately not optimised in #100, and that judgement still holds: materialize is an explicit bridge command, not a hot loop. Note the obvious cheap guard -- only ask when an entry would actually be added -- does NOT help, because in the bug scenario the entries never get added, so the walk runs on every invocation regardless.
+
+The real fix is to ask the index instead of the working tree: one read for any tracked path under the file-view directory, instead of N status calls. It would also close a documented gap in the current check -- a path git tracks but that is missing from the working tree is not found by a directory walk, because there is no file to walk onto.
+
+Cost: new App::karr::Git API, and it changes `karr init`s behaviour too (both commands share the helper), which #100 explicitly ruled out of its own scope. Hence a separate ticket.
+
+Not urgent. File it, do it when Git grows index access for another reason.
+Landed on main as 2b29403 (combined with the 0.500 version bump and the other tickets in that commit). Full suite green: 113 files, 767 tests.
