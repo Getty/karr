@@ -31,6 +31,19 @@ by the file view, and task refs with no matching file are deleted. It therefore
 requires an explicit C<--yes> acknowledgement, and, because it mutates refs, it
 pulls before and pushes after like the other writing commands.
 
+The config is the one thing it does not replace. A F<config.yml> that has been
+through another tool is not the whole board config any more -- kanban-md
+rewrites the file as soon as it loads it and keeps only what its own schema
+knows -- so the view is read as a set of changes rather than as the truth.
+Keys it carries and karr models are adopted; keys it cannot express, C<foundation>
+and C<lock_timeout> among them, keep what C<refs/karr/config> already said.
+Without that, C<karr disable> was undone by a tool that never heard of it
+(ticket #87). See L<App::karr::Config/reconcile_view_config>.
+
+The task id counter moves forward across the bridge and never backwards: it
+ends up at whichever is higher, one past the highest imported card or the
+view's own C<next_id> (ticket #90).
+
 Two things it will not do. An empty F<tasks/> is refused rather than read as
 "delete every task" -- deleting the whole board is what C<karr delete> is for.
 And the import is all-or-nothing: every card is parsed before any ref is
