@@ -169,8 +169,13 @@ sub execute {
   $config->validate_priority( $self->priority ) if defined $self->priority;
   App::karr::Config->validate_due( $self->due ) if defined $self->due;
 
-  my @results;
-  for my $id (@ids) {
+  # Every id is attempted, whatever the ones before it did: a missing id used to
+  # die from inside this loop and take the rest of the batch with it (ticket
+  # #61). The option-value checks above stay outside it, because they condemn
+  # the whole invocation rather than one id.
+  my ($results, $failed) = $self->run_batch(\@ids, sub {
+    my ($id) = @_;
+
     my $task = $self->update_task_guarded($id, sub {
       my ($task) = @_;
 
@@ -225,13 +230,15 @@ sub execute {
       }
     });
 
-    push @results, { id => $task->id, title => $task->title };
     printf "Updated task %d: %s\n", $task->id, $task->title unless $self->json;
-  }
+    return { id => $task->id, title => $task->title };
+  });
 
   $self->sync_after;
 
-  $self->print_json_results(@results);
+  $self->print_json_results(@$results);
+
+  $self->report_batch_failure($failed, scalar @ids);
 }
 
 1;

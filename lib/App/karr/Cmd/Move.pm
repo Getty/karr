@@ -88,8 +88,12 @@ sub execute {
 
   my @statuses = $self->store->all_status_names;
 
-  my @results;
-  for my $id (@ids) {
+  # Every id is attempted, whatever the ones before it did: a missing id used to
+  # die from inside this loop and take the rest of the batch with it, so the
+  # result depended on where the bad id sat in the list (ticket #61).
+  my ($results, $failed) = $self->run_batch(\@ids, sub {
+    my ($id) = @_;
+
     # Everything that reads the task happens inside the guard, --next/--prev
     # included: the target status is derived from the task's current status, so
     # deciding it outside the loop would decide it against a revision another
@@ -122,13 +126,15 @@ sub execute {
       $old_status = $self->apply_status_change($task, $task_new_status, $self->claim);
     });
 
-    push @results, { id => $task->id, title => $task->title, old_status => $old_status, new_status => $task->status };
     printf "Moved task %d: %s -> %s\n", $task->id, $old_status, $task->status unless $self->json;
-  }
+    return { id => $task->id, title => $task->title, old_status => $old_status, new_status => $task->status };
+  });
 
   $self->sync_after;
 
-  $self->print_json_results(@results);
+  $self->print_json_results(@$results);
+
+  $self->report_batch_failure($failed, scalar @ids);
 }
 
 sub _status_index {

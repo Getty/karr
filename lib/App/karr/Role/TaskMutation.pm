@@ -6,15 +6,23 @@ use Moo::Role;
 use Time::Piece;
 use App::karr::Task;
 use App::karr::Config;
+# Loaded without importing, for the reason spelled out in
+# App::karr::Role::Output: a Moo::Role composes every sub in its package into
+# its consumers, imported ones included, so `use ... qw( user_error )` here
+# would quietly make user_error a method on move, edit, delete, archive and
+# handoff.
+use App::karr::Error ();
 use App::karr::Role::ClaimTimeout;
 
 with 'App::karr::Role::ClaimTimeout';
 
 =head1 DESCRIPTION
 
-Commands that change a task that already exists -- C<move>, C<edit>, C<delete>
--- share two things through this role: the compare-and-swap loop that persists
-the change, and the single implementation of "this task's status becomes that".
+Commands that change a task that already exists -- C<move>, C<edit>, C<delete>,
+C<archive>, C<handoff> -- share three things through this role: the
+compare-and-swap loop that persists the change, the single implementation of
+"this task's status becomes that", and the batch loop the id-list commands run
+that pair over.
 
 Claim ownership is checked by the caller, inside the callback it hands to
 C<update_task_guarded>, rather than by C<update_task_guarded> itself, because
@@ -26,7 +34,98 @@ there (tickets #44, #46, #56).
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Role::ClaimTimeout>,
-L<App::karr::Cmd::Move>, L<App::karr::Cmd::Edit>, L<App::karr::Cmd::Delete>
+L<App::karr::Cmd::Move>, L<App::karr::Cmd::Edit>, L<App::karr::Cmd::Delete>,
+L<App::karr::Cmd::Archive>, L<App::karr::Cmd::Handoff>
+
+=cut
+
+# One batch loop for every command that takes ID[,ID,...].
+#
+# `move`, `edit` and `delete` used to die on the first missing id from inside
+# the loop, which skipped every id after it: `move 1,999,2` moved 1 and never
+# looked at 2, while `move 999,1,2` moved nothing. Which ids survived depended
+# on where the bad one sat in the list. `archive` was the only one that already
+# warned and carried on, and it is the shape ADR 0002 settled on: "partial
+# success is committed, the exit code reports the failure (1)" -- the same
+# contract as kanban-md's runBatch (cmd/root.go), which attempts every id,
+# prints the per-id failures, and still returns 1 if any of them failed
+# (ticket #61).
+#
+# A usage error is deliberately NOT a per-id failure. `move 1,2,3 bogus-status`
+# is wrong for every id at once, so it aborts the batch untouched and keeps its
+# exit code of 2 (ticket #54's rule): collecting it would report the same
+# message once per id and demote the exit code to 1, which is precisely the
+# distinction the exit-code contract exists to make. The markers come from
+# App::karr::Error rather than a second copy of bin/karr's list, so a new marker
+# on either side cannot silently reclassify a batch.
+sub run_batch {
+    my ($self, $ids, $per_id) = @_;
+
+    my @results;
+    my $failed = 0;
+
+    for my $id (@$ids) {
+        my @out;
+        my $err = do {
+            local $@;
+            eval { @out = $per_id->($id); 1 } ? undef : ( $@ || 'unknown error' );
+        };
+
+        if ( defined $err ) {
+            die $err if App::karr::Error::is_usage_error($err);
+            $failed++;
+            my $line = App::karr::Error::clean_error($err);
+            # The id is echoed as a number when it is one, so an agent reading
+            # --json gets the same type it passed in -- and a non-numeric id
+            # does not add "Argument isn't numeric" to the diagnosis of what is
+            # already an error.
+            push @results,
+              { id => ( $id =~ /\A[0-9]+\z/ ? $id + 0 : $id ), error => $line };
+            warn "$line\n" unless $self->json;
+            next;
+        }
+
+        push @results, @out;
+    }
+
+    return ( \@results, $failed );
+}
+
+=head2 run_batch
+
+Runs one callback per id and keeps going when an id fails, so that a bad id in
+the middle of the list cannot skip the ids after it. Returns the collected
+per-id results and the number of failures.
+
+    my ( $results, $failed ) = $self->run_batch( \@ids, sub {
+        my ($id) = @_;
+        ...
+        return { id => $id, title => $title };
+    } );
+
+Whatever the callback returns is appended to the results; a callback that dies
+contributes C<< { id => $id, error => $message } >> instead and the message is
+also warned to STDERR unless C<--json> is in force. Usage errors are re-thrown
+rather than collected: they condemn the whole invocation, not one id.
+
+=cut
+
+sub report_batch_failure {
+    my ($self, $failed, $total) = @_;
+    return 0 unless $failed;
+    # After the successful ids are committed and pushed, never instead of them.
+    # A die rather than an exit: bin/karr's handler turns it into the 1 the
+    # contract calls for, and an in-process caller gets an exception instead of
+    # having its interpreter shot out from under it.
+    App::karr::Error::user_error( sprintf '%d of %d ids failed', $failed, $total );
+}
+
+=head2 report_batch_failure
+
+    $self->report_batch_failure( $failed, scalar @ids );
+
+Ends a batch that had failures with exit code 1 and a one-line summary, after
+the ids that did succeed have been committed. A no-op when nothing failed.
 
 =cut
 

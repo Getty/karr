@@ -8,6 +8,7 @@ our $VERSION = '0.403';
 use App::karr;
 use App::karr::SyncGuard;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
+use App::karr::Error qw( is_usage_error );
 
 # The character/octet boundary (ticket #53). Everything above this line is
 # bytes, everything below is Perl characters: @ARGV comes in decoded, STDOUT and
@@ -63,11 +64,15 @@ if ( !$ran ) {
     # missing, a Git/sync failure, a refused destructive operation -- is a
     # runtime failure (1).
     #
+    # The markers themselves live in App::karr::Error::is_usage_error, because
+    # this handler is no longer their only reader: the batch runner in
+    # App::karr::Role::TaskMutation asks the same question to decide whether a
+    # failure belongs to one id or to the whole invocation (ticket #61).
+    #
     # Option-parse errors (unknown option, unparseable option value) never reach
     # here: MooX::Options exits 2 directly via App::karr::Role::ExitCodes (and
     # the root's _print_help), so those exits bypass this eval.
-    my $is_usage = defined $err
-        && $err =~ /\A(?:Unknown command:|unexpected extra argument|Usage:|Usage error:)/;
+    my $is_usage = is_usage_error($err);
 
     print STDERR $err if defined $err && length $err;
     exit( $is_usage ? 2 : 1 );
