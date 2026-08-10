@@ -1,0 +1,36 @@
+---
+class: standard
+completed: 2026-08-10
+created: 2026-08-09T22:35:11Z
+id: 96
+priority: low
+status: done
+tags:
+- sync
+- git-native
+title: SyncGuard's insurance push retries a server rejection three times and then
+  gives generic advice
+updated: 2026-08-10T01:40:24Z
+---
+
+Follow-up to #84, in a region that fix did not cover.
+
+karr push now reads Git::Native::Remote::Result and fails on a non-empty
+->rejected with the per-ref reason, and SyncLifecycle no longer retries a
+rejection -- one attempt, one report, because the server already answered.
+
+App::karr::SyncGuard has its own push path (the insurance push drained from the
+END block, see #37) and it did not get the same treatment: it still makes three
+attempts at a push the server has already declined, and ends with the generic
+"Local refs are intact. Run karr sync to push them." advice regardless of why
+the push failed.
+
+So the one path that runs when a command has already died is also the one that
+reports the least. Work: consume the same rejection contract in SyncGuard, do
+not retry a rejection, and say what the remote refused rather than advising a
+retry that will fail identically.
+Fixed and merged into main (fa79722); full suite green at 93 files / 630 tests.
+Reproduced before the fix, regression test verified to fail against the pre-fix
+code. #94 additionally confirmed empirically that libgit2 lookup-based delete
+really does guard: moving the ref underneath it answers "old reference value
+does not match".
