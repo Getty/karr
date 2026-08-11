@@ -1,0 +1,44 @@
+---
+claimed_at: 2026-08-11T20:30:33Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-08-11T20:30:33Z
+created: 2026-08-11T19:38:57Z
+id: 133
+priority: high
+started: 2026-08-11T20:30:33Z
+status: done
+tags:
+- ux
+- discovery
+title: '''No karr board found'' cannot tell an empty repo from a half-board'
+updated: 2026-08-11T20:30:33Z
+---
+
+The message is thrown from two places with identical wording but different
+meanings:
+
+  - Role/BoardDiscovery.pm:169 (require_board), guarded by board_exists, which
+    is exactly refs/karr/config. Refs under refs/karr/ may well exist -- tasks,
+    next-id, log -- and the message still says the repo has no board.
+  - Cmd/{Backup,Destroy,Materialize,Repair}.pm, guarded by has_board_refs, where
+    it really does mean nothing is there.
+
+So a reader cannot distinguish "this repo has never had a board" from "this repo
+has a board whose config ref is missing". A task walked into exactly that: a
+repo holding 21 tickets kept telling it to run karr init, it never suspected the
+tickets existed, and running init then triggered the encoding-stamp bug filed
+alongside this.
+
+The information to tell them apart is already there -- has_board_refs answers
+precisely this question, and the raw-ref commands use it. require_board should
+consult it and say which case it is:
+
+  - nothing under refs/karr/: "No karr board found. Run karr init to create one."
+  - refs present, config missing: name it a half-board, say how many task refs
+    are there, and that karr init completes it without discarding them (that is
+    what ensure_next_id / ensure_board_id are for, #62). If the encoding-stamp
+    bug is not fixed yet, this is also where a warning belongs.
+
+Do not point at karr repair here: it only migrates double-encoded UTF-8 and, on
+a repo with no refs at all, dies with this very same message.
