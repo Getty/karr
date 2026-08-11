@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-08-11T21:50:14Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-08-11T21:50:14Z
+created: 2026-08-11T20:53:03Z
+id: 135
+priority: high
+started: 2026-08-11T21:50:14Z
+status: done
+tags:
+- ux
+- discovery
+title: read-only commands render an empty board where there is no board
+updated: 2026-08-11T21:50:14Z
+---
+
+board, list, show, log and context call neither sync_before nor require_board.
+Reading offline is defensible -- they are the fast local surfaces -- but the
+consequence is that a repository with no local board is indistinguishable from
+a board with nothing on it.
+
+Found while verifying #134, in a fresh clone whose karr refs had never been
+fetched:
+
+    $ git clone ssh://.../dbio-clickhouse.git
+    $ karr board
+    # Kanban Board
+    ## Backlog
+    ## Todo
+    ...
+    0 tasks
+    $ git for-each-ref refs/karr/** | wc -l
+    0
+
+The board is rendered from the default config with an empty task list, so the
+answer reads "this board is empty" when the truth is "no board has been loaded
+here". A user who trusts it concludes their tickets are gone. Every write
+command syncs and would have told them otherwise.
+
+This is the same family as #133: the information to answer correctly is right
+there (board_exists / has_board_refs), the command just never asks. Now that
+require_board distinguishes an empty repository from a half-board, the read
+commands should consult it too -- or, if staying silent is deliberate, say
+what was actually read: no board here, nothing fetched yet, run karr sync.
+
+Note the interaction with a fresh clone specifically: refs/karr/* are not
+fetched by git clone, so this is the normal state of every newly cloned
+repository, not an edge case.
