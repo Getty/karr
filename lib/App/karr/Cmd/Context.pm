@@ -98,6 +98,11 @@ sub execute {
     sprintf '--activity-limit must be 1 or greater (got %d)', $self->activity_limit )
     if $self->activity_limit < 1;
 
+  # A briefing built from a board that was never read says "0 tasks, nothing
+  # blocked, nothing overdue" -- the most confident possible way to be wrong,
+  # and --write-to would then paste it into AGENTS.md (#135).
+  $self->require_local_board;
+
   my $ec = $self->store->effective_config;
   my @tasks = $self->load_tasks;
   my @statuses = $self->store->all_status_names;

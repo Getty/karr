@@ -177,6 +177,10 @@ clean up raw refs (C<backup>, C<destroy>, C<materialize>, C<repair>) ask
 L<App::karr::BoardStore/has_board_refs> instead, so they can still deal with a
 half-board left behind by an older karr.
 
+The read-only commands do not sync, so they cannot use this method; they ask
+L</require_local_board>, which puts C<karr sync> in front of C<karr init> for
+exactly the fresh clone this one may assume has already been pulled.
+
 =cut
 
 sub require_board {
@@ -186,7 +190,9 @@ sub require_board {
 
     # Nothing under refs/karr/ at all: the sentence every board-less repository
     # has always got, and the same one Backup/Destroy/Materialize/Repair raise
-    # off has_board_refs, where it means exactly this.
+    # off has_board_refs, where it means exactly this. No mention of 'karr sync'
+    # here, unlike the read-side message in require_local_board: this method is
+    # called after sync_before, so the pull has already run and found nothing.
     die "No karr board found. Run 'karr init' to create one.\n"
         unless $store->has_board_refs;
 
@@ -197,8 +203,7 @@ sub require_board {
     # that completing it keeps the tasks -- not 'karr repair', which only
     # migrates double-encoded UTF-8 and would die with this very sentence on a
     # repository that has no refs.
-    my @ids   = $store->git->list_task_refs;   # returns through sort: no scalar context
-    my $tasks = scalar @ids;
+    my $tasks = $self->_task_refs_held;
     my $held =
           $tasks == 0 ? "board metadata is"
         : $tasks == 1 ? "1 task ref is"
@@ -207,6 +212,84 @@ sub require_board {
         . "already under refs/karr/, so this repository is not empty.\n"
         . "Run 'karr init' to complete the board -- it writes the missing config\n"
         . "and keeps what is already there.\n";
+}
+
+=head2 require_local_board
+
+    $self->require_local_board;   # no sync_before: reads stay offline
+
+The read side of L</require_board>, for the commands that render the board
+without pulling first (C<board>, C<list>, C<show>, C<log>, C<context>). It
+answers one question those commands never asked: was anything actually read
+here? Without it they rendered the code defaults over an empty task list, so a
+repository holding no board printed exactly what a board holding no tasks
+prints -- and since C<git clone> does not fetch C<refs/karr/*>, that is the
+normal state of every fresh clone, where the user's tickets are all on the
+remote (#135).
+
+The two states L</require_board> distinguishes need different answers on the
+read path:
+
+=over 4
+
+=item * nothing under C<refs/karr/> — refuse. Naming C<refs/karr/> says what
+was looked at, and where the repository has a remote the message leads with
+C<karr sync>, not C<karr init>: on a fresh clone the board exists and is
+merely unfetched, and C<init> is the one command that would answer that by
+starting a second, empty one.
+
+=item * refs present, C<refs/karr/config> missing — a half-board: go on, and
+say so on STDERR. Refusing would hide tasks that are demonstrably there, which
+is the mistake #133 was about; but the board name, statuses and defaults being
+rendered are karr's own, not the board's, and nothing else on the page says so.
+STDERR keeps C<--json> parsable.
+
+=back
+
+Reads deliberately do not sync (a network round trip in front of every C<karr
+show> is not worth it, and a stale read is recoverable where a stale write is
+not), so unlike L</require_board> this may be called first thing in C<execute>
+-- after option validation, so that a usage error still exits 2.
+
+=cut
+
+sub require_local_board {
+    my ($self) = @_;
+    my $store = $self->store;
+    return 1 if $store->board_exists;
+
+    if ( $store->has_board_refs ) {
+        my $tasks = $self->_task_refs_held;
+        my $held =
+              $tasks == 0 ? "no task refs are"
+            : $tasks == 1 ? "1 task ref is"
+            :               "$tasks task refs are";
+        # Never suppressed by --json or --quiet: there is no field in any of
+        # these payloads that could carry it, so STDERR is the only channel.
+        print STDERR
+            "Note: refs/karr/config is missing, so this board is half-initialized:\n"
+          . "$held under refs/karr/, and the name, statuses and defaults shown are\n"
+          . "karr's own, not the board's. Run 'karr init' to complete it -- it keeps\n"
+          . "what is already there.\n";
+        return 1;
+    }
+
+    my $advice = $store->git->has_remote
+        ? "'git clone' does not fetch refs/karr/*, so a fresh clone starts out like\n"
+        . "this. Run 'karr sync' to fetch the board, or 'karr init' to start one here.\n"
+        : "Run 'karr init' to create one.\n";
+    die "No karr board in this repository: nothing is stored under refs/karr/.\n"
+      . "This is not an empty board -- nothing was read here at all.\n"
+      . $advice;
+}
+
+# How many task refs the repository holds. Through a list, because
+# list_task_refs returns through sort and would answer the number of arguments
+# sort was handed if it were called in scalar context.
+sub _task_refs_held {
+    my ($self) = @_;
+    my @ids = $self->store->git->list_task_refs;
+    return scalar @ids;
 }
 
 1;

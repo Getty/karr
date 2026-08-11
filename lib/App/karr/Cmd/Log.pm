@@ -72,6 +72,10 @@ option last => (
 sub execute {
     my ($self, $args_ref, $chain_ref) = @_;
 
+    # "No log entries." is what a board with no activity says; a repository
+    # with no board has to say something else (#135).
+    $self->require_local_board;
+
     my $git = $self->git;
 
     unless ($git->is_repo) {

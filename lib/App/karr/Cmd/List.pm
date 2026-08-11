@@ -152,6 +152,9 @@ option archived => (
 
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
+  # "0 task(s)" and `[]` are answers about a board; a repository with no board
+  # has to say that instead of borrowing them (#135).
+  $self->require_local_board;
   my @tasks = $self->_load_tasks;
   @tasks = $self->_filter(\@tasks);
   @tasks = $self->_sort(\@tasks);

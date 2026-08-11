@@ -103,6 +103,12 @@ my %PRIORITY_COLOR = (
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  # Before anything is rendered: a repository with no board here would
+  # otherwise print the default config over an empty task list, which is
+  # byte-identical to a board that simply has no cards (#135). No sync -- see
+  # App::karr::Role::BoardDiscovery/require_local_board.
+  $self->require_local_board;
+
   my $ec = $self->store->effective_config;
   my @statuses = $self->store->all_status_names;
   my @tasks = $self->load_tasks;

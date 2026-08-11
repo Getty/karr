@@ -1,5 +1,28 @@
 {{$NEXT}}
 
+    - The read-only commands no longer render an empty board where there is no
+      board (ticket #135). `board`, `list`, `show`, `log`, `context` and the
+      bare `karr` summary never asked whether a board was there; they rendered
+      the code defaults over an empty task list, so a repository holding no
+      board printed exactly what a board holding no cards prints — down to the
+      byte, once the board is called "Kanban Board". `git clone` does not fetch
+      `refs/karr/*`, which makes that the normal state of every fresh clone,
+      where the tickets are all still on the remote: a user who trusts `0 tasks`
+      there concludes they are gone. The reads stay offline — a pull in front of
+      every `karr show` is not worth it, and a stale read is recoverable where a
+      stale write is not — but they now report what they actually read. Nothing
+      under `refs/karr/` is refused with exit 1 and a message that names the
+      namespace, denies the empty-board reading, and, where the repository has a
+      remote, leads with `karr sync` rather than `karr init`: the board is
+      unfetched rather than absent, and `init` would answer that by starting a
+      second, empty one. A half-board (#133) is read rather than refused — its
+      tasks are demonstrably there — with the note that `refs/karr/config` is
+      missing on STDERR, so `--json` stays parsable. An initialized board with
+      no tasks answers exactly as before, which is the distinction that was
+      missing. `--json` consumers tell the two apart the way they tell every
+      other karr failure apart: exit 1 and an empty stdout, rather than a
+      payload full of zeros.
+
     - The runtime images can reach an `ssh://` remote (ticket #134). They
       shipped without an ssh binary — `runtime-base` installed `git gosu passwd`
       and the shared libraries, and nothing else — so git's CLI fallback died

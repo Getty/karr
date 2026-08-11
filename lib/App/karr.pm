@@ -299,19 +299,18 @@ sub execute {
   # directly (not dispatched by MooX::Cmd), so it has no command_chain to adopt
   # --dir from; forward the root's own --dir explicitly so bare
   # `karr --dir PATH` targets PATH rather than silently falling back to cwd.
-  eval {
-    my %board_args = (
-      done      => $self->done,
-    );
-    $board_args{dir} = $self->dir if $self->has_dir;
-    App::karr::Cmd::Board->new(%board_args)->execute($args_ref, $chain_ref);
-  };
-  if ($@) {
-    if ($@ =~ /No karr board found/) {
-      die "No karr board found. Run 'karr init' to create one.\n";
-    }
-    die $@;
-  }
+  #
+  # Board's own errors reach the CLI unchanged. This used to run in an eval that
+  # rewrote anything matching /No karr board found/ into that same sentence --
+  # a no-op while the sentence was all there was to say, and a downgrade the
+  # moment it was not: bare `karr` in a fresh clone must say that refs/karr/*
+  # are merely unfetched and name 'karr sync', which is precisely the wording
+  # that rewrite would have thrown away (#135).
+  my %board_args = (
+    done      => $self->done,
+  );
+  $board_args{dir} = $self->dir if $self->has_dir;
+  App::karr::Cmd::Board->new(%board_args)->execute($args_ref, $chain_ref);
 }
 
 1;

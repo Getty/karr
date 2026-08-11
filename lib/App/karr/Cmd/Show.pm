@@ -161,6 +161,11 @@ sub execute {
   $self->usage_error( sprintf '--last must be 1 or greater (got %d)', $self->last )
     if $self->last < 1;
 
+  # After the usage checks, before any lookup: "No tasks found." / `[]` for an
+  # id that was never loaded is the wrong answer, and "Task N not found" is a
+  # worse one -- neither says the board itself is not here (#135).
+  $self->require_local_board;
+
   my @pos = $self->positional_args($args_ref);
   my @tasks = $self->_select_tasks($pos[0]);
 
