@@ -1,0 +1,47 @@
+---
+claimed_at: 2026-08-11T20:30:27Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-08-11T20:30:27Z
+created: 2026-08-11T19:38:48Z
+id: 132
+priority: critical
+started: 2026-08-11T19:46:20Z
+status: done
+tags:
+- encoding
+- init
+- data-loss
+title: init stamps the encoding marker on a half-board, cutting off its migration
+updated: 2026-08-11T20:30:27Z
+---
+
+Init.pm:79 refuses only when board_exists (which is exactly refs/karr/config,
+BoardStore.pm:38-41). A half-board -- task refs present, config ref missing --
+therefore passes that gate, and Init.pm:98 then calls stamp_encoding_version
+unconditionally. That writes refs/karr/meta/encoding, whose meaning is "this
+board was written under the current character-encoding contract".
+
+On a half-board carrying pre-0.403 payloads that claim is false. Consequence:
+board_is_legacy_encoded turns 0, the mojibake repair in the read path is
+skipped, and every old task suddenly reads wrong:
+
+    before:  DBD::mysql als Transport pruefen — DBD::MariaDB verbindet nicht
+    after:   DBD::mysql als Transport pruefen a  DBD::MariaDB verbindet nicht
+
+The bytes in the refs are untouched; it is the read path that stops repairing.
+Worse, `karr repair` now reports the board as up to date (Repair.pm:101), so the
+one command that could still fix it declines to run. The board is left readable
+only through a hand-deleted marker ref.
+
+Found for real: an agent hit "No karr board found" on a repo holding 21 tickets
+(see the sibling ticket about that message), ran karr init as the message told
+it to, and silently lost correct reading of every old ticket.
+
+init must not stamp when the board it is completing may carry legacy payloads.
+Stamping is only truthful for a genuinely fresh board -- i.e. when nothing lives
+under refs/karr/ at all. When init completes a half-board, leave the marker
+absent so the read path keeps repairing and `karr repair --yes` stays available.
+
+Recovery path that works today, for reference: delete refs/karr/meta/encoding,
+then karr repair (dry run), then karr repair --yes.
