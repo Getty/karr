@@ -15,6 +15,26 @@
       App::karr::Git::delete_ref returns the same 0 for "the ref never
       existed" and "libgit2 refused the delete". Documentation only; no
       behaviour changed anywhere.
+    - The Docker images no longer fight over their tags (ticket #116).
+      F<dist.ini> set C<docker_image> without C<docker_default = 0>, so the
+      C<[@Author::GETTY]> bundle added a third, unnamed C<Docker::API> plugin
+      on top of the two the distribution configures by name. That one has no
+      C<target>, so it built the last stage in the F<Dockerfile> — which is
+      C<runtime-user>, not C<runtime-root> — and no C<tags>, so it inherited
+      the plugin default C<latest %V %v>: exactly the tags C<runtime-root>
+      publishes. Which image C<raudssus/karr:latest> ended up carrying
+      therefore depended on the order the plugins happened to run in. Only
+      the two named builds run now.
+    - The bundled agent skill documents C<karr materialize>, C<karr import>
+      and C<karr repair>, which it had never mentioned, spells
+      C<karr agent-name> the way the command table does, and no longer
+      describes C<karr handoff> as moving to a literal C<review> — since
+      ticket #102 the target is the board's review column, or its last
+      non-terminal column on a board that has none. This applies to
+      F<share/claude-skill.md>, the copy C<karr skill install> writes into
+      other projects, so an agent set up by karr gets the corrected text
+      (ticket #117 tracks that this copy and the one in this repository are
+      kept in step by hand).
     - App::karr::Git now resolves every path it hands git from the work tree
       root, on both routes into is_tracked_under (tickets #113 and #114). The
       string comes out of _relative_to_root, which measures from the root, and
