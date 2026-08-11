@@ -118,7 +118,18 @@ is exactly one write path to keep the log in step with.
 
 sub delete_task {
     my ($self, $id) = @_;
+    # The same guard save_task has, for the same reason. The log answers what
+    # happened to this board, and App::karr::BoardStore::delete_task returns
+    # false when nothing was removed -- the id was never there, or the delete
+    # itself failed. Logging that wrote an entry `karr log` and `karr show --me`
+    # then reported as a delete that happened (#64 gave them this log, #120
+    # found the two doors disagreeing). An entry cannot say "attempted": it
+    # carries agent, action and task id, so an attempt is indistinguishable from
+    # a real delete, and a false entry is worse than a missing one. The guarded
+    # twin, App::karr::Role::TaskMutation::delete_task_guarded, already dies on
+    # a missing id before it logs, so all three write paths agree now.
     my $result = $self->store->delete_task($id);
+    return $result unless $result;
     $self->log_task_write($id);
     return $result;
 }
@@ -130,9 +141,10 @@ sub delete_task {
 In a command class that composes this role, deletes a task's ref and records
 the activity-log entry for it, mirroring L</save_task> as the other of the
 two doors a command writes through. Returns whatever
-L<App::karr::BoardStore/delete_task> returns (false if the id did not exist);
-unlike C<save_task>, the log entry is written either way, since a delete of
-an already-gone task is still the outcome the caller asked for.
+L<App::karr::BoardStore/delete_task> returns, and logs only when that is
+true: a delete of an id that was never there removes nothing, so it leaves no
+entry behind, exactly as C<save_task> leaves none for a write that lost its
+compare-and-swap (#120).
 
 =cut
 
@@ -274,26 +286,24 @@ sub log_task_write {
     );
 }
 
-sub save_config {
-    my ($self, $effective) = @_;
-    $effective //= $self->config;
-    return $self->store->save_config($effective);
-}
+=head2 Writing the config
 
-=method save_config
+There is deliberately no C<save_config> on this role. Config writes go to
+C<< $self->store->save_config($effective_hash) >> directly, as C<Cmd::Config>
+and C<Cmd::Init> do -- unlike L</save_task> and L</delete_task>, which earn
+their door by writing the activity log, a role-level wrapper would add nothing
+to the store's own method.
 
-    $self->save_config($effective_hash);
-    $self->save_config;   # defaults to $self->config
-
-In a command class that composes this role, delegates to
-L<App::karr::BoardStore/save_config>, which validates the schema and writes
-C<refs/karr/config>. With no argument it falls back to C<< $self->config >>,
-the L<App::karr::Role::BoardDiscovery/config> attribute -- an
-L<App::karr::Config> object, not the plain hash C<BoardStore::save_config>
-otherwise expects. No command in this distribution calls the no-argument
-form; every caller of config-saving today goes through
-C<< $self->store->save_config >> directly (C<Cmd::Config>, C<Cmd::Init>) with
-an explicit hash.
+The one this role used to carry defaulted its argument to
+C<< $self->config >>, which is an L<App::karr::Config> object, while
+L<App::karr::BoardStore/save_config> takes the plain effective-config hash: it
+reads C<< $effective->{version} >> and diffs the whole thing against the
+defaults. Handed the object it saw the C<data> and C<file> keys of the
+blessed hash instead, and because that merges over the defaults into something
+schema-valid, nothing refused it -- C<< $self->save_config >> wrote a
+C<refs/karr/config> whose entire real content sat nested under a C<data:> key
+and whose C<board.name> was gone. Nothing in F<lib/> or F<t/> ever called it,
+which is the only reason no board was ever corrupted this way (#120).
 
 =cut
 

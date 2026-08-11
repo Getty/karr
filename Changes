@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - Deleting a task id that was never there no longer writes an activity-log
+      entry claiming it was deleted (ticket #120). `Role::BoardAccess`'s two
+      write doors disagreed by accident: `save_task` guarded its
+      `log_task_write` on the store write having succeeded, `delete_task`
+      called it unconditionally. Since #64 that log feeds `karr log` and `karr
+      show --me`, so `karr delete 999` on a board with no task 999 reported a
+      delete that never happened — and an entry has no room to say
+      "attempted", since it carries only agent, action, task id and detail.
+      The third write path, `Role::TaskMutation::delete_task_guarded`, already
+      dies on a missing id before it logs, so the unguarded door was the lone
+      outlier of three.
+
+    - `Role::BoardAccess::save_config` is gone (ticket #120). Nothing in the
+      distribution called it — every config write goes to
+      `$self->store->save_config($hash)` directly — and its no-argument form
+      would have corrupted the board: it defaulted to `$self->config`, an
+      `App::karr::Config` object, where `BoardStore::save_config` expects the
+      plain effective-config hash. Handed the object it diffed the blessed
+      hash's own `data` and `file` keys against the defaults, and because that
+      merges into something schema-valid, `Config->validate` — the single
+      validation gate — waved it through: the result was a `refs/karr/config`
+      with the board's entire real config nested under a `data:` key and
+      `board.name` gone. This is an API removal against 0.500 for anyone who
+      composed the role outside this distribution; the role's POD now records
+      why the door is deliberately absent, since `save_task` and `delete_task`
+      earn theirs by writing the activity log and a bare pass-through does not.
+
     - The COMMANDS block of `karr --help` lines its descriptions up in one
       column again. It never did: the row was rendered with `sprintf "  %-*s
       %s\n", $max, colored($name, 'cyan'), $desc`, and `%-*s` pads to the
