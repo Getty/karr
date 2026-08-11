@@ -125,25 +125,30 @@ sub _show_all {
 
 sub _display_keys {
   my ($self, $d) = @_;
-  # Through the Config accessors, which tolerate a malformed board: `config
-  # show` is how you find out that a config is broken, so it must not die
-  # dereferencing the very key that is wrong (ticket #78).
+  # Every list and mapping guarded before it is dereferenced: `config show` is
+  # how you find out that a config is broken, so it must not die dereferencing
+  # the very key that is wrong (ticket #78).
   my $c = App::karr::Config->from_merged($d);
   my $board    = ref $d->{board} eq 'HASH'    ? $d->{board}    : {};
   my $defaults = ref $d->{defaults} eq 'HASH' ? $d->{defaults} : {};
+  # The lists as configured, not just their names: `_format_value` renders the
+  # mapping form legibly, and `show` and `get` should not disagree about what
+  # the board's statuses are (ticket #130).
+  my $statuses = ref $d->{statuses} eq 'ARRAY' ? $d->{statuses} : [];
+  my $classes  = ref $d->{classes}  eq 'ARRAY' ? $d->{classes}  : [];
   my @out;
   push @out, ['version',            $d->{version}];
   push @out, ['board.name',         $board->{name}]        if $board->{name};
   push @out, ['board.description',  $board->{description}] if $board->{description};
   push @out, ['tasks_dir',          $d->{tasks_dir}];
-  push @out, ['statuses',           [$c->statuses]];
+  push @out, ['statuses',           $statuses];
   push @out, ['priorities',         [$c->priorities]];
   push @out, ['defaults.status',    $defaults->{status}]   if $defaults->{status};
   push @out, ['defaults.priority',  $defaults->{priority}] if $defaults->{priority};
   push @out, ['defaults.class',     $defaults->{class}]    if $defaults->{class};
   push @out, ['claim_timeout',      $d->{claim_timeout}];
   push @out, ['lock_timeout',       $d->{lock_timeout}];
-  push @out, ['classes',            [$c->classes]];
+  push @out, ['classes',            $classes];
   push @out, ['foundation.enabled', $c->foundation_enabled];
   push @out, ['foundation.reason',  $d->{foundation}{reason}]
     if ref $d->{foundation} eq 'HASH' && $d->{foundation}{reason};
@@ -221,11 +226,35 @@ sub _format_value {
   my ($self, $val) = @_;
   return '' unless defined $val;
   if (ref $val eq 'ARRAY') {
-    return join(', ', @$val);
+    return join(', ', map { $self->_format_entry($_) } @$val);
   } elsif (ref $val eq 'HASH') {
-    return join(', ', map { "$_: $val->{$_}" } sort keys %$val);
+    return $self->_format_settings($val, sort keys %$val);
   }
   return "$val";
+}
+
+# One entry of a config list. `statuses` and `classes` allow both a bare name
+# and the mapping form ({ name => 'in-progress', require_claim => 1 }), and
+# joining the raw list stringified every mapping as HASH(0x...) -- unreadable in
+# the one output a reader consults to learn which columns a board has, which is
+# how an "extended status set" nobody configures got invented (ticket #130). The
+# name leads and its per-entry settings follow in parentheses, so the value
+# stays a single greppable line and still says which status wants a claim and
+# which class carries a WIP limit. --json is untouched by this: it carries the
+# entries as configured, never a rendering of them.
+sub _format_entry {
+  my ($self, $entry) = @_;
+  return $self->_format_value($entry) unless ref $entry eq 'HASH';
+  my @settings = grep { $_ ne 'name' } sort keys %$entry;
+  my $name = defined $entry->{name} ? $entry->{name} : '';
+  return $name unless @settings;
+  return sprintf '%s(%s)', length $name ? "$name " : '',
+    $self->_format_settings($entry, @settings);
+}
+
+sub _format_settings {
+  my ($self, $hash, @keys) = @_;
+  return join(', ', map { "$_: " . $self->_format_value($hash->{$_}) } @keys);
 }
 
 1;

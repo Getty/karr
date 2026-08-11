@@ -1,5 +1,22 @@
 {{$NEXT}}
 
+    - `karr config get statuses` and `karr config get classes` are readable
+      again (ticket #130). Both lists allow an entry to be either a bare name or
+      a mapping — `{ name: in-progress, require_claim: true }`,
+      `{ name: expedite, wip_limit: 1 }` — and the renderer joined the raw list,
+      so every mapping printed as `HASH(0x558580cd1688)`. The default board hits
+      it twice in `statuses` and, because all four of its classes are mappings,
+      four times out of four in `classes`, where the answer carried no name at
+      all. An entry now renders as its name followed by its per-entry settings
+      in parentheses — `in-progress (require_claim: 1)`, `expedite
+      (bypass_column_wip: 1, wip_limit: 1)` — and `karr config show` renders the
+      two lists the same way instead of dropping the settings, so the overview
+      and the single-key lookup cannot disagree about what the board's columns
+      are. `--json` is unchanged: it already carried the entries as configured,
+      and still does. This was not cosmetic — that output is what a reader
+      consults to learn which columns a board has, and the unreadable entries
+      led an agent to describe an "extended status set" with a `closed` status
+      that no board in the tree configures.
     - The `runtime-user` image build no longer warns about `/home/karr`. The
       shared `runtime-base` stage used to create that directory, so
       `runtime-user`'s `useradd -m` was asking for a home that already existed
