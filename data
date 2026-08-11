@@ -1,0 +1,83 @@
+---
+claimed_at: 2026-08-11T14:22:12Z
+claimed_by: coiling-labelled
+class: standard
+completed: 2026-08-11T14:22:12Z
+created: 2026-08-11T03:09:06Z
+id: 125
+priority: high
+started: 2026-08-11T13:54:12Z
+status: done
+tags:
+- bug
+- import
+- error-handling
+title: A scalar depends_on dies mid-write with a raw Perl message and a lib path
+updated: 2026-08-11T14:22:12Z
+---
+
+Found by karr-worker while implementing #123. Pre-existing; #123 does not
+widen the reachable surface.
+
+`depends_on: 5` in a task file's frontmatter -- a scalar where a list is
+expected -- passes the parse gate and then dies in App::karr::Task at the
+to_markdown line that dereferences it:
+
+    Can't use string ("5") as an ARRAY ref while "strict refs" in use
+      at lib/App/karr/Task.pm line 335.
+
+That is a raw Perl message carrying a source location into user-facing output,
+which is exactly the class tickets #77 and #38 were about, and it happens
+mid-write-loop rather than at the gate.
+
+Not reachable on a karr board today: every write goes through to_markdown, so
+nothing karr itself produces can contain a scalar there. `karr import` of a
+hand-written or externally-produced file view does reach it, and does so after
+the parse gate has already accepted the file -- so the import is underway when
+it dies.
+
+Fix belongs where the other frontmatter normalisation already lives:
+Task::BUILD, next to _normalize_blocked (#58) and the empty-optional handling
+(#98). Same shape as those -- coerce a scalar to a one-element list, or refuse
+it as a usage error at parse time with a message naming the file and the
+field. Refusing is probably the better answer for a field whose whole meaning
+is "a list of ids", but either beats dying at line 335.
+Zwei Ergaenzungen aus einem Pre-Release-Durchgang, beide reproduziert.
+
+1. tags ist genauso betroffen, und wahrscheinlicher.
+
+    tags: dringend          -> Task.pm:331, gleiche Meldung
+    depends_on: 1           -> Task.pm:335
+
+Der Titel nennt nur depends_on. tags ist aber das Feld, das jemand beim
+Editieren einer materialisierten Karte von Hand anfasst -- depends_on kann man
+per CLI ohnehin nicht setzen (#124), tags schon, also kennt man es und schreibt
+es hin. Ein Fix in Task::BUILD sollte beide Listenfelder normalisieren.
+
+2. Es bricht die Zusage, die serialize_from ausdruecklich gibt.
+
+Die POD von BoardStore::serialize_from sagt: "All or nothing. Every card is
+parsed before the first ref is written ... with the board left exactly as it
+was (ticket #70)." Das gilt nur fuer Parse-Fehler. Eine Karte, die parst, aber
+nicht schreibbar ist, kommt durch das Tor und stirbt in der Schreibschleife
+(BoardStore.pm:822-827) -- nach save_config und vor dem Prune.
+
+Reproduziert: Board mit 3 Karten, materialisiert, dann im View Karte 1
+umbenannt, Karte 2 mit `depends_on: 1` versehen, Karte 3 geloescht.
+karr import --yes hinterlaesst:
+
+    #1  umbenannt geschrieben
+    #2  nicht geschrieben
+    #3  haette geprunt werden muessen, steht noch da
+
+Dazu: save_config ist schon gelaufen, und das Seeding von next-id, der
+encoding-Stempel und ensure_board_id werden nie erreicht. Exit-Code ist 1, die
+Meldung ist die rohe Perl-Zeile mit lib-Pfad.
+
+restore_snapshot macht es an derselben Stelle richtig (#47: jedes Commit-Objekt
+gebaut, bevor der erste Ref sich bewegt) -- serialize_from fehlt genau dieser
+zweite Teil des Tors.
+
+Deshalb von low auf high: nicht wegen der Fehlermeldung, sondern weil der
+Import auf halbem Weg stehen bleibt und der Prune ausfaellt.
+Fixed in ceadc12: scalar list fields (tags, depends_on) refused at the parse gate in Task::BUILD; empty/null loads as []. Regression test t/126, full suite PASS.
