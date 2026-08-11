@@ -61,6 +61,21 @@ sub claim_timeout_secs {
     return $self->_parse_timeout( $self->store->effective_config->{claim_timeout} // '1h' );
 }
 
+=method claim_timeout_secs
+
+    my $secs = $self->claim_timeout_secs;
+
+In a command class that composes this role, returns the board's configured
+C<claim_timeout> in seconds, parsed with the full Go C<time.ParseDuration>
+grammar kanban-md writes (e.g. C<1h30m>), not just C<< ^\d+[hms]$ >>. Falls
+back to one hour (3600) when the board has no C<claim_timeout> set or the
+value does not parse -- except an explicit C<0s>, which is honoured verbatim
+and means "claims never expire" (see C<karr unlock>). This is the timeout
+L</check_claim> applies; L<App::karr::Cmd::Pick>'s lock timeout is a separate,
+shorter fallback and does not go through this method.
+
+=cut
+
 # karr and kanban-md both stamp claims with RFC3339, but not the same RFC3339.
 # karr writes `gmtime->datetime . 'Z'` -- no fraction, always UTC. kanban-md
 # writes Go's time.RFC3339Nano off the agent's local clock, verified against the
@@ -135,5 +150,36 @@ sub check_claim {
     return 1 if $self->_claim_expired( $task, $self->claim_timeout_secs );
     die sprintf "Task %d is claimed by %s\n", $task->id, $task->claimed_by;
 }
+
+=method check_claim
+
+    $self->check_claim( $task, $self->claim );   # $self->claim may be undef
+
+In a command class that composes this role, decides whether C<$task>'s
+existing claim blocks the caller and either returns true or dies with
+C<"Task N is claimed by X\n">. Four cases, checked in order:
+
+=over 4
+
+=item * the task is not claimed at all -- always allowed;
+
+=item * C<$claimant> is defined, non-empty, and matches C<< $task->claimed_by
+>> exactly -- the current claimant may always proceed;
+
+=item * the claim is older than L</claim_timeout_secs> -- an expired claim no
+longer blocks anyone, but is not cleared as a side effect of asking (that
+stays kanban-md's behaviour, not karr's -- see the comment above this method
+for why);
+
+=item * otherwise -- the task belongs to someone still working on it, and the
+call dies rather than silently taking the claim over.
+
+=back
+
+Call it against the same task revision the caller then writes -- see
+L<App::karr::Role::TaskMutation/update_task_guarded> -- since a check made
+against a stale read can pass or fail against bytes that are no longer there.
+
+=cut
 
 1;

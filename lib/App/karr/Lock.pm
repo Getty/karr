@@ -86,13 +86,56 @@ sub new {
     }, $class;
 }
 
+=method new
+
+    my $lock = App::karr::Lock->new( git => $git, task_id => 12, ttl => 300 );
+    my $lock = App::karr::Lock->new( dir => '.' );   # builds its own Git
+
+Takes C<git> (an L<App::karr::Git> instance), or C<dir> to build one via
+C<< App::karr::Git->new(dir => $dir) >> when no C<git> is given. C<task_id>
+and C<ttl> are both optional -- see L</task_id> and L</ttl>.
+
+=cut
+
 sub task_id { shift->{task_id} }
 sub git     { shift->{git} }
+
+=attr task_id
+
+The task this lock instance was constructed for. Every method that names a
+lock (L</ref_name>, L</legacy_ref_name>, L</get>, L</acquire>, L</release>,
+L</break_lock>) takes an explicit C<$task_id> and falls back to this only
+when none is given, so one C<App::karr::Lock> can be reused across tasks by
+always passing C<$task_id> explicitly -- as C<karr pick> does, trying one
+candidate after another with a single lock object -- or dedicated to one
+task by setting this instead.
+
+=attr git
+
+The L<App::karr::Git> instance the lock reads and writes refs through. Set
+from the C<git> argument to L</new>, or built there from C<dir> when not
+given.
+
+=cut
 
 sub ttl {
     my ($self) = @_;
     return defined $self->{ttl} ? $self->{ttl} : DEFAULT_TTL;
 }
+
+=attr ttl
+
+Seconds a lock may be held before L</expired> considers it stale and
+L</acquire> is allowed to take it over. Falls back to C<300> (the
+C<DEFAULT_TTL> constant) when not given at L</new> -- but direct
+construction is the exception: C<karr pick> builds its lock with the
+board's own C<lock_timeout> config value instead (see
+L<App::karr::Cmd::Pick/LOCK EXPIRY>), so that is what governs expiry in
+practice. A C<ttl> of C<0> or a negative number disables expiry outright:
+L</expired> always answers false and no lock built with it is ever taken
+over.
+
+=cut
 
 sub ref_name {
     my ( $self, $task_id ) = @_;
@@ -100,11 +143,35 @@ sub ref_name {
     return LOCK_ROOT . "$task_id/lock";
 }
 
+=method ref_name
+
+    my $ref = $lock->ref_name(12);   # 'refs/karr-local/tasks/12/lock'
+    my $ref = $lock->ref_name;       # uses $lock->task_id
+
+The current-layout ref name for a task's lock, under C<refs/karr-local/> --
+outside every namespace C<karr> pushes, fetches, prunes or snapshots (see
+L</Locks are local, and live outside the board>). C<$task_id> defaults to
+L</task_id> when omitted.
+
+=cut
+
 sub legacy_ref_name {
     my ( $self, $task_id ) = @_;
     $task_id //= $self->task_id;
     return LEGACY_LOCK_ROOT . "$task_id/lock";
 }
+
+=method legacy_ref_name
+
+    my $ref = $lock->legacy_ref_name(12);   # 'refs/karr/tasks/12/lock'
+
+The pre-#93 ref name for a task's lock, inside the board namespace C<karr>
+pushes. Nothing in this module writes here any more; it exists so L</locks>
+can find locks a pre-#93 C<karr>, or a board that synced one in before the
+fix, left behind, and so L</break_lock> can clear them. See
+L</Locks are local, and live outside the board>.
+
+=cut
 
 sub get {
     my ( $self, $task_id ) = @_;
@@ -112,6 +179,16 @@ sub get {
     my $content = $self->git->read_ref($ref);
     return $content;
 }
+
+=method get
+
+    my $holder = $lock->get(12);   # e.g. 'agent@example.com', or undef
+
+The identity currently holding the lock on C<$task_id> (defaulting to
+L</task_id>), or C<undef> if it is not held. Reads only the current-layout
+ref; a stray L</legacy_ref_name> lock is not reported here, see L</locks>.
+
+=cut
 
 # Acquisition is one compare-and-swap per attempt, never a read followed by an
 # unguarded write. The old version checked the ref and then wrote it, so every
@@ -152,6 +229,41 @@ sub acquire {
     } );
 }
 
+=method acquire
+
+    my ( $ok, $msg ) = $lock->acquire( 12, 'agent@example.com' );
+
+Tries to take the lock on C<$task_id> (defaulting to L</task_id>) for
+C<$email>. Always returns a two-element list for its ordinary outcomes,
+rather than throwing:
+
+=over 4
+
+=item * C<(1, "acquired")> -- taken, nobody held it.
+
+=item * C<(1, "acquired (broke stale lock held by $prior)")> -- taken over
+from a holder whose lock had passed its L</ttl>; see L</expired>.
+
+=item * C<(0, "locked by $current")> -- held by somebody else and not
+expired. This is a final answer, not contention: the caller should treat it
+as "somebody else has this one" and try a different task, not retry.
+
+=back
+
+The lock is not what makes a pick exclusive by itself -- see
+L</DESCRIPTION> -- so losing the race here means trying a different task,
+not that a concurrent pick is unsafe.
+
+Acquisition is a single compare-and-swap per attempt, retried automatically
+against Git ref contention (L<App::karr::Git/retry_contended>). That retry
+loop, not this method, is what throws: if the ref stays contended across
+every retry -- many agents writing the board at once -- the C<die> from
+L<App::karr::Git/retry_contended> propagates uncaught. That is a distinct
+failure from "locked by somebody else" above and is not expected in
+ordinary use.
+
+=cut
+
 # Whether the lock commit $oid points at is older than the TTL. Takes the OID
 # rather than a task id so the age judged and the OID a takeover is guarded
 # against are the same revision.
@@ -165,6 +277,24 @@ sub expired {
     return 0 unless defined $held_since;
     return ( time - $held_since ) > $ttl ? 1 : 0;
 }
+
+=method expired
+
+    my $stale = $lock->expired($oid);
+
+Whether the lock commit C<$oid> points at is older than L</ttl>. Takes the
+commit OID a lock ref currently resolves to, not a C<$task_id> -- taken from
+L</locks>, or from the OID L</acquire> reads before deciding whether to
+steal. Guarding a takeover against the exact OID whose age was judged is
+what keeps a holder that refreshes its lock mid-check from being evicted;
+see L</acquire>.
+
+Returns false (never expired) when L</ttl> is C<0> or negative, and also
+when C<$oid>'s commit time cannot be read at all -- a missing timestamp is
+not evidence the holder is dead, and refusing to steal is the safe
+direction; C<karr unlock> remains the way out.
+
+=cut
 
 # Every lock currently held, with its holder, its age, and whether it has
 # expired. Reported rather than acted on: seeing who holds what and for how long
@@ -199,6 +329,22 @@ sub locks {
                || $a->{legacy}  <=> $b->{legacy} } @locks;
 }
 
+=method locks
+
+    my @held = $lock->locks;
+    # [ { task_id => 12, owner => 'a@x', held_since => 1712345678,
+    #     age => 40, expired => 0, legacy => 0 }, ... ]
+
+Every lock currently held, across both L</ref_name> and L</legacy_ref_name>
+namespaces, sorted by task id and then current-before-legacy. Each entry is
+a hashref with C<task_id>, C<owner>, C<held_since> (epoch seconds, or
+C<undef> if unreadable), C<age> (seconds, or C<undef> to match), an
+C<expired> flag (see L</expired>), and a C<legacy> flag marking a lock found
+at L</legacy_ref_name> rather than L</ref_name>. Reporting only -- nothing
+here acts on what it finds; that is L</break_lock>.
+
+=cut
+
 # Drop a lock regardless of who holds it or how old it is. release() refuses to
 # touch another agent's lock, which is right for the pick path and useless as an
 # escape hatch -- the whole problem is that the holder is never coming back.
@@ -220,6 +366,21 @@ sub break_lock {
     return ( 0, "not locked" ) unless $broke;
     return ( 1, $owner );
 }
+
+=method break_lock
+
+    my ( $ok, $owner ) = $lock->break_lock(12);
+
+Clears the lock on C<$task_id> (defaulting to L</task_id>) unconditionally
+-- regardless of who holds it or whether L</expired> says it is stale -- at
+both L</ref_name> and L</legacy_ref_name>. Returns C<(1, $owner)> naming
+whoever held it (the current-layout holder if both were set), or
+C<(0, "not locked")> if neither ref existed. This is the escape hatch
+L</release> deliberately is not: C<karr unlock> is built on this, not on
+L</release>, because the whole problem it solves is a holder that is never
+coming back to release anything.
+
+=cut
 
 # Giving a lock back is a guarded delete: the holder is re-read and the removal
 # is guarded against that exact revision, so a lock that was broken and re-taken
@@ -245,5 +406,31 @@ sub release {
         return ( 1, "released" );
     } );
 }
+
+=method release
+
+    my ( $ok, $msg ) = $lock->release( 12, 'agent@example.com' );
+
+Gives back the lock on C<$task_id> (defaulting to L</task_id>) held by
+C<$email>. Like L</acquire>, returns a two-element list for its ordinary
+outcomes and only lets L<App::karr::Git/retry_contended>'s exhaustion
+C<die> through:
+
+=over 4
+
+=item * C<(1, "released")> -- released, or already gone (nothing held,
+already broken, or taken over after expiring). Not an error: release is
+normally the tail end of a pick that already finished its work.
+
+=item * C<(0, "locked by $current")> -- held by a different identity, left
+untouched.
+
+=back
+
+The delete is itself a compare-and-swap against the holder read moments
+before, so a lock that was broken and re-taken between the read and the
+delete is not dropped out from under its new holder (#94).
+
+=cut
 
 1;

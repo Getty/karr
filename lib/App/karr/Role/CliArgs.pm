@@ -82,6 +82,23 @@ sub positional_args {
     return @positional;
 }
 
+=method positional_args
+
+    my @positional = $self->positional_args($args_ref);
+
+In a command class that composes this role, recovers the real positional
+arguments from C<$args_ref> -- the argv MooX::Cmd echoes back into
+C<execute()>, which under C<protect_argv> still holds every original token:
+recognised option flags, the values they consumed, and the positionals, in
+their original order. Returns the positionals only, in order, as plain
+strings; unrecognised dash-prefixed tokens are treated defensively as
+non-consuming (a genuine typo is already rejected upstream by
+MooX::Options). A bare C<--> ends option processing, so every token after it
+is returned as a positional however option-shaped it looks. Never dies --
+an argument list with no positionals returns an empty list.
+
+=cut
+
 # Reject surplus positional arguments before a command does any work, matching
 # kanban-md's cobra Args validators (ExactArgs/RangeArgs/MaximumNArgs) which
 # refuse extra positionals ahead of RunE. The comma list stays the one and only
@@ -104,5 +121,26 @@ sub check_positional_args {
         join(', ', map { "'$_'" } @extra),
         ($usage ? "$usage\n" : '');
 }
+
+=method check_positional_args
+
+    $self->check_positional_args($args_ref, $max);
+
+In a command class that composes this role, dies with a usage message
+(C<"unexpected extra argument(s): '...'\n">, followed by the command's usage
+string if it has one) when C<$args_ref> resolves to more than C<$max>
+positionals via L</positional_args>; otherwise returns nothing. The message
+starts with the C<unexpected extra argument> marker
+L<App::karr::Error/is_usage_error> recognises, so F<bin/karr>'s central
+handler exits C<2> (ADR 0002), not C<1>. There is no
+minimum-arity check here -- a missing required positional is each command's
+own concern -- this only rejects surplus. Call it before a command does any
+work: kanban-md's cobra C<Args> validators run before C<RunE> the same way,
+and karr's batch commands rely on the comma list (parsed by
+L<App::karr::Role::BoardAccess/parse_ids>) as the one and only way to pass
+more than one id, so a second bare positional is always a mistake rather than
+an alternate batch syntax.
+
+=cut
 
 1;

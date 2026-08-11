@@ -98,10 +98,35 @@ sub new {
     }, $class;
 }
 
+=method new
+
+    my $git = App::karr::Git->new( dir => $path );
+
+Constructs a new instance. C<dir> defaults to C<'.'> and is stored as given --
+nothing here touches the filesystem or checks that C<dir> is inside a Git
+repository. That only happens lazily, the first time a method needs the
+repository handle (see L</is_repo>).
+
+=cut
+
 sub dir {
     my ($self) = @_;
     return path( $self->{dir} );
 }
+
+=method dir
+
+    my $path = $git->dir;   # Path::Tiny
+
+Returns the directory C<new> was constructed with, as a L<Path::Tiny>. This is
+not necessarily the repository root: libgit2 discovers a repository by
+walking up from here to the nearest C<.git>, so C<< App::karr::Git->new(dir
+=> 'some/subdir') >> is legal, and C<dir> keeps returning C<some/subdir> even
+though every ref and path operation resolves against the discovered root
+instead (L</repo_root>) -- see ticket #113. Prefer L</repo_root> whenever the
+actual repository root is what's needed.
+
+=cut
 
 # The libgit2 exception text from the most recent remote operation that failed
 # (fetch/push/pull). Native operations have no shell exit code, so callers
@@ -155,6 +180,19 @@ our $WRITES = 0;
 sub pending_writes {
     return $WRITES;
 }
+
+=method pending_writes
+
+    my $n = $git->pending_writes;
+
+Returns the number of ref writes and deletes that have actually landed in
+this process so far -- across every L<App::karr::Git> instance, since this is
+process-global state rather than per-object (see the comment above C<$WRITES>
+for why: reading it off an object during global destruction is unreliable).
+L<App::karr::SyncGuard> reads this on the die path to tell "the command died
+before writing anything" from "local refs changed and were never pushed".
+
+=cut
 
 # ----- Native repository handle (lazy) -----
 
@@ -229,6 +267,21 @@ sub commit_time {
     return try { $repo->commit($oid)->time } catch { undef };
 }
 
+=method commit_time
+
+    my $epoch = $git->commit_time($oid);
+
+Returns the committer time of the commit at C<$oid> (a hex object id, as
+returned by L</read_ref_with_oid> and similar) as a Unix epoch integer, or
+C<undef> when C<$oid> is missing or empty, the repository can't be opened, or
+the object can't be read. Takes an OID rather than a ref name deliberately:
+pass the OID a compare-and-swap is already guarding, not a fresh read of the
+ref -- the ref may move between the two reads, and a timestamp read that way
+would not belong to the revision being judged. L<App::karr::Lock> uses this to
+decide whether a lock is stale.
+
+=cut
+
 # ----- Repo discovery -----
 
 sub is_repo {
@@ -242,6 +295,20 @@ sub is_repo {
     return $ok;
 }
 
+=method is_repo
+
+    if ( $git->is_repo ) { ... }
+
+Returns true when L</dir> is inside a Git repository libgit2 can open --
+walking up to find C<.git>, the same discovery L</repo_root> relies on --
+false otherwise. Always false during Perl's global destruction phase,
+regardless of the repository's actual state, so that teardown code never
+re-enters libgit2 (a real crash risk otherwise -- see the comment above
+C<_repo> below for the story). Sets L</last_error> to the exception text on
+failure.
+
+=cut
+
 sub repo_root {
     my ($self) = @_;
     my $repo = $self->_repo or return undef;
@@ -250,6 +317,21 @@ sub repo_root {
     $root =~ s{/+\z}{};
     return path($root);
 }
+
+=method repo_root
+
+    my $root = $git->repo_root;   # Path::Tiny, or undef
+
+Returns the repository's work tree root as libgit2 discovered it by walking up
+from L</dir> -- not L</dir> itself, unless they happen to coincide. Falls back
+to the bare-repo gitdir when there is no work tree. Returns C<undef> when the
+repository can't be opened (see L</is_repo>). Every path-taking operation in
+this class -- C<is_tracked>, C<is_tracked_under>, the git-CLI fallback --
+resolves paths from here rather than from L</dir>, so code that builds a path
+relative to L</dir> instead silently asks the wrong question the moment C<dir>
+is a subdirectory of the root (#113).
+
+=cut
 
 # ----- Working-tree file status -----
 
@@ -397,10 +479,26 @@ sub git_user_email {
     return $self->_config_string('user.email');
 }
 
+=method git_user_email
+
+    my $email = $git->git_user_email;
+
+Returns the repository's configured C<user.email> (read via native git
+config, not the CLI), or the empty string when unset or the repository can't
+be opened. Never C<undef>.
+
+=cut
+
 sub git_user_name {
     my ($self) = @_;
     return $self->_config_string('user.name');
 }
+
+=method git_user_name
+
+Same contract as L</git_user_email>, for C<user.name>.
+
+=cut
 
 sub git_user_identity {
     my ($self) = @_;
@@ -410,6 +508,16 @@ sub git_user_identity {
     return $email || $name || '';
 }
 
+=method git_user_identity
+
+    my $id = $git->git_user_identity;   # "Name <email>", or whichever half is set
+
+Returns C<"$name E<lt>emailE<gt>"> when both L</git_user_name> and
+L</git_user_email> are set, otherwise whichever one is non-empty, or the
+empty string when neither is. Never C<undef>.
+
+=cut
+
 # ----- Ref name validation -----
 
 sub normalize_ref_name {
@@ -418,6 +526,18 @@ sub normalize_ref_name {
     $ref =~ s{^/+}{};
     return $ref =~ m{^refs/} ? $ref : "refs/$ref";
 }
+
+=method normalize_ref_name
+
+    my $full = $git->normalize_ref_name('karr/foo');      # "refs/karr/foo"
+    my $full = $git->normalize_ref_name('refs/karr/foo'); # unchanged
+
+Strips any leading C</> and prefixes C<refs/> unless the name already starts
+with it. Dies with C<"Ref name is required\n"> when C<$ref> is C<undef>. Does
+not otherwise validate the name -- see L</validate_helper_ref> and
+L</validate_board_ref> for that.
+
+=cut
 
 sub validate_helper_ref {
     my ( $self, $ref ) = @_;
@@ -450,6 +570,21 @@ sub validate_helper_ref {
 
     return $full_ref;
 }
+
+=method validate_helper_ref
+
+    my $full_ref = $git->validate_helper_ref($ref);
+
+Normalizes C<$ref> (L</normalize_ref_name>) and dies unless it is both a
+syntactically valid git ref name and outside every namespace karr itself owns
+or protects: C<refs/heads/>, C<refs/tags/>, C<refs/remotes/>, C<refs/bisect/>,
+C<refs/replace/>, C<refs/stash>, C<refs/karr/> (the board) and
+C<refs/karr-local/> (pick locks, deliberately kept out of reach of any
+refspec -- #93). Returns the normalized ref on success. This is the gate
+C<karr set-refs>/C<get-refs> go through via L</push_ref>/L</pull_ref>, so a
+caller cannot point a helper ref at the board or at a branch.
+
+=cut
 
 # ----- Ref CRUD (the hotspot — was 4 fork/exec per write_ref) -----
 
@@ -488,6 +623,39 @@ sub retry_contended {
       . " attempts -- too many agents are writing the board at once. "
       . "Try again.\n";
 }
+
+=method retry_contended
+
+    my @result = $git->retry_contended( $what, sub {
+        my ($try) = @_;
+        ...
+        return ();       # lost the race -- read again and retry
+        return $answer;  # committed -- stop retrying
+    } );
+
+Runs C<$attempt> (called with the 1-based attempt number) up to 32 times, with
+randomised backoff in between, until it returns something other than the empty
+list. C<$attempt> returning C<()> means "another writer got there first, read
+again and retry"; any other return value is the final answer and comes back to
+the caller untouched (as a list, in list context). An exception from
+C<$attempt> propagates immediately without retrying -- only contention is
+retried, not a real failure. C<$what> names the thing being updated, for the
+message if every attempt is exhausted: this then dies with C<"karr: gave up
+updating $what after 32 attempts -- too many agents are writing the board at
+once. Try again.\n">.
+
+Every compare-and-swap operation in this class -- L</write_ref_cas>,
+L</delete_ref_cas>, L</allocate_next_id_ref> -- runs its attempt through here,
+which is also where contention is told apart from real failure: a lost race
+can surface natively as libgit2's C<GIT_EMODIFIED> (the ref moved),
+C<GIT_ENOTFOUND> (it was deleted) or C<GIT_ELOCKED> (another process
+currently holds its lock file). C<GIT_ELOCKED> is the one that decides whether
+this actually works under real concurrency -- it is the common outcome once
+more than one process is writing, and a retry loop that only recognised
+C<GIT_EMODIFIED>-style mismatches still lost most writes (16 contenders on one
+counter left 4 processes dead and 4 increments missing; #85).
+
+=cut
 
 sub _cas_backoff {
     my ($try) = @_;
@@ -566,6 +734,25 @@ sub write_ref {
     return $self->_write_ref_oid( $ref, $self->_commit_for_content( $repo, $content ) );
 }
 
+=method write_ref
+
+    $git->write_ref( $ref, $content );
+
+Force-writes C<$ref> to a new parentless commit wrapping C<$content> (a
+character string -- see L<App::karr::Encoding> for the octet boundary),
+last-writer-wins. Retries transparently through L</retry_contended> when
+another process holds the ref's lock, so an ordinary transient collision is
+invisible to the caller; it surfaces only as the "gave up after 32 attempts"
+exception when contention never clears, or as a C<karr: could not write ...>
+exception for anything else. Returns a true value on success, C<undef> when
+the repository can't be opened. Every non-CAS ref write in this class goes
+through here -- L</save_task_ref>, L</write_config_ref>, L</write_next_id_ref>,
+L</write_board_id_ref>, L</write_encoding_version> -- so it is not safe
+against another writer's own write landing between two calls; use
+L</write_ref_cas> when that matters.
+
+=cut
+
 # The ref-moving half of write_ref, split out for replace_board_refs, which
 # has to build every commit in a restore before it moves the first ref.
 sub _write_ref_oid {
@@ -616,6 +803,26 @@ sub write_ref_cas {
     $WRITES++;
     return 1;
 }
+
+=method write_ref_cas
+
+    my $ok = $git->write_ref_cas( $ref, $content, $expected_old );
+
+The compare-and-swap sibling of L</write_ref>: the write only lands if
+C<$ref> still points at C<$expected_old> (a hex OID), where C<undef> means
+"the ref must not exist at all". Returns C<1> when the write landed. Returns
+C<0> -- not an exception -- when someone else won the race: the ref had
+already moved, had already been deleted, or another process currently holds
+its lock file (libgit2's C<GIT_ELOCKED>, the common case under real
+contention, distinct from and handled alongside the stale-OID
+C<GIT_EMODIFIED>/C<GIT_ENOTFOUND> case -- #85). A caller getting C<0> from a
+single call is expected to be inside L</retry_contended>, re-read whatever it
+just decided the new expected state is, and try again. A genuine failure
+C<die>s with a C<karr: could not write ...> message rather than returning
+C<0>. Unlike L</write_ref>, a failed write here never increments
+L</pending_writes>.
+
+=cut
 
 # Compare-and-swap sibling of delete_ref, and the mirror image of
 # write_ref_cas: the ref is removed only if it still holds $expected_old.
@@ -668,6 +875,29 @@ sub delete_ref_cas {
     return 1;
 }
 
+=method delete_ref_cas
+
+    my $ok = $git->delete_ref_cas( $ref, $expected_old );
+
+The compare-and-swap sibling of L</delete_ref>: the ref is removed only if it
+still points at C<$expected_old> (a hex OID; required -- dies with C<"karr:
+could not delete ...: no expected revision given\n"> when omitted).
+Internally this combines an explicit OID comparison (covering the window
+between the caller's read and the lookup here) with libgit2's own
+C<GIT_EMODIFIED> check on the actual removal (covering the window between
+that lookup and the delete) -- together they make this a real
+compare-and-swap, which the unguarded C<git_reference_remove> that
+L</delete_ref> uses cannot be (#94). Returns C<1> when the delete landed,
+C<0> when the ref had already moved or gone, or when another process
+currently holds its lock (C<GIT_ELOCKED> -- same contention handling as
+L</write_ref_cas>, #85). A caller getting C<0> is expected to be inside
+L</retry_contended> and retry. A genuine failure C<die>s with a C<karr:
+could not delete ...> message -- the one place this differs from
+L</delete_ref>, where the same kind of failure is folded silently into a
+C<0> return.
+
+=cut
+
 # Two answers from one read: the OID the ref points at (undef when the ref is
 # absent) and the content of that exact commit. Compare-and-swap callers need
 # both together -- deciding on content fetched independently of the OID would
@@ -696,16 +926,49 @@ sub read_ref_with_oid {
     return ( $oid->hex, $content );
 }
 
+=method read_ref_with_oid
+
+    my ( $oid, $content ) = $git->read_ref_with_oid($ref);
+
+Reads C<$ref> and returns both its current OID (hex string, or C<undef> when
+the ref doesn't exist or the repository can't be opened) and the
+character-string content of the commit it points at (chomped of one trailing
+newline, matching the old C<git cat-file> transport; empty string when there
+is nothing to read). Always returns both from the same read -- a
+compare-and-swap caller that fetched the OID and the content separately would
+be guarding against the wrong revision if the ref moved in between.
+L</load_task_ref_with_oid> is the task-shaped version of this.
+
+=cut
+
 sub read_ref {
     my ( $self, $ref ) = @_;
     return ( $self->read_ref_with_oid($ref) )[1];
 }
+
+=method read_ref
+
+    my $content = $git->read_ref($ref);
+
+The content half of L</read_ref_with_oid>, for callers that don't need the
+OID. Returns the empty string when the ref doesn't exist, never C<undef>.
+
+=cut
 
 sub ref_exists {
     my ( $self, $ref ) = @_;
     my $repo = $self->_repo or return 0;
     return $repo->reference_exists($ref) ? 1 : 0;
 }
+
+=method ref_exists
+
+    if ( $git->ref_exists($ref) ) { ... }
+
+Returns C<1> when C<$ref> exists, C<0> otherwise -- including when the
+repository can't be opened.
+
+=cut
 
 # Returns 1 only when this call actually removed the ref, 0 otherwise -- the
 # ref was not there, or libgit2 refused. It used to swallow the exception and
@@ -738,6 +1001,21 @@ sub delete_ref {
         return 1;
     } );
 }
+
+=method delete_ref
+
+    my $removed = $git->delete_ref($ref);
+
+Deletes C<$ref>. Retries transparently through L</retry_contended> while
+another process holds the ref's lock. Returns C<1> only when this exact call
+is the one that removed it; returns C<0> for every other outcome -- the ref
+was never there, the repository can't be opened, or the delete failed for a
+reason other than lock contention. Unlike L</delete_ref_cas>, a
+non-contention failure here is reported the same way as "already gone"
+rather than as an exception -- a caller that needs to tell those apart has no
+way to from the return value alone.
+
+=cut
 
 # ----- Remote / network ops: native via Git::Native::Remote -----
 
@@ -805,6 +1083,15 @@ sub has_remote {
     return $repo->has_remote($remote);
 }
 
+=method has_remote
+
+    if ( $git->has_remote('origin') ) { ... }
+
+Returns true when C<$remote> (default C<origin>) is configured, false
+otherwise -- including when the repository can't be opened.
+
+=cut
+
 # Default credentials callback: SSH-agent → ~/.ssh/id_ed25519 → ~/.ssh/id_rsa
 # → default → fail. Matches CLI `git`'s implicit auth chain.
 sub _default_credentials_cb {
@@ -862,6 +1149,19 @@ sub fetch {
         $self->_cli_transport( 'fetch', $remote, [] );
     };
 }
+
+=method fetch
+
+    my $ok = $git->fetch($remote);   # default 'origin'
+
+Runs a plain C<git fetch> using the remote's configured refspecs -- unlike
+L</pull>, this does not go through the C<refs/karr-remote/> mirror or touch
+the board at all. Returns C<1> when C<$remote> isn't configured (a no-op) or
+the fetch succeeds, C<0> on failure with L</last_error> set. Tries the native
+libgit2 transport first and falls back to the system C<git> CLI on failure
+(see L</DESCRIPTION>).
+
+=cut
 
 # Per-ref rejections from the most recent push, as
 # [ { ref => $name, reason => $text }, ... ]. Empty when the last push
@@ -975,6 +1275,22 @@ sub push {
     return 1;
 }
 
+=method push
+
+    my $ok = $git->push( $remote, $refspec );
+
+Pushes C<$refspec> (default: the forced, pruning board refspec covering all
+of C<refs/karr/*>) to C<$remote> (default C<origin>). Returns C<1> when
+C<$remote> isn't configured (a no-op) or the push lands, C<0> otherwise --
+including when the transport itself succeeded but the far side rejected some
+or all of the refs (see L</push_rejections>, and L</last_error> for the
+combined message). Tries the native transport first, falls back to the CLI on
+transport failure (L</DESCRIPTION>). Only a push of the default board refspec
+updates the C<refs/karr-remote/> mirror afterwards; a custom C<$refspec> (as
+L</push_ref> uses) does not.
+
+=cut
+
 # %opt: accept_wipe => bool, the caller's answer to _refuse_wholesale_wipe;
 # accept_foreign => bool, its answer to _check_board_identity. Only
 # `karr sync --prune` sets the first and `karr sync --accept-foreign-board`
@@ -1011,6 +1327,23 @@ sub pull {
     $self->_reconcile_with_mirror( $remote, $tracked, $opt{accept_wipe} );
     return 1;
 }
+
+=method pull
+
+    my $ok = $git->pull( $remote, accept_wipe => 0, accept_foreign => 0 );
+
+Fetches the remote's board state into the C<refs/karr-remote/E<lt>remoteE<gt>/>
+mirror and reconciles the local board against it (see L</DESCRIPTION> for the
+full algorithm and the four cases it resolves). Returns C<1> when C<$remote>
+isn't configured (a no-op) or reconciliation completes, C<0> on a transport
+failure. Two situations are refused outright by C<die>-ing rather than
+returning C<0>: a reconciliation that would delete every remaining board ref
+(pass C<accept_wipe =E<gt> 1> -- C<karr sync --prune> -- to allow it), and a
+remote presenting a board with a different C<refs/karr/meta/board-id> (pass
+C<accept_foreign =E<gt> 1> -- C<karr sync --accept-foreign-board> -- to allow
+it). Either refusal leaves the mirror exactly as it was before the fetch.
+
+=cut
 
 # The identity half of the pull guards (#95), run after the fetch and before
 # any reconciliation. The wipe guard cannot see this case at all: a remote
@@ -1334,6 +1667,19 @@ sub push_ref {
     return $self->_accept_push_result( $remote, $result );
 }
 
+=method push_ref
+
+    my $ok = $git->push_ref( $ref, $remote );
+
+Pushes a single ref (not the board) with a forced, non-pruning refspec, after
+validating it through L</validate_helper_ref> -- so this dies rather than
+silently pushing when C<$ref> is in a protected namespace or is not a legal
+ref name. Same return contract as L</push>: C<1> for a no-op or success, C<0>
+on rejection or transport failure. This is what C<karr set-refs> uses to
+publish a helper ref.
+
+=cut
+
 sub pull_ref {
     my ( $self, $ref, $remote ) = @_;
     $remote //= 'origin';
@@ -1356,6 +1702,17 @@ sub pull_ref {
         $self->_cli_transport( 'fetch', $remote, ["+$ref:$ref"] );
     };
 }
+
+=method pull_ref
+
+    my $ok = $git->pull_ref( $ref, $remote );
+
+Fetches a single ref (not the board) with a forced refspec, after validating
+it through L</validate_helper_ref>. Returns C<1> on success (or when
+C<$remote> isn't configured), C<0> on failure. This is what C<karr get-refs>
+uses to pull a helper ref someone else published.
+
+=cut
 
 # Fallback transport via the system `git` CLI so that ssh-config directives
 # libgit2 ignores (ProxyCommand, Host aliases, IdentityFile, insteadOf) are
@@ -1603,6 +1960,19 @@ sub board_encoding_version {
     };
 }
 
+=method board_encoding_version
+
+    my $version = $git->board_encoding_version;
+
+Returns the board's stamped encoding contract version as an integer, or
+C<1> when C<refs/karr/meta/encoding> is absent or unparseable -- C<1> means
+"written before this ref existed", i.e. every board from before ticket #53.
+Cached per instance after the first read; L</write_encoding_version> and
+L</replace_board_refs> both invalidate the cache, since either can change
+what is currently stamped.
+
+=cut
+
 sub write_encoding_version {
     my ( $self, $version ) = @_;
     $version //= BOARD_ENCODING_VERSION;
@@ -1610,10 +1980,32 @@ sub write_encoding_version {
     return $self->write_ref( 'refs/karr/meta/encoding', "$version\n" );
 }
 
+=method write_encoding_version
+
+    $git->write_encoding_version;              # stamps the current contract version
+    $git->write_encoding_version($version);
+
+Stamps C<refs/karr/meta/encoding> with C<$version> (default: the current
+contract version). Invalidates the per-instance cache L</board_encoding_version>
+keeps, so the next read reflects the new value. C<karr init>, C<karr repair
+--yes> and C<karr import --yes> call this.
+
+=cut
+
 sub board_is_legacy_encoded {
     my ($self) = @_;
     return $self->board_encoding_version < BOARD_ENCODING_VERSION ? 1 : 0;
 }
+
+=method board_is_legacy_encoded
+
+    if ( $git->board_is_legacy_encoded ) { ... }
+
+Returns C<1> when L</board_encoding_version> is below the current contract
+version -- this board still carries the double-UTF-8-encoded payloads
+L<App::karr::Encoding> describes -- C<0> otherwise.
+
+=cut
 
 # Repair board payloads read off a pre-contract board, and only those.
 sub maybe_repair_legacy {
@@ -1621,6 +2013,17 @@ sub maybe_repair_legacy {
     return $data unless $self->board_is_legacy_encoded;
     return repair_mojibake($data);
 }
+
+=method maybe_repair_legacy
+
+    my $data = $git->maybe_repair_legacy($data);
+
+Returns C<$data> unchanged unless L</board_is_legacy_encoded>, in which case
+it is run through C<repair_mojibake> first. Callers that read board payloads
+(task frontmatter, config, activity log entries) route them through this
+rather than checking the flag themselves.
+
+=cut
 
 # ----- Board identity (ticket #95) -----
 
@@ -1644,10 +2047,29 @@ sub read_board_id_ref {
     return $self->_read_id_ref(BOARD_ID_REF);
 }
 
+=method read_board_id_ref
+
+    my $id = $git->read_board_id_ref;
+
+Returns this board's identity (C<refs/karr/meta/board-id>, normalized --
+whitespace stripped), or C<undef> when it isn't stamped -- true of every
+board created before ticket #95. See L</DESCRIPTION> for why this exists
+(telling a swapped remote apart from the right one).
+
+=cut
+
 sub write_board_id_ref {
     my ( $self, $id ) = @_;
     return $self->write_ref( BOARD_ID_REF, "$id\n" );
 }
+
+=method write_board_id_ref
+
+    $git->write_board_id_ref($id);
+
+Stamps C<refs/karr/meta/board-id> with C<$id>.
+
+=cut
 
 # 128 bits of hex. This is an accident guard, not a secret, and rand is the
 # same source App::karr::Cmd::AgentName uses; modern perls seed it from OS
@@ -1656,6 +2078,16 @@ sub new_board_id {
     my ($self) = @_;
     return join '', map { sprintf '%02x', int rand 256 } 1 .. 16;
 }
+
+=method new_board_id
+
+    my $id = $git->new_board_id;   # 32 hex chars, 128 bits
+
+Returns a fresh random board identity: 128 bits as lowercase hex. An accident
+guard, not a secret -- collisions, not adversaries, are what it defends
+against.
+
+=cut
 
 # Read-before-write on purpose: an existing id is never re-keyed. That is
 # what makes re-init of a half-board safe -- re-keying would make every other
@@ -1669,6 +2101,17 @@ sub ensure_board_id_ref {
     return $id;
 }
 
+=method ensure_board_id_ref
+
+    my $id = $git->ensure_board_id_ref;
+
+Returns the board's identity, stamping a fresh one first if none exists yet.
+Read-before-write: an existing id is never replaced, which is what makes
+calling this safe on a half-initialized board -- re-keying would make every
+other clone see this one as foreign (L</pull>'s C<accept_foreign> case).
+
+=cut
+
 # ----- Task / config refs (sit on top of write_ref/read_ref) -----
 
 sub save_task_ref {
@@ -1677,10 +2120,29 @@ sub save_task_ref {
   $self->write_ref($ref, $task->to_markdown);
 }
 
+=method save_task_ref
+
+    $git->save_task_ref($task);
+
+Writes C<$task> (an L<App::karr::Task>) to its
+C<refs/karr/tasks/E<lt>idE<gt>/data> ref via L</write_ref> -- last-writer-wins.
+See L</save_task_ref_cas> for the guarded version.
+
+=cut
+
 sub load_task_ref {
   my ($self, $id) = @_;
   return ( $self->load_task_ref_with_oid($id) )[1];
 }
+
+=method load_task_ref
+
+    my $task = $git->load_task_ref($id);
+
+Returns the L<App::karr::Task> at C<refs/karr/tasks/E<lt>idE<gt>/data>, or
+C<undef> when it doesn't exist.
+
+=cut
 
 # The task plus the OID of the commit it was read from, for callers that then
 # write it back under compare-and-swap (App::karr::Cmd::Pick). Same pairing
@@ -1696,11 +2158,35 @@ sub load_task_ref_with_oid {
   ));
 }
 
+=method load_task_ref_with_oid
+
+    my ( $oid, $task ) = $git->load_task_ref_with_oid($id);
+
+Same as L</load_task_ref> but also returns the OID the task was read from,
+for a caller (L<App::karr::Cmd::Pick>) that means to write it back under
+compare-and-swap -- pairing OID and content from one read for the same
+reason L</read_ref_with_oid> does. Returns C<(undef, undef)> when the task
+doesn't exist -- note this differs from L</read_ref_with_oid>, which answers
+a missing ref with C<(undef, '')>. Legacy boards
+(L</board_is_legacy_encoded>) have their frontmatter repaired as part of the
+parse.
+
+=cut
+
 sub save_task_ref_cas {
   my ($self, $task, $expected_old) = @_;
   my $ref = "refs/karr/tasks/" . $task->id . "/data";
   return $self->write_ref_cas($ref, $task->to_markdown, $expected_old);
 }
+
+=method save_task_ref_cas
+
+    my $ok = $git->save_task_ref_cas( $task, $expected_old );
+
+The compare-and-swap sibling of L</save_task_ref>: same contract as
+L</write_ref_cas>, applied to C<$task>'s data ref.
+
+=cut
 
 # Only the data ref makes a task exist. The pattern used to be
 # m{refs/karr/tasks/(\d+)/}, which also matched .../N/lock -- so a lock left
@@ -1717,6 +2203,18 @@ sub list_task_refs {
   return sort { $a <=> $b } keys %ids;
 }
 
+=method list_task_refs
+
+    my @ids = $git->list_task_refs;
+
+Returns every task id that has a C<refs/karr/tasks/E<lt>idE<gt>/data> ref,
+numerically sorted, deduplicated. Deliberately matches only the C<data> ref
+and not e.g. C<.../lock>: a lock ref left behind by a process that died
+mid-pick must not make L</load_task_ref> get asked to load a task that no
+longer exists (#45).
+
+=cut
+
 sub list_refs {
     my ( $self, $prefix ) = @_;
     $prefix //= 'refs/karr/';
@@ -1725,6 +2223,16 @@ sub list_refs {
     my $names = $repo->reference_names( glob => "$prefix*" );
     return @$names;
 }
+
+=method list_refs
+
+    my @refs = $git->list_refs($prefix);   # default 'refs/karr/'
+
+Returns the full names of every ref matching C<"$prefix*">, glob-scoped
+server-side rather than filtered client-side after listing everything. Empty
+list when the repository can't be opened.
+
+=cut
 
 sub ref_oids {
     my ( $self, $prefix ) = @_;
@@ -1741,6 +2249,18 @@ sub ref_oids {
     return \%oids;
 }
 
+=method ref_oids
+
+    my $oids = $git->ref_oids($prefix);   # { $ref => $hex_oid, ... }
+
+Returns a hashref of every ref under C<$prefix> (default C<refs/karr/>)
+mapped to its current OID as a hex string. Refs that can't be resolved are
+silently omitted rather than included with an undef value. Returns C<undef>
+-- not an empty hashref -- when the repository can't be opened; callers
+throughout this class guard with C<< $git->ref_oids(...) || {} >>.
+
+=cut
+
 sub read_config_ref {
     my ($self) = @_;
     my $content = $self->read_ref('refs/karr/config');
@@ -1748,10 +2268,29 @@ sub read_config_ref {
     return $self->maybe_repair_legacy( yaml_load($content) );
 }
 
+=method read_config_ref
+
+    my $config = $git->read_config_ref;   # hashref
+
+Returns the board config as a hashref, parsed from C<refs/karr/config>
+(YAML) and repaired if the board is legacy-encoded. Returns C<{}> -- not
+C<undef> -- when the ref is absent or empty.
+
+=cut
+
 sub write_config_ref {
     my ( $self, $data ) = @_;
     return $self->write_ref( 'refs/karr/config', yaml_dump($data) );
 }
+
+=method write_config_ref
+
+    $git->write_config_ref($config);
+
+Serializes C<$config> to YAML and writes it to C<refs/karr/config> via
+L</write_ref>.
+
+=cut
 
 use constant NEXT_ID_REF => 'refs/karr/meta/next-id';
 
@@ -1767,10 +2306,31 @@ sub read_next_id_ref {
     return _parse_next_id( $self->read_ref(NEXT_ID_REF) );
 }
 
+=method read_next_id_ref
+
+    my $next = $git->read_next_id_ref;
+
+Returns the next task id to be handed out, as an integer. Returns C<1> when
+the ref is absent or unparseable. This is a plain, unguarded read -- see
+L</allocate_next_id_ref> for the version that actually reserves an id.
+
+=cut
+
 sub write_next_id_ref {
     my ( $self, $next_id ) = @_;
     return $self->write_ref( NEXT_ID_REF, "$next_id\n" );
 }
+
+=method write_next_id_ref
+
+    $git->write_next_id_ref($next_id);
+
+Unconditionally writes the next-id counter via L</write_ref>. Not
+compare-and-swapped -- a direct caller races with L</allocate_next_id_ref>;
+this is for whole-board writers (C<karr import>, C<repair>) restamping the
+counter outright, not for handing out an id.
+
+=cut
 
 # Hand out one id and move the counter past it in a single guarded step.
 #
@@ -1790,6 +2350,17 @@ sub allocate_next_id_ref {
     } );
 }
 
+=method allocate_next_id_ref
+
+    my $id = $git->allocate_next_id_ref;
+
+Hands out one task id and advances the counter past it, atomically: the read
+and the compare-and-swapped write happen inside one L</retry_contended> loop,
+so two callers racing for the same id can never both receive it and silently
+overwrite each other's task (#44). Returns the allocated id.
+
+=cut
+
 # ----- Whole-board replacement (restore) -----
 
 # The mirror image of validate_helper_ref, which keeps helper refs out of the
@@ -1807,6 +2378,19 @@ sub validate_board_ref {
         unless Git::Native->reference_name_is_valid($ref);
     return $ref;
 }
+
+=method validate_board_ref
+
+    my $ref = $git->validate_board_ref($ref);
+
+The mirror image of L</validate_helper_ref>: dies unless C<$ref> is
+non-empty, inside the board namespace C<refs/karr/>, and a syntactically
+valid git ref name. Returns C<$ref> unchanged on success.
+L</replace_board_refs> (C<karr restore>) validates every ref in a snapshot
+through this before writing anything, so a hand-edited backup can't point a
+ref like C<refs/heads/main> at a board commit.
+
+=cut
 
 # Make the board consist of exactly the refs in %$refs (name => content).
 #
@@ -1859,6 +2443,25 @@ sub replace_board_refs {
     return 1;
 }
 
+=method replace_board_refs
+
+    $git->replace_board_refs( \%refs );   # { $ref => $content, ... }
+
+Makes the board consist of exactly the given refs: C<karr restore>'s
+primitive. Every ref name is validated (L</validate_board_ref>) and every
+commit object built I<before> any ref is touched, so a single bad name or
+non-text value in C<%refs> dies without leaving the board half-overwritten.
+The given refs are then written in place -- never through a
+delete-everything-then-rewrite step, so the board is never briefly empty --
+and any existing board ref not present in C<%refs> is deleted afterwards,
+best-effort: a ref that resists deletion is left in place with a warning
+rather than failing the whole restore. Always returns C<1> once the given
+refs are in place, even when some stray ref could not be removed. Resets the
+cached L</board_encoding_version>, since a restored snapshot may carry a
+different one than the board had.
+
+=cut
+
 sub delete_refs {
     my ( $self, $prefix ) = @_;
     $self->delete_ref($_) for $self->list_refs($prefix);
@@ -1872,5 +2475,18 @@ sub delete_refs {
     die "karr: could not delete " . join( ', ', @left ) . "\n" if @left;
     return 1;
 }
+
+=method delete_refs
+
+    $git->delete_refs($prefix);
+
+Deletes every ref currently under C<$prefix> (via L</delete_ref>, so each one
+is itself retried against lock contention). Re-reads the prefix afterwards
+rather than trusting the deletes to have all landed, and dies naming
+whichever refs are still there if any are -- this is what C<karr destroy>
+uses, and a partial destroy reported as a success would be worse than one
+that fails loudly.
+
+=cut
 
 1;

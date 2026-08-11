@@ -78,15 +78,61 @@ sub load_config_overrides {
     return ref $data eq 'HASH' ? $data : {};
 }
 
+=head2 load_config_overrides
+
+Returns the board's raw config overrides -- whatever C<refs/karr/config>
+currently holds, decoded but not merged with the code defaults. A board with
+no config ref yet, or one whose ref does not decode to a mapping, answers
+C<{}> rather than C<undef> or dying.
+
+    my $overrides = $store->load_config_overrides;   # sparse, not effective
+
+This is the input L</load_config> merges over
+L<App::karr::Config/default_config>; see that method for the merged result,
+and L</effective_config> for its cached form.
+
+=cut
+
 sub load_config {
     my ($self) = @_;
     return App::karr::Config->effective_config( $self->load_config_overrides );
 }
 
+=head2 load_config
+
+Reads L</load_config_overrides> and merges them over the code defaults via
+L<App::karr::Config/effective_config>, returning a plain hash reference --
+not a blessed L<App::karr::Config> object. Every call re-reads the config
+ref; L</effective_config> is the cached wrapper most callers want instead.
+
+    my $ec = $store->load_config;
+
+=cut
+
 sub effective_config {
     my ($self) = @_;
     return $self->{_effective_config} //= $self->load_config;
 }
+
+=head2 effective_config
+
+The board's merged config, cached for the lifetime of this C<$store>
+instance. The first call runs L</load_config>; every call after returns the
+same hash reference until L</save_config> invalidates the cache. This is the
+entry point almost every command and role uses --
+C<< App::karr::Config->from_merged( $store->effective_config ) >> is the
+standard way to get a queryable L<App::karr::Config> object for the current
+board (see L<App::karr::Config/from_merged>).
+
+Not to be confused with the class method
+L<App::karr::Config/effective_config>, which does the actual default/override
+merge and takes no board at all; this method is the per-store cache built on
+top of it.
+
+    my $ec = $store->effective_config;
+    my $config = App::karr::Config->from_merged($ec);
+
+=cut
 
 sub all_status_names {
     my ($self) = @_;
@@ -210,10 +256,40 @@ sub save_config {
     return $self->git->write_config_ref($overrides);
 }
 
+=head2 save_config
+
+Validates a config and writes it back to C<refs/karr/config> as sparse
+overrides. C<$effective> may be a full effective config or the sparse
+contents of a F<config.yml> -- both are merged over the defaults first (a
+no-op for an already-effective config), then validated with
+L<App::karr::Config/validate> (dies on a broken schema), then diffed against
+L<App::karr::Config/default_config> so only the keys that differ from the
+code defaults are actually stored. This is the single write choke point for
+the config ref, so every writer (C<karr config set>, C<karr init>, C<karr
+disable>/C<karr enable>, C<karr import>) shares one validation gate (ticket
+#78).
+
+Invalidates this store's L</effective_config> cache before writing, so the
+next read reflects what was just saved.
+
+    $store->save_config($effective);
+
+=cut
+
 sub peek_next_id {
     my ($self) = @_;
     return $self->git->read_next_id_ref;
 }
+
+=head2 peek_next_id
+
+Returns the board's next-id counter as it currently stands, without
+allocating or advancing it. Contrast with L</allocate_next_id>, which hands
+out the value and moves the counter past it atomically.
+
+    my $next = $store->peek_next_id;
+
+=cut
 
 sub allocate_next_id {
     my ($self) = @_;
@@ -235,6 +311,18 @@ sub set_next_id {
     my ( $self, $next_id ) = @_;
     return $self->git->write_next_id_ref($next_id);
 }
+
+=head2 set_next_id
+
+Writes the next-id counter directly to C<$next_id>, with no compare-and-swap
+and no check that the value only moves forward -- callers that need either of
+those guarantees provide them themselves (see L</ensure_next_id> and
+L</serialize_from>, the only two callers). Prefer L</allocate_next_id> for
+ordinary id allocation.
+
+    $store->set_next_id(42);
+
+=cut
 
 sub ensure_next_id {
     my ($self) = @_;
@@ -323,10 +411,36 @@ sub load_tasks {
     return grep { defined } map { $self->git->load_task_ref($_) } @ids;
 }
 
+=head2 load_tasks
+
+Returns every task on the board as a list of L<App::karr::Task> objects, in
+ascending id order (L<App::karr::Git/list_task_refs> sorts numerically). Any
+ref that resolves to no C<data> blob -- see L</find_task> -- is silently
+skipped rather than returned as C<undef>; a single undef in this list once
+took out C<list>, C<board>, C<materialize> and C<pick> at once, since every
+consumer calls methods on each element (ticket #45). A ref whose C<data> blob
+is present but fails to parse still dies, propagating out of this call.
+
+    my @tasks = $store->load_tasks;
+
+=cut
+
 sub find_task {
     my ( $self, $id ) = @_;
     return $self->git->load_task_ref($id);
 }
+
+=head2 find_task
+
+Returns the L<App::karr::Task> for C<$id>, or C<undef> when its ref does not
+exist or resolves to no C<data> blob at all -- the same tolerant case
+L</load_tasks> filters out of a whole-board read. A ref that does exist and
+does carry a C<data> blob but fails to parse as a task still dies, the same
+as L<App::karr::Task/from_string> would.
+
+    my $task = $store->find_task(7) or die "No such task\n";
+
+=cut
 
 sub find_task_with_oid {
     my ( $self, $id ) = @_;
@@ -353,6 +467,21 @@ sub save_task {
     $task->updated( gmtime->datetime . 'Z' ) if $self->git->ref_exists($ref);
     return $self->git->save_task_ref($task);
 }
+
+=head2 save_task
+
+Writes C<$task> to its ref (C<refs/karr/tasks/ID/data>), unconditionally --
+no compare-and-swap, so a concurrent writer's change can be lost under it;
+see L</save_task_cas> when that matters. Bumps C<updated> to now first, but
+only when the ref already exists: a brand new task keeps the C<updated>
+value it was constructed with (which for a fresh L<App::karr::Task> equals
+C<created>). The restore/import path bypasses this bump entirely by calling
+L<App::karr::Git/save_task_ref> directly, to preserve original timestamps --
+see L</serialize_from>.
+
+    $store->save_task($task);
+
+=cut
 
 sub save_task_cas {
     my ( $self, $task, $expected_oid ) = @_;
@@ -386,15 +515,43 @@ sub delete_task {
     return $self->git->delete_ref("refs/karr/tasks/$id/data");
 }
 
+=head2 delete_task
+
+Deletes the ref for task C<$id> (C<refs/karr/tasks/ID/data>). Deleting a ref
+that does not exist is not an error -- see L<App::karr::Git/delete_ref>.
+
+    $store->delete_task(7);
+
+=cut
+
 sub list_karr_refs {
     my ($self) = @_;
     return $self->git->list_refs('refs/karr/');
 }
 
+=head2 list_karr_refs
+
+Returns every ref name under C<refs/karr/>, board and metadata refs alike --
+the same broad question L</has_board_refs> asks with just a boolean answer.
+
+    my @refs = $store->list_karr_refs;
+
+=cut
+
 sub delete_all_karr_refs {
     my ($self) = @_;
     return $self->git->delete_refs('refs/karr/');
 }
+
+=head2 delete_all_karr_refs
+
+Deletes every ref under C<refs/karr/> -- the whole board, metadata included.
+Used only by C<karr destroy>; there is no per-piece variant, because a board
+is what is being removed, not a task.
+
+    $store->delete_all_karr_refs;
+
+=cut
 
 sub materialize_to {
     my ( $self, $board_dir, %args ) = @_;
@@ -480,6 +637,19 @@ sub file_view_gitignore_entries {
     return ( 'tasks/', 'config.yml' );
 }
 
+=head2 file_view_gitignore_entries
+
+Returns the exact two path entries the materialized file view claims --
+C<tasks/> and C<config.yml>, named exactly as L</materialize_to> writes them.
+The single source of truth for those two strings, shared by
+L</ensure_gitignore> (what to append) and L</project_owned_view_paths> (what
+to check for project-tracked content) so the two can never drift apart -- see
+that method for why the check matters (tickets #48, #89, #100, #104).
+
+    my @entries = $store->file_view_gitignore_entries;   # ('tasks/', 'config.yml')
+
+=cut
+
 sub project_owned_view_paths {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);
@@ -552,6 +722,26 @@ sub ensure_gitignore {
     $gitignore->append_utf8($append);
     return @missing;
 }
+
+=head2 ensure_gitignore
+
+Idempotently appends any of L</file_view_gitignore_entries> missing from
+F<$board_dir/.gitignore> (creating the file, and a header comment, on first
+use). Returns the list of entries actually added -- empty when the file
+already covers everything.
+
+This method does B<not> itself check whether the project already tracks
+content at those paths; it only ever appends. The check is
+L</project_owned_view_paths>, a separate call so a caller can ask before
+writing anything: C<karr init> and C<karr materialize> both call it first and
+skip C<ensure_gitignore> entirely when it returns anything, because appending
+an entry for a path git already tracks would be inert at best and misleading
+at worst (tickets #48, #89, #100, #104, #107).
+
+    my @owned = $store->project_owned_view_paths($board_dir);
+    my @added = @owned ? () : $store->ensure_gitignore($board_dir);
+
+=cut
 
 sub serialize_from {
     my ( $self, $board_dir ) = @_;
@@ -714,6 +904,19 @@ sub snapshot {
         refs => \%snapshot,
     };
 }
+
+=head2 snapshot
+
+Reads every ref under C<refs/karr/> into a plain hash reference:
+C<< { version => 1, refs => { $ref_name => $content, ... } } >>, where
+C<$content> is that ref's raw stored text (config YAML, a task's Markdown
+document, or a bare id/hex string for the meta refs) via
+L<App::karr::Git/read_ref>. C<karr backup> writes this straight to YAML; pair
+with L</restore_snapshot> to write one back onto C<refs/karr/*>.
+
+    my $snapshot = $store->snapshot;
+
+=cut
 
 sub restore_snapshot {
     my ( $self, $snapshot ) = @_;

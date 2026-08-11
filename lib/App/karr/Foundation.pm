@@ -292,6 +292,33 @@ sub run {
   return 0;
 }
 
+=method run
+
+    exit App::karr::Foundation->new_with_options->run;
+
+The single entry point, invoked by F<bin/karr-foundation>. One pass over
+every configured repo, then returns -- there is no internal loop; running
+periodically is left to cron/systemd-timer/an external C<while> loop, per
+L</DESCRIPTION>. Returns C<1> (a process exit code, not an exception) when
+C<_discover_repos> finds nothing at all -- an empty C<dirs>/C<scan> in the
+config, or a config file that does not exist -- and C<0> otherwise, including
+when individual repos error out: a repo whose C<_process_repo> dies is
+C<warn>ed and skipped, never propagated, so one broken board cannot stop the
+rest of the run.
+
+With C<--status> it prints L<App::karr::Foundation::Overview>'s read-only
+overview and returns without touching any board. Without it, C<run> first
+checks whether B<any> repo has an agent configured at all (per repo,
+C<_agent_command>, excluding boards disabled via C<karr disable>); if none
+do, it falls back to the same overview instead of doing nothing, since
+agent execution is opt-in and a config with no agents configured is a
+legitimate way to use foundation purely as a status board. Otherwise it calls
+C<_process_repo> for each repo in turn, which is what applies the disable
+flag, the lock, the cooldown, the change/actionability check, and finally the
+drain loop described under "Drain semantics" above.
+
+=cut
+
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------

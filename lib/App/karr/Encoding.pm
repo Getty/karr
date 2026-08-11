@@ -98,7 +98,9 @@ use constant BOARD_ENCODING_VERSION => 2;
 
   my $bytes = to_octets($characters);
 
-Encodes a character string to UTF-8 octets. C<undef> passes through.
+Encodes a character string to UTF-8 octets. C<undef> passes through. This is
+the character-to-octet edge: the only place karr calls C<Encode::encode>
+directly, so nothing outside this module ever needs to.
 
 =cut
 
@@ -112,8 +114,10 @@ sub to_octets {
 
   my $characters = from_octets($bytes);
 
-Decodes UTF-8 octets to a character string. A payload that is not valid UTF-8
-is returned B<unchanged> rather than being lossily substituted: karr ref blobs
+Decodes UTF-8 octets to a character string -- the octet-to-character edge,
+and the only place karr calls C<Encode::decode> directly. A payload that is
+not valid UTF-8 is returned B<unchanged> rather than being lossily
+substituted: karr ref blobs
 and command-line arguments are UTF-8 by contract, and passing a non-conforming
 payload through keeps the byte-in/byte-out behaviour karr had before this
 boundary existed, instead of quietly replacing bytes with U+FFFD.
@@ -163,7 +167,9 @@ sub enable_std_utf8 {
 
   my $characters = yaml_dump($data);
 
-C<YAML::XS::Dump> at the character level.
+C<YAML::XS::Dump> at the character level, and the only place karr calls it
+directly: C<Dump> itself emits octets, which is why the result is passed
+through L</from_octets> before any caller sees it.
 
 =cut
 
@@ -176,7 +182,9 @@ sub yaml_dump {
 
   my $data = yaml_load($characters);
 
-C<YAML::XS::Load> at the character level.
+C<YAML::XS::Load> at the character level, and the only place karr calls it
+directly: C<Load> expects octets, which is why the character string is
+turned to them with L</to_octets> first.
 
 =cut
 
@@ -201,8 +209,9 @@ sub _json {
 
   my $characters = json_encode($data);
 
-C<encode_json> at the character level, with C<canonical> key ordering so the
-C<--json> payload an agent parses is byte-stable across runs.
+C<encode_json> at the character level, and the only place karr calls it
+directly, with C<canonical> key ordering so the C<--json> payload an agent
+parses is byte-stable across runs.
 
 =cut
 
@@ -215,7 +224,8 @@ sub json_encode {
 
   my $data = json_decode($characters);
 
-C<decode_json> at the character level.
+C<decode_json> at the character level, and the only place karr calls it
+directly.
 
 =cut
 

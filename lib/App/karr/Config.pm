@@ -46,10 +46,45 @@ sub from_merged {
   return bless { data => $merged, file => undef }, $class;
 }
 
+=head2 from_merged
+
+  my $config = App::karr::Config->from_merged($effective_hash);
+
+Wraps an already-effective config hash (defaults merged with overrides,
+typically L<App::karr::BoardStore/effective_config>) directly as a
+L<App::karr::Config> instance, with no file behind it -- C<< ->file >>
+answers C<undef>. This is the entry point almost every command uses to get a
+queryable config object for the current board:
+
+  App::karr::Config->from_merged( $self->store->effective_config )
+
+is the standard idiom (see L<App::karr::Cmd::Handoff>, L<App::karr::Cmd::Pick>,
+L<App::karr::Cmd::Edit>, among others). Because C<file> is unset, L</save> on
+an instance built this way dies dereferencing it -- these instances are for
+reading and validating, not for writing back; write through
+L<App::karr::BoardStore/save_config> instead.
+
+=cut
+
 sub save {
   my ($self) = @_;
   DumpFile($self->file->stringify, $self->data);
 }
+
+=head2 save
+
+  $config->save;
+
+Dumps C<< $self->data >> as YAML to C<< $self->file >>. Only meaningful for
+an instance constructed with a real C<file> (C<< App::karr::Config->new(file
+=> $path) >>); an instance from L</from_merged> has no file and this dies
+dereferencing C<undef>. This is not how the board config is written in
+normal operation -- C<refs/karr/config> is written by
+L<App::karr::BoardStore/save_config>, which validates and diffs against
+defaults first. C<save> writes C<data> verbatim to a YAML file and exists for
+code that works with the temporary materialized config view directly.
+
+=cut
 
 # The three list accessors below tolerate a malformed board config instead of
 # dying inside a dereference. `karr config show` has to stay able to print a
@@ -95,12 +130,36 @@ sub status_config {
   return undef;
 }
 
+=head2 status_config
+
+  my $sc = $config->status_config('in-progress');
+  # { name => 'in-progress', require_claim => 1 }
+
+Returns the full configuration entry for one status: the mapping as
+configured, or a synthesized C<< { name => $name } >> when the board wrote it
+as a bare string, or C<undef> when no status by that name exists. Contrast
+with L</statuses>, which returns every name and none of the per-status
+detail.
+
+=cut
+
 sub priorities {
   my ($self) = @_;
   return ref $self->data->{priorities} eq 'ARRAY'
     ? @{ $self->data->{priorities} }
     : qw( low medium high critical );
 }
+
+=head2 priorities
+
+  my @priorities = $config->priorities;
+
+Returns the configured priority names in order, or the built-in C<low medium
+high critical> when the config carries none. Unlike L</statuses> and
+L</classes>, entries are always bare strings -- kanban-md's priority list has
+no per-entry options to carry.
+
+=cut
 
 sub classes {
   my ($self) = @_;
@@ -123,6 +182,20 @@ sub claim_timeout {
   my ($self) = @_;
   return $self->data->{claim_timeout} // '1h';
 }
+
+=head2 claim_timeout
+
+  my $raw = $config->claim_timeout;   # '1h', unparsed
+
+Returns the board's configured claim-expiry duration as the raw string from
+the config (C<'1h'> when unset), in kanban-md's C<time.ParseDuration> grammar
+-- not seconds. Pass it to L</parse_duration> to get a number. Governs how
+long C<karr pick> and the C<move>/C<edit>/C<handoff> claim check
+(L<App::karr::Role::ClaimTimeout>) honour an existing C<claimed_by> before
+treating it as expired; distinct from C<lock_timeout>, which bounds a single
+C<karr pick> transaction rather than a whole work session.
+
+=cut
 
 sub foundation_enabled {
   my ($self) = @_;
@@ -557,11 +630,47 @@ sub status_requires_claim {
   return $sc->{require_claim} ? 1 : 0;
 }
 
+=head2 status_requires_claim
+
+  if ($config->status_requires_claim('in-progress')) {
+      # move/pick into this status must carry --claim
+  }
+
+Returns true when the named status is configured with C<require_claim> set,
+false both when it is configured without one and when no status by that name
+exists at all -- never dies, unlike L</validate_status>. Looks the status up
+directly rather than through L</status_config>, but answers the same
+question that method's C<require_claim> key would.
+
+L<App::karr::BoardStore/status_requires_claim> wraps this with
+L</from_merged> into the per-board form that L<App::karr::Role::TaskMutation>
+and C<karr move>/C<karr pick> actually call to gate a status change.
+
+=cut
+
 sub effective_config {
   my ($class, $overrides, %args) = @_;
   my $defaults = $class->default_config(%args);
   return _merge_hashes($defaults, $overrides // {});
 }
+
+=head2 effective_config
+
+  my $ec = App::karr::Config->effective_config($overrides);
+  my $ec = App::karr::Config->effective_config($overrides, name => 'My Board');
+
+Deep-merges C<$overrides> (a board's sparse C<refs/karr/config> contents, or
+C<{}>/C<undef> for none) over L</default_config>, with C<%args> forwarded to
+it, and returns the merged result as a plain hash reference -- B<not> a
+blessed L<App::karr::Config> instance. Wrap the result in L</from_merged> to
+get one.
+
+Not to be confused with L<App::karr::BoardStore/effective_config>, the
+per-store cached wrapper most command code actually calls: that instance
+method calls this class method once (via L<App::karr::BoardStore/load_config>)
+and caches the hash it returns.
+
+=cut
 
 sub default_config {
   my ($class, %args) = @_;

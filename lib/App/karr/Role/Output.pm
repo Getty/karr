@@ -34,6 +34,18 @@ sub print_json {
   print App::karr::Encoding::json_encode($data) . "\n";
 }
 
+=method print_json
+
+    $self->print_json($data);
+
+In a command class that composes this role, encodes C<$data> (a plain hashref
+or arrayref) via L<App::karr::Encoding/json_encode> and prints it to STDOUT
+followed by a newline, unconditionally -- unlike L</print_json_results> below,
+it does not check C<< $self->json >> itself, so a caller that wants the
+C<--json> gate applies it before calling this method.
+
+=cut
+
 =method print_json_results
 
   $self->print_json_results(@results);

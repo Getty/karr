@@ -281,10 +281,33 @@ sub slug {
   return $truncated;
 }
 
+=method slug
+
+  my $slug = $task->slug;
+
+Lowercases the title, collapses everything that is not C<[a-z0-9]> to a
+single dash, and trims leading/trailing dashes, truncating on a word
+boundary at 50 characters the way kanban-md's C<GenerateSlug> does. Used by
+L</filename> to build the on-disk name; not stored anywhere itself, so a
+title edit changes the slug -- and so the filename -- on the next L</save>.
+
+=cut
+
 sub filename {
   my ($self) = @_;
   return sprintf('%03d-%s.md', $self->id, $self->slug);
 }
+
+=method filename
+
+  my $name = $task->filename;   # '007-fix-login-bug.md'
+
+Returns the on-disk filename this task would use in a materialized file
+view: the id zero-padded to three digits, a dash, and L</slug>, matching
+kanban-md's own C<^(\d+)-> naming convention. Used by L</save> when writing
+into a directory rather than to an already-known C<file_path>.
+
+=cut
 
 sub to_frontmatter {
   my ($self) = @_;
@@ -385,6 +408,18 @@ sub to_markdown {
   return $md;
 }
 
+=method to_markdown
+
+  my $text = $task->to_markdown;
+
+Renders the task as the Markdown-plus-YAML-frontmatter document stored in
+C<refs/karr/tasks/*/data> and written by L</save>: L</to_frontmatter> dumped
+as YAML between C<---> delimiters, followed by the body. The body is
+terminated with a single trailing newline, added only when it does not
+already end in one, to match kanban-md's own writer byte-for-byte.
+
+=cut
+
 sub _parse_content {
   my ($class, $content) = @_;
   # The closing delimiter is anchored to the start of a line (/m), the way
@@ -438,6 +473,25 @@ sub from_string {
   return $class->new(%$args, extra => $extra, body => $body);
 }
 
+=method from_string
+
+  my $task = App::karr::Task->from_string($markdown_content);
+  my $task = App::karr::Task->from_string($markdown_content, repair_frontmatter => 1);
+
+Parses a Markdown-plus-YAML-frontmatter document (the same shape
+L</to_markdown> writes) into a new task object. Dies with C<Invalid task
+format> when the document has no frontmatter block. Frontmatter keys the
+class does not model are kept on L</extra> rather than dropped (ticket #69).
+
+C<repair_frontmatter> is for a board written before C<refs/karr/meta/encoding>
+existed: only the frontmatter -- not the body -- went through L<YAML::XS>
+twice and needs L<App::karr::Encoding/repair_mojibake> run over it once to
+undo the double encoding. Set by
+L<App::karr::Git/load_task_ref_with_oid> from the board's own
+encoding-version check; nothing else should need to pass it (ticket #53).
+
+=cut
+
 sub from_file {
   my ($class, $file) = @_;
   $file = path($file);
@@ -460,6 +514,20 @@ sub from_file {
   die "$why ($file)\n";
 }
 
+=method from_file
+
+  my $task = App::karr::Task->from_file('/path/to/007-fix-login-bug.md');
+
+Reads C<$file>, parses it the same way L</from_string> does, and sets
+C<file_path> to it so a later L</save> with no directory argument rewrites
+the same file. Every failure -- an unparseable document, a missing required
+field -- dies with the file path appended, stripping Moo's own "at ... line
+N" suffix first so the message names the file that is wrong instead of a
+line in generated constructor code (ticket #70). Used by C<karr import> to
+read a whole kanban-md-style F<tasks/> directory, one file at a time.
+
+=cut
+
 sub save {
   my ($self, $dir) = @_;
   croak "Task has no file_path; ref-backed tasks must be persisted via BoardStore/save_task"
@@ -469,5 +537,28 @@ sub save {
   $self->file_path($file);
   return $file;
 }
+
+=method save
+
+  $task->save($dir);   # write as $dir/NNN-slug.md, using the current slug
+  $task->save;          # rewrite the file this task was loaded from
+
+Writes L</to_markdown> to disk and records the file written as
+C<file_path>. Given C<$dir>, the filename is derived fresh from the current
+L</slug> (so a renamed task moves to a new filename, and can leave the old
+one behind -- callers that materialize a whole board sweep stale files
+separately; see L<App::karr::BoardStore/materialize_to>). With no C<$dir>,
+rewrites C<file_path> as it stands, so a task loaded via L</from_file> saves
+back to the same name it was read from even after a rename.
+
+Dies -- C<Task has no file_path; ref-backed tasks must be persisted via
+BoardStore/save_task> -- when called with no C<$dir> on a task that has never
+had a C<file_path>, i.e. every task that lives only in C<refs/karr/*> and was
+never materialized to a file. This is deliberate: the canonical write path
+for such a task is L<App::karr::BoardStore/save_task>, and a silent no-op or
+an implicit directory guess here would let a card go unwritten instead of
+failing loudly (ticket #77).
+
+=cut
 
 1;

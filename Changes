@@ -1,5 +1,20 @@
 {{$NEXT}}
 
+    - Every public method in the distribution now carries POD (ticket #118).
+      The gap was not evenly spread and not a policy: App::karr::ActivityLog,
+      Error, SyncGuard and four roles documented every method, while
+      App::karr::Git documented four of fifty-two and App::karr::Lock none of
+      twelve — although all of them are set up identically, with an ABSTRACT,
+      a DESCRIPTION and a SYNOPSIS each, so a reader had no way to tell which
+      modules were meant to be used. Ticket #115, the dead L</last_error>
+      link, was one symptom of it. The new blocks state contracts rather than
+      restating method names: what a lookup answers when the thing is missing,
+      which arguments are required, and which failures are returned versus
+      thrown. Writing them down surfaced four defects that reading the code
+      had not (tickets #119 to #122), the sharpest being that
+      App::karr::Git::delete_ref returns the same 0 for "the ref never
+      existed" and "libgit2 refused the delete". Documentation only; no
+      behaviour changed anywhere.
     - App::karr::Git now resolves every path it hands git from the work tree
       root, on both routes into is_tracked_under (tickets #113 and #114). The
       string comes out of _relative_to_root, which measures from the root, and

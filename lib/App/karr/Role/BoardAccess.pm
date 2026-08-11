@@ -53,10 +53,34 @@ sub load_tasks {
     return $self->store->load_tasks;
 }
 
+=method load_tasks
+
+    my @tasks = $self->load_tasks;
+
+In a command class that composes this role, returns every task on the board
+as L<App::karr::Task> objects, in no particular order. A ref left behind by a
+crashed C<pick> (e.g. an orphaned lock with no data ref) is silently excluded
+rather than surfaced as C<undef> in the list -- see
+L<App::karr::BoardStore/load_tasks>.
+
+=cut
+
 sub find_task {
     my ($self, $id) = @_;
     return $self->store->find_task($id);
 }
+
+=method find_task
+
+    my $task = $self->find_task($id);
+
+In a command class that composes this role, looks up one task by id and
+returns the L<App::karr::Task>, or C<undef> if no task with that id exists.
+It does not die on a missing id -- callers that need a hard failure (most of
+them) check the return value themselves, e.g. C<< $self->find_task($id) or
+die "Task $id not found\n" >>.
+
+=cut
 
 sub save_task {
     my ( $self, $task, $expected_oid ) = @_;
@@ -75,6 +99,23 @@ sub save_task {
     return $wrote;
 }
 
+=method save_task
+
+    $self->save_task($task);                    # unguarded
+    $self->save_task($task, $expected_oid);      # compare-and-swap
+
+In a command class that composes this role, writes a task and records the
+activity-log entry for it -- the only door a write goes through that also
+logs. With two arguments the write is unconditional; with a third it is a
+compare-and-swap against C<$expected_oid> (the OID L<App::karr::BoardStore
+/find_task_with_oid> read the task from) and returns false, without writing
+or logging, if another agent has moved the ref since. The guarded form is
+what L<App::karr::Role::TaskMutation/update_task_guarded> and C<pick> use
+instead of reaching past this method to C<save_task_cas> directly, so there
+is exactly one write path to keep the log in step with.
+
+=cut
+
 sub delete_task {
     my ($self, $id) = @_;
     my $result = $self->store->delete_task($id);
@@ -82,15 +123,54 @@ sub delete_task {
     return $result;
 }
 
+=method delete_task
+
+    my $ok = $self->delete_task($id);
+
+In a command class that composes this role, deletes a task's ref and records
+the activity-log entry for it, mirroring L</save_task> as the other of the
+two doors a command writes through. Returns whatever
+L<App::karr::BoardStore/delete_task> returns (false if the id did not exist);
+unlike C<save_task>, the log entry is written either way, since a delete of
+an already-gone task is still the outcome the caller asked for.
+
+=cut
+
 sub allocate_next_id {
     my ($self) = @_;
     return $self->store->allocate_next_id;
 }
 
+=method allocate_next_id
+
+    my $id = $self->allocate_next_id;
+
+In a command class that composes this role, reserves and returns the next
+free task id, delegating to L<App::karr::BoardStore/allocate_next_id>. The
+allocation is a compare-and-swap on the board's counter ref, so two agents
+running C<karr create> at the same time are always handed different ids.
+
+=cut
+
 sub parse_ids {
     my ($self, $id_str) = @_;
     return split /,/, $id_str;
 }
+
+=method parse_ids
+
+    my @ids = $self->parse_ids('1,2,3');   # (1, 2, 3)
+    my @ids = $self->parse_ids('7');       # (7)
+
+In a command class that composes this role, splits the comma-separated id
+argument every batch-capable command (C<move>, C<edit>, C<delete>,
+C<archive>, C<unlock>) takes on its single positional and returns the ids in
+order, unvalidated and as plain strings. There is no range syntax (C<1-3>)
+and no whitespace handling; an empty string returns an empty list. Whether
+each id actually names a task is left to the per-id callback each command
+runs via L<App::karr::Role::TaskMutation/run_batch>.
+
+=cut
 
 sub activity_log {
     my ($self, $git) = @_;
@@ -98,12 +178,45 @@ sub activity_log {
     return App::karr::ActivityLog->new(git => $git, role => $self->role);
 }
 
+=method activity_log
+
+    my $log = $self->activity_log;              # this command's own git/role
+    my $log = $self->activity_log($other_git);   # a different repo
+
+In a command class that composes this role, builds an L<App::karr::ActivityLog>
+for C<$git> (defaulting to C<< $self->git >>) and this command's C<role>. Most
+callers use it to read (C<< $self->activity_log->entries >>); writing a mutation
+normally happens through L</save_task> or L</delete_task> instead of this
+method directly -- see L</Activity logging> above.
+
+=cut
+
 sub append_log {
     my ($self, $git, %entry) = @_;
     my $key = ($entry{action} // '') . ':' . ($entry{task_id} // '');
     return 0 if $self->_logged_writes->{$key}++;
     return $self->activity_log($git)->log_entry(%entry);
 }
+
+=method append_log
+
+    $self->append_log($self->git,
+        agent   => $self->claim,
+        action  => 'pick',
+        task_id => $picked->id,
+        detail  => $picked->status,
+    );
+
+In a command class that composes this role, writes one activity-log entry.
+Unlike L</save_task> and L</delete_task>, this is never called automatically
+by a write -- a command is recorded because it wrote through one of those two
+doors, or because it called C<append_log> itself, as C<pick> does here for
+the claim it takes outside the guarded save. C<$git> is required (no default)
+and C<%entry> is handed to L<App::karr::ActivityLog/log_entry> unchanged.
+Guarded against double-logging the same C<action>/C<task_id> pair within one
+command run, the same guard L</log_task_write> uses.
+
+=cut
 
 =head2 log_action
 
@@ -166,5 +279,22 @@ sub save_config {
     $effective //= $self->config;
     return $self->store->save_config($effective);
 }
+
+=method save_config
+
+    $self->save_config($effective_hash);
+    $self->save_config;   # defaults to $self->config
+
+In a command class that composes this role, delegates to
+L<App::karr::BoardStore/save_config>, which validates the schema and writes
+C<refs/karr/config>. With no argument it falls back to C<< $self->config >>,
+the L<App::karr::Role::BoardDiscovery/config> attribute -- an
+L<App::karr::Config> object, not the plain hash C<BoardStore::save_config>
+otherwise expects. No command in this distribution calls the no-argument
+form; every caller of config-saving today goes through
+C<< $self->store->save_config >> directly (C<Cmd::Config>, C<Cmd::Init>) with
+an explicit hash.
+
+=cut
 
 1;
