@@ -127,7 +127,11 @@ sub execute {
     });
 
     printf "Moved task %d: %s -> %s\n", $task->id, $old_status, $task->status unless $self->json;
-    return { id => $task->id, title => $task->title, old_status => $old_status, new_status => $task->status };
+    # After the write, not inside the guarded callback that decided it: see
+    # App::karr::Role::DependencyCheck/dependency_report. Under --json the pair
+    # it returns lands in this hash instead of on STDERR.
+    return { id => $task->id, title => $task->title, old_status => $old_status,
+             new_status => $task->status, $self->dependency_report( $task->id ) };
   });
 
   $self->sync_after;

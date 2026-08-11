@@ -231,7 +231,12 @@ sub execute {
     });
 
     printf "Updated task %d: %s\n", $task->id, $task->title unless $self->json;
-    return { id => $task->id, title => $task->title };
+    # --status goes through apply_status_change, so an edit that takes a card
+    # up gets the same dependency warning `karr move` does, for free and by
+    # construction -- the #55 point again (ticket #123). An edit that changes
+    # anything else records nothing, so this adds no key.
+    return { id => $task->id, title => $task->title,
+             $self->dependency_report( $task->id ) };
   });
 
   $self->sync_after;

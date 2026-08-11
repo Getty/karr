@@ -156,8 +156,12 @@ sub execute {
 
   $self->sync_after;
 
+  # The handoff target is a working column, so apply_status_change above will
+  # have recorded any unsatisfied dependencies; this emits them (ticket #123).
+  my %dependency = $self->dependency_report( $task->id );
+
   if ($self->json) {
-    $self->print_json($task->to_json_hash);
+    $self->print_json({ %{ $task->to_json_hash }, %dependency });
     return;
   }
 

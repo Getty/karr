@@ -75,6 +75,9 @@ sub _show_task {
   printf "Tags:     %s\n", join(', ', @{$task->tags}) if @{$task->tags};
   printf "Due:      %s\n", $task->due if $task->has_due;
   printf "Estimate: %s\n", $task->estimate if $task->has_estimate;
+  printf "Depends:  %s\n",
+    join( ', ', map { $self->_dependency_label($_) } @{$task->depends_on} )
+    if @{$task->depends_on};
   printf "Claimed:  %s\n", $task->claimed_by if $task->has_claimed_by;
   printf "Blocked:  %s\n", $task->has_block_reason ? $task->block_reason : 'yes'
     if $task->has_blocked;
@@ -83,6 +86,19 @@ sub _show_task {
   if (defined $task->body && length $task->body) {
     print "\n" . $task->body . "\n";
   }
+}
+
+# A bare id list answers the wrong question: `depends_on: [5]` tells the reader
+# nothing about whether 5 is finished, which is the only thing they wanted to
+# know. Half of what made ticket #123 a trap was that `show` did not print the
+# field at all, so a dependency recorded on a card was invisible to the one
+# reader who could have acted on it. An id the board does not have is called
+# unknown rather than left to look like a status.
+sub _dependency_label {
+  my ($self, $dep_id) = @_;
+  my $dep = $self->find_task($dep_id);
+  return sprintf '%s (unknown)', $dep_id unless $dep;
+  return sprintf '%s (%s)', $dep_id, $dep->status;
 }
 
 # Tasks sorted most-recently-updated first.

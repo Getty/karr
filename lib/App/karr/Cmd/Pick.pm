@@ -9,12 +9,14 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::DependencyCheck;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::Lock;
 use Time::Piece;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output', 'App::karr::Role::ClaimTimeout';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::ClaimTimeout', 'App::karr::Role::DependencyCheck';
 
 =head1 SYNOPSIS
 
@@ -204,8 +206,10 @@ sub execute {
 
   $self->sync_after;
 
+  my %dependency = $self->dependency_report( $picked->id );
+
   if ($self->json) {
-    $self->print_json($picked->to_json_hash);
+    $self->print_json({ %{ $picked->to_json_hash }, %dependency });
     return;
   }
 
@@ -296,6 +300,30 @@ sub _claim_under_lock {
 
     $task->claimed_by($self->claim);
     $task->claimed_at(gmtime->datetime . 'Z');
+
+    # Outside the --move branch, and before it: on a pick the *claim* is the
+    # taking-up. `karr pick --claim X` with no --move is the commonest call
+    # there is, and after it the agent holds the card and starts work --
+    # whether the status changed on the way says nothing about whether somebody
+    # should have been told what is still open underneath. Scoped to --move
+    # only, this left #123's own sentence ("karr pick hands it out regardless")
+    # true of the very command it was written about.
+    #
+    # Without --move the card stays where it is, so the status it stays in is
+    # the one to judge. That is not a formality: --status is the one way a card
+    # already in a terminal status reaches this point at all (_is_pickable
+    # excludes terminal statuses only when --status is absent), and picking up
+    # a finished card must not lecture about dependencies that stopped
+    # mattering when it was finished.
+    #
+    # Pick does not go through apply_status_change (see EXCLUSIVITY above), so
+    # this is its own call to the check every other status change gets there.
+    # And karr deliberately parts company with the reference here: kanban-md
+    # filters a card with unmet dependencies out of the candidate set outright
+    # (internal/board/pick.go:69, filterPickDeps), so pick never offers it;
+    # karr hands it over and warns, because nothing about depends_on blocks
+    # anything (ticket #123).
+    $self->check_dependencies( $task, $self->move // $task->status );
 
     if ($self->move) {
       my $old_status = $task->status;

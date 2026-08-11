@@ -1,5 +1,30 @@
 {{$NEXT}}
 
+    - karr now reads `depends_on` (ticket #123). The field had been stored,
+      round-tripped and written into the frontmatter since the beginning and
+      evaluated by nothing, which is worse than a missing feature: a card
+      recording `depends_on: [5]` looked as though karr would hold it back
+      until 5 was finished, because the field was accepted, kept and
+      materialized — and `karr pick` handed it out regardless. Taking a card
+      up now warns when a dependency is unfinished, and warns in different
+      words when one names an id the board does not have. That covers a move
+      into a non-terminal status (`move`, `edit --status`, `handoff`) and
+      every `pick`, with or without `--move`: on a pick the claim itself is
+      the taking-up, so a bare `karr pick --claim X` — the commonest call
+      there is — warns too. It does not block: the command proceeds and
+      still exits 0. "Finished" is decided by the board's own terminal
+      statuses, so a board ending in `shipped` is judged by that column and
+      not by the literal `done`. The warning goes to STDERR, so STDOUT stays
+      parseable; under `--json` it rides in the result object instead, where
+      a JSON consumer can actually see it; `--quiet` silences the STDERR
+      copy. kanban-md skips such a card in `pick` entirely
+      (internal/board/pick.go) and counts an unknown id as satisfied
+      (internal/board/filter.go) — karr deliberately does neither, and says
+      so at both sites.
+    - `karr show` now displays `depends_on`, with the current status of each
+      dependency and `(unknown)` for an id the board does not have (also
+      ticket #123). The field was previously invisible in every command, which
+      was half of what made it a trap.
     - Every public method in the distribution now carries POD (ticket #118).
       The gap was not evenly spread and not a policy: App::karr::ActivityLog,
       Error, SyncGuard and four roles documented every method, while

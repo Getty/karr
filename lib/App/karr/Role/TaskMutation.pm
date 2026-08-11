@@ -16,8 +16,9 @@ use App::karr::Config;
 # handoff.
 use App::karr::Error ();
 use App::karr::Role::ClaimTimeout;
+use App::karr::Role::DependencyCheck;
 
-with 'App::karr::Role::ClaimTimeout';
+with 'App::karr::Role::ClaimTimeout', 'App::karr::Role::DependencyCheck';
 
 =head1 DESCRIPTION
 
@@ -262,6 +263,14 @@ sub apply_status_change {
         && !( defined $claimant && length $claimant )
         && !$task->has_claimed_by;
 
+    # Being the one status-change path is also what makes this the one place
+    # `depends_on` has to be consulted: move, edit --status, handoff and archive
+    # all arrive here, so none of them can be the door that forgets to ask
+    # (ticket #123). Recorded, not printed -- this runs inside
+    # update_task_guarded's callback, which re-runs on contention, so the
+    # emitting is left to dependency_report after the write has landed.
+    $self->check_dependencies( $task, $new_status );
+
     my $old_status = $task->status;
     $task->status($new_status);
     # The lifecycle rules themselves live on the task, mirroring kanban-md's
@@ -282,8 +291,10 @@ sub apply_status_change {
 =head2 apply_status_change
 
 The only place a task's status is assigned. Rejects a status the board does not
-configure, applies C<require_claim> and the lifecycle stamps, and returns the
-status the task had before the change.
+configure, applies C<require_claim> and the lifecycle stamps, records any
+unsatisfied dependencies (L<App::karr::Role::DependencyCheck/check_dependencies>
+-- recorded here, emitted by the caller once the write has landed), and returns
+the status the task had before the change.
 
     my $old_status = $self->apply_status_change( $task, 'in-progress', $claimant );
 

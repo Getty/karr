@@ -7,6 +7,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::ClaimTimeout;
 use App::karr::Role::CliArgs;
+use App::karr::Role::DependencyCheck;
 use App::karr::Role::ExitCodes;
 use App::karr::Role::Output;
 use App::karr::Role::SyncLifecycle;
@@ -59,7 +60,7 @@ my $FRAMEWORK = qr{
 my %KNOWN_LEAK = ();
 
 my @ROLES = map { "App::karr::Role::$_" } qw(
-    BoardAccess BoardDiscovery ClaimTimeout CliArgs
+    BoardAccess BoardDiscovery ClaimTimeout CliArgs DependencyCheck
     ExitCodes Output SyncLifecycle TaskMutation
 );
 

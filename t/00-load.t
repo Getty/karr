@@ -10,6 +10,7 @@ my @modules = qw(
   App::karr::BoardStore
   App::karr::Role::BoardAccess
   App::karr::Role::Output
+  App::karr::Role::DependencyCheck
   App::karr::Cmd::Init
   App::karr::Cmd::Create
   App::karr::Cmd::List

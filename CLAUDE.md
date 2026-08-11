@@ -129,7 +129,9 @@ dzil build                     # Build distribution
 Live status is on the karr board (`refs/karr/*`); this is the at-a-glance summary.
 
 1. **metrics command** — throughput, lead/cycle time, flow efficiency
-2. **dependency checking** — block tasks with unsatisfied deps from being picked
+2. **dependency checking** — taking a card up warns about unfinished `depends_on`
+   (ticket #123, warn rather than block by decision). Still missing: any CLI way
+   to set the field (#124), and set-time validation on top of it
 3. **Self-healing IDs** — detect and repair duplicate IDs, filename/ID mismatches
 4. **WIP limit enforcement** — reject moves that would exceed WIP limits
 5. **TUI** — interactive terminal board (stretch goal, possibly with Tickit)
