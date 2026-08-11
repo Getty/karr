@@ -1,0 +1,52 @@
+---
+claimed_at: 2026-08-11T03:25:47Z
+claimed_by: seized-dilemma
+class: standard
+completed: 2026-08-11T03:25:47Z
+created: 2026-08-11T02:41:14Z
+id: 123
+priority: medium
+started: 2026-08-11T02:44:24Z
+status: done
+tags:
+- bug
+- model
+- pick
+title: depends_on is stored and written but evaluated by nothing, so a dependency
+  silently does not block
+updated: 2026-08-11T03:25:47Z
+---
+
+Found while checking the CLAUDE.md roadmap against the code.
+
+App::karr::Task has depends_on (Task.pm:51), it is part of the field list
+(:83), and to_markdown writes it into the frontmatter when non-empty (:335).
+So a caller can set it, karr stores it in the task ref, and `karr materialize`
+puts it in the file view where kanban-md would read it.
+
+Nothing reads it. Verified: depends_on appears nowhere in lib/ outside those
+three lines in Task.pm, and in no command at all -- not pick, not move, not
+show, not board, not list.
+
+The consequence is worse than a missing feature. A missing feature is visible;
+this one looks present. An agent that records `depends_on: [5]` on a card has
+every reason to believe karr will hold that card back until 5 is done, because
+the field was accepted, stored and round-tripped. `karr pick` hands it out
+regardless. In a multi-agent setup -- which is what this whole distribution is
+for -- that means work starting in the wrong order with no warning anywhere.
+
+Roadmap item 2 in CLAUDE.md ("dependency checking -- block tasks with
+unsatisfied deps from being picked") is this. The data model half is already
+built; what is missing is the evaluation.
+
+Smallest honest step, if the full feature is not wanted now: make `karr show`
+display depends_on, so at least the field is visible where a human looks. That
+does not fix the silence in pick, but it stops the field from being invisible
+as well as inert.
+
+For the real fix, decisions needed rather than assumed: does an unsatisfied
+dependency make a task unpickable, or only warn? What counts as satisfied --
+any terminal status, or specifically done? What happens to a dependency on an
+id that does not exist, or on an archived task? Does `karr move` into
+in-progress get the same check as pick, or only pick? kanban-md's behaviour is
+the reference for the defaults.
