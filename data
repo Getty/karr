@@ -1,0 +1,60 @@
+---
+claimed_at: 2026-08-11T20:59:42Z
+claimed_by: main
+class: standard
+completed: 2026-08-11T20:59:42Z
+created: 2026-08-11T20:16:50Z
+id: 134
+priority: high
+started: 2026-08-11T20:35:57Z
+status: done
+tags:
+- docker
+- transport
+- docs
+title: the docker images cannot reach an ssh remote at all
+updated: 2026-08-11T20:59:42Z
+---
+
+A karr board on an ssh:// remote is unusable from the published images, and
+the failure reads as a local misconfiguration rather than a missing feature.
+
+Observed against ssh://git@codeberg.org/... :
+
+    Git::Native: ssh host codeberg.org is not in known_hosts. Run
+      `ssh-keyscan codeberg.org >> ~/.ssh/known_hosts` ...
+      git pull failed: git fetch (CLI fallback) failed:
+      error: cannot run ssh: No such file or directory
+    fatal: unable to fork
+
+Two independent causes, and the message points at neither:
+
+1. runtime-base installs `git gosu passwd libssl3 libssh2-1 zlib1g libffi8`
+   and no openssh-client, so there is no ssh binary. git cannot fork one, and
+   the CLI fallback -- which exists precisely for the ssh-config/ProxyCommand
+   cases libgit2 cannot do -- can never work for an ssh remote inside the
+   image.
+
+2. The README alias (README.md, "Recommended alias for real use") mounts
+   .gitconfig, .claude, .codex and .cursor, but neither ~/.ssh nor
+   $SSH_AUTH_SOCK, and sets HOME=/home/karr. Git::Native looks for
+   $HOME/.ssh/known_hosts, finds nothing, and reports the host as unknown --
+   so the advice it prints (`ssh-keyscan ... >> ~/.ssh/known_hosts`) is
+   followed on the host and changes nothing inside the container. Even with
+   known_hosts present there is still no key and no agent to authenticate
+   with.
+
+Neither fix alone helps: an image with openssh-client but no mounted ~/.ssh
+still cannot authenticate, and a mounted ~/.ssh without an ssh binary still
+cannot fall back.
+
+Wanted:
+- openssh-client in runtime-base.
+- The documented alias forwards ssh: `-v "$HOME/.ssh:/home/karr/.ssh:ro"` and
+  `-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e SSH_AUTH_SOCK` (agent preferred over
+  mounting private keys; :ro so a container can never write the host keys).
+- Consider whether the known_hosts warning should say which HOME it searched,
+  since inside a container that is the whole answer.
+
+Found while a real board on codeberg could not sync; the same repo works
+natively, where `git ls-remote` over the same URL succeeds.
