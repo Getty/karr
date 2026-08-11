@@ -112,6 +112,30 @@ sub last_error {
     return $self->{_last_error};
 }
 
+=method last_error
+
+    my $why = $git->last_error;
+
+Returns text describing the most recent failure, or C<undef> if none has
+happened yet. Meaningful only right after a call that itself reported
+failure -- a later successful call never clears it, so reading this on its
+own cannot answer "did anything just fail?".
+
+Two unrelated kinds of text can end up here. Historically, the real C<git>
+CLI stderr from the transport fallback, when a network operation
+(C<fetch>/C<push>/C<pull>) drops to the system C<git> binary. Since ticket
+#107, also the reason a native libgit2 read declined to answer:
+L</is_tracked_under> sets this when the index cannot be read natively, before
+it falls back to C<git ls-files> through the CLI. Both are free-form prose
+meant for a log line or an error message, not a code a caller branches on.
+
+L<App::karr::Cmd::Sync>, L<App::karr::SyncGuard> and
+L<App::karr::Role::SyncLifecycle> all read this after a failed C<pull> or
+C<push> to build the line of diagnostic text shown to the user or written to
+the sync log.
+
+=cut
+
 # Ref writes and deletes performed in this process. App::karr::SyncGuard reads
 # it on the die path -- where no push has succeeded by definition -- to tell
 # "the command died before writing anything" (nothing to push, stay quiet)
