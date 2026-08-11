@@ -216,6 +216,12 @@ Use this when you want explicit control over board ref exchange with the remote
 instead of relying only on the implicit pull/push behavior of mutating
 commands.
 
+**A fresh clone has no board yet.** `git clone` does not fetch `refs/karr/*`,
+and the read commands (`board`, `list`, `show`, `log`, `context`) do not pull —
+only mutating commands do. So they refuse with exit 1 and say so, rather than
+rendering an empty board. Run `karr sync` first; do **not** run `karr init`
+there, which would start a second, empty board beside the one on the remote.
+
 ### File view (kanban-md interop)
 
 ```bash

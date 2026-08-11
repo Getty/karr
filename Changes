@@ -21,7 +21,11 @@
       no tasks answers exactly as before, which is the distinction that was
       missing. `--json` consumers tell the two apart the way they tell every
       other karr failure apart: exit 1 and an empty stdout, rather than a
-      payload full of zeros.
+      payload full of zeros. The agent skill says so too, in its Sync section:
+      a fresh clone has no `refs/karr/*`, the read commands refuse until
+      `karr sync` has run, and `karr init` is the wrong answer there. That is
+      the loop this came out of — an agent read an empty board, believed it,
+      and reached for `init`.
 
     - The runtime images can reach an `ssh://` remote (ticket #134). They
       shipped without an ssh binary — `runtime-base` installed `git gosu passwd`
