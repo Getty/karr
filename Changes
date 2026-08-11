@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - `karr list --json` now carries the task body (ticket #129). It built its
+      payload from `Task->to_frontmatter`, the YAML frontmatter view — and the
+      body lives *below* the frontmatter in the file format, never inside it,
+      so every card came out of `list --json` without its text while `show`,
+      `pick` and `handoff`, which go through `Task->to_json_hash`, shipped the
+      same card whole. Nothing documented the difference: `--json` was
+      described as "machine-readable" without a caveat, and `to_json_hash`
+      listed its users without noticing `list` was missing from them. kanban-md
+      marshals the full task structs in `cmd/list.go`, with
+      `json:"body,omitempty"` on `Body`, so this was also a parity gap. In
+      practice it forced anyone reading ticket text by machine into one `show`
+      per id — N+1 calls for what one call can answer. An absent body stays an
+      absent key rather than an empty string, as kanban-md's `omitempty`
+      spells it, and a body of `"0"` counts as text (the #78 rule: emptiness is
+      length, not truth). Boards with long bodies will see the payload grow;
+      that is what `--compact` is for. `karr board --json` is deliberately
+      unchanged: its columns stay a card index, not a text dump — kanban-md's
+      own `board --json` carries counts and no task payloads at all, so karr
+      already gives more there than parity asks for.
     - `depends_on` can now be set from the CLI (ticket #124): `karr create
       --depends-on 2,3` takes comma-separated ids the way `--tags` does, and
       `karr edit --add-depends-on` / `--remove-depends-on` follow the

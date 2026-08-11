@@ -384,8 +384,8 @@ left in L</extra> fills in the rest verbatim.
 This is the one place karr and kanban-md agree on what a frontmatter document
 looks like. C<to_markdown> feeds the result straight to L<YAML::XS> for the
 on-disk and ref form; L</to_json_hash> layers a C<body> key and a real JSON
-boolean for C<blocked> on top of it for C<--json> output; C<karr board
---json> and C<karr list --json> use it the same way.
+boolean for C<blocked> on top of it for C<--json> output; C<karr board --json>
+uses it directly, which is why a board column carries no card bodies.
 
 A modelled field always wins the slot it owns, and a field that has since
 been cleared cannot be resurrected by a stale copy in C<extra> either --
@@ -400,8 +400,10 @@ are laid on top of what remains.
 
 Returns the task as a plain hash reference ready for JSON encoding: the
 frontmatter fields from L</to_frontmatter> plus a C<body> key when the task has
-a non-empty body. Used by the C<show>, C<pick>, and C<handoff> commands to
-build their C<--json> payload.
+a non-empty body. Used by every command that emits whole tasks as C<--json>:
+C<show>, C<list>, C<pick>, C<handoff>, C<materialize>, and C<import>. C<list>
+joined that set late -- it built its payload from L</to_frontmatter> alone and
+therefore dropped every body until ticket #129.
 
 C<blocked> comes back as a JSON boolean, so an agent parsing C<--json> sees the
 same C<true> kanban-md emits and never the free-text reason it used to get

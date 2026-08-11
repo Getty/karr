@@ -33,6 +33,12 @@ with C<--status>, or for the archive alone with C<--archived>. Use
 C<--compact> for terse one-line output and C<--json> for machine-readable
 automation.
 
+C<--json> emits each task as the full payload L<App::karr::Task/to_json_hash>
+builds -- the frontmatter fields plus the C<body> when the task has one, the
+same shape C<karr show --json> returns. Reading a set of tickets is therefore
+one call rather than one C<show> per id; C<--compact> is the flag for when the
+bodies are not wanted.
+
 Note that karr excludes the whole terminal group here where kanban-md's
 C<list> excludes only C<archived> and still shows finished work. That is a
 deliberate difference, not an oversight: C<karr list> is the agent's "what is
@@ -151,7 +157,12 @@ sub execute {
   @tasks = $self->_sort(\@tasks);
 
   if ($self->json) {
-    $self->print_json([map { $_->to_frontmatter } @tasks]);
+    # to_json_hash, not to_frontmatter: the body lives below the frontmatter in
+    # the file format, so the frontmatter view has no body to give and list
+    # --json shipped bodiless cards while show/pick/handoff shipped whole ones
+    # (ticket #129). kanban-md marshals the full task here too, with
+    # `json:"body,omitempty"` on Body (cmd/list.go, internal/task/task.go).
+    $self->print_json([map { $_->to_json_hash } @tasks]);
     return;
   }
 
