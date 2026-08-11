@@ -41,11 +41,13 @@ sub all_status_names {
   return map { ref $_ ? $_->{name} : $_ } @{ $self->{ec}{statuses} // [] };
 }
 
+# Derived, for the same reason is_terminal_status below is: this used to be a
+# third inline copy of Config's walk over `statuses` (ticket #121), so a change
+# to what require_claim means would have left the double answering the old rule
+# while the real store answered the new one.
 sub status_requires_claim {
   my ($self, $name) = @_;
-  my ($sc) = grep { (ref $_ ? $_->{name} : $_) eq $name } @{ $self->{ec}{statuses} // [] };
-  return 0 unless $sc && ref $sc;
-  return $sc->{require_claim} ? 1 : 0;
+  return App::karr::Config->from_merged( $self->{ec} )->status_requires_claim($name);
 }
 
 # Derived from the mock's own config, exactly as App::karr::BoardStore derives

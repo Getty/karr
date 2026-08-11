@@ -141,6 +141,13 @@ as a bare string, or C<undef> when no status by that name exists. Contrast
 with L</statuses>, which returns every name and none of the per-status
 detail.
 
+This is the one place a single status name is resolved to what the board says
+about it; L</status_requires_claim> is a boolean view of the C<require_claim>
+key of what it returns, and any further per-status option belongs here too
+rather than in a second walk over C<statuses> (ticket #121). Note that the
+synthesized entry for a bare string carries nothing but C<name> -- that is
+what makes a bare status require no claim.
+
 =cut
 
 sub priorities {
@@ -622,11 +629,13 @@ usage error on a board with no working column at all.
 
 sub status_requires_claim {
   my ($self, $status_name) = @_;
-  my ($sc) = grep {
-    (ref $_ ? $_->{name} : $_) eq $status_name
-  } $self->_list('statuses');
+  # Through L</status_config> rather than walking `statuses` a second time
+  # (ticket #121). The bare-string rule t/53-config-semantics.t records --
+  # only an explicit require_claim flag demands a claim -- survives the fold
+  # because status_config synthesizes { name => $s } for a bare entry, which
+  # carries no require_claim key and so answers 0 here.
+  my $sc = $self->status_config($status_name);
   return 0 unless $sc;
-  return 0 if !ref $sc;
   return $sc->{require_claim} ? 1 : 0;
 }
 
@@ -638,9 +647,9 @@ sub status_requires_claim {
 
 Returns true when the named status is configured with C<require_claim> set,
 false both when it is configured without one and when no status by that name
-exists at all -- never dies, unlike L</validate_status>. Looks the status up
-directly rather than through L</status_config>, but answers the same
-question that method's C<require_claim> key would.
+exists at all -- never dies, unlike L</validate_status>. It is exactly
+L</status_config>'s C<require_claim> key read as a boolean, and asks that
+method for the entry rather than walking C<statuses> itself (ticket #121).
 
 L<App::karr::BoardStore/status_requires_claim> wraps this with
 L</from_merged> into the per-board form that L<App::karr::Role::TaskMutation>
