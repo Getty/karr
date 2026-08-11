@@ -1,0 +1,72 @@
+---
+claimed_at: 2026-08-11T02:32:39Z
+claimed_by: seized-dilemma
+class: standard
+completed: 2026-08-11T02:32:39Z
+created: 2026-08-11T01:53:20Z
+id: 118
+priority: medium
+started: 2026-08-11T02:32:39Z
+status: done
+tags:
+- docs
+- pod
+title: 'Method POD coverage is inconsistent: seven modules at 100 percent, Git.pm
+  at 4 of 52'
+updated: 2026-08-11T02:32:39Z
+---
+
+Measured while checking the documentation after the 0.500 work, prompted by
+#115 -- which was not a stray broken link but one symptom of this.
+
+Public methods carrying an =method / =attr / =head2 block, per module
+(execute / BUILD / DEMOLISH / BUILDARGS excluded):
+
+  ActivityLog.pm            5/5    100%
+  Error.pm                  3/3    100%
+  Role/BoardDiscovery.pm    1/1    100%
+  Role/ExitCodes.pm         1/1    100%
+  Role/SyncLifecycle.pm     2/2    100%
+  Role/TaskMutation.pm      5/5    100%
+  SyncGuard.pm              3/3    100%
+  Config.pm                19/26    73%
+  BoardStore.pm            19/34    55%
+  Task.pm                   5/11    45%
+  Role/Output.pm            1/2     50%
+  Role/BoardAccess.pm       3/12    25%
+  Git.pm                    4/52     7%
+  Encoding.pm               0/9      0%
+  Lock.pm                   0/12     0%
+  Foundation.pm             0/1      0%
+  Role/ClaimTimeout.pm      0/2      0%
+  Role/CliArgs.pm           0/2      0%
+
+This is not a policy of leaving internals undocumented. Git.pm, Encoding.pm,
+Lock.pm and ActivityLog.pm are all set up identically -- ABSTRACT, DESCRIPTION
+and SYNOPSIS each -- and ActivityLog documents every method while Git.pm
+documents four. Whoever reads the dist cannot tell which modules are meant to
+be used and which are not, because the presentation says the same thing about
+all of them.
+
+Two are worth doing before the rest:
+
+- Git.pm, 4 of 52, and it is the module everything else goes through. #115 was
+  exactly this: last_error is called from Cmd/Sync.pm, SyncGuard.pm and
+  Role/SyncLifecycle.pm and had only a `#` comment, which only surfaced because
+  something linked to it. The same is true of the ref read/write pairs, the CAS
+  variants and the retry helper -- the parts a caller most needs a contract for.
+- Encoding.pm, 0 of 9. CLAUDE.md makes it the architectural boundary ("nothing
+  else may Encode::encode/decode, call YAML::XS::Dump/Load, or
+  encode_json/decode_json directly"), so the rule that governs the whole dist
+  lives in a file agents read and not in the POD of the module that enforces it.
+  from_octets / to_octets / yaml_dump / yaml_load / json_encode / json_decode
+  are precisely the surface that rule is about.
+
+Not a release blocker: podchecker is clean across every woven module (that was
+#115), every .pm has its ABSTRACT, and nothing here is wrong -- it is missing.
+Work for karr-pod-writer, sensibly split per module rather than as one sweep.
+Correction 2026-08-11, my error: the table above lists Encoding.pm at 0/9, which is wrong. The scan counted =method / =attr / =head2 and not =func, and Encoding.pm documents all nine functions with =func -- added in 46f006b, together with a DESCRIPTION that reproduces the CLAUDE.md boundary rule and links each function. =func is house-sanctioned: Pod::Elemental::Transformer::Author::GETTY turns =attr, =method and =func into =head2 alike, verified in the woven output. So the claim that the encoding rule lives only in CLAUDE.md and not in the module enforcing it was false.
+
+Re-measured against HEAD with =func included, the modules with real gaps are: Git.pm 4/52, Lock.pm 0/12, Foundation.pm 0/1, Role/ClaimTimeout 0/2, Role/CliArgs 0/2, Role/BoardAccess 3/12, Role/Output 1/2, Task.pm 5/11, BoardStore.pm 19/34, Config.pm 19/26. Everything else was already complete. The rest of this ticket stands.
+
+Encoding.pm was still improved rather than reverted: each of the six codec functions now says locally that it is the only place karr calls the raw Encode / YAML::XS / *_json function, so a reader of to_octets does not have to jump to DESCRIPTION to learn which side of the boundary they are on.
