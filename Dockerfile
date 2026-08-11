@@ -58,8 +58,12 @@ FROM runtime-base AS runtime-user
 ARG KARR_UID=1000
 ARG KARR_GID=1000
 
+# -M, not -m: runtime-base already created /home/karr, so asking useradd to
+# create it only earns a warning and a skipped /etc/skel copy. Nothing here
+# wants the skel files — the entrypoint is karr, never a login shell — and the
+# chown below is what actually hands the directory to the user.
 RUN groupadd -g ${KARR_GID} karr \
-    && useradd -m -d /home/karr -u ${KARR_UID} -g ${KARR_GID} -s /bin/sh karr \
+    && useradd -M -d /home/karr -u ${KARR_UID} -g ${KARR_GID} -s /bin/sh karr \
     && chown -R ${KARR_UID}:${KARR_GID} /home/karr /work
 
 USER karr

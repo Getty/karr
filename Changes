@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - The `runtime-user` image build no longer warns about `/home/karr`. The
+      shared `runtime-base` stage creates that directory itself — `runtime-root`
+      needs a `HOME` before any user exists — so `runtime-user`'s `useradd -m`
+      asked for a home that was already there and printed `useradd: warning: the
+      home directory /home/karr already exists.` plus `Not copying any file from
+      skel directory into it.` on every build. Nothing depended on the skel copy:
+      the entrypoint is `karr`, never a login shell, and the `chown -R` in the
+      same layer is what actually hands the directory to the user. `-M` says out
+      loud what the stage always meant. The resulting image is byte-for-byte
+      equivalent in uid/gid, `passwd` entry and ownership; only the warning is
+      gone.
     - `karr list --json` now carries the task body (ticket #129). It built its
       payload from `Task->to_frontmatter`, the YAML frontmatter view — and the
       body lives *below* the frontmatter in the file format, never inside it,
