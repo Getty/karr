@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-08-11T19:33:48Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-08-11T19:33:48Z
+created: 2026-08-11T18:23:17Z
+id: 130
+priority: medium
+started: 2026-08-11T19:01:54Z
+status: done
+tags:
+- config
+- output
+title: config get renders hash-form statuses as HASH(0x...)
+updated: 2026-08-11T19:33:48Z
+---
+
+karr config get statuses prints:
+
+    backlog, todo, HASH(0x558580cd1688), HASH(0x558582ac9348), done, archived
+
+The default status list (Config.pm:681-688) mixes plain strings with hashes:
+in-progress and review carry require_claim => 1, so they are HASH refs, and the
+scalar-joining renderer in config get stringifies the ref instead of its name.
+
+Same shape is likely reachable for priorities and classes, which also allow the
+hash form (classes are hashes throughout: wip_limit, bypass_column_wip).
+
+Not cosmetic: the output is what a reader consults to learn which columns a
+board has. Two unreadable entries invite invention. This was found after an
+agent claimed one board had an "extended status set" including a closed status
+that no board in the tree actually configures -- every board runs the defaults.
+
+Expected: print the status name, and ideally its per-status settings in a form
+that survives --json too. Config->statuses already normalises to names
+(Config.pm:100-104); config get is not using it.
+Fixed: config get/show now render list entries as name plus per-entry settings (Cmd/Config.pm _format_entry/_format_settings); --json unchanged (already faithful). Regression test t/129-config-list-entry-rendering.t (RED before fix: 4/7 subtests). Verified: prove -l t/02-config.t t/06-config-cmd.t t/49-config-skill-options-first.t t/53-config-semantics.t t/64-disable-enable-cmd.t t/94-write-path-validation.t t/102-import-config-reconcile.t t/129-config-list-entry-rendering.t -> PASS; prove -l t/ -> Files=121, Tests=848, Result: PASS. Not committed.
