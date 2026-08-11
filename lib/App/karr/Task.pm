@@ -116,7 +116,36 @@ sub BUILD {
     my $value = $self->$attr;
     $self->$clearer if !defined $value || !length $value;
   }
+  $self->_normalize_lists;
   $self->_normalize_blocked;
+}
+
+# The two list-valued fields, guarded here for the same reason the optional
+# scalars are cleared above: the parse gate is the only gate. A scalar where
+# the list belongs -- `tags: urgent`, `depends_on: 1`, both only writable by
+# hand or by a third tool, since every karr write goes through to_frontmatter
+# -- used to pass construction and die mid-write at the dereference in
+# to_frontmatter, as a raw Perl error carrying a source location (the #77
+# class), and on the import path after refs had already started moving, which
+# broke serialize_from's all-or-nothing promise (#70). A field whose whole
+# meaning is "a list" refuses a single value as a usage error at parse time,
+# where from_file can still name the file (ticket #125).
+#
+# An empty or null value is not a scalar value. Every list field is `omitempty`
+# in kanban-md's Go struct, so "present but empty" is the same state as
+# "absent" (the #98 rule) and loads as the empty list.
+sub _normalize_lists {
+  my ($self) = @_;
+  for my $attr (qw( tags depends_on )) {
+    my $value = $self->$attr;
+    next if ref $value eq 'ARRAY';
+    if ( !defined $value || ( !ref $value && !length $value ) ) {
+      $self->$attr([]);
+      next;
+    }
+    die "Frontmatter field '$attr' must be a list"
+      . ( ref $value ? '' : ', not a single value' ) . "\n";
+  }
 }
 
 # karr up to 0.402 stored the blocking *reason* in `blocked` as free text;

@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - A scalar where a list field belongs — `tags: urgent`, `depends_on: 1`,
+      writable only by hand or by a third tool in a materialized view — is now
+      refused at the parse gate as a usage error naming the field, and through
+      `karr import` also the file (ticket #125). It used to pass parsing and
+      die mid-write at the dereference in to_frontmatter, as a raw Perl error
+      with a source location (the #77 class); on the import path that fired
+      after refs had already started moving, so the import stopped half done —
+      config saved, earlier cards rewritten, the bad card and the prune never
+      reached — despite serialize_from's all-or-nothing promise (#70). Refusing
+      at parse time puts it behind that gate, and no ref moves. An empty or
+      null value is not refused: per the #98 interop rule "present but empty"
+      is the same state as "absent" and now loads as the empty list, where it
+      previously died at the same dereference.
     - karr now reads `depends_on` (ticket #123). The field had been stored,
       round-tripped and written into the frontmatter since the beginning and
       evaluated by nothing, which is worse than a missing feature: a card
