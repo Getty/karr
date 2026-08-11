@@ -123,6 +123,74 @@ with the status it stays in.
 
 =cut
 
+# The set-time half of the ticket pair (#124, gated on the CLI route existing;
+# the move-time warning above is #123). kanban-md does both too
+# (ValidateDependencyIDs, internal/task/validate.go:155) -- set-time catches a
+# typo while the author still remembers what they meant, move-time catches
+# state that changed afterwards, which set-time can never see.
+#
+# Both rejections here condemn the whole invocation rather than one id of a
+# batch: a malformed or unknown dependency id is wrong for every id at once, so
+# it is a usage error (exit 2) raised before anything is written -- ticket #54's
+# rule, the same reason Cmd::Create runs them before allocating an id. The one
+# per-id case, a self-reference, cannot live here: which id is "self" differs
+# per batch id, so the caller checks it inside its batch loop (#61).
+sub parse_dependency_ids {
+    my ( $self, $flag, $value ) = @_;
+    my ( @ids, %seen );
+    for my $raw ( split /,/, $value ) {
+        $self->usage_error(
+            qq{invalid $flag id "$raw" (ids are comma-separated numbers)} )
+            unless $raw =~ /\A[0-9]+\z/;
+        # Numified on purpose: YAML::XS and JSON::MaybeXS both encode by the
+        # scalar's own type, so a string "2" would round-trip as '2' / "2" --
+        # which go-yaml refuses to unmarshal into kanban-md's IntSlice. Same
+        # care run_batch takes when echoing batch ids. Deduplicated here, once
+        # for every flag, so `--depends-on 2,2` cannot store [2,2]: a repeated
+        # id carries no meaning in any of the three flags, and edit's
+        # append-unique only guards against ids the card already carries.
+        push @ids, $raw + 0 unless $seen{ $raw + 0 }++;
+    }
+    $self->usage_error("$flag requires at least one id") unless @ids;
+    return \@ids;
+}
+
+=method parse_dependency_ids
+
+    my $ids = $self->parse_dependency_ids( '--depends-on', $self->depends_on );
+
+Splits a comma-separated dependency option value into an arrayref of numeric
+ids, in order, duplicates collapsed. A value that is not a plain number is a
+usage error naming the flag and the value, raised before any task is touched
+-- it condemns the invocation, never one id of a batch. The ids are returned
+as numbers so they round-trip numerically through the frontmatter and
+C<--json> (kanban-md models the field as an C<IntSlice>).
+
+=cut
+
+sub assert_dependencies_exist {
+    my ( $self, $ids ) = @_;
+    for my $dep_id (@$ids) {
+        $self->usage_error(
+            "dependency task $dep_id does not exist on this board" )
+            unless $self->find_task($dep_id);
+    }
+    return $ids;
+}
+
+=method assert_dependencies_exist
+
+    $self->assert_dependencies_exist($ids);
+
+Usage error unless every id names a task on this board, archived included --
+the same L<App::karr::Role::BoardAccess/find_task> lookup
+L</check_dependencies> resolves ids with, so set-time and move-time can never
+disagree about what exists. Called with ids that are about to be B<added>;
+removing an id the board no longer has must stay legal, because that is how a
+dependency on a deleted task is cleaned up.
+
+=cut
+
 sub dependency_report {
     my ( $self, $id ) = @_;
 

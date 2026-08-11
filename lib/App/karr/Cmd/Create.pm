@@ -8,16 +8,18 @@ use MooX::Options (
   usage_string => 'USAGE: karr create --title TEXT [--priority LEVEL] [--status STATUS] [options]',
 );
 use App::karr::Role::BoardAccess;
+use App::karr::Role::DependencyCheck;
 use App::karr::Task;
 use App::karr::Config;
 
-with 'App::karr::Role::BoardAccess';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyCheck';
 
 =head1 SYNOPSIS
 
     karr create "Fix login bug"
     karr create --title "Write release notes" --priority high --status todo
     karr create --title "Review API" --tags docs,review --body "Check CLI help"
+    karr create "Ship it" --depends-on 2,3
 
 =head1 DESCRIPTION
 
@@ -40,6 +42,14 @@ Override the configured default lifecycle values for the new task.
 =item * C<--assignee>, C<--tags>, C<--due>, C<--estimate>
 
 Populate optional frontmatter fields at creation time.
+
+=item * C<--depends-on>
+
+Comma-separated ids of tasks this one depends on, same shape as C<--tags>.
+Every id must name a task on this board; an unknown or non-numeric id rejects
+the create as a usage error before an id is allocated, so nothing is burned
+(ticket #54). Taking the new card up while a dependency is unfinished warns --
+see L<App::karr::Cmd::Move>.
 
 =item * C<--body>
 
@@ -96,6 +106,12 @@ option estimate => (
   doc => 'Time estimate',
 );
 
+option depends_on => (
+  is => 'ro',
+  format => 's',
+  doc => 'Comma-separated ids of tasks this one depends on',
+);
+
 option class => (
   is => 'ro',
   format => 's',
@@ -131,6 +147,16 @@ sub execute {
   $config->validate_class( $self->class )       if defined $self->class;
   App::karr::Config->validate_due( $self->due ) if defined $self->due;
 
+  # Set-time dependency validation (ticket #124), under the same #54 rule.
+  # A self-reference is not expressible here: the new id does not exist until
+  # it is allocated below, and every dependency must already exist, so no
+  # dependency can equal it. length, not truth (ticket #78).
+  my $depends_on;
+  if ( defined $self->depends_on && length $self->depends_on ) {
+    $depends_on = $self->parse_dependency_ids( '--depends-on', $self->depends_on );
+    $self->assert_dependencies_exist($depends_on);
+  }
+
   my %task_args = (
     id       => $self->allocate_next_id,
     title    => $title,
@@ -139,12 +165,13 @@ sub execute {
     class    => $self->class    // $defaults->{class}     // 'standard',
   );
 
-  $task_args{assignee} = $self->assignee if $self->assignee;
-  $task_args{tags}     = [split /,/, $self->tags] if $self->tags;
-  $task_args{due}      = $self->due if $self->due;
-  $task_args{estimate} = $self->estimate if $self->estimate;
+  $task_args{assignee}   = $self->assignee if $self->assignee;
+  $task_args{tags}       = [split /,/, $self->tags] if $self->tags;
+  $task_args{depends_on} = $depends_on if $depends_on;
+  $task_args{due}        = $self->due if $self->due;
+  $task_args{estimate}   = $self->estimate if $self->estimate;
   # length, not truth: --body 0 is a body (ticket #78).
-  $task_args{body}     = $self->body if defined $self->body && length $self->body;
+  $task_args{body}       = $self->body if defined $self->body && length $self->body;
 
   my $task = App::karr::Task->new(%task_args);
   $self->save_task($task);

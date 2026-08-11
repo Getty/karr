@@ -25,6 +25,7 @@ Creates the board refs inside the current Git repository. With
 ```bash
 karr create "Title" [--status STATUS] [--priority PRIORITY] [--tags t1,t2] [--body TEXT]
 karr create --title "Title" --assignee NAME --due 2026-03-15
+karr create "Ship it" --depends-on 2,3       # ids of tasks this one depends on; each must exist on this board
 ```
 
 ### List tasks
@@ -65,6 +66,8 @@ karr move ID in-progress --claim agent-1     # move and claim
 ```bash
 karr edit ID --title "New title"
 karr edit ID --priority high --add-tag urgent
+karr edit ID --add-depends-on 2,3            # append dependency ids (no duplicates; ids must exist, no self-reference)
+karr edit ID --remove-depends-on 4           # absent ids are a no-op (cleanup after a deleted dependency)
 karr edit ID --body "New description"
 karr edit ID -a "Appended note"              # append to body
 karr edit ID --claim agent-1                 # claim
@@ -72,6 +75,12 @@ karr edit ID --release                       # release claim
 karr edit ID --block "Waiting on API"        # mark blocked
 karr edit ID --unblock                       # clear blocked
 ```
+
+An unknown or non-numeric id given to `--depends-on`/`--add-depends-on` rejects
+the whole invocation before anything is written (usage error, exit 2); a
+self-reference (`karr edit 5 --add-depends-on 5`) fails only that id, the rest
+of the batch proceeds, and the command exits 1. Taking up a card whose
+dependencies are unfinished warns on move/pick but is never blocked.
 
 ### Delete task
 

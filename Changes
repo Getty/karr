@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `depends_on` can now be set from the CLI (ticket #124): `karr create
+      --depends-on 2,3` takes comma-separated ids the way `--tags` does, and
+      `karr edit --add-depends-on` / `--remove-depends-on` follow the
+      `--add-tag`/`--remove-tag` rule — add appends without duplicating,
+      remove is a no-op for ids the card does not carry. Until now the field
+      was reachable only through `karr import` of a file view, so after #123
+      karr warned about a relationship it could not itself express. The ids
+      are stored and emitted as numbers, matching kanban-md's IntSlice, so
+      they round-trip the frontmatter and `--json` numerically. Setting also
+      validates, as kanban-md does (ValidateDependencyIDs): a non-numeric id
+      or one the board does not have condemns the whole invocation as a usage
+      error (exit 2) before anything is written — on create, before an id is
+      allocated, so a rejected create burns none (the #54 rule) — while a
+      self-reference is per-id (`karr edit 4,5 --add-depends-on 5` is valid
+      for 4 and wrong for 5), failing that id and letting the rest of the
+      batch proceed (the #61 rule, exit 1). Removing an id the board no
+      longer has stays legal: it is how a dependency on a deleted task is
+      cleaned up. The #123 move-time warning is unchanged and complementary —
+      set-time catches a typo while the author still remembers what they
+      meant, move-time catches state that changed afterwards.
     - A scalar where a list field belongs — `tags: urgent`, `depends_on: 1`,
       writable only by hand or by a third tool in a materialized view — is now
       refused at the parse gate as a usage error naming the field, and through

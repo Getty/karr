@@ -21,6 +21,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
 
     karr edit 5 --title "Updated title"
     karr edit 5 --add-tag urgent --remove-tag stale
+    karr edit 5 --add-depends-on 2,3 --remove-depends-on 4
     karr edit 5 -a "Waiting for review"
     karr edit 5 --claim agent-fox --block "waiting on API"
 
@@ -59,6 +60,17 @@ claim, C<--block> records a blocking reason, and C<--unblock> removes it.
 =item * Tag management
 
 C<--add-tag> and C<--remove-tag> accept comma-separated lists.
+
+=item * Dependency management
+
+C<--add-depends-on> and C<--remove-depends-on> accept comma-separated task
+ids and follow the tag rule: add appends without duplicating, remove is a
+no-op for ids the card does not carry. Ids being added must exist on this
+board and must not name the task itself; an unknown or non-numeric id rejects
+the whole invocation as a usage error before anything is written, while a
+self-reference fails only the id it is wrong for and lets the rest of the
+batch proceed. Removing an id the board no longer has stays legal -- it is
+how a dependency on a deleted task is cleaned up.
 
 =back
 
@@ -103,6 +115,18 @@ option remove_tag => (
   is => 'ro',
   format => 's',
   doc => 'Remove tags (comma-separated)',
+);
+
+option add_depends_on => (
+  is => 'ro',
+  format => 's',
+  doc => 'Add dependency ids (comma-separated)',
+);
+
+option remove_depends_on => (
+  is => 'ro',
+  format => 's',
+  doc => 'Remove dependency ids (comma-separated)',
 );
 
 option due => (
@@ -169,12 +193,35 @@ sub execute {
   $config->validate_priority( $self->priority ) if defined $self->priority;
   App::karr::Config->validate_due( $self->due ) if defined $self->due;
 
+  # Same rule for the dependency flags (ticket #124): a malformed or unknown
+  # id is wrong for every id in the batch at once. Only ids being *added* must
+  # exist -- removing an id the board no longer has is how a dependency on a
+  # deleted task is cleaned up. length, not truth (ticket #78).
+  my $add_depends;
+  if ( defined $self->add_depends_on && length $self->add_depends_on ) {
+    $add_depends = $self->parse_dependency_ids( '--add-depends-on', $self->add_depends_on );
+    $self->assert_dependencies_exist($add_depends);
+  }
+  my $remove_depends;
+  if ( defined $self->remove_depends_on && length $self->remove_depends_on ) {
+    $remove_depends = $self->parse_dependency_ids( '--remove-depends-on', $self->remove_depends_on );
+  }
+
   # Every id is attempted, whatever the ones before it did: a missing id used to
   # die from inside this loop and take the rest of the batch with it (ticket
   # #61). The option-value checks above stay outside it, because they condemn
   # the whole invocation rather than one id.
   my ($results, $failed) = $self->run_batch(\@ids, sub {
     my ($id) = @_;
+
+    # A self-reference is the one dependency error that is per-id rather than
+    # per-invocation: `edit 4,5 --add-depends-on 5` is valid for 4 and wrong
+    # for 5, so it fails this id and lets the batch carry on (ticket #61).
+    # kanban-md rejects it at the same moment (ValidateDependencyIDs). The
+    # numeric guard keeps a non-numeric batch id headed for its own "Task X
+    # not found" instead of a numeric-comparison warning.
+    die "Task $id cannot depend on itself\n"
+      if $add_depends && $id =~ /\A[0-9]+\z/ && grep { $_ == $id } @$add_depends;
 
     my $task = $self->update_task_guarded($id, sub {
       my ($task) = @_;
@@ -209,6 +256,18 @@ sub execute {
       if ($self->remove_tag) {
         my %remove = map { $_ => 1 } split /,/, $self->remove_tag;
         $task->tags([grep { !$remove{$_} } @{$task->tags}]);
+      }
+
+      # The --add-tag/--remove-tag shape: append-unique and remove, so one
+      # rule covers both list fields (ticket #124).
+      if ($add_depends) {
+        my %existing = map { $_ => 1 } @{$task->depends_on};
+        push @{$task->depends_on}, grep { !$existing{$_} } @$add_depends;
+      }
+
+      if ($remove_depends) {
+        my %remove = map { $_ => 1 } @$remove_depends;
+        $task->depends_on([grep { !$remove{$_} } @{$task->depends_on}]);
       }
 
       if ($self->claim) {
