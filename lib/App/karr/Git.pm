@@ -238,8 +238,10 @@ sub repo_root {
 use constant GIT_STATUS_WT_NEW  => 0x0080;
 use constant GIT_STATUS_IGNORED => 0x4000;
 
-# Resolve $path to a string relative to the work tree, the form both
-# status_for_path (is_tracked) and a git-CLI pathspec (is_tracked_under) want.
+# Resolve $path to a string relative to the work tree, the form status_for_path
+# (is_tracked), the index (is_tracked_under) and a git-CLI pathspec all want --
+# index paths are root-relative with / separators, exactly as `git ls-files`
+# prints them.
 # Both ends go through the containing directory -- the path itself may not
 # exist yet -- so a symlinked work tree does not make every path look like it
 # escapes. Undef when the repo has no work tree, or $path resolves outside it.
@@ -288,15 +290,28 @@ sub is_tracked_under {
     # which is_tracked above can do. libgit2's status_for_path takes one file
     # and, being a working-tree comparison, cannot see a path git tracks but
     # that is currently missing from disk -- rm'd, not yet committed (#104).
-    # `git ls-files` reads the index directly and matches a bare directory
-    # name as a prefix over everything under it, so one call answers for a
-    # file or a directory alike, tracked-and-present or tracked-and-deleted.
+    # The index carries the entry either way, and Git::Native::Index asks it as
+    # a path question: the exact entry first, then "$rel/" as a prefix, so a
+    # directory answers for everything below it without `tasks` being answered
+    # by a tracked `tasksfoo.txt` (#107).
     #
-    # Git::Native (libgit2) exposes no index API at all in the version karr
-    # depends on -- Git::Native::Repository has no `index` method, and the raw
-    # FFI binding for git_index_find_prefix is not attached either -- so there
-    # is no native path to prefer here. This goes through the git CLI
-    # unconditionally, not as a fallback from a native attempt.
+    # Every ->index re-reads the index file from disk rather than handing back
+    # a cached one, which is what makes this safe in a checkout several agents
+    # are staging and committing in.
+    my $native = try {
+        my $repo = $self->_repo or return undef;
+        $repo->index->is_tracked_under($rel) ? 1 : 0;
+    } catch { $self->{_last_error} = "$_"; undef };
+    return $native if defined $native;
+
+    # Reached only when libgit2 could not answer -- an index it refuses to
+    # read, or a Git::Native older than the `index` accessor. `git ls-files`
+    # reads the same index and matches a bare directory name as a prefix over
+    # everything under it, so it answers the same question for a file or a
+    # directory alike. Without a `git` on PATH there is nothing left to ask,
+    # and an unanswered question is reported as "not tracked" -- the same
+    # not-tracked-as-far-as-we-can-tell that is_tracked returns for a
+    # repository it cannot open.
     my $run = $self->_run_git( 'ls-files', '-z', '--', $rel );
     return 0 unless $run->{failure} eq '' && ( $run->{status} >> 8 ) == 0;
     return length $run->{out} ? 1 : 0;
@@ -313,6 +328,13 @@ anything in a repository that cannot be opened, return false.
     if ( $git->is_tracked_under($dir) ) {
         # the project already owns content under $dir
     }
+
+The index is read natively, through L<Git::Native::Index/is_tracked_under>.
+Only when libgit2 declines to answer -- an index it cannot read, or a
+L<Git::Native> too old to expose one -- does this fall back to C<git ls-files>
+through the CLI, with L</last_error> carrying why. With no C<git> on C<PATH>
+that fallback has nothing to run, so a failed native read answers false; the
+native path itself needs no C<git> binary.
 
 =cut
 

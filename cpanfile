@@ -14,8 +14,8 @@ requires 'IO::Select';
 requires 'Errno';
 requires 'POSIX';
 requires 'Time::HiRes';
-requires 'Git::Native', '0.004';
-requires 'Git::Libgit2', '0.005';
+requires 'Git::Native', '0.005';
+requires 'Git::Libgit2', '0.006';
 
 on test => sub {
     requires 'Test::More';

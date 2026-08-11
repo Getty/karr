@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - App::karr::Git::is_tracked_under now reads the index natively, through
+      Git::Native::Index, and only falls back to `git ls-files` when libgit2
+      declines to answer (ticket #107). That question decides whether `karr
+      init` and `karr materialize` may claim `tasks/` and `config.yml` in
+      .gitignore, and it used to be asked through the git CLI unconditionally
+      — not as a fallback, but because the Git::Native of the day exposed no
+      index at all. With no `git` on PATH the run simply failed, the answer
+      came back "not tracked", and both commands wrote the entries over paths
+      the project already tracks, undoing ticket #89 in that configuration.
+      The native route needs no `git` binary, so that configuration now
+      answers correctly; the CLI remains for an index libgit2 cannot read,
+      with the reason in last_error. Requires Git::Native 0.005 and
+      Git::Libgit2 0.006.
     - Fixed the em dash literals that reached users double-encoded (ticket
       #108). No file under lib/ or bin/ says `use utf8`, deliberately: non-ASCII
       belongs in data, and App::karr::Encoding owns every character/octet
