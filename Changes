@@ -1,5 +1,27 @@
 {{$NEXT}}
 
+    - App::karr::Git now resolves every path it hands git from the work tree
+      root, on both routes into is_tracked_under (tickets #113 and #114). The
+      string comes out of _relative_to_root, which measures from the root, and
+      libgit2 resolves it that way by itself — but the `git ls-files` fallback
+      ran as `git -C ->dir`, and a pathspec is resolved against the process
+      cwd. Build the class on a subdirectory, as its own SYNOPSIS shows with
+      `dir => '.'`, and it asked about `subdir/tasks` while the caller asked
+      about `tasks`; a pathspec that matches nothing exits 0 with no output,
+      which reads back as "not tracked", so a project that owns `tasks/` would
+      be told it does not — the symptom ticket #89 removed, through a different
+      door. The CLI is now pinned to the root, which the transport verbs cannot
+      tell apart. The root itself is `.`, a pathspec git understands but not a
+      path the index can hold — entries are stored as `tasks/a.md`, never
+      `./tasks/a.md` — so the native route answered 0 for a repository full of
+      tracked files; at the root the question is now whether the index holds
+      anything at all, which is what `ls-files -- .` answers there too. No
+      karr command changes behaviour: every is_tracked_under call goes through
+      the store's Git, which App::karr::Role::BoardDiscovery builds at the
+      repository root, and none of them passes the root as the path. Both were
+      latent, and each was a wrong answer rather than a failure — the kind that
+      would have surfaced as the answer depending on whether libgit2 was
+      available to ask.
     - App::karr::Git::is_tracked_under now reads the index natively, through
       Git::Native::Index, and only falls back to `git ls-files` when libgit2
       declines to answer (ticket #107). That question decides whether `karr

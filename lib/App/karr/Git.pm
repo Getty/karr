@@ -238,10 +238,20 @@ sub repo_root {
 use constant GIT_STATUS_WT_NEW  => 0x0080;
 use constant GIT_STATUS_IGNORED => 0x4000;
 
-# Resolve $path to a string relative to the work tree, the form status_for_path
-# (is_tracked), the index (is_tracked_under) and a git-CLI pathspec all want --
-# index paths are root-relative with / separators, exactly as `git ls-files`
-# prints them.
+# Resolve $path to a string relative to the WORK TREE ROOT -- repo_root, never
+# ->dir. That is the form status_for_path (is_tracked), the index
+# (is_tracked_under) and a git-CLI pathspec all want: root-relative with /
+# separators, exactly as `git ls-files` prints them. The two happen to be the
+# same string whenever ->dir is the root, which is all BoardDiscovery ever
+# builds, so a consumer that resolves from ->dir instead looks correct until
+# something constructs this class on a subdirectory (#113). Every route below
+# therefore resolves from the root: libgit2 does so by itself, and _run_git is
+# pinned to it.
+#
+# The root itself is `.`, which is a pathspec git understands but NOT a path
+# the index can hold -- entries are stored as `tasks/a.md`, never `./tasks/a.md`
+# (#114). A consumer that asks the index has to spell that case out.
+#
 # Both ends go through the containing directory -- the path itself may not
 # exist yet -- so a symlinked work tree does not make every path look like it
 # escapes. Undef when the repo has no work tree, or $path resolves outside it.
@@ -298,9 +308,18 @@ sub is_tracked_under {
     # Every ->index re-reads the index file from disk rather than handing back
     # a cached one, which is what makes this safe in a checkout several agents
     # are staging and committing in.
+    #
+    # `.` -- the work tree root -- is the one thing the index cannot be asked
+    # as a path: no entry is stored with a leading `./`, so neither the exact
+    # path nor the `./` prefix can ever match and the answer came back 0 for a
+    # repository full of tracked files (#114). At the root the question is
+    # simply whether the index holds anything at all, which is what the CLI's
+    # `ls-files -- .` answers there too.
     my $native = try {
-        my $repo = $self->_repo or return undef;
-        $repo->index->is_tracked_under($rel) ? 1 : 0;
+        my $repo  = $self->_repo or return undef;
+        my $index = $repo->index;
+        return $index->entrycount ? 1 : 0 if $rel eq '.';
+        $index->is_tracked_under($rel) ? 1 : 0;
     } catch { $self->{_last_error} = "$_"; undef };
     return $native if defined $native;
 
@@ -308,8 +327,10 @@ sub is_tracked_under {
     # read, or a Git::Native older than the `index` accessor. `git ls-files`
     # reads the same index and matches a bare directory name as a prefix over
     # everything under it, so it answers the same question for a file or a
-    # directory alike. Without a `git` on PATH there is nothing left to ask,
-    # and an unanswered question is reported as "not tracked" -- the same
+    # directory alike -- and $rel is a root-relative pathspec, which is why
+    # _run_git resolves it from the work tree root rather than from ->dir.
+    # Without a `git` on PATH there is nothing left to ask, and an unanswered
+    # question is reported as "not tracked" -- the same
     # not-tracked-as-far-as-we-can-tell that is_tracked returns for a
     # repository it cannot open.
     my $run = $self->_run_git( 'ls-files', '-z', '--', $rel );
@@ -1433,9 +1454,20 @@ sub _transport_timeout {
     return $raw + 0;
 }
 
-# Run `git -C <dir> @args` and return
+# Run `git -C <work tree root> @args` and return
 #   { ok => 0|1, failure => ''|'start'|'timeout', status => $?, out, err,
 #     timeout => $seconds }
+#
+# The root, not ->dir. Everything this class hands git as a path comes out of
+# _relative_to_root and is therefore measured from the work tree root, while a
+# git pathspec is resolved against the process cwd -- so running from ->dir
+# asked about `subdir/tasks` whenever ->dir was not the root, and `git ls-files`
+# answers that with exit 0 and no output, i.e. "not tracked" (#113). Pinning
+# the cwd here puts both routes on one origin instead of correcting the
+# pathspec at each call site. It costs the transport verbs nothing: git
+# discovers the same repository from either directory. Only a repository
+# libgit2 cannot open has no root to run from, and there ->dir is all that is
+# left -- the same degradation every other native operation makes.
 #
 # Both pipes are drained through one IO::Select loop. Reading stdout to EOF
 # first, as this used to, deadlocks the moment the child fills the 64 KiB
@@ -1452,7 +1484,8 @@ sub _transport_timeout {
 sub _run_git {
     my ( $self, @args ) = @_;
 
-    my @cmd     = ( 'git', '-C', $self->dir->stringify, @args );
+    my $cwd     = $self->repo_root // $self->dir;
+    my @cmd     = ( 'git', '-C', $cwd->stringify, @args );
     my $timeout = _transport_timeout();
     my %result  = (
         ok => 0, failure => 'start', status => 0,
