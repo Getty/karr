@@ -124,17 +124,13 @@ dzil test                      # Full Dist::Zilla test
 dzil build                     # Build distribution
 ```
 
-## What still needs building (v1 roadmap)
+## What still needs building
 
-Live status is on the karr board (`refs/karr/*`); this is the at-a-glance summary.
-
-1. **metrics command** — throughput, lead/cycle time, flow efficiency
-2. **dependency checking** — taking a card up warns about unfinished `depends_on`
-   (ticket #123, warn rather than block by decision). Still missing: any CLI way
-   to set the field (#124), and set-time validation on top of it
-3. **Self-healing IDs** — detect and repair duplicate IDs, filename/ID mismatches
-4. **WIP limit enforcement** — reject moves that would exceed WIP limits
-5. **TUI** — interactive terminal board (stretch goal, possibly with Tickit)
+Open work lives on the karr board (`refs/karr/*`) — `karr list --compact` or
+`karr board`. This file deliberately keeps no second copy of it: the summary that
+used to stand here dated from the initial commit, was never reconciled with the
+board, and by the time anyone noticed, none of its five items existed as a
+ticket while it claimed the board held the live status.
 
 ## Documentation and release notes
 
