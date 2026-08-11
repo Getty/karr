@@ -114,6 +114,37 @@ subtest 'write commands refuse in a repository with no board' => sub {
         'and not one of them left a ref behind in an unrelated repository' );
 };
 
+subtest 'a half-board is named as one, not reported as no board at all' => sub {
+    # Ticket #133: both states raised the same sentence, so a repository whose
+    # only missing ref was refs/karr/config told every write command's user
+    # "No karr board found. Run 'karr init'". An agent read that on a repository
+    # holding 21 tickets, believed the tickets did not exist, and ran init --
+    # which back then also broke how the tickets were read (#132).
+    my $repo = _half_board();
+
+    my $rv = _run_karr( $repo, 'create', 'anything' );
+    is( $rv->{exit}, 1, 'a write command still refuses on a half-board' );
+    like( $rv->{stderr}, qr/Half-initialized karr board/,
+        'but it names the state it actually found' );
+    like( $rv->{stderr}, qr/refs\/karr\/config is missing/,
+        'and says which ref is missing' );
+    like( $rv->{stderr}, qr/2 task refs/,
+        'and how many task refs are at stake, so nobody writes them off' );
+    like( $rv->{stderr}, qr/karr init/, 'it still points at karr init' );
+    like( $rv->{stderr}, qr/keeps what is already there/,
+        'and promises init does not discard them' );
+    unlike( $rv->{stderr}, qr/No karr board found/,
+        'and never claims the repository has no board' );
+    # karr repair only migrates double-encoded UTF-8, and on a repository with
+    # no refs at all it dies with the very sentence this branch replaces.
+    unlike( $rv->{stderr}, qr/karr repair/, 'nor does it send anyone to karr repair' );
+
+    is_deeply( [ _board_refs($repo) ],
+        [ 'refs/karr/meta/board-id', 'refs/karr/meta/next-id',
+          'refs/karr/tasks/1/data', 'refs/karr/tasks/2/data' ],
+        'the refused command left the half-board exactly as it was' );
+};
+
 subtest 'init completes a half-board instead of refusing forever' => sub {
     my $repo = _half_board();
 

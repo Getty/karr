@@ -1947,7 +1947,10 @@ sub _reap_killed {
 # encoded twice in its task frontmatter, its config, and its activity log. The
 # ref is the discriminator: absent means "legacy, repair on read", 2 means
 # "written under the current contract, hands off". Boards are stamped by
-# `karr init`, `karr repair --yes`, and `karr import --yes`.
+# `karr repair --yes`, and by `karr init` / `karr import --yes` when they
+# create the board rather than write into one that was already there -- see
+# App::karr::BoardStore/stamp_encoding_version for why that distinction is the
+# whole point (#132).
 #
 # Cached per object: it is consulted once per task load, and a board does not
 # change contract version mid-command.
@@ -1987,8 +1990,11 @@ sub write_encoding_version {
 
 Stamps C<refs/karr/meta/encoding> with C<$version> (default: the current
 contract version). Invalidates the per-instance cache L</board_encoding_version>
-keeps, so the next read reflects the new value. C<karr init>, C<karr repair
---yes> and C<karr import --yes> call this.
+keeps, so the next read reflects the new value. C<karr repair --yes> calls this,
+and so do C<karr init> and C<karr import --yes> -- but only when they create the
+board instead of adding to one that already had refs, since the marker speaks
+for every ref under C<refs/karr/>; see
+L<App::karr::BoardStore/stamp_encoding_version>.
 
 =cut
 

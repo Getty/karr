@@ -155,6 +155,21 @@ create> typed in the wrong directory silently seeded a partial board in an
 unrelated repository -- and that partial board then locked C<karr init> out of
 it permanently (#62).
 
+It distinguishes the two ways of not having a board, because they call for
+different things from the reader (#133):
+
+=over 4
+
+=item * nothing under C<refs/karr/> — "No karr board found. Run 'karr init' to
+create one.", the sentence C<backup>, C<destroy>, C<materialize> and C<repair>
+raise off L<App::karr::BoardStore/has_board_refs> for the same state;
+
+=item * refs present, C<refs/karr/config> missing — a half-board: the message
+names it as one, says how many task refs are at stake, and says that C<karr
+init> completes it without discarding them.
+
+=back
+
 Call it B<after> C<sync_before>, never before: on a fresh clone the board only
 exists on the remote until the pull has run, and checking first would report a
 board that is merely not fetched yet as missing. The four commands that read or
@@ -166,9 +181,32 @@ half-board left behind by an older karr.
 
 sub require_board {
     my ($self) = @_;
+    my $store = $self->store;
+    return 1 if $store->board_exists;
+
+    # Nothing under refs/karr/ at all: the sentence every board-less repository
+    # has always got, and the same one Backup/Destroy/Materialize/Repair raise
+    # off has_board_refs, where it means exactly this.
     die "No karr board found. Run 'karr init' to create one.\n"
-        unless $self->store->board_exists;
-    return 1;
+        unless $store->has_board_refs;
+
+    # Refs are there, only refs/karr/config is missing. Saying "no board found"
+    # here was a lie with consequences: an agent got it on a repository holding
+    # 21 tickets, believed the repository had never had a board, and never
+    # looked for them (#133). Name the state, count what is at stake, and say
+    # that completing it keeps the tasks -- not 'karr repair', which only
+    # migrates double-encoded UTF-8 and would die with this very sentence on a
+    # repository that has no refs.
+    my @ids   = $store->git->list_task_refs;   # returns through sort: no scalar context
+    my $tasks = scalar @ids;
+    my $held =
+          $tasks == 0 ? "board metadata is"
+        : $tasks == 1 ? "1 task ref is"
+        :               "$tasks task refs are";
+    die "Half-initialized karr board: refs/karr/config is missing, but $held\n"
+        . "already under refs/karr/, so this repository is not empty.\n"
+        . "Run 'karr init' to complete the board -- it writes the missing config\n"
+        . "and keeps what is already there.\n";
 }
 
 1;

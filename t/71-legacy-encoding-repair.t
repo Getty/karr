@@ -166,6 +166,31 @@ sub _legacy_board {
   return ( $repo, $git );
 }
 
+# A card in a file view, written the way any correct tool writes one: singly
+# encoded UTF-8 octets on disk. This is what import reads back into refs.
+sub _write_view_card {
+  my ( $repo, $id, $title, $body ) = @_;
+  mkdir "$repo/tasks" unless -d "$repo/tasks";
+  my $doc = <<"MD";
+---
+id: $id
+title: $title
+status: backlog
+priority: medium
+class: standard
+created: 2026-01-01T00:00:00Z
+updated: 2026-01-01T00:00:00Z
+---
+
+$body
+MD
+  open my $fh, '>', "$repo/tasks/$id-card.md" or die "open: $!";
+  binmode $fh;
+  print {$fh} encode_utf8($doc);
+  close $fh;
+  return 1;
+}
+
 subtest 'the legacy fixture really is double-encoded' => sub {
   my ( $repo, $git ) = _legacy_board();
 
@@ -316,7 +341,7 @@ subtest 'an all-ASCII legacy board comes out bit-identical' => sub {
     'and the board is stamped so it is never guessed at again' );
 };
 
-subtest 'init and import stamp the board so the repair never runs on them' => sub {
+subtest 'init and import stamp only a board they create themselves' => sub {
   my $repo = _init_repo();
   is( _run_karr( $repo, 'init', '--name', 'Fresh Board' )->{exit}, 0, 'board initialized' );
 
@@ -326,17 +351,95 @@ subtest 'init and import stamp the board so the repair never runs on them' => su
   my $rv = _run_karr( $repo, 'repair' );
   like( $rv->{stdout}, qr/already at version 2/, 'a fresh board needs no migration' );
 
-  # import rewrites every task ref from character-level file reads, so what it
-  # leaves behind satisfies the contract whatever the board was before.
+  # Import's other half: on a repository with nothing under refs/karr/ it is a
+  # board-birth path, and there the claim is true -- every ref the board has
+  # came out of this import's character-level file reads.
+  my $bootstrap = _init_repo();
+  _write_view_card( $bootstrap, 1, $TITLE, $BODY );
+  is( _run_karr( $bootstrap, 'import', '--yes' )->{exit}, 0, 'import bootstraps a board' );
+
+  my $born = App::karr::Git->new( dir => $bootstrap );
+  is( $born->board_encoding_version, BOARD_ENCODING_VERSION,
+    'and stamps the board it just created' );
+  is( $born->load_task_ref(1)->title, $TITLE, 'with the card intact' );
+
+  # But not on a board that was already there. Import replaces the task refs and
+  # leaves everything else alone -- the activity log above all -- so on a 0.402
+  # board the marker would declare double-encoded payloads clean and turn off
+  # the read repair that is the only reason they still read right (#132).
   my ( $legacy_repo, $legacy_git ) = _legacy_board();
   is( _run_karr( $legacy_repo, 'materialize' )->{exit}, 0, 'legacy board materializes' );
   is( _run_karr( $legacy_repo, 'import', '--yes' )->{exit}, 0, 'and imports back' );
 
   my $after = App::karr::Git->new( dir => $legacy_repo );
-  is( $after->board_encoding_version, BOARD_ENCODING_VERSION, 'import stamps the marker' );
-  is( $after->load_task_ref(1)->title, $TITLE, 'and the card survived the trip' );
+  ok( $after->board_is_legacy_encoded,
+    'import does not stamp a board it merely wrote into' );
+  is( $after->load_task_ref(1)->title, $TITLE, 'the card survived the trip' );
   ok( index( _blob( $legacy_repo, 'refs/karr/tasks/1/data' ), encode_utf8($TITLE) ) >= 0,
-    'the ref is singly encoded afterwards' );
+    'and its ref is singly encoded afterwards' );
+  is( decode_json( _run_karr( $legacy_repo, 'log', '--json' )->{stdout} )->[0]{detail},
+    "blocked on \x{fc}bergang",
+    'while the log ref import never touched still reads correctly' );
+
+  # And the command that may stamp -- because it rewrites every ref -- still can.
+  is( _run_karr( $legacy_repo, 'repair', '--yes' )->{exit}, 0, 'karr repair --yes runs' );
+  my $migrated = App::karr::Git->new( dir => $legacy_repo );
+  ok( !$migrated->board_is_legacy_encoded, 'and finishes the migration import left open' );
+  is( $migrated->load_task_ref(1)->title, $TITLE, 'card still correct' );
+  is( decode_json( _run_karr( $legacy_repo, 'log', '--json' )->{stdout} )->[0]{detail},
+    "blocked on \x{fc}bergang", 'log still correct' );
+};
+
+subtest 'init on a legacy half-board does not claim its payloads are current' => sub {
+  # Ticket #132. init completes a half-board -- task refs present,
+  # refs/karr/config missing (#62) -- and used to stamp the encoding marker on
+  # the way out regardless. On a board written by 0.402 that assertion is false:
+  # the cards it adopts are double-encoded, the marker switches the read repair
+  # off, and `karr repair` then calls the board up to date and declines. Nothing
+  # in the refs changes, which is why this asserts on what the board *reads* as.
+  my $repo = _init_repo();
+  my $git  = App::karr::Git->new( dir => $repo );
+  $git->write_ref( 'refs/karr/meta/next-id', "2\n" );
+  _plant( $git, 'refs/karr/tasks/1/data',
+    _legacy_task_doc( id => 1, title => $TITLE, body => $BODY, tags => [$TAG] ) );
+  _plant( $git, 'refs/karr/log/agent/legacy', _legacy_log_doc("blocked on \x{fc}bergang") );
+
+  ok( !$git->ref_exists('refs/karr/config'), 'setup: a half-board, no config ref' );
+  is( decode_json( _run_karr( $repo, 'show', '1', '--json' )->{stdout} )->{title},
+    $TITLE, 'setup: and it reads correctly before init' );
+
+  my $init = _run_karr( $repo, 'init', '--name', 'Completed' );
+  is( $init->{exit}, 0, 'init completes the half-board rather than refusing it (#62)' )
+    or diag $init->{stderr};
+  like( $init->{stdout}, qr/Completed a half-board/, 'and says that is what it did' );
+  is( _run_karr( $repo, 'config', 'get', 'board.name' )->{stdout}, "Completed\n",
+    'the config it was there to write is written' );
+
+  my $after = App::karr::Git->new( dir => $repo );
+  ok( !$after->ref_exists('refs/karr/meta/encoding'), 'no encoding marker was stamped' );
+  ok( $after->board_is_legacy_encoded, 'so the board is still treated as legacy' );
+
+  my $show = _run_karr( $repo, 'show', '1', '--json' );
+  is( $show->{exit}, 0, 'show --json still exits 0' ) or diag $show->{stderr};
+  my $data = decode_json( $show->{stdout} );
+  is( $data->{title}, $TITLE, 'and the card reads exactly as it did before init' );
+  is( $data->{body},  $BODY,  'body too' );
+  is_deeply( $data->{tags}, [$TAG], 'and the tags' );
+  is( decode_json( _run_karr( $repo, 'log', '--json' )->{stdout} )->[0]{detail},
+    "blocked on \x{fc}bergang", 'the activity log still reads correctly as well' );
+
+  # The recovery path stays open: repair used to answer "already at version 2".
+  my $dry = _run_karr( $repo, 'repair' );
+  is( $dry->{exit}, 0, 'karr repair exits 0' );
+  unlike( $dry->{stdout}, qr/already at version/,
+    'and does not report the board as up to date' );
+  like( $dry->{stdout}, qr{refs/karr/tasks/1/data}, 'it still sees the legacy card' );
+  like( $dry->{stdout}, qr{refs/karr/log/agent/legacy}, 'and the legacy log entry' );
+
+  is( _run_karr( $repo, 'repair', '--yes' )->{exit}, 0, 'karr repair --yes runs' );
+  my $migrated = App::karr::Git->new( dir => $repo );
+  ok( !$migrated->board_is_legacy_encoded, 'the board is migrated and stamped' );
+  is( $migrated->load_task_ref(1)->title, $TITLE, 'with the card still correct' );
 };
 
 subtest 'a stamped board is never second-guessed, even when its text looks like mojibake' => sub {

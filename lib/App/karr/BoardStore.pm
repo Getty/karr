@@ -49,8 +49,11 @@ directory produced a board that C<karr init> then refused to touch for good --
 the half-board counted as existing, so the name, the statuses and the
 F<.gitignore> entries could never be written (#62).
 
-    die "No karr board found. Run 'karr init' to create one.\n"
-        unless $store->board_exists;
+    my $whole = $store->board_exists;
+
+Callers state the refusal through L<App::karr::Role::BoardDiscovery/require_board>
+rather than testing this themselves: a repository that fails this check may
+still hold a half-board's tasks, and the two cases need different words (#133).
 
 =cut
 
@@ -359,10 +362,18 @@ sub stamp_encoding_version {
 
 Records in C<refs/karr/meta/encoding> that this board's payloads follow the
 current character-encoding contract, so nothing reading it applies the
-legacy-mojibake repair (see L<App::karr::Encoding>). Written by C<karr init>,
-C<karr repair --yes>, and the import path below.
+legacy-mojibake repair (see L<App::karr::Encoding>).
 
     $store->stamp_encoding_version;
+
+The claim covers every ref under C<refs/karr/>, so only a caller that can
+vouch for all of them may make it: C<karr repair --yes>, which rewrites them,
+and the two board-birth paths -- C<karr init> and L</serialize_from> -- but
+in their case B<only> when the board really was born there, i.e. when nothing
+lived under C<refs/karr/> beforehand. Neither may stamp a board it is merely
+adding to: the refs it did not write may be a 0.402 board's double-encoded
+ones, and the marker would silently turn off the repair that still reads them
+correctly, while making C<karr repair> report the board as up to date (#132).
 
 =cut
 
@@ -747,6 +758,12 @@ sub serialize_from {
     my ( $self, $board_dir ) = @_;
     $board_dir = path($board_dir);
 
+    # Whether this import is the board's birth or a write into one that was
+    # already here. Asked before anything below writes a ref, since every write
+    # would answer it "already here"; the encoding marker at the bottom hangs
+    # on the difference (#132).
+    my $born_here = !$self->has_board_refs;
+
     # Ticket #70: parse the entire view before a single ref is touched, so one
     # malformed card leaves the board exactly as it was instead of half
     # imported with the prune never reached. Reading the config here rather
@@ -854,12 +871,18 @@ sub serialize_from {
     $self->set_next_id($floor) if $self->peek_next_id < $floor;
 
     # Everything just written came from character-level file reads (LoadFile,
-    # Task->from_file), so the refs now satisfy the current encoding contract
-    # even if the board did not before. Stamping here stops the legacy repair
-    # from running over data that is already correct. Only when it is missing:
-    # every ref write mints a fresh commit object, and re-stamping an already
-    # current board would push a new one on every import for no reason.
-    $self->stamp_encoding_version if $self->git->board_is_legacy_encoded;
+    # Task->from_file) and so satisfies the current encoding contract -- but the
+    # marker speaks for the whole board, not for the refs this import happened
+    # to rewrite. On a board that was already here, import replaces the task
+    # refs and leaves the activity log under refs/karr/log/ alone (and the
+    # config too, when the view carries no config.yml), so a pre-0.403 board
+    # keeps double-encoded payloads that the marker would then declare clean:
+    # every old log entry read as mojibake and `karr repair` reported the board
+    # as up to date (#132, the same defect as `karr init` on a half-board).
+    # Only a board born in this import gets the claim; on any other, the
+    # read-path repair keeps running and `karr repair --yes` stays the one
+    # command that may stamp, because it is the one that rewrites every ref.
+    $self->stamp_encoding_version if $born_here;
 
     # Import is a board-birth path like init (#30), so it stamps the board
     # identity too (#95) rather than waiting for the first pull to notice the
@@ -888,6 +911,12 @@ All or nothing. Every card is parsed before the first ref is written, so a
 malformed file aborts the whole import -- listing each rejected file and its
 reason -- with the board left exactly as it was (ticket #70). Refusing an empty
 view is the caller's job; see L<App::karr::Cmd::Import>.
+
+Importing into a repository that held nothing under C<refs/karr/> also creates
+the board: it writes a config when the view has none, seeds the counter, stamps
+the board identity, and stamps the encoding marker. Importing into a board that
+was already there does B<not> stamp the marker -- see
+L</stamp_encoding_version>.
 
     $store->serialize_from( $git_root );
 

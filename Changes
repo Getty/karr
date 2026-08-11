@@ -1,5 +1,39 @@
 {{$NEXT}}
 
+    - `karr init` no longer stamps the encoding marker on a board it is
+      completing rather than creating (ticket #132). `init` accepts a
+      half-board — task refs present, `refs/karr/config` missing — and finishes
+      it (#62), but it used to write `refs/karr/meta/encoding` on the way out
+      either way. On a board from 0.402 or earlier that marker asserts the
+      opposite of what the adopted task refs carry: the read path stopped
+      undoing their double-encoded UTF-8, every old card turned to mojibake
+      (`… Transport prüfen —` became `… Transport prÃ¼fen â`), and `karr
+      repair` then reported the board as already up to date and declined to
+      migrate it, leaving hand-deleting a ref as the only way back. Not one
+      byte in the refs changes in that failure, which is why it was invisible.
+      The marker is now written only by an `init` that found nothing at all
+      under `refs/karr/`, so a completed half-board keeps both the repair on
+      read and `karr repair --yes`. `karr import --yes` had the same defect and
+      the same fix: it rewrites the task refs from the file view but never the
+      activity log under `refs/karr/log/` (nor the config, when the view
+      carries no `config.yml`), so on a pre-0.403 board it stamped a claim it
+      could not make and turned every old log entry into mojibake. It now
+      stamps only a board that import itself created. `karr repair --yes` is
+      unchanged and remains the one command that may stamp an existing board,
+      because it is the one that rewrites every ref.
+    - "No karr board found. Run 'karr init' to create one." no longer speaks
+      for two different repositories (ticket #133). Write commands raised it
+      whenever `refs/karr/config` was absent, including on a repository whose
+      tasks, counter and log were all there — so a board missing exactly one
+      ref reported itself as never having existed. An agent hit that on a
+      repository holding 21 tickets, believed them gone, and ran `karr init`,
+      which at the time also broke how they were read (#132 above). A
+      repository with nothing under `refs/karr/` still gets the old sentence,
+      the one `backup`, `destroy`, `materialize` and `repair` raise for the
+      same state. A half-board now gets its own: it is named as one, the number
+      of task refs at stake is stated, and `karr init` is described as
+      completing the board while keeping what is already there. `karr init`
+      likewise reports which of the two things it did.
     - `karr config get statuses` and `karr config get classes` are readable
       again (ticket #130). Both lists allow an entry to be either a bare name or
       a mapping — `{ name: in-progress, require_claim: true }`,

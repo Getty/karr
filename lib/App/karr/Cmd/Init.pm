@@ -78,6 +78,12 @@ sub execute {
   my $store = $self->store;
   die "Board already exists in refs/karr/\n" if $store->board_exists;
 
+  # Asked before the first ref write below, which would make any repository
+  # look like it already held something. This is what tells a board born here
+  # apart from a half-board this run is completing (#62), and the encoding
+  # marker further down hangs on the difference (#132).
+  my $born_here = !$store->has_board_refs;
+
   my $overrides = { version => 1 };
   $overrides->{board} = { name => $self->name } if defined $self->name;
 
@@ -94,8 +100,15 @@ sub execute {
   # overwrite.
   $store->ensure_next_id;
   # A board born here is written under the current encoding contract, so mark
-  # it and spare it the legacy-mojibake repair (ticket #53).
-  $store->stamp_encoding_version;
+  # it and spare it the legacy-mojibake repair (ticket #53) -- but only one
+  # actually born here. The task refs of a half-board this run is completing
+  # were written by some earlier karr, quite possibly 0.402 or older, and
+  # stamping asserts the opposite of what they carry: the read-path repair
+  # stops running, every old card turns to mojibake, and `karr repair` then
+  # reports the board as up to date and declines to fix it (#132). Say nothing
+  # instead, which leaves both the repair on read and `karr repair --yes`
+  # available.
+  $store->stamp_encoding_version if $born_here;
   # And stamp its identity, the thing a pull compares against the remote's to
   # recognise a swapped board (#95). ensure_, not set_: init also completes
   # half-boards (#62), and re-keying one that already carries an id would
@@ -103,6 +116,21 @@ sub execute {
   $store->ensure_board_id;
 
   print "Initialized karr board in refs/karr/\n";
+
+  # Completing a half-board is a different event from creating one, and the
+  # user has to be told which one just happened: the tasks that were already
+  # there are still there, and the board is still on the old encoding contract
+  # because this run had no business claiming otherwise (#132).
+  if ( !$born_here ) {
+    my @ids   = $store->git->list_task_refs;   # returns through sort: no scalar context
+    my $tasks = scalar @ids;
+    print $tasks == 1
+      ? "Completed a half-board: the 1 task ref already here was kept.\n"
+      : "Completed a half-board: the $tasks task refs already here were kept.\n";
+    print "Left refs/karr/meta/encoding unstamped, so those refs keep being read the way\n"
+      . "they were written; 'karr repair' says whether they need migrating.\n"
+      if $store->git->board_is_legacy_encoded;
+  }
 
   # The materialized file view (config.yml + tasks/) is a disposable view of the
   # canonical refs and must never be committed. Ensure the board-root .gitignore
