@@ -79,6 +79,7 @@ storage backend.
 | `delete` | implemented | `delete` / `rm` |
 | `board` | implemented | `board` / `summary` |
 | `pick` | implemented | `pick` |
+| `unlock` | implemented | — (show and break pick locks) |
 | `archive` | implemented | `archive` |
 | `handoff` | implemented | `handoff` |
 | `metrics` | TODO | `metrics` |
