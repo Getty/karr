@@ -35,7 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/perl5/site_perl/ /usr/local/lib/perl5/site_perl/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
-RUN mkdir -p /home/karr /work
+# /work only. The home directory is created by whoever ends up owning it:
+# runtime-user's `useradd -m`, and for runtime-root the entrypoint, which has to
+# mkdir it anyway for the uid it is about to drop to. Creating it here just made
+# useradd warn about a home it had been told to create.
+RUN mkdir -p /work
 
 ENV HOME=/home/karr
 ENV GIT_AUTHOR_NAME="karr"
@@ -58,13 +62,9 @@ FROM runtime-base AS runtime-user
 ARG KARR_UID=1000
 ARG KARR_GID=1000
 
-# -M, not -m: runtime-base already created /home/karr, so asking useradd to
-# create it only earns a warning and a skipped /etc/skel copy. Nothing here
-# wants the skel files — the entrypoint is karr, never a login shell — and the
-# chown below is what actually hands the directory to the user.
 RUN groupadd -g ${KARR_GID} karr \
-    && useradd -M -d /home/karr -u ${KARR_UID} -g ${KARR_GID} -s /bin/sh karr \
-    && chown -R ${KARR_UID}:${KARR_GID} /home/karr /work
+    && useradd -m -d /home/karr -u ${KARR_UID} -g ${KARR_GID} -s /bin/sh karr \
+    && chown -R ${KARR_UID}:${KARR_GID} /work
 
 USER karr
 

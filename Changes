@@ -1,16 +1,30 @@
 {{$NEXT}}
 
     - The `runtime-user` image build no longer warns about `/home/karr`. The
-      shared `runtime-base` stage creates that directory itself — `runtime-root`
-      needs a `HOME` before any user exists — so `runtime-user`'s `useradd -m`
-      asked for a home that was already there and printed `useradd: warning: the
-      home directory /home/karr already exists.` plus `Not copying any file from
-      skel directory into it.` on every build. Nothing depended on the skel copy:
-      the entrypoint is `karr`, never a login shell, and the `chown -R` in the
-      same layer is what actually hands the directory to the user. `-M` says out
-      loud what the stage always meant. The resulting image is byte-for-byte
-      equivalent in uid/gid, `passwd` entry and ownership; only the warning is
-      gone.
+      shared `runtime-base` stage used to create that directory, so
+      `runtime-user`'s `useradd -m` was asking for a home that already existed
+      and printed `useradd: warning: the home directory /home/karr already
+      exists.` plus `Not copying any file from skel directory into it.` on every
+      build. `runtime-base` now creates only `/work` and leaves the home to
+      whoever owns it — `useradd -m` in `runtime-user`, and in `runtime-root` the
+      entrypoint, which has to `mkdir` it anyway for the uid it drops to, so
+      nothing there depended on the base stage doing it. Two visible
+      consequences for the `-user` image: the home is now `0700` rather than
+      `0755`, because `useradd` applies Debian's `HOME_MODE` instead of
+      inheriting a `mkdir` default, and it carries the `/etc/skel` files
+      (`.bashrc`, `.profile`, `.bash_logout`) that the warning had been skipping.
+      Neither affects the image as documented — it runs fixed as `USER karr`,
+      which owns that directory, and the README's `-v …:/home/karr/…` mounts are
+      unaffected. Overriding the uid at `docker run --user` time is the one thing
+      that gets stricter; that case is what the root image and its entrypoint are
+      for.
+    - The README's recipe for a custom fixed-user image passed `.` from a git
+      checkout as the Docker build context, which cannot work: the `builder`
+      stage installs the tree with `cpanm`, and a Dist::Zilla distribution has no
+      `Makefile.PL` until it has been built. It now points at a built
+      distribution — an unpacked CPAN tarball, or `dzil build --no-tgz` output —
+      and mentions that `dzil build` already produces both published images
+      itself through the `[@Author::GETTY::Docker]` sections.
     - `karr list --json` now carries the task body (ticket #129). It built its
       payload from `Task->to_frontmatter`, the YAML frontmatter view — and the
       body lives *below* the frontmatter in the file format, never inside it,

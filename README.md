@@ -98,14 +98,22 @@ karr skill install --agent codex --global --force
 karr create "Document release workflow"
 ```
 
-If you want a custom fixed-user image in CI or a downstream repo:
+If you want a custom fixed-user image in CI or a downstream repo, build from a
+built distribution rather than from a git checkout. The `builder` stage installs
+the tree with `cpanm`, and `Makefile.PL` only exists once Dist::Zilla has
+generated it, so the repository root is not a usable build context.
 
 ```bash
+cd App-karr-*/   # unpacked CPAN tarball, or `dzil build --no-tgz` in a clone
+
 docker build --target runtime-user \
   --build-arg KARR_UID=1010 \
   --build-arg KARR_GID=1010 \
   -t raudssus/karr:user1010 .
 ```
+
+Building both published images is what `dzil build` does anyway, via the
+`[@Author::GETTY::Docker]` sections in `dist.ini`.
 
 ## How it works
 
