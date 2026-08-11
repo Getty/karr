@@ -123,7 +123,7 @@ karr handoff ID --claim agent-1 --note "Done, needs QA" --timestamp
 karr handoff ID --claim agent-1 --block "waiting for feedback" --release
 ```
 
-Moves task to `review`, refreshes claim, optionally appends a timestamped note, blocks, or releases the claim.
+Moves the task to the board's review column, refreshes the claim, and optionally appends a timestamped note, blocks, or releases the claim. On a board that configures a `review` status that is the target; a board without one hands off to its last non-terminal column instead of failing.
 
 ### Config
 
@@ -207,6 +207,33 @@ Use this when you want explicit control over board ref exchange with the remote
 instead of relying only on the implicit pull/push behavior of mutating
 commands.
 
+### File view (kanban-md interop)
+
+```bash
+karr materialize                             # refs -> tasks/ + config.yml on disk
+karr materialize --force                     # overwrite git-tracked cards there
+karr import --yes                            # tasks/ on disk -> refs
+```
+
+The board lives in `refs/karr/*`. `materialize` writes a file view of it for
+grepping or for kanban-md to read; `import` reads such a directory back in.
+The `tasks/` directory is always gitignored and is never the source of truth —
+losing it costs nothing, editing it costs nothing until you `import`.
+`materialize` refuses to write over paths the project itself tracks in git,
+which is what `--force` overrides.
+
+### Repair an old board
+
+```bash
+karr repair                                  # report what would change
+karr repair --yes                            # migrate
+```
+
+Boards written by karr 0.402 or earlier stored UTF-8 double-encoded. Such a
+board is detected on read and repaired on the fly, so nothing is broken in the
+meantime; this migrates the stored refs once so the workaround stops being
+needed. A board created by a later version needs nothing here and says so.
+
 ### Backup and restore
 
 ```bash
@@ -250,8 +277,8 @@ karr log --last 50 --json                    # more entries, JSON
 ### Agent name
 
 ```bash
-karr agentname                               # generate random two-word name
-karr pick --claim $(karr agentname) --move in-progress
+karr agent-name                               # generate random two-word name
+karr pick --claim $(karr agent-name) --move in-progress
 ```
 
 ## Stored task format
@@ -329,7 +356,7 @@ is kept separately in `refs/karr/meta/next-id`.
 
 ```bash
 # 1. Generate agent name and pick task
-NAME=$(karr agentname)
+NAME=$(karr agent-name)
 karr pick --claim $NAME --status todo --move in-progress
 
 # 2. Work on task...
