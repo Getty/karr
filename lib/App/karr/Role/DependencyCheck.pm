@@ -4,6 +4,28 @@ package App::karr::Role::DependencyCheck;
 our $VERSION = '0.500';
 use Moo::Role;
 
+# What this role calls on its consumer, said out loud (ticket #128). It used to
+# declare nothing, and got away with it only because every consumer happened to
+# compose the roles that supply these: store from
+# App::karr::Role::BoardDiscovery, find_task from App::karr::Role::BoardAccess,
+# usage_error from App::karr::Role::ExitCodes, quiet from
+# App::karr::Role::SyncLifecycle. App::karr::Role::TaskMutation composes this
+# role, so the next command to reach for the mutation path would have inherited
+# four methods whose collaborators nobody had checked for -- and found out at
+# the moment a warning was due, as a "Can't locate object method", rather than
+# at compile time.
+#
+# `json` is the one call dependency_report makes that cannot be listed here.
+# App::karr::Cmd::Create composes this role for parse_dependency_ids and
+# assert_dependencies_exist alone and has no --json of its own, so requiring it
+# would refuse a consumer that never reaches the reporting half. Leaving it out
+# still narrows the hole the ticket names: `$self->json || $self->quiet`
+# evaluated quiet only when json was false, so a consumer missing quiet broke
+# only without --json -- json is evaluated first and unconditionally. Splitting
+# the set-time helpers from the reporting half is what would let json in too,
+# and that has to touch Create and Pick.
+requires qw( store find_task usage_error quiet );
+
 =head1 DESCRIPTION
 
 C<depends_on> was stored, round-tripped and written into the frontmatter by

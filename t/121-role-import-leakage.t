@@ -135,6 +135,17 @@ subtest 'the mutation roles no longer compose Time::Piece over the builtins' => 
     package MutationConsumer;
     use Moo;
     use MooX::Options;
+    # Stubs, not App::karr::Role::BoardAccess: since ticket #128
+    # App::karr::Role::DependencyCheck declares what it calls on its consumer,
+    # and TaskMutation composes it, so those names have to be here for the
+    # composition to go through. Composing the real supplier would pull in three
+    # more roles and defeat the point of this class, which is to inherit nothing
+    # but the roles under test. t/135-dependency-check-requires.t is where the
+    # requirement itself is checked.
+    sub store       { }
+    sub find_task   { }
+    sub usage_error { }
+    sub quiet       { }
     with 'App::karr::Role::TaskMutation';
 }
 

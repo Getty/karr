@@ -182,7 +182,16 @@ same revision. Returns the written task.
 
 The callback runs once per attempt, so it must be a function of the task it is
 handed -- read C<< $task->status >>, never a status captured beforehand -- and
-it must not have side effects outside the task object.
+anything it does besides changing that task has to be safe to do twice. A side
+effect outside the task object is allowed where a repeat B<replaces> it instead
+of adding to it: L</apply_status_change> calls
+L<App::karr::Role::DependencyCheck/check_dependencies>, which records into a slot
+keyed by task id and clears that slot on entry, so what a losing attempt wrote is
+overwritten by the attempt that wins rather than added to. Appending to a list,
+incrementing a counter or printing would each have come out once per attempt --
+printing is why the dependency warnings are emitted by
+L<App::karr::Role::DependencyCheck/dependency_report> once the write has landed,
+and never from inside the callback.
 
 =cut
 
