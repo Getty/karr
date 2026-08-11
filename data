@@ -1,0 +1,56 @@
+---
+claimed_at: 2026-08-11T00:52:36Z
+claimed_by: abusers-somewhat
+class: standard
+completed: 2026-08-11T00:52:36Z
+created: 2026-08-11T00:04:30Z
+id: 114
+priority: low
+started: 2026-08-11T00:34:48Z
+status: done
+tags:
+- bug
+- git
+- latent
+title: is_tracked_under's two routes disagree for the work-tree root itself
+updated: 2026-08-11T00:52:36Z
+---
+
+Found by karr-worker while doing #107; left alone deliberately rather than
+papered over with an invented normalisation, and filed instead.
+
+When $path is the repository root, _relative_to_root returns `.`, and the two
+routes answer differently:
+
+- native: Git::Native::Index->is_tracked_under('.') tries has_path('.') and
+  has_prefix('./'), both of which miss -- index entries are stored as
+  `tasks/a.md`, never with a leading `./`. Answer: 0.
+- CLI: `git ls-files -z -- .` lists every tracked file in the repo.
+  Answer: 1.
+
+Measured, not reasoned about, in a scratch repo tracking tasks/a.md and
+tasksfoo.txt: index 0, ls-files both files.
+
+For any non-empty repository, 1 is the truthful answer to "is anything tracked
+at or under this path". The native route is the wrong one here.
+
+Not currently reachable: no caller passes the work-tree root. BoardStore asks
+about board_dir children, Cmd::Init and Cmd::Materialize about tasks/ and
+config.yml. So this is latent -- but it is exactly the sort of divergence that
+turns a fallback into a behaviour change, because which answer you get would
+depend on whether libgit2 happened to be available.
+
+Fix direction: decide what `.` means at the App::karr::Git boundary and enforce
+it in one place rather than in each route. Ticket #113 touches the same
+boundary (the CLI fallback's root resolution) and should probably be decided
+together with this one.
+Fixed together with #113 -- same boundary. Ticket analysis confirmed by measurement, not inherited: in a scratch repo tracking tasks/a.md and tasksfoo.txt, is_tracked_under on the work-tree root gave native=0, CLI=1. The ticket's call is right: for a non-empty repository 1 is the truthful answer and the native route was the wrong one.
+
+Resolution: the contract is now written at _relative_to_root -- $rel is relative to the work tree root, and the root itself is '.', a pathspec git understands but NOT a path the index can hold (entries are 'tasks/a.md', never './tasks/a.md'). The native adapter in is_tracked_under spells that case out once: at the root it asks index->entrycount, i.e. 'does the index hold anything at all', which is exactly what 'ls-files -- .' answers from the root. No invented normalisation of '.' into a fake prefix. The CLI route needed no case of its own once #113 pinned _run_git to the root. Git::Native 0.005 already exposes entrycount, so no cpanfile bump.
+
+Finding worth keeping: before the fix the two defects CANCELLED. A Git built on a subdirectory and asked about the root answered 0 on both routes -- native missed '.', the CLI listed the (empty) subdirectory instead of the root. So 'the two routes agree' was not a safe assertion on its own, and the regression test pins the truthful value in every case instead.
+
+Regression test: t/114-tracked-under-path-origin.t, subtest 'the work tree root itself (#114)'. Demonstrated failing against HEAD: 3 of 7 assertions fail (native route at the root; both routes for root-from-subdirectory). An empty repository is the control -- 0 on both routes, before and after.
+
+Suite: prove -lr t/ -> 116 files / 785 tests / PASS.
+Not committed, nothing staged -- working tree only.
