@@ -245,8 +245,17 @@ sub _print_help {
   my $max = 0;
   for (@COMMANDS) { $max = length($_->[0]) if length($_->[0]) > $max }
 
+  # Pad on the VISIBLE width, then colour. sprintf's %-*s counts the ANSI
+  # escapes colored() wraps around the name, and those alone already exceed
+  # $max, so a "%-*s" over the coloured string never pads at all and the
+  # descriptions come out ragged. Padding by hand off the bare command name
+  # is correct whether or not colored() actually emits escapes (it returns
+  # the text untouched under NO_COLOR/ANSI_COLORS_DISABLED).
   for my $cmd (@COMMANDS) {
-    $out .= sprintf "  %-*s  %s\n", $max, colored($cmd->[0], 'cyan'), $cmd->[1];
+    $out .= sprintf "  %s%s  %s\n",
+      colored($cmd->[0], 'cyan'),
+      ' ' x ($max - length $cmd->[0]),
+      $cmd->[1];
   }
 
   $out .= "\n" . colored("OPTIONS:", 'bold') . "\n";

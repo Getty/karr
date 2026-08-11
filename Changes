@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - The COMMANDS block of `karr --help` lines its descriptions up in one
+      column again. It never did: the row was rendered with `sprintf "  %-*s
+      %s\n", $max, colored($name, 'cyan'), $desc`, and `%-*s` pads to the
+      length of the string it is handed — which for a coloured name includes
+      the ANSI escapes `colored()` wrapped around it. Those are about nine
+      characters on their own, so every argument was already wider than `$max`
+      and the field never padded at all, leaving each description one space
+      behind its command name. The padding is now computed from the bare name
+      and applied before the colour, so `materialize` and `init` put their
+      descriptions on the same column. The width still derives from the
+      longest name in the table rather than a fixed number, so adding a longer
+      command does not silently break it again. What kept this from being
+      caught: `colored()` returns its text untouched under `NO_COLOR` /
+      `ANSI_COLORS_DISABLED`, so the existing help tests — which strip escapes
+      or run plain — saw perfectly aligned output. The regression test renders
+      the help twice, once forced plain and once with colour forced on, and
+      asserts the coloured rendering really does carry escapes before
+      measuring it.
+
     - `karr config get` / `karr config show` answer for this board, or refuse
       (ticket #136). They were the sibling of #135 that fix deliberately left
       out: `Cmd::Config` called `sync_before` and `require_board` only in its
