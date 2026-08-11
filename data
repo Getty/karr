@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-11T00:52:30Z
+claimed_by: abusers-somewhat
+class: standard
+completed: 2026-08-11T00:52:30Z
+created: 2026-08-11T00:04:10Z
+id: 113
+priority: low
+started: 2026-08-11T00:34:40Z
+status: done
+tags:
+- bug
+- git
+- latent
+title: CLI fallback in is_tracked_under resolves its pathspec against the wrong root
+updated: 2026-08-11T00:52:30Z
+---
+
+Found by karr-worker while doing #107, in the code it was replacing -- so this
+is pre-existing, not introduced there.
+
+App::karr::Git::_run_git runs `git -C $self->dir` (Git.pm:1455), but the $rel it
+is handed comes from _relative_to_root, which is relative to repo_root
+(Git.pm:250). Those are the same string only because
+BoardDiscovery::_build_store always constructs the store's Git object at
+git_root. Construct App::karr::Git with a subdirectory instead and the fallback
+asks about `subdir/tasks` while the caller asked about `tasks`.
+
+Why it matters more now than before #107: the CLI used to be the only route, so
+this was on every call and would have been noticed. It is now the fallback,
+reached only when libgit2 declines -- rarely, and exactly when something is
+already wrong. A wrong answer on a rarely-taken path is the kind that hides.
+
+It is a wrong answer, not a failure: `git ls-files -- subdir/tasks` exits 0 with
+empty output, which is_tracked_under reads as "not tracked". So a project that
+owns tasks/ would be told it does not, and karr init would claim the .gitignore
+entries -- the same symptom #89 fixed, through a different door.
+
+Fix direction: either run the CLI from repo_root rather than dir, or make
+_relative_to_root's contract explicit and convert at the call site. Prefer
+whichever keeps is_tracked (status_for_path, which takes the same $rel and is
+correct because libgit2 resolves against the work tree) consistent with it.
+
+Test shape: construct App::karr::Git on a subdirectory of a repo that tracks
+content at the root, and assert both routes agree. No such test exists today --
+t/113 drives everything through git_root.
+Fixed together with #114 -- same boundary, one contract, one commit's worth of work. Ticket analysis confirmed by measurement (scratch repo, Git built on subdir, asked about tasks/: native=1, CLI=0).
+
+Resolution: _relative_to_root now states its contract explicitly -- the string it returns is relative to the WORK TREE ROOT (repo_root), never ->dir -- and _run_git is pinned to that same origin: 'git -C (repo_root // dir)' instead of 'git -C dir'. That puts both is_tracked_under routes on one origin rather than correcting the pathspec at the call site; libgit2 already resolved from the work tree, so this is the CLI catching up to it. Costs the transport verbs nothing (git discovers the same repo from either directory); a repository libgit2 cannot open still falls back to ->dir.
+
+Regression test: t/114-tracked-under-path-origin.t, subtest 'a Git built on a subdirectory still answers about the root (#113)'. Demonstrated failing against HEAD: 6 of 26 assertions fail, all of them CLI-fallback answers from $repo/sub and $repo/sub/deeper. Each case pins the truthful value, not just route agreement -- see the #114 note for why agreement alone would have been unsafe.
+
+Suite: prove -lr t/ -> 116 files / 785 tests / PASS.
+Changes: entry added under {{$NEXT}} covering both tickets; no karr command changes behaviour (every is_tracked_under call goes through the store's Git, built at git_root), but App::karr::Git is POD'd public API and its own SYNOPSIS shows dir => '.'.
+Not committed, nothing staged -- working tree only.
