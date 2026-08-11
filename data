@@ -1,0 +1,36 @@
+---
+claimed_at: 2026-08-11T22:28:31Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-08-11T22:28:31Z
+created: 2026-08-11T21:50:21Z
+id: 136
+priority: medium
+started: 2026-08-11T21:54:08Z
+status: done
+tags:
+- ux
+- discovery
+- config
+title: config get/show answer from code defaults with no board
+updated: 2026-08-11T22:28:31Z
+---
+
+Sibling of #135, deliberately left out of it to keep that fix scoped.
+
+`karr config get` and `karr config show` fall back to the code defaults when
+there is no board, which Cmd/Config.pm documents as an explicit choice: the
+values printed really are the ones that would apply, so it is a weaker lie
+than `0 tasks` was. But it has the same shape as #135 -- a repository with no
+board answers as though it had one, and nothing in the output says which of
+the two happened.
+
+Worth deciding now that the read surface is otherwise consistent: either name
+the state the way require_local_board does (a note on stderr would keep --json
+parsable, as the half-board note in #135 does), or keep the fallback and
+document it in the command POD so the silence is at least on purpose.
+
+Note the interaction with a fresh clone: config get board there prints
+"Kanban Board", the default name, not the board name waiting on the remote.
+Reproduced: config get/show call neither sync_before nor require_board -- Config.pm:88-90 does both only in the 'set' branch. So this is not merely 'the defaults are a useful answer': in a fresh clone whose board is named 'Echtes Board' on the remote, 'karr config get board' answers 'name: Kanban Board' with exit 0, and the clone still holds 0 karr refs afterwards. 'karr sync' then fetches 6 refs and the same command answers correctly. The earlier note that config syncs was wrong -- the file contains sync_before, but not on the read path.
+Fixed, uncommitted (6 files modified, not staged). config get/show now go through require_local_board like every other read: exit 1 with empty stdout where nothing is under refs/karr/, half-board read with the note on STDERR, initialized board unchanged. The defaults they used to print silently are kept as an explicit request: new --defaults flag on show and get, reads no board and needs no git repo, rejected on set (exit 2). require_local_board gained an optional hint => STRING appended to the refusal; Cmd::Config is its only caller and points at 'karr config show --defaults'. Per-key refusal was considered and rejected: in a fresh clone every key can be overridden on the remote, board.name is only the one that almost always is, so the state decides and the question asked decides, not the key. Test: prove -l t/130-read-commands-no-board.t (extended, 7 subtests, PASS; RED before the fix: 5 of 7 failed). Full suite: prove -l t/ -> Files=122, Tests=866, all pass, 0 skipped.
