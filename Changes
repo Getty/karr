@@ -1,5 +1,29 @@
 {{$NEXT}}
 
+    - `karr config get` / `karr config show` answer for this board, or refuse
+      (ticket #136). They were the sibling of #135 that fix deliberately left
+      out: `Cmd::Config` called `sync_before` and `require_board` only in its
+      `set` branch, so the read path did neither and fell back to the code
+      defaults — documented as a choice, on the grounds that those values really
+      are the ones that would apply. For `board.name` there is no such reading.
+      In a fresh clone of a board named "Echtes Board", `karr config get
+      board.name` printed `Kanban Board`, karr's placeholder, at exit 0, and
+      left the clone holding zero karr refs; `karr sync` then fetched six and
+      the same command answered correctly. Both `show` and `get` now go through
+      `require_local_board` like every other read: still offline, refusing with
+      exit 1 where nothing is stored under `refs/karr/`, reading a half-board
+      with the note on STDERR. The defaults keep their honest use — "what would
+      a board created here start with?" is a real question — but have to be
+      asked for: `karr config show --defaults` (and `get KEY --defaults`) reads
+      no board, needs no repository, and answers the same everywhere, so the
+      difference between the board's value and karr's is carried by the exit
+      code rather than by an unmarked payload. Which key it is does not decide
+      anything: in a fresh clone every key can be overridden on the remote, and
+      `board.name` is only the one that almost always is. `--defaults` renders
+      identically to a board read, so `diff <(karr config show) <(karr config
+      show --defaults)` is exactly the set of keys a board overrides. It is
+      rejected on `set`, with exit 2.
+
     - The read-only commands no longer render an empty board where there is no
       board (ticket #135). `board`, `list`, `show`, `log`, `context` and the
       bare `karr` summary never asked whether a board was there; they rendered

@@ -30,12 +30,33 @@ use JSON::MaybeXS qw( decode_json );
 #                                The note that the config ref is missing goes
 #                                to STDERR so --json stays parsable.
 #   initialized, no tasks     -> unchanged: an empty board is a real answer.
+#
+# Ticket #136 is the sibling that was deliberately left out of #135: `karr
+# config get`/`config show` were in the same position, calling neither
+# sync_before nor require_board -- Cmd/Config.pm did both only in the `set`
+# branch. They answered from the code defaults instead, which the command
+# documented as a deliberate choice. For most keys that really is a useful
+# answer; for `board.name` it is not an answer at all, only karr's placeholder,
+# and in the fresh clone above the board it belongs to is sitting on the remote
+# with a name of its own. Measured before the fix: `karr config get board.name`
+# in that clone printed "Kanban Board" at exit 0 and left the clone holding 0
+# karr refs; `karr sync` fetched 6 and the same command then said "Remote
+# Board". So the two states were byte-identical here as well.
+#
+# The resolution keeps both answers but stops them sharing one command
+# invocation: `show`/`get` answer for this board and refuse like every other
+# read, and `--defaults` asks for karr's built-in values on purpose. That makes
+# the distinction the ticket asks for -- "the board's value" vs "what karr would
+# use if you made one" -- readable from the exit code alone, with no STDERR
+# parsing, and it holds for every key rather than for a hand-maintained list of
+# keys deemed identity-bearing. See the #136 subtests at the bottom.
 
 my $ROOT = abs_path('.');
 my $BIN  = "$ROOT/bin/karr";
 
 # Every read command in the ticket, in both renderings, plus the bare `karr`
-# default summary (lib/App/karr.pm), which wraps Cmd::Board.
+# default summary (lib/App/karr.pm), which wraps Cmd::Board -- and the two
+# config reads #136 added to the same contract.
 my @READ_ARGV = (
     ['board'], [ 'board', '--json' ],
     ['list'],  [ 'list',  '--json' ],
@@ -43,6 +64,9 @@ my @READ_ARGV = (
     ['log'],   [ 'log',   '--json' ],
     ['context'], [ 'context', '--json' ],
     [],
+    [ 'config', 'show' ], [ 'config', 'show', '--json' ],
+    [ 'config', 'get', 'board.name' ],
+    [ 'config', 'get', 'board.name', '--json' ],
 );
 
 sub _run_karr {
@@ -134,6 +158,12 @@ subtest 'an initialized board with no tasks still reads as an empty board' => su
     like( _run_karr( $repo, 'log' )->{stdout},  qr{No log entries}, 'karr log works' );
     like( _run_karr( $repo, 'context' )->{stdout}, qr{BEGIN kanban-md context},
         'karr context works' );
+
+    # #136: a board with no tasks still has a config, and it is the board's.
+    my $name = _run_karr( $repo, 'config', 'get', 'board.name' );
+    is( $name->{exit},   0,               'karr config get works' );
+    is( $name->{stdout}, "Empty Board\n", 'and answers the board its own name' );
+    is( _run_karr( $repo, 'config', 'show' )->{exit}, 0, 'karr config show works' );
 };
 
 subtest 'a fresh clone is told the board is unfetched, not missing' => sub {
@@ -171,11 +201,21 @@ subtest 'a fresh clone is told the board is unfetched, not missing' => sub {
             "$label puts sync before init, not the other way round" );
     }
 
+    # #136's measurement, in the state it was measured in: before the sync the
+    # clone must not answer the placeholder name for a board that has one.
+    my $before = _run_karr( $clone, 'config', 'get', 'board.name' );
+    unlike( $before->{stdout}, qr{Kanban Board},
+        'config get board.name does not answer the placeholder in a fresh clone' );
+
     is( _run_karr( $clone, 'sync' )->{exit}, 0, 'the advice runs' );
     my $after = _run_karr( $clone, 'board' );
     is( $after->{exit}, 0, 'and the board reads afterwards' ) or diag $after->{stderr};
     like( $after->{stdout}, qr{# Remote Board}, 'as the board it always was' );
     like( $after->{stdout}, qr{a ticket that exists}, 'with the ticket that was never gone' );
+
+    my $name = _run_karr( $clone, 'config', 'get', 'board.name' );
+    is( $name->{exit},   0,                'config get board.name works after the sync' );
+    is( $name->{stdout}, "Remote Board\n", 'and answers the name the board really has' );
 };
 
 subtest 'a half-board is read, not refused' => sub {
@@ -203,6 +243,23 @@ subtest 'a half-board is read, not refused' => sub {
     is( $data->{total}, 2, 'stdout stays parsable JSON, with both tasks in it' )
         or diag $json->{stdout};
     like( $json->{stderr}, qr{half-initialized}, 'and the note reaches STDERR under --json' );
+
+    # #136: config lands here too, and this is the one state where the note's
+    # own words -- "the name, statuses and defaults shown are karr's own, not
+    # the board's" -- describe the whole of what the command prints. There is no
+    # refs/karr/config to read, so every value is a default; refusing would
+    # still be wrong, because two task refs say a board is here.
+    my $show = _run_karr( $repo, 'config', 'show' );
+    is( $show->{exit}, 0, 'karr config show reads a half-board' ) or diag $show->{stderr};
+    like( $show->{stdout}, qr{^claim_timeout\s+1h$}m, 'printing what karr would use' );
+    like( $show->{stderr}, qr{name, statuses and defaults shown are},
+        'while STDERR says whose values those are' );
+
+    my $cjson = _run_karr( $repo, 'config', 'show', '--json' );
+    is( $cjson->{exit}, 0, 'karr config show --json too' );
+    is( eval { decode_json( $cjson->{stdout} ) }->{board}{name},
+        'Kanban Board', 'stdout stays parsable JSON' ) or diag $cjson->{stdout};
+    like( $cjson->{stderr}, qr{half-initialized}, 'with the note on STDERR' );
 };
 
 subtest 'reads stay offline: an unreachable remote does not stop them' => sub {
@@ -216,13 +273,102 @@ subtest 'reads stay offline: an unreachable remote does not stop them' => sub {
     system( 'git', '-C', $repo, 'remote', 'add', 'origin', "$work/nowhere.git" ) == 0
         or BAIL_OUT('git remote add failed');
 
-    for my $argv ( ['board'], ['list'], ['show'], ['log'], ['context'], [] ) {
+    for my $argv (
+        ['board'], ['list'], ['show'], ['log'], ['context'], [],
+        # #136 explicitly kept this constraint: the config read path may not
+        # gain a sync_before either. An unreachable remote is the proof.
+        [ 'config', 'show' ], [ 'config', 'get', 'board.name' ],
+        )
+    {
         my $rv = _run_karr( $repo, @$argv );
         is( $rv->{exit}, 0, _label(@$argv) . ' reads without reaching the remote' )
             or diag $rv->{stderr};
     }
     like( _run_karr( $repo, 'list' )->{stdout}, qr{local only},
         'and answers from the local refs' );
+    is( _run_karr( $repo, 'config', 'get', 'board.name' )->{stdout},
+        "Offline Board\n", 'config included' );
+};
+
+subtest 'config refuses like the other reads, and names --defaults (#136)' => sub {
+    my $repo = _repo();
+
+    for my $argv (
+        [ 'config', 'show' ], [ 'config', 'show', '--json' ],
+        [ 'config', 'get', 'board.name' ], [ 'config', 'get', 'claim_timeout' ],
+        [ 'config', 'get', 'statuses', '--json' ],
+        )
+    {
+        my $label = _label(@$argv);
+        my $rv    = _run_karr( $repo, @$argv );
+
+        is( $rv->{exit}, 1, "$label exits 1 where there is no board" );
+        is( $rv->{stdout}, '', "$label prints nothing on stdout" );
+        # The whole of #136: the value that used to stand here was karr's, and
+        # nothing said so. Neither the placeholder name nor the defaults it was
+        # printed alongside may reach a caller as this board's config.
+        unlike( $rv->{stdout}, qr{Kanban Board|backlog|1h},
+            "$label leaks no default value as if it were the board's" );
+        like( $rv->{stderr}, qr{nothing is stored under refs/karr/},
+            "$label says what was actually looked at" );
+        like( $rv->{stderr}, qr{karr config show --defaults},
+            "$label points at where those defaults are still available" );
+    }
+};
+
+subtest '--defaults answers the other question, in every state (#136)' => sub {
+    # The defaults were a real answer to "what would a board created here look
+    # like?" -- they were just answering it in place of a question about this
+    # board. Asked on purpose they are true by construction, so they must hold
+    # in all three states and outside a repository entirely.
+    my $none = _repo();
+    my $real = _board_repo('Echtes Board');
+    my $bare = tempdir( CLEANUP => 1 );   # not a git repository at all
+
+    for my $spec ( [ 'no board', $none ], [ 'a real board', $real ],
+        [ 'no repository', $bare ] )
+    {
+        my ( $what, $dir ) = @$spec;
+
+        my $show = _run_karr( $dir, 'config', 'show', '--defaults' );
+        is( $show->{exit}, 0, "--defaults answers with $what" ) or diag $show->{stderr};
+        like( $show->{stdout}, qr{^board\.name\s+Kanban Board$}m,
+            "and says so with karr's placeholder name ($what)" );
+        like( $show->{stdout}, qr{^claim_timeout\s+1h$}m, "and karr's timeout ($what)" );
+        is( $show->{stderr}, '', "no note is needed: nothing was implied ($what)" );
+
+        my $json = _run_karr( $dir, 'config', 'show', '--defaults', '--json' );
+        is( eval { decode_json( $json->{stdout} ) }->{board}{name},
+            'Kanban Board', "--defaults --json is machine-usable ($what)" )
+            or diag $json->{stdout};
+
+        my $get = _run_karr( $dir, 'config', 'get', 'claim_timeout', '--defaults' );
+        is( $get->{exit},   0,     "get --defaults answers with $what" );
+        is( $get->{stdout}, "1h\n", "with the built-in value ($what)" );
+    }
+
+    # The distinction the ticket asked for, stated as one comparison: on a real
+    # board the two forms disagree about board.name, and each is right about the
+    # question it was asked. Before the fix a board-less repository could not
+    # produce this disagreement at all -- both forms were the same call.
+    my $board = _run_karr( $real, 'config', 'get', 'board.name' );
+    is( $board->{stdout}, "Echtes Board\n", "config get board.name is the board's" );
+    is( _run_karr( $real, 'config', 'get', 'board.name', '--defaults' )->{stdout},
+        "Kanban Board\n", 'config get board.name --defaults is karr\'s' );
+
+    # --defaults has nothing to write to, and saying so is a usage error (2),
+    # not a runtime failure (1) -- ADR 0002.
+    my $set = _run_karr( $real, 'config', 'set', 'board.name', 'X', '--defaults' );
+    is( $set->{exit}, 2, 'config set --defaults is a usage error' );
+    like( $set->{stderr}, qr{nothing to set}, 'and says why' );
+    is( _run_karr( $real, 'config', 'get', 'board.name' )->{stdout},
+        "Echtes Board\n", 'and wrote nothing' );
+
+    # The board check must not swallow a plain misuse: `karr config bogus` in a
+    # board-less repository still gets the answer that is about the typo.
+    my $bogus = _run_karr( $none, 'config', 'bogus' );
+    like( $bogus->{stderr}, qr{Unknown action: bogus},
+        'an unknown action is still reported as one, board or no board' );
 };
 
 done_testing;

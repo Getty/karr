@@ -217,15 +217,16 @@ sub require_board {
 =head2 require_local_board
 
     $self->require_local_board;   # no sync_before: reads stay offline
+    $self->require_local_board( hint => "...one more sentence.\n" );
 
 The read side of L</require_board>, for the commands that render the board
-without pulling first (C<board>, C<list>, C<show>, C<log>, C<context>). It
-answers one question those commands never asked: was anything actually read
-here? Without it they rendered the code defaults over an empty task list, so a
-repository holding no board printed exactly what a board holding no tasks
-prints -- and since C<git clone> does not fetch C<refs/karr/*>, that is the
-normal state of every fresh clone, where the user's tickets are all on the
-remote (#135).
+without pulling first (C<board>, C<list>, C<show>, C<log>, C<context>, and
+C<config show>/C<config get>). It answers one question those commands never
+asked: was anything actually read here? Without it they rendered the code
+defaults over an empty task list, so a repository holding no board printed
+exactly what a board holding no tasks prints -- and since C<git clone> does not
+fetch C<refs/karr/*>, that is the normal state of every fresh clone, where the
+user's tickets are all on the remote (#135, and #136 for the config half).
 
 The two states L</require_board> distinguishes need different answers on the
 read path:
@@ -251,10 +252,18 @@ show> is not worth it, and a stale read is recoverable where a stale write is
 not), so unlike L</require_board> this may be called first thing in C<execute>
 -- after option validation, so that a usage error still exits 2.
 
+The optional C<hint> argument appends one caller-supplied sentence to the
+refusal, for a command that can offer something beyond C<karr sync> /
+C<karr init>. L<App::karr::Cmd::Config> is the one caller: what it used to
+print here -- karr's built-in defaults -- is a real answer to a different
+question, so its refusal points at C<karr config show --defaults>, where the
+same values are true by construction (#136). The half-board note takes no
+hint: it already says the values shown are karr's own.
+
 =cut
 
 sub require_local_board {
-    my ($self) = @_;
+    my ( $self, %args ) = @_;
     my $store = $self->store;
     return 1 if $store->board_exists;
 
@@ -280,7 +289,8 @@ sub require_local_board {
         : "Run 'karr init' to create one.\n";
     die "No karr board in this repository: nothing is stored under refs/karr/.\n"
       . "This is not an empty board -- nothing was read here at all.\n"
-      . $advice;
+      . $advice
+      . ( defined $args{hint} ? $args{hint} : '' );
 }
 
 # How many task refs the repository holds. Through a list, because

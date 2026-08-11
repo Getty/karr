@@ -140,10 +140,18 @@ Moves the task to the board's review column, refreshes the claim, and optionally
 karr config                                  # show all config values
 karr config get KEY                          # get a single value
 karr config set KEY VALUE                    # set a writable value
+karr config show --defaults                  # karr's defaults, no board read
 karr config --json                           # JSON output
 ```
 
 Writable keys: `board.name`, `board.description`, `defaults.status`, `defaults.priority`, `defaults.class`, `claim_timeout`, `lock_timeout`, `foundation.enabled`, `foundation.reason`.
+
+`show` and `get` read this board and refuse with exit 1 when there is none —
+they never fall back to the built-in defaults, which is how a fresh clone used
+to answer `board.name: Kanban Board` for a board that has a name. Ask for those
+defaults explicitly with `--defaults`: it reads no board (and needs no
+repository), so `diff <(karr config show) <(karr config show --defaults)` is
+exactly what this board overrides.
 
 ### Disable / enable automated agent runs
 
@@ -217,10 +225,11 @@ instead of relying only on the implicit pull/push behavior of mutating
 commands.
 
 **A fresh clone has no board yet.** `git clone` does not fetch `refs/karr/*`,
-and the read commands (`board`, `list`, `show`, `log`, `context`) do not pull —
-only mutating commands do. So they refuse with exit 1 and say so, rather than
-rendering an empty board. Run `karr sync` first; do **not** run `karr init`
-there, which would start a second, empty board beside the one on the remote.
+and the read commands (`board`, `list`, `show`, `log`, `context`, and `config
+show`/`config get`) do not pull — only mutating commands do. So they refuse
+with exit 1 and say so, rather than rendering an empty board. Run `karr sync`
+first; do **not** run `karr init` there, which would start a second, empty
+board beside the one on the remote.
 
 ### File view (kanban-md interop)
 

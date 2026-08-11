@@ -5,7 +5,7 @@ our $VERSION = '0.500';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr config [show|get KEY|set KEY VALUE] [--json]',
+  usage_string => 'USAGE: karr config [show|get KEY|set KEY VALUE] [--defaults] [--json]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -18,6 +18,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr config
     karr config get claim_timeout
     karr config set board.name "New Board Name"
+    karr config show --defaults
     karr config --json
 
 =head1 DESCRIPTION
@@ -26,6 +27,42 @@ Reads and updates the board configuration stored canonically in
 C<refs/karr/config>. The command supports whole-config display, individual key
 lookup, and writes to a small set of explicitly writable keys. Internally it
 works on the temporary materialized YAML view generated for the command run.
+
+C<show> and C<get> answer for B<this repository's board> and refuse when there
+is none, the way every other read command does
+(L<App::karr::Role::BoardDiscovery/require_local_board>). They used to fall
+back to the code defaults instead, and the fallback was silent: in a fresh
+clone -- where C<git clone> has fetched none of C<refs/karr/*> and the board is
+sitting on the remote -- C<karr config get board.name> answered C<Kanban Board>,
+karr's placeholder, for a board that has a name (#136).
+
+Those defaults are still worth printing; they were just answering a different
+question. C<--defaults> asks it explicitly, so a caller can always tell the
+board's value from the value karr would use if you made one:
+
+    karr config show                # this board's config, or exit 1 if none
+    karr config show --defaults     # what a board created here would start with
+
+=head1 OPTIONS
+
+=over 4
+
+=item * C<--defaults>
+
+Print L<App::karr::Config/default_config> instead of the board's config, for
+C<show> and C<get> alike. Reads no board and needs no Git repository at all,
+so it answers the same anywhere -- which is what makes it honest where the
+fallback was not. Rejected on C<set>, which has nothing to write to.
+
+Because it renders identically to a board read, C<< diff <(karr config show)
+<(karr config show --defaults) >> is exactly the set of keys this board
+overrides.
+
+=item * C<--json>
+
+Machine-readable rendering of whichever of the two the command answered.
+
+=back
 
 =head1 WRITABLE KEYS
 
@@ -66,6 +103,11 @@ L<App::karr::Cmd::Context>, L<App::karr::Config>
 
 =cut
 
+option defaults => (
+  is  => 'ro',
+  doc => "Print karr's built-in defaults instead of this board's config",
+);
+
 my %WRITABLE = map { $_ => 1 } qw(
   board.name board.description
   defaults.status defaults.priority defaults.class
@@ -73,24 +115,54 @@ my %WRITABLE = map { $_ => 1 } qw(
   foundation.enabled foundation.reason
 );
 
+# The sentence the no-board refusal carries beyond `karr sync` / `karr init`.
+# This command is the only read that has a third answer worth naming: the
+# defaults it used to print silently are true of karr, just not of any board,
+# and --defaults is where they are still available (#136).
+my $DEFAULTS_HINT =
+    "To see the values a board created here would start with, run\n"
+  . "'karr config show --defaults' -- those are karr's, not any board's.\n";
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
   my @pos    = $self->positional_args($args_ref);
   my $action = $pos[0] // 'show';
 
   # Action-dependent arity: show=1, get KEY=2, set KEY VALUE=3 positionals
-  # (the action itself is a positional). Reject surplus before any work/sync.
+  # (the action itself is a positional). Reject surplus before any work/sync --
+  # and reject an action that is not one of the three here rather than after the
+  # config is loaded, so `karr config bogus` still says so in a repository that
+  # has no board to refuse over.
   my %arity = ( show => 1, get => 2, set => 3 );
-  $self->check_positional_args($args_ref, $arity{$action}) if $arity{$action};
+  die "Unknown action: $action (use show, get, or set)\n" unless $arity{$action};
+  $self->check_positional_args($args_ref, $arity{$action});
 
-  # Only `set` writes, and only `set` needs a board: `get` and `show` fall
-  # back to the code defaults, which is a useful answer even without one.
-  if ( $action eq 'set' ) {
-    $self->sync_before;
-    $self->require_board;
+  # Option validation before the board checks, so misuse still exits 2 (ADR
+  # 0002) rather than being pre-empted by a refusal about the board.
+  $self->usage_error('--defaults reads no board, so there is nothing to set')
+    if $self->defaults && $action eq 'set';
+
+  # `set` writes, so it pulls first and then requires a whole board. `get` and
+  # `show` read, so they stay offline (#135) -- but they must still say whether
+  # anything was read: printing the code defaults for a board that was never
+  # loaded is the same lie for `board.name` that `0 tasks` was for the task
+  # list, and in a fresh clone it is the normal case (#136). --defaults asks
+  # for those defaults on purpose and touches neither store nor Git, so it
+  # answers outside a repository too.
+  my $config;
+  if ( $self->defaults ) {
+    $config = App::karr::Config->from_merged( App::karr::Config->default_config );
   }
-
-  my $config = App::karr::Config->from_merged($self->store->effective_config);
+  else {
+    if ( $action eq 'set' ) {
+      $self->sync_before;
+      $self->require_board;
+    }
+    else {
+      $self->require_local_board( hint => $DEFAULTS_HINT );
+    }
+    $config = App::karr::Config->from_merged($self->store->effective_config);
+  }
 
   if ($action eq 'show') {
     $self->_show_all($config);
@@ -102,8 +174,6 @@ sub execute {
     my $val = $pos[2] // die "Usage: karr config set KEY VALUE\n";
     $self->_set_key($config, $key, $val);
     $self->sync_after;
-  } else {
-    die "Unknown action: $action (use show, get, or set)\n";
   }
 }
 
