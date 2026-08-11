@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-08-11T23:57:15Z
+claimed_by: agent-statuscfg
+class: standard
+completed: 2026-08-11T23:57:15Z
+created: 2026-08-11T02:27:14Z
+id: 121
+priority: low
+started: 2026-08-11T23:46:04Z
+status: done
+tags:
+- cleanup
+- config
+title: Config->status_config has no callers and duplicates status_requires_claim's
+  lookup
+updated: 2026-08-11T23:57:15Z
+---
+
+Found by karr-pod-writer while documenting Config.pm for #118.
+
+App::karr::Config::status_config has zero callers in lib/ or t/. The lookup it
+performs -- find the entry for a status name in _list('statuses') -- is inlined
+a second time inside status_requires_claim, which does have callers.
+
+So either status_requires_claim should call status_config and the duplication
+goes away, or status_config is dead and should go. The first is the smaller
+change and leaves one place where "what does the board say about this status"
+is answered; worth checking whether any other method inlines the same walk
+before deciding.
+
+It is documented as it stands, so nothing is misleading in the meantime. Filed
+because a pod-writer should not silently decide that a public method is dead.
