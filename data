@@ -1,0 +1,44 @@
+---
+claimed_at: 2026-08-11T15:16:48Z
+claimed_by: coiling-labelled
+class: standard
+completed: 2026-08-11T15:16:48Z
+created: 2026-08-11T03:09:01Z
+id: 124
+priority: medium
+started: 2026-08-11T13:54:18Z
+status: done
+tags:
+- cli
+- model
+- usability
+title: depends_on cannot be set from the CLI at all -- neither create nor edit has
+  an option for it
+updated: 2026-08-11T15:16:48Z
+---
+
+Found by karr-worker while implementing #123, and it explains that ticket:
+depends_on sat inert for so long because nothing on the CLI can write it.
+
+Neither `karr create` nor `karr edit` has a --depends-on. The field is
+reachable only through `karr import` of a kanban-md file view, or by editing
+a materialized card by hand and importing it back. Every other field on the
+task model has a CLI route.
+
+So after #123 karr warns about a relationship that karr itself cannot express.
+The tests for #123 had to seed depends_on through BoardStore directly for that
+reason.
+
+Shape: --depends-on on create and edit, comma-separated ids, matching how
+--tags already works on both. Whether edit replaces or appends should follow
+whatever --tags does, so there is one rule rather than two.
+
+Once this exists, set-time validation becomes possible and worth having --
+kanban-md does both (internal/task/validate.go:155, ValidateDependencyIDs
+rejects a self-reference and an unknown id at the moment they are written).
+The worker's judgement, which I agree with: set-time validation and the
+move-time warning from #123 are complementary rather than alternatives.
+Set-time catches a typo while the author still remembers what they meant;
+move-time catches state that changed afterwards -- a dependency reopened or
+deleted -- which set-time can never see. But set-time has nothing to attach to
+until this ticket exists, so this one gates it.
