@@ -84,10 +84,39 @@ alias karr='docker run --rm -it \
   -e HOME=/home/karr \
   -v "$(pwd):/work" \
   -v "$HOME/.gitconfig:/home/karr/.gitconfig:ro" \
+  -v "$HOME/.ssh:/home/karr/.ssh:ro" \
   -v "$HOME/.claude:/home/karr/.claude" \
   -v "$HOME/.codex:/home/karr/.codex" \
   -v "$HOME/.cursor:/home/karr/.cursor" \
   raudssus/karr:latest'
+```
+
+The `.ssh` mount is what makes an `ssh://` remote work at all. `HOME` inside
+the container is `/home/karr`, so that is where both libgit2 and `ssh` look for
+`known_hosts` and for keys — without the mount they find neither, and karr
+reports the host as unknown no matter how often you run `ssh-keyscan` on the
+host. It is mounted read-only so a container can never rewrite your keys.
+
+One caveat with mounting the whole directory: the image ships a current
+OpenSSH, and a `~/.ssh/config` written against an older one can be refused
+outright — `Bad key types '+ssh-dss'`, and the connection never starts. Set
+`GIT_SSH_COMMAND="ssh -F /dev/null -o UserKnownHostsFile=/home/karr/.ssh/known_hosts"`
+to skip the config and keep the host keys.
+
+If your key needs a passphrase, forward the agent instead of relying on the key
+files. That does not belong in an alias, because `docker run` rejects the mount
+outright when no agent is running:
+
+```bash
+karr() {
+  local ssh_agent=()
+  [ -n "$SSH_AUTH_SOCK" ] && ssh_agent=(-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e SSH_AUTH_SOCK)
+  docker run --rm -it -w /work -e HOME=/home/karr \
+    -v "$(pwd):/work" \
+    -v "$HOME/.gitconfig:/home/karr/.gitconfig:ro" \
+    -v "$HOME/.ssh:/home/karr/.ssh:ro" \
+    "${ssh_agent[@]}" raudssus/karr:latest "$@"
+}
 ```
 
 With that alias, all normal commands stay identical:

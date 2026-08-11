@@ -27,8 +27,14 @@ FROM perl:5.40-slim AS runtime-base
 # git + runtime shared libs: the vendored libgit2.so links against OpenSSL
 # (HTTPS), libssh2 (SSH) and zlib (compression); FFI::Platypus now links the
 # system libffi (see builder stage), so libffi8 must be present at runtime too.
+#
+# openssh-client is what the git-CLI fallback forks for an ssh:// remote.
+# libssh2 covers the libgit2 path, but the fallback exists precisely for the
+# cases libgit2 cannot do -- ssh-config, ProxyCommand -- and without an ssh
+# binary it could never take any of them: git answered `cannot run ssh: No such
+# file or directory` and the board was simply unreachable.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git gosu passwd \
+    git gosu passwd openssh-client \
     libssl3 libssh2-1 zlib1g libffi8 \
     && rm -rf /var/lib/apt/lists/*
 

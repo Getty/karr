@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - The runtime images can reach an `ssh://` remote (ticket #134). They
+      shipped without an ssh binary — `runtime-base` installed `git gosu passwd`
+      and the shared libraries, and nothing else — so git's CLI fallback died
+      with `error: cannot run ssh: No such file or directory` and a board on an
+      ssh remote was unreachable from the published images. That fallback is not
+      decoration: it is there for the ssh-config and `ProxyCommand` setups
+      libgit2 cannot do, and it could never take a single one of them.
+      `openssh-client` is now installed with the rest. The other half was the
+      README's recommended alias, which mounted `.gitconfig`, `.claude`,
+      `.codex` and `.cursor` but not `.ssh`, while setting `HOME=/home/karr` —
+      so libgit2 looked for `known_hosts` in a directory that did not exist and
+      reported every host as unknown, and the fix it printed
+      (`ssh-keyscan … >> ~/.ssh/known_hosts`) was carried out on the host, where
+      the container never saw it. The alias now mounts `~/.ssh` read-only, and
+      an agent-forwarding variant is documented as a shell function, since
+      `docker run` rejects the socket mount outright when no agent is running.
+      Neither half helps alone: an ssh binary with no keys cannot authenticate,
+      and mounted keys with no ssh binary cannot fall back. A third piece only
+      turned up when the finished image was pointed at a real ssh remote: the
+      root image drops to whoever owns F</work>, and that host uid has no
+      C</etc/passwd> entry, so C<ssh> — which looks itself up with
+      C<getpwuid()> — refused to start with `No user exists for uid 1000`. The
+      entrypoint now writes an entry for the uid before dropping to it. The
+      fixed-user image never had this problem, since C<useradd> wrote one at
+      build time; the default image, the one the README recommends, had it for
+      every ssh remote.
+
     - `karr init` no longer stamps the encoding marker on a board it is
       completing rather than creating (ticket #132). `init` accepts a
       half-board — task refs present, `refs/karr/config` missing — and finishes
