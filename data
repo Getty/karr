@@ -1,0 +1,65 @@
+---
+claimed_at: 2026-08-11T23:57:21Z
+claimed_by: agent-boardaccess
+class: standard
+completed: 2026-08-11T23:57:21Z
+created: 2026-08-11T02:26:48Z
+id: 120
+priority: low
+started: 2026-08-11T23:45:59Z
+status: done
+tags:
+- bug
+- roles
+- logging
+title: 'Role::BoardAccess: delete_task logs unconditionally, and save_config''s no-arg
+  form passes the wrong type'
+updated: 2026-08-11T23:57:21Z
+---
+
+Two findings by karr-pod-writer while documenting Role/BoardAccess.pm for
+#118. Neither was introduced there; both were verified against the code.
+
+1. delete_task logs even when nothing was deleted.
+
+    sub save_task {   ... return $wrote unless $wrote;
+                      $self->log_task_write(...); return $wrote; }
+    sub delete_task { my $result = $self->store->delete_task($id);
+                      $self->log_task_write($id); return $result; }
+
+save_task guards the activity-log write on a successful store write;
+delete_task calls log_task_write unconditionally, so deleting an id that does
+not exist still appends an entry to refs/karr/log/*. Since #64 that log feeds
+`karr log` and `karr show --me`, so this shows up as an action that never
+happened. Decide whether the guard belongs on delete_task too, or whether a
+delete attempt is deliberately worth logging either way -- but the two should
+not disagree by accident.
+
+2. Role::BoardAccess::save_config is unreachable, and would misbehave.
+
+    sub save_config { my ($self, $effective) = @_;
+                      $effective //= $self->config;
+                      return $self->store->save_config($effective); }
+
+No caller anywhere in lib/ or t/ invokes $self->save_config; every config write
+goes through $self->store->save_config($hash) directly (Cmd::Config, Cmd::Init).
+The zero-argument fallback hands BoardStore::save_config the `config` attribute
+from Role::BoardDiscovery, which is an App::karr::Config OBJECT, whereas
+BoardStore::save_config expects a plain effective-config hash -- it reads
+$effective->{version} and passes it to _diff_hashes against the defaults. The
+keys do not line up.
+
+So the fallback is both unused and wrong. Either delete the role method (the
+honest option if nothing wants it), or fix the fallback to hand over the hash
+and give it a caller. It is documented as-is for now, explicitly saying no
+command uses the no-argument form.
+Both findings fixed in lib/App/karr/Role/BoardAccess.pm; regression test t/133-boardaccess-write-doors.t.
+
+1) delete_task now guards its log write on the store result (return $result unless $result), matching save_task. Rationale: the log answers what happened to the board; BoardStore::delete_task returns false when nothing was removed (id absent, or delete failed), and an entry has no room to say 'attempted' -- agent/action/task_id only -- so an attempt entry is indistinguishable from a real delete. TaskMutation::delete_task_guarded already dies on a missing id before logging, so all three write paths now agree.
+
+2) Role save_config removed (sub + POD), replaced by a =head2 'Writing the config' note. It was unreachable (no caller in lib/, t/, bin/) and worse than the ticket said: the no-arg form does NOT die. Verified empirically -- passing the App::karr::Config object writes a refs/karr/config with the blessed hash's 'data:' and 'file: ~' at top level, burying the real config and losing board.name, and it passes BoardStore's validation gate. One-arg form was a bare pass-through adding nothing, so fixing the fallback would have meant inventing a caller.
+
+Tests: prove -l t/133-boardaccess-write-doors.t -> PASS (4 subtests). RED verified against the pre-fix module (git show HEAD copy of BoardAccess.pm): subtests 1 and 4 fail, 'log entries after deleting 999' got 1 expected 0, and Role::BoardAccess->can('save_config') true.
+Also green: prove -l t/90-activity-log-coverage.t t/89-activity-log-refname.t t/44-delete-ref-backed.t t/88-delete-ref-outcome.t t/92-delete-ref-cas.t t/06-config-cmd.t t/63-foundation-disable-config.t t/100-batch-partial-failure.t t/121-role-import-leakage.t t/123-context-activity-section.t t/77-task-mutation-guards.t
+
+Not done (orchestrator's lane): Changes entry, commit. Note for Changes: removing a documented role method is an API change vs 0.500.
