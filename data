@@ -1,0 +1,36 @@
+---
+claimed_at: 2026-08-11T01:35:01Z
+claimed_by: seized-dilemma
+class: standard
+completed: 2026-08-11T01:35:01Z
+created: 2026-08-11T01:20:14Z
+id: 115
+priority: low
+started: 2026-08-11T01:35:01Z
+status: done
+tags:
+- pod
+- docs
+- git
+title: 'Git.pm POD: L</last_error> link is unresolved -- no =method last_error section
+  exists'
+updated: 2026-08-11T01:35:01Z
+---
+
+Found during the 0.500 pre-release audit (karr-release-checker), auditing commits 15b6961/f8ab239/89e879e since the last audit (9f0c38b).
+
+Ticket #107 (commit f8ab239) added this sentence to the is_tracked_under POD:
+
+    ...does this fall back to C<git ls-files>
+    through the CLI, with L</last_error> carrying why. ...
+
+`podchecker lib/App/karr/Git.pm` (run against the dzil-built, PodWeaver-woven module) reports:
+
+    *** ERROR: unresolved internal link 'last_error' at line 1830 in file lib/App/karr/Git.pm
+    lib/App/karr/Git.pm has 1 pod syntax error.
+
+Cause: `last_error` (Git.pm:110) has only a `#` comment above it, no `=method last_error` POD block, so PodWeaver never emits a `=head2 last_error` heading for the L</last_error> link to resolve to. Confirmed this is the only broken link in the whole lib/ tree (podchecker run across every woven .pm came back clean elsewhere) and that it did not exist before f8ab239 -- grep for "L</last_error>" in git history shows this is the only occurrence, newly added by that commit.
+
+last_error is genuinely public API -- called externally from lib/App/karr/Cmd/Sync.pm, lib/App/karr/SyncGuard.pm and lib/App/karr/Role/SyncLifecycle.pm -- so per house POD convention it should carry an inline `=method last_error` block anyway; that was already missing before #107, and adding it closes both gaps (missing docs + the broken link) in one edit.
+
+Not release-blocking on its own (does not fail dzil build or dzil test), but shows as a broken link on MetaCPAN once released. Hand to karr-pod-writer.
