@@ -1,0 +1,36 @@
+---
+claimed_at: 2026-08-11T00:10:47Z
+claimed_by: augean-phobics
+class: standard
+completed: 2026-08-11T00:10:47Z
+created: 2026-08-10T15:39:42Z
+id: 107
+priority: low
+started: 2026-08-10T23:46:54Z
+status: done
+tags:
+- git-native
+- upstream
+- architecture
+title: is_tracked_under goes through the git CLI because Git::Native exposes no index
+  API
+updated: 2026-08-11T00:10:47Z
+---
+
+Found while doing #104, which replaced the per-file working-tree walk in BoardStore::project_owned_view_paths with a single index question.
+
+CLAUDE.md describes the Git layer as: local operations native via Git::Native (libgit2), git-CLI fallback for remote transport (ssh-config/ProxyCommand). The new App::karr::Git::is_tracked_under is a LOCAL operation that goes through `git ls-files -z` unconditionally -- not as a fallback from a native attempt, because there is no native attempt to make.
+
+Verified against Git::Native 0.004, the version the cpanfile pins:
+- Git::Native::Repository exposes no index API at all -- there is no `index` method
+- Git::Libgit2::FFI attaches git_index_find but never git_index_find_prefix
+
+Prefix matching over a directory is the whole point here: one call has to answer "is anything under tasks/ tracked?" for a file and a directory alike. `git ls-files -- <dir>` does that; libgit2 through the currently attached surface does not.
+
+Consequence, flagged by the worker rather than papered over: with `git` off PATH, is_tracked_under returns 0, so ownership degrades to "unowned" and `karr init` writes the .gitignore entries -- a cosmetic regression of #89 in that configuration. NOT a data-loss path: materialize_to keeps its #48 refusal on libgit2 is_tracked, so nothing gets overwritten. The whole suite gates on require_git_c anyway, and karr transport already assumes the binary.
+
+Decision taken 2026-08-10: leave it. A libgit2 second-guess would reintroduce the very walk #104 deleted, for a configuration karr does not otherwise support.
+
+What would close this properly is upstream, in the same repo as #85: git_index_find_prefix attached in Git::Libgit2::FFI plus an index accessor on Git::Native::Repository. Then is_tracked_under becomes native with the CLI as a real fallback, matching the documented architecture. Worth bundling with the is_locked request rather than sending separately.
+Upstream tickets filed 2026-08-10, so the chain is now traceable rather than a note in this body: Git::Libgit2 #9 attaches git_index_find_prefix (the single missing FFI line -- git_repository_index, git_index_free, git_index_find and git_index_get_byindex are all already attached, verified against the checkout), and Git::Native #24 asks for the Repository->index accessor on top of it, blocked by #9. Confirmed against the freshly installed Git::Native 0.005 / Git::Libgit2 0.006 that neither exists yet: Repository has 44 methods, none named index, and git_index_find_prefix appears in no file in either distribution. Git::Native 0.005 did bring status / status_for_path, which could answer the question in principle -- but status compares worktree against index against HEAD, far more work than the ls-files call it would replace, so it does not change the 'leave it' decision above.
+2026-08-11 00:02 is_tracked_under now reads the index natively via Git::Native::Index (Git::Native 0.005 / Git::Libgit2 0.006, both installed here, neither on CPAN yet -- the maintainer releases them after karr). Repository->index re-reads the index file on every call and never caches, so parallel agents on one checkout are safe; Index->is_tracked_under asks has_path($dir) then has_prefix("$dir/"), which covers both requirements the old comment listed: tracked-but-deleted, and no 'tasks' vs 'tasksfoo.txt' prefix trap. git ls-files is now a real fallback, reached only when libgit2 declines (unreadable index, or a Git::Native without the accessor), with last_error carrying why. The #89 regression is gone: reproduced it first against HEAD's Git.pm (empty PATH -> .gitignore written over a tracked tasks/), fixed run leaves it alone. New t/113-native-index-tracked-under.t: 8 subtests, 5 of them fail against the pre-fix Git.pm. cpanfile pins raised. Changes entry under {{\$NEXT}}. prove -lr t/: 115 files, 783 tests, PASS. Not committed -- maintainer reviews and commits.
