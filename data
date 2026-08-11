@@ -1,0 +1,107 @@
+---
+claimed_at: 2026-08-11T23:59:03Z
+claimed_by: agent-depcheck
+class: standard
+completed: 2026-08-11T23:59:03Z
+created: 2026-08-11T13:51:33Z
+id: 128
+priority: low
+started: 2026-08-11T23:46:11Z
+status: done
+tags:
+- bug
+- roles
+- docs
+title: 'Role::DependencyCheck: keine requires, und die neue Nutzung widerspricht der
+  POD von update_task_guarded'
+updated: 2026-08-11T23:59:03Z
+---
+
+Zwei Nachlesen aus #123, beide klein, beide aus dem gerade eingebauten Code.
+
+1. Die Rolle deklariert nichts von dem, was sie braucht.
+
+check_dependencies ruft $self->store und $self->find_task, dependency_report
+ruft $self->json und $self->quiet. Keines davon steht in einem requires.
+Heute traegt das: json/compact kommen aus Role::Output, quiet aus
+Role::SyncLifecycle (ueber Role::BoardAccess), store/find_task ebenfalls aus
+BoardAccess -- und alle vier Konsumenten (Move, Edit, Handoff, Pick) haben
+beides. Aber TaskMutation composed DependencyCheck fuer jeden kuenftigen
+Konsumenten mit, und der bekommt statt eines Kompositionsfehlers ein
+"Can not locate object method" zur Laufzeit. Zusaetzlich haesslich: in
+`$self->json || $self->quiet` wird quiet nur ausgewertet, wenn json falsch
+ist -- der Fehler traete also erst auf, wenn tatsaechlich eine Warnung
+ansteht, und dann ohne --json.
+
+Vier Zeilen requires an den Kopf der Rolle, mehr ist es nicht.
+
+2. Die POD von update_task_guarded sagt jetzt etwas Falsches.
+
+    "The callback runs once per attempt, so it must be a function of the task
+     it is handed ... and it must not have side effects outside the task
+     object."
+
+apply_status_change ruft seit #123 check_dependencies, und das schreibt in
+$self->_dependency_warnings -- also genau ein Seiteneffekt ausserhalb des
+Task-Objekts, im Callback, den der Satz meint. Der Code ist in Ordnung: die
+Warnungen liegen nach Task-Id statt in einer Liste und werden bei jedem
+Versuch zuerst geloescht, damit ein Retry sie nicht verdoppelt, und emittiert
+wird erst nach dem Write. Die Regel ist es, die nicht mehr stimmt, und sie ist
+die Stelle, an der der naechste Autor nachliest, was im Callback erlaubt ist.
+
+Formulieren als das, was gemeint ist: keine Seiteneffekte, die ein
+wiederholter Lauf nicht zuruecknimmt -- mit check_dependencies als Beispiel
+dafuer, wie ein erlaubter aussieht.
+Beide Punkte umgesetzt.
+
+1. requires: die tatsaechliche Liste ist fuenf Namen, nicht vier -- store,
+find_task (check_dependencies), usage_error (parse_dependency_ids,
+assert_dependencies_exist), quiet und json (dependency_report). Vier davon
+stehen jetzt am Kopf der Rolle:
+
+    requires qw( store find_task usage_error quiet );
+
+json geht nicht: es gibt einen fuenften Konsumenten, den das Ticket nicht
+nennt -- Cmd::Create komponiert DependencyCheck fuer die beiden Set-Time-Helfer
+und hat kein --json. Mit `requires json` bricht `karr create` beim Laden:
+"Cant apply App::karr::Role::DependencyCheck to App::karr::Cmd::Create -
+missing json at Create.pm line 15". Die Trennung der Set-Time- von der
+Report-Haelfte muesste Create und Pick anfassen -> Ticket #137. quiet mit
+drin zu haben nimmt der Luecke trotzdem die Schaerfe, die das Ticket
+beschreibt: json wird in `$self->json || $self->quiet` zuerst und
+unbedingt ausgewertet.
+
+2. POD von update_task_guarded: das Pauschalverbot ist durch die
+tatsaechliche Anforderung ersetzt -- alles ausser der Task-Aenderung muss
+zweimal ausfuehrbar sein, ein Seiteneffekt ist erlaubt, wenn ein zweiter
+Versuch ihn ersetzt statt ihn zu addieren, mit check_dependencies als
+Beispiel und Liste/Zaehler/print als Gegenbeispielen.
+
+Test: t/135-dependency-check-requires.t (neu). Faengt die Luecke -- eine
+Klasse ohne die liefernden Rollen scheitert jetzt beim Komponieren, und
+zwar auch ueber TaskMutation hinweg. Vor dem Fix scheitern die Subtests
+1, 2 und 5, danach gruen. Zusaetzlich prueft er per Quell-Scan, dass die
+requires-Liste alle $self->-Aufrufe der Rolle abdeckt, mit json als
+einziger dokumentierter Ausnahme.
+
+t/121-role-import-leakage.t angepasst: sein MutationConsumer komponierte
+TaskMutation nackt und war damit genau der Fall, den die requires
+abfangen -- vier Stubs statt BoardAccess, damit die Leak-Pruefung sauber
+bleibt.
+
+    prove -l t/135-dependency-check-requires.t t/121-role-import-leakage.t \
+      t/125-dependency-warnings.t t/127-depends-on-cli.t \
+      t/77-task-mutation-guards.t t/00-load.t
+    -> All tests successful. Files=6, Tests=78
+
+    prove -l t/03-archive.t t/04-handoff.t t/100-batch-partial-failure.t \
+      t/101-archive-handoff-guarded.t t/111-pick-move-terminal-status.t \
+      t/112-handoff-derived-target.t t/16-pick-lock.t t/44-delete-ref-backed.t \
+      t/48-pick-execute.t t/72-claim-timeout.t t/83-pick-exclusivity-and-locks.t \
+      t/88-delete-ref-outcome.t t/92-delete-ref-cas.t t/97-pick-json-empty.t \
+      t/38-archive-ref-backed.t t/42-list-archived.t
+    -> All tests successful. Files=16, Tests=79
+
+    prove -l t/124-source-ascii-only.t t/120-error-message-sweep.t \
+      t/98-terminal-status-config.t t/107-completed-stamp-terminal-status.t
+    -> All tests successful.
