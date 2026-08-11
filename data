@@ -1,0 +1,53 @@
+---
+claimed_at: 2026-08-11T16:18:41Z
+claimed_by: coiling-labelled
+class: standard
+completed: 2026-08-11T16:18:41Z
+created: 2026-08-11T15:48:47Z
+id: 129
+priority: medium
+started: 2026-08-11T16:18:41Z
+status: done
+tags:
+- cli
+- output
+- parity
+title: list --json drops the body while show/pick/handoff --json keep it
+updated: 2026-08-11T16:18:41Z
+---
+
+Cmd::List.pm:154 baut sein JSON aus to_frontmatter:
+
+    $self->print_json([map { $_->to_frontmatter } @tasks]);
+
+to_frontmatter ist die YAML-Frontmatter-Sicht, und der Body steht per
+Dateiformat unter dem Frontmatter, nicht darin -- also faellt er weg. Die
+Methode fuer diesen Zweck ist to_json_hash (Task.pm:413), die genau eine
+Zeile mehr macht (body, wenn defined und length, Ticket #78) und deren POD
+ihre Nutzer aufzaehlt: "used by the show, pick, and handoff commands".
+list fehlt in dieser Liste -- das sieht nach Versehen aus, nicht nach
+Entscheidung, denn dokumentiert ist --json in List.pm:33 nur als
+"machine-readable" ohne jeden Vorbehalt.
+
+Belegt am echten Board: `karr list --json` liefert acht Tasks ohne einen
+einzigen body-Key, `karr show 128 --json` liefert denselben Task mit 1899
+Zeichen body.
+
+kanban-md macht es andersherum: cmd/list.go:156 marshallt die vollen
+*task.Task-Structs, und Body traegt dort json:"body,omitempty"
+(internal/task/task.go:33). list --json liefert dort also Bodies. Bei
+erklaertem Parity-Ziel ist karrs Verhalten eine Luecke.
+
+Folge in der Praxis: wer Ticket-Inhalte maschinell auswerten will, kann
+list --json nicht benutzen und faellt auf ein show pro Ticket zurueck --
+also N+1 Aufrufe fuer etwas, das ein Aufruf liefern koennte.
+
+Fix ist eine Zeile (to_frontmatter -> to_json_hash) plus ein Test, der
+list --json gegen einen Task mit Body prueft. Zu bedenken: bei grossen
+Boards waechst die Ausgabe deutlich -- das ist aber genau der Grund,
+warum --compact existiert, und kanban-md nimmt es auch in Kauf.
+
+Nicht betroffen: die blocked-Konvertierung aus #58. to_json_hash erzwingt
+dort JSON::MaybeXS::true(), to_frontmatter nicht -- geprueft, beide Wege
+liefern "blocked":true, weil der Wert den YAML-Roundtrip als Boolean
+uebersteht.
