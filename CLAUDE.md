@@ -20,10 +20,16 @@ the rules file). Agents in this repo (skills force-loaded via `briefing.skills`)
 
 | Task | Agent |
 |---|---|
-| Implement / refactor / debug behavior-relevant code | `karr-worker` (default) |
+| Task/config semantics, lifecycle, activity log, ordinary board commands, filtering, rendering | `karr-board-worker` |
+| Git transport, refs-backed storage, CAS, locks, sync, encoding, materialize/import/backup/restore | `karr-ref-worker` |
+| karr-foundation: discovery, drain loops, per-repo lock/state, cooldown, auto-blocking, `disable`/`enable` | `karr-foundation-worker` |
+| Behavior-relevant code spanning those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
 | Write/extend tests under `t/` | `karr-test-writer` |
 | Pre-release audit (Changes, cpanfile, dist.ini, version) | `karr-release-checker` |
 | POD (`=attr`/`=method`, `# ABSTRACT`) | `karr-pod-writer` |
+
+Take the narrowest domain worker that fits; each names the other two in its boundaries section
+and hands a misrouted task back rather than solving it from the wrong context.
 
 **Dogfood:** karr tracks its own work on its own board (`refs/karr/*`). Use `karr list --compact`
 / `karr board` for open work and file bugs found here as tickets. Full surface: skill
