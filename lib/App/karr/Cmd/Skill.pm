@@ -33,6 +33,10 @@ clients. The command can target project-local directories or global skill
 locations in the current user's home directory, which makes it useful both for
 direct Perl installs and Docker-wrapped vendor usage.
 
+Writes go into the target file B<in place>, keeping its inode, so a
+F<SKILL.md> that is one link of a hardlink chain shared across projects stays
+part of that chain instead of being silently broken out of it.
+
 =head1 SUPPORTED AGENTS
 
 The built-in agent targets are C<claude-code>, C<codex>, and C<cursor>. When
@@ -242,10 +246,51 @@ sub _read_skill {
   return $content;
 }
 
+# Written in place, on purpose. Path::Tiny's spew_utf8 writes a temp file and
+# renames it over the target, so the path it wrote comes back on a *new* inode.
+# For a SKILL.md that is the wrong move: skill files are kept as hardlink
+# chains (manage-skills), one inode behind the same relative path in dozens of
+# projects, so the rename silently breaks the updated path out of its chain --
+# that one path gets the new text, every other project keeps the old inode with
+# the old text, and the link count drops with nothing said (ticket #142, found
+# in kubernetes-ocp, where the workaround was `karr skill show` into a shell
+# redirect).
+#
+# append_utf8 with truncate is the in-place counterpart: Path::Tiny sysopens
+# the existing inode for writing, locks it, truncates, and writes through it,
+# so every link sees the new content. It is Path::Tiny's own UTF-8, i.e. still
+# character-level, which is what the file edge is allowed to use -- encoding on
+# top of it would be the double encode App::karr::Encoding forbids. A target
+# that does not exist yet is created by the same call (">" with O_CREAT), so
+# install and update share this one path.
 sub _write_skill {
   my ($self, $file, $content) = @_;
-  eval { $file->parent->mkpath; $file->spew_utf8($content); 1 }
+
+  eval { $file->parent->mkpath; 1 }
     or user_error( "Could not write $file: ", clean_error($@) );
+
+  return if eval { $file->append_utf8( { truncate => 1 }, $content ); 1 };
+  my $in_place_error = $@;
+
+  # Opening the file for writing is the one thing the rename never needed: it
+  # only needs a writable *directory*, so it used to update a read-only
+  # SKILL.md happily. Keep that working rather than turning a mode bit into a
+  # failure -- but this is now the only way a chain can break, so when the
+  # target really was hardlinked, say so instead of breaking it silently.
+  my $links = ( stat "$file" )[3];
+  eval { $file->spew_utf8($content); 1 }
+    or user_error( "Could not write $file: ", clean_error($in_place_error) );
+
+  if ( $links && $links > 1 ) {
+    my $others = $links - 1;
+    my $note = $others == 1
+      ? 'one other hardlink to it still holds the previous content.'
+      : "$others other hardlinks to it still hold the previous content.";
+    warn "Warning: $file could not be written in place ("
+      . clean_error($in_place_error)
+      . ") and was replaced instead;\n$note\n";
+  }
+
   return;
 }
 

@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `karr skill install` and `karr skill update` write the target SKILL.md in
+      place instead of replacing it (ticket #142). Path::Tiny's `spew_utf8`
+      writes a temp file and renames it over the destination, so the path it
+      wrote came back on a new inode -- right for an ordinary file, wrong for a
+      skill file: skills are shared between projects as a hardlink chain, one
+      inode behind the same relative path in dozens of checkouts, and the
+      rename broke the updated path out of its chain. That one project got the
+      new skill, all the others kept the old inode with the old text, and the
+      link count dropped with nothing said. Found during agent setup in an
+      unrelated repository, where the workaround was piping `karr skill show`
+      into a shell redirect. The write now truncates the existing file and
+      writes through it, so every link sees the update; it is still
+      Path::Tiny's character-level UTF-8, so the encoding boundary is unmoved.
+      A target that does not exist yet is still created and a symlinked target
+      is still written through. A target that cannot be opened for writing at
+      all -- a read-only SKILL.md, which the rename handled because it only
+      needed a writable directory -- is still updated by replacement rather
+      than turned into a failure, but that is the one case left where a chain
+      cannot survive, so it is now reported instead of done silently.
+
     - `karr metrics` now says how much of its lead average cannot be believed
       (ticket #139). A card whose `completed` precedes its own `created`
       contributes a negative lead time, and it still does: unlike `started`,
