@@ -1,0 +1,56 @@
+---
+claimed_at: 2026-08-12T18:58:13Z
+claimed_by: karr-foundation-worker
+class: standard
+completed: 2026-08-12T18:57:58Z
+created: 2026-08-12T16:14:23Z
+id: 160
+priority: high
+started: 2026-08-12T18:34:10Z
+status: done
+tags:
+- bug
+- foundation
+title: Foundation's common-error scan misfires on ordinary agent output and throttles
+  a healthy board to one run per hour
+updated: 2026-08-12T18:58:13Z
+---
+
+Found in a bug hunt, reproduced twice by the finder with mundane output.
+
+Foundation/Runner.pm:183-203 (_error_patterns / _match_error), consumed at
+Foundation.pm:632-639. The default pattern list holds bare substrings --
+network, quota, credentials, 403, 401, 429, 503, 529 -- matched
+case-insensitively against the ENTIRE captured output, before any check of
+whether the run succeeded.
+
+An agent on a karr board prints task titles (it runs karr list), diffstats,
+commit hashes and byte counts, so a match is routine. On a hit the drain
+aborts, no board progress is credited, and _set_cooldown raises the level;
+the next run trips the same string, so the level never resets and climbs to
+the cooldown_max ceiling.
+
+Reproduction A -- the board simply has a networking ticket in the backlog;
+the agent exits 0 and moves the board:
+
+    #1 backlog retry the network fetch on 503
+    END elapsed=1s exit=0
+    COMMON-ERROR network
+    cooldown — 1m (level 1)
+    .karr.state: {"cooldown_level":1,"last_error":"network","last_exit":0}
+
+Escalation, one tick per round: 2m, 4m, 8m, 16m, 32m, 64m.
+
+Reproduction B -- no suspicious ticket needed, just a diffstat:
+
+    lib/App/karr/Foundation.pm | 403 ++++++++-----
+    END elapsed=0s exit=0
+    COMMON-ERROR 403
+
+Cost: a board that works perfectly is permanently throttled to one agent run
+per hour, each thrown away as an error. .karr.state records the
+contradiction plainly (last_exit: 0 with last_error: network) and nothing
+surfaces it to the operator. The bare numeric patterns also fire on random
+hex in commit hashes at a few percent per run.
+Fixed in a110395. Both halves were wrong and both are fixed: the ordering (a run that exited 0 and moved the board is progress whatever it printed; the scan is evidence only where there is none other) and the patterns (a symptom word only next to a failure word on the same line, an HTTP status only where something adjacent marks it as one). Verified against 18 genuine failure strings and 14 mundane ones; the ticket's own 'retry the network fetch on 503' line is now rejected by the patterns ALONE, independent of the ordering gate. Cooldown reset verified rather than assumed: 429 -> level 1,2,3, then a clean run drains and clears it. last_exit:0 with last_error stays representable because that pair IS the real case -- what was wrong was a STALE last_error outliving its run by three cooldowns. Found while fixing: 30 real regexes cost ~30x the substrings (1.37s per drain iteration on a 1MB transcript), so each pattern carries its required literals and index() pre-filters -- 1.365s to 0.009s, with a test that each trigger really matches its own regex.
+Residual on record, not fixed: an agent that prints .karr.log back at itself (cat .karr.log) can still re-arm a match on a no-progress run, since the log contains 'COMMON-ERROR rate limit'. Rarer than what was fixed and self-limiting via the cooldown, but real.
