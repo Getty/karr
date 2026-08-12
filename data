@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-12T18:29:54Z
+claimed_by: karr-foundation-worker
+class: standard
+completed: 2026-08-12T18:29:47Z
+created: 2026-08-12T16:14:08Z
+id: 158
+priority: critical
+started: 2026-08-12T18:13:41Z
+status: done
+tags:
+- bug
+- foundation
+title: Foundation auto-blocks tasks the agent never touched, including work a human
+  holds
+updated: 2026-08-12T18:29:54Z
+---
+
+Found in a bug hunt, reproduced twice by the finder (the second time with
+only defaults in play). I confirmed the mechanism in the code.
+
+Foundation.pm:575-588 (_stuck_tasks), applied at :654-660. Its comment says
+"Tasks the agent engaged (claimed / in-progress) but did not move". The code
+cannot tell engagement from mere existence:
+
+    next unless $self->_is_actionable( $a );
+    next unless defined $a->{claimed_by} || ( $a->{status} // '' ) eq 'in-progress';
+
+WHO claimed it is never checked -- there is no comparison against the agent
+at all. So every iteration in which the agent moves some OTHER task charges
+an attempt against every card somebody else is holding. At max_attempts
+(default 2) foundation writes
+
+    blocked: auto-block: no progress after N attempts (foundation)
+
+onto it and git-pushes it (_autoblock_task, :678-690). Both attempts are
+consumed inside a SINGLE tick.
+
+Reproduction: board with task 1 in-progress claimed by human-alice, task 2
+in backlog; the agent command only ever touches task 2. Only max_iterations
+is set, everything else default.
+
+    Task #1: human is working on this
+    Status:   in-progress
+    Claimed:  human-alice
+    Blocked:  auto-block: no progress after 2 attempts (foundation)
+
+    .karr.log: AUTOBLOCK task#1: auto-block: no progress after 2 attempts
+
+Cost: foundation makes a destructive write to shared board state about work
+it never attempted, and pushes it. A human's or another machine's
+in-progress card is blocked out from under them within seconds, drops out of
+karr pick's actionable set, and carries a reason that is factually wrong. On
+a dogfooded multi-agent board this is the most damaging thing in the domain.
+Fixed in ebd1433. The identity question had no obvious answer -- karr agentname mints a random name inside the agent and --claim is whatever the agent typed, so foundation cannot know a name a priori. The one identity the BOARD records for a foundation run is the activity-log identity: Runner exports KARR_ROLE=agent, so every karr write the agent makes lands in refs/karr/log/agent/<email>. Foundation builds that same identity itself and diffs the entries across the drain, which yields both what was touched and under which claim name. No Runner.pm change needed. Engagement is accumulated across the whole drain, not per iteration, because the iteration that claims a card is the one that moves the board -- a stall only becomes visible later. A card claimed in an EARLIER run does not count: foundation cannot tell its own stale claim from another machine's live one, and 'no progress after N attempts' would be a lie about attempts it never made. That is claim_timeout / karr unlock territory. Side effect: _reset_attempts heals counters poisoned by the old behaviour on the next run.
