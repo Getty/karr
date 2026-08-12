@@ -1,0 +1,52 @@
+---
+claimed_at: 2026-08-12T04:19:35Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-08-12T04:19:30Z
+created: 2026-08-12T01:00:57Z
+id: 140
+priority: medium
+started: 2026-08-12T03:48:51Z
+status: done
+tags:
+- bug
+- metrics
+title: 'karr metrics: the start guard stops guarding after the #138 clamp'
+updated: 2026-08-12T04:19:35Z
+---
+
+Measured on a detached copy of this board (a temp repo with no remote, fed
+`refs/karr/*` by path) while implementing #138.
+
+`karr metrics` excludes a card from cycle time when its `started` precedes its
+own `created`:
+
+    my $start_measurable =
+      defined $started && ( !defined $created || $started >= $created );
+
+After `karr repair --yes` clamps `started` to `created` (#138) that condition is
+true by construction for every card it touched, so the guard excludes nothing
+any more -- and `unusable_timestamps`, the figure whose whole job is to say how
+many cards are missing from the averages, drops to zero.
+
+    before repair:  lead 6h38m over 134 | cycle 4h44m over 42  | efficiency 17.6% | unusable 75
+    after  repair:  lead 6h38m over 134 | cycle 0h16m over 117 | efficiency  3.4% | unusable 0
+
+The average cycle time of 16 minutes is not a measurement. 42 of those 117
+cycle samples are negative, because the same old karr also wrote `completed` as
+a bare date and it falls before the clamped `started` (companion ticket on the
+`completed` stamp). The command now reports a figure built on them with no
+caveat at all -- the confidently wrong number its own POD says it exists not to
+print.
+
+The relevant POD paragraph ("Neither average is clamped: a card whose
+`completed` precedes its `created` ... contributes a negative duration and is
+left visible as one") was written for a hand-edited outlier. It is not wrong,
+but it does not cover 36% of the sample being impossible.
+
+What is probably wanted: a second ordering check -- a cycle time may not be
+negative, i.e. `completed >= started` -- counted into `unusable_timestamps` the
+same way the start check is, so the note keeps naming what was left out. That
+is a metrics-semantics decision (karr-board-worker), which is why #138
+deliberately did not touch `lib/App/karr/Cmd/Metrics.pm`.
+Fixed in d21f0b8: second ordering guard (completed >= started) on the cycle average, counted into unusable_timestamps. POD/skill docs and Changes updated, regression test t/141-metrics-cycle-order.t. Lead time deliberately untouched -- see #139.
