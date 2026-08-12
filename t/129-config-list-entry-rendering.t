@@ -31,7 +31,11 @@ use App::karr::Git;
 # parentheses, in `get` and in `show` alike, so the two surfaces cannot disagree
 # about what the board's columns are. --json keeps carrying the entries exactly
 # as configured -- it was already faithful, and is pinned here so a rendering
-# fix can never be "helpfully" pushed into the machine-readable payload.
+# fix can never be "helpfully" pushed into the machine-readable payload. That
+# assurance is about the entries, not about the envelope: #131 later wrapped
+# every `config get --json` answer in its key, so the expectations here are
+# `{ statuses => [...] }` where they used to be a bare array. t/138 owns the
+# envelope.
 #
 # Driven through the real binary: the bug lived in the command's renderer, and
 # an in-process assertion on Config->statuses (t/02, t/53) stayed green
@@ -133,17 +137,22 @@ subtest 'config show renders the same lists as config get (#130)' => sub {
 subtest '--json carries the entries as configured, not the rendering (#130)' => sub {
     my $repo = _board_repo();
 
+    # The payload is wrapped in the requested key since #131 -- what this
+    # subtest guards is the *value*: the entries as configured, never the
+    # `name (setting: 1)` rendering above.
     my $statuses = _run_karr( $repo, 'config', 'get', 'statuses', '--json' );
     is( $statuses->{exit}, 0, 'exit 0' ) or diag $statuses->{stderr};
     is_deeply(
         eval { decode_json( $statuses->{stdout} ) },
-        [   'backlog',
-            'todo',
-            { name => 'in-progress', require_claim => 1 },
-            { name => 'review',      require_claim => 1 },
-            'done',
-            'archived',
-        ],
+        {   statuses => [
+                'backlog',
+                'todo',
+                { name => 'in-progress', require_claim => 1 },
+                { name => 'review',      require_claim => 1 },
+                'done',
+                'archived',
+            ]
+        },
         'statuses --json is the configured structure, mappings and all'
     ) or diag $statuses->{stdout};
 
@@ -151,17 +160,20 @@ subtest '--json carries the entries as configured, not the rendering (#130)' => 
     is( $classes->{exit}, 0, 'exit 0' ) or diag $classes->{stderr};
     is_deeply(
         eval { decode_json( $classes->{stdout} ) },
-        [   { name => 'expedite', wip_limit => 1, bypass_column_wip => 1 },
-            { name => 'fixed-date' },
-            { name => 'standard' },
-            { name => 'intangible' },
-        ],
+        {   classes => [
+                { name => 'expedite', wip_limit => 1, bypass_column_wip => 1 },
+                { name => 'fixed-date' },
+                { name => 'standard' },
+                { name => 'intangible' },
+            ]
+        },
         'classes --json keeps wip_limit and bypass_column_wip'
     ) or diag $classes->{stdout};
 
     my $priorities = _run_karr( $repo, 'config', 'get', 'priorities', '--json' );
     is_deeply( eval { decode_json( $priorities->{stdout} ) },
-        [qw( low medium high critical )], 'priorities --json is a plain array' )
+        { priorities => [qw( low medium high critical )] },
+        'priorities --json is a plain array' )
         or diag $priorities->{stdout};
 
     my $whole = _run_karr( $repo, 'config', 'show', '--json' );

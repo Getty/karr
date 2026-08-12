@@ -61,6 +61,19 @@ overrides.
 =item * C<--json>
 
 Machine-readable rendering of whichever of the two the command answered.
+C<show> prints the config as one object keyed by config key; C<get KEY> prints
+that same object restricted to the one key asked for -- B<always> wrapped, so
+the requested key is in the payload whatever its value is:
+
+    karr config get claim_timeout --json    # {"claim_timeout":"1h"}
+    karr config get board --json            # {"board":{"name":"..."}}
+    karr config get statuses --json         # {"statuses":["backlog", ...]}
+
+Through 0.402 only scalars were wrapped and lists and mappings were printed
+bare, which left C<get board> answering C<{"name":"..."}> -- byte-identical to
+the wrapped form of a scalar key called C<name>, and no key in the payload to
+tell them apart (#131). Consumers that read the bare list or mapping must now
+index the requested key first; a scalar read is unchanged.
 
 =back
 
@@ -231,7 +244,13 @@ sub _get_key {
   die "Unknown key: $key\n" unless defined $val;
 
   if ($self->json) {
-    $self->print_json(ref $val ? $val : { $key => $val });
+    # Always wrapped in the requested key, scalar or not (#131). It used to hand
+    # a list or mapping over bare, and then `config get board --json` answered
+    # {"name":"..."} -- indistinguishable from the wrapped form of a scalar key
+    # named `name`, with nothing in the payload saying which of the two it was.
+    # Wrapping unconditionally also makes the answer a one-key subset of the
+    # `config show --json` object rather than a second schema.
+    $self->print_json({ $key => $val });
   } else {
     printf "%s\n", $self->_format_value($val);
   }

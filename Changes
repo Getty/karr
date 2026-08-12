@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - `karr config get KEY --json` now always wraps the answer in the key that
+      was asked for (ticket #131). It wrapped scalars and printed lists and
+      mappings bare, so `karr config get board --json` answered
+      `{"name":"..."}` — byte-identical to the wrapped form of a scalar key
+      called `name`, with nothing in the payload to tell the two apart, and a
+      consumer reading it as `{"board": ...}` silently got the wrong shape.
+      Mappings and lists are now `{"board":{...}}` and `{"statuses":[...]}`;
+      scalars are unchanged. That also makes `get KEY --json` a one-key subset
+      of the `config show --json` object rather than a second schema. This is
+      a deliberate break of a machine-readable interface, not a bug fix:
+      consumers that read the bare list or mapping have to index the requested
+      key first. Nothing in the distribution, the shipped skill or
+      karr-foundation read the old form. Two asymmetries are left alone as
+      separate decisions: `config set --json` answers with its own
+      `{"key":...,"value":...}` shape, and a dotted key still wraps flat
+      (`get board.name --json` → `{"board.name":"..."}`, not a nested object),
+      so a dotted `get` is still not a subset of `show`.
+
     - Deleting a task id that was never there no longer writes an activity-log
       entry claiming it was deleted (ticket #120). `Role::BoardAccess`'s two
       write doors disagreed by accident: `save_task` guarded its
@@ -22,8 +40,9 @@
       merges into something schema-valid, `Config->validate` — the single
       validation gate — waved it through: the result was a `refs/karr/config`
       with the board's entire real config nested under a `data:` key and
-      `board.name` gone. This is an API removal against 0.500 for anyone who
-      composed the role outside this distribution; the role's POD now records
+      `board.name` gone. It has been there since the initial release, so this
+      is an API removal against 0.402 for anyone who composed the role outside
+      this distribution; the role's POD now records
       why the door is deliberately absent, since `save_task` and `delete_task`
       earn theirs by writing the activity log and a bare pass-through does not.
 
