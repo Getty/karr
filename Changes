@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - karr-foundation no longer auto-blocks tasks its agent never touched
+      (ticket #158). `_stuck_tasks` claimed to return "tasks the agent engaged
+      (claimed / in-progress) but did not move" and tested only whether the
+      card carried *any* claim or sat in `in-progress` — who held it was never
+      compared against anything. Every drain iteration in which the agent moved
+      some other card therefore charged an attempt against every card somebody
+      else was holding, and since `max_attempts` (default 2) can be spent
+      inside a single drain, a human's in-progress card was blocked with
+      `auto-block: no progress after N attempts (foundation)` and pushed to the
+      remote within seconds — a destructive write to shared board state about
+      work foundation never attempted, dropping that card out of `karr pick`'s
+      actionable set behind its owner's back and giving a reason that is
+      factually wrong. Engagement is now proven rather than assumed: foundation
+      runs the agent with `KARR_ROLE=agent`, so the agent's `karr` writes are
+      recorded in the board's own activity log under the `agent` identity, and
+      only cards named there during that drain — held by nobody, or under a
+      claim name the agent itself wrote with — can be penalized. A card the
+      agent merely left claimed in an earlier run no longer counts either; a
+      stale claim is what `claim_timeout` and `karr unlock` are for. Where that
+      evidence is missing altogether — an agent command that never calls
+      `karr`, an unreadable log — foundation now auto-blocks nothing rather
+      than guess: a drain that ends on its iteration cap costs an iteration,
+      blocking the wrong card costs somebody their work. The ownership test is
+      repeated at the write itself, which is the only place foundation mutates
+      a board, so a future caller inherits the guarantee instead of having to
+      remember it.
+
     - karr-foundation no longer splices environment values into the agent
       command string before `/bin/sh` parses it (ticket #159). `PROMPT`,
       `KARR_REPO` and `KARR_ROLE` are exported into the child's environment

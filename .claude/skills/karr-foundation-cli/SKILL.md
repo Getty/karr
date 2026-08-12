@@ -148,7 +148,7 @@ Each iteration runs `command` once, then classifies result:
 | Outcome | Meaning | Action |
 |---------|---------|--------|
 | **progress** | board changed | keep draining |
-| **stall** | task claimed but didn't move | bump attempt counter; auto-block after `max_attempts` |
+| **stall** | a task *this run's agent engaged* didn't move | bump attempt counter; auto-block after `max_attempts` |
 | **common-error** | bad exit, timeout, or error pattern | exponential backoff, no task penalty |
 | **idle** | agent did nothing, grabbed nothing | stop |
 
@@ -159,6 +159,16 @@ When a task is stuck after `max_attempts`, foundation marks it blocked with:
 blocked: auto-block: no progress after N attempts (foundation)
 ```
 Agent can override with `karr edit --block "reason"`.
+
+**Engaged** means foundation can prove the agent worked that card during *this*
+drain: it runs the command with `KARR_ROLE=agent`, so the agent's `karr` writes
+land in the board's activity log under the `agent` identity, and only tasks
+named there — unclaimed, or held under a claim name the agent itself wrote
+with — can be penalized. A card somebody else holds is never auto-blocked,
+nor is one the agent merely left claimed in an earlier run (that is what
+`claim_timeout` and `karr unlock` are for). Without that evidence — an agent
+command that never calls `karr` — foundation auto-blocks **nothing** rather
+than guess (#158).
 
 ### Exponential cooldown
 

@@ -257,8 +257,11 @@ subtest 'foundation does not treat an empty claim as an engaged card' => sub {
   ok( $foundation->_is_actionable( $states{1} ), 'and it is still actionable' );
 
   # Identical before and after a run means the agent made no progress. A card
-  # nobody ever claimed must not count toward the auto-block for that.
-  is_deeply( [ $foundation->_stuck_tasks( \%states, \%states ) ], [],
+  # nobody ever claimed must not count toward the auto-block for that -- even
+  # when the agent did write to it during the run, which is what the engagement
+  # record here says (#158).
+  my $engaged = { seen => 0, ids => { 1 => 1 }, claims => {} };
+  is_deeply( [ $foundation->_stuck_tasks( \%states, \%states, $engaged ) ], [],
     'an unclaimed card is not a stuck task' );
 };
 

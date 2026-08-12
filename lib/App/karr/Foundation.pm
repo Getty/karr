@@ -14,6 +14,7 @@ use Digest::MD5 qw( md5_hex );
 use Try::Tiny;
 use App::karr::Git;
 use App::karr::BoardStore;
+use App::karr::ActivityLog;
 use App::karr::Foundation::Runner;
 use App::karr::Foundation::State;
 use App::karr::Foundation::Overview;
@@ -227,11 +228,23 @@ the run's captured output:
 
 =item * B<progress> — the board changed; keep draining.
 
-=item * B<stall> — a task the agent claimed / left C<in-progress> did not move.
-That task's attempt counter is bumped; at C<max_attempts> it is auto-blocked
+=item * B<stall> — a task B<this run's agent engaged> did not move. That task's
+attempt counter is bumped; at C<max_attempts> it is auto-blocked
 (C<blocked: auto-block: no progress after N attempts (foundation)>) so it drops
 out of the actionable set and the drain can finish. The agent may always set a
 better reason itself with C<karr edit --block>; the auto-block is a fallback.
+
+B<Engaged> means foundation can prove the agent worked on that card during
+B<this> drain: the agent runs with C<KARR_ROLE=agent>, so every C<karr> write
+it makes is recorded in the board's own activity log under the C<agent>
+identity, and only the tasks named there — held by nobody, or by a claim name
+the agent itself wrote under — can be penalized. A card somebody else holds is
+never touched, and neither is one the agent merely left claimed in an earlier
+run: a stale claim is what C<claim_timeout> and C<karr unlock> are for. Where
+that evidence is missing altogether — an agent that does not write through
+C<karr>, an unreadable log — foundation auto-blocks B<nothing> rather than
+guess: the drain then simply ends on its iteration cap, which is far cheaper
+than blocking a human's in-progress card out from under them (#158).
 
 =item * B<common-error> — a non-zero/timeout exit or a C<error_patterns> match
 (rate limit, auth, network, 5xx, …). No task is penalized; the repo enters an
@@ -569,15 +582,84 @@ sub _has_actionable_tasks {
   return 0;
 }
 
-# Tasks the agent engaged (claimed / in-progress) but did not move across a
-# run — still actionable and byte-identical before/after. These are the only
-# tasks that count toward an auto-block.
+# ---------------------------------------------------------------------------
+# Agent engagement (who this run's agent is, and what it touched)
+# ---------------------------------------------------------------------------
+
+# The activity log of the identity foundation runs its agent under. The Runner
+# exports KARR_ROLE=agent to the command, so every nested `karr` write during
+# the run lands in refs/karr/log/agent/<git-email> — the same identity this
+# builds, since the agent runs in this repo with this repo's git config. Any
+# other actor on the board (a human, another machine's agent) writes elsewhere.
+sub _agent_log_entries {
+  my ( $self, $repo ) = @_;
+  my $git = App::karr::Git->new( dir => "$repo" );
+  return () unless $git->is_repo;
+  my $log = App::karr::ActivityLog->new( git => $git, role => 'agent' );
+  return try { $log->entries } catch { () };
+}
+
+# An engagement record for one drain: the log entries already present when the
+# drain started (so only what this drain adds counts), the task ids this run's
+# agent has written to, and the claim names it wrote them under.
+sub _new_engagement {
+  my ( $self, $repo ) = @_;
+  my @seen = $self->_agent_log_entries( $repo );
+  return { seen => scalar @seen, ids => {}, claims => {} };
+}
+
+# Fold the entries the last command added into the record. Nothing else is
+# evidence of engagement: a task that never shows up here was never touched by
+# this run's agent, whatever its status or claim says.
+sub _note_engagement {
+  my ( $self, $repo, $eng ) = @_;
+  my @entries = $self->_agent_log_entries( $repo );
+  return $eng if @entries <= $eng->{seen};
+  for my $entry ( @entries[ $eng->{seen} .. $#entries ] ) {
+    my $id = $entry->{task_id};
+    $eng->{ids}{ $id + 0 } = 1 if defined $id && $id =~ /\A[0-9]+\z/;
+    my $who = $entry->{agent};
+    $eng->{claims}{$who} = 1 if defined $who && length $who;
+  }
+  $eng->{seen} = scalar @entries;
+  return $eng;
+}
+
+# True when the card is the agent's to penalize: unclaimed, or held under a
+# name this run's agent itself wrote with. A claim belonging to anybody else —
+# a human, another machine's agent, or this agent's own abandoned claim from an
+# earlier run — is never ours to auto-block.
+sub _agent_holds {
+  my ( $self, $state, $claims ) = @_;
+  my $owner = $state->{claimed_by};
+  return 1 unless defined $owner && length $owner;
+  return ( $claims // {} )->{$owner} ? 1 : 0;
+}
+
+# Tasks this run's agent engaged but did not move — still actionable, written
+# to by the agent during this drain, held by nobody but the agent, and
+# byte-identical before/after the last command. These are the only tasks that
+# count toward an auto-block.
+#
+# Engagement is proven, never assumed: without an entry of the agent's own in
+# $eng, foundation has no evidence it ever attempted the task, and an
+# auto-block would be a destructive write to somebody else's card carrying a
+# reason that is factually wrong (#158). So an engagement it cannot establish —
+# an agent that does not write through karr, an unreadable log, a stale claim
+# nobody touched this run — yields no stuck tasks and no auto-block at all.
+# Failing to block a genuinely stuck card only leaves the drain to end on its
+# iteration cap; blocking a stranger's card takes their work out of the
+# actionable set behind their back.
 sub _stuck_tasks {
-  my ( $self, $before, $after ) = @_;
+  my ( $self, $before, $after, $eng ) = @_;
+  my $ids    = ( $eng // {} )->{ids}    // {};
+  my $claims = ( $eng // {} )->{claims} // {};
   my @stuck;
   for my $id ( sort { $a <=> $b } keys %$after ) {
     my $a = $after->{$id};
     next unless $self->_is_actionable( $a );
+    next unless $ids->{$id};                      # the agent never touched it
+    next unless $self->_agent_holds( $a, $claims ); # somebody else holds it
     next unless defined $a->{claimed_by} || ( $a->{status} // '' ) eq 'in-progress';
     my $b = $before->{$id} or next;   # newly created this run — give it grace
     next if ( $b->{status}  // '' ) ne ( $a->{status}  // '' );
@@ -611,6 +693,11 @@ sub _drain_repo {
   my $first      = 1;
   my $iter       = 0;
 
+  # What this run's agent engages, accumulated across the whole drain: the
+  # iteration that claims a task is the one that moves the board, so the stall
+  # only becomes visible one or more iterations later.
+  my $eng = $self->_new_engagement( $repo );
+
   while ( 1 ) {
     my %before = $self->_task_states( $repo );
     my @actionable = grep { $self->_is_actionable( $before{$_} ) } keys %before;
@@ -643,7 +730,8 @@ sub _drain_repo {
     $outcome = 'progress' if $progressed;
 
     my %after = $self->_task_states( $repo );
-    my @stuck = $self->_stuck_tasks( \%before, \%after );
+    $self->_note_engagement( $repo, $eng );
+    my @stuck = $self->_stuck_tasks( \%before, \%after, $eng );
 
     # Reset the attempt counter for any task that is no longer stuck
     # (advanced, blocked, or gone), then bump/auto-block the stuck ones.
@@ -655,7 +743,8 @@ sub _drain_repo {
       my $n = $self->_bump_attempts( $repo, $id );
       next if $n < $max_attempts;
       $self->_autoblock_task( $repo, $id,
-        "auto-block: no progress after $n attempts (foundation)" );
+        "auto-block: no progress after $n attempts (foundation)",
+        $eng->{claims} );
       $self->_reset_attempts( $repo, $id );
     }
 
@@ -675,13 +764,26 @@ sub _drain_repo {
 # Auto-block (in-process via BoardStore, no karr CLI)
 # ---------------------------------------------------------------------------
 
+# $claims is the set of claim names this run's agent wrote under (see
+# _note_engagement). The ownership test is repeated here, at the write itself,
+# rather than trusted from _stuck_tasks: this is the one place that mutates
+# somebody's card and pushes it, the board may have changed since the snapshot
+# the caller decided on, and any future caller inherits the guarantee instead
+# of having to remember it (#158).
 sub _autoblock_task {
-  my ( $self, $repo, $id, $reason ) = @_;
+  my ( $self, $repo, $id, $reason, $claims ) = @_;
   return if $self->dry_run;
   my $git = App::karr::Git->new( dir => "$repo" );
   return unless $git->is_repo;
   my $store = App::karr::BoardStore->new( git => $git );
   my $task  = $store->find_task( $id ) or return;
+  unless ( $self->_agent_holds(
+      { claimed_by => ( $task->has_claimed_by ? $task->claimed_by : undef ) },
+      $claims ) ) {
+    $self->_append_log( $repo,
+      "AUTOBLOCK-SKIP task#$id: claimed by " . $task->claimed_by );
+    return 0;
+  }
   $task->block( $reason );
   $store->save_task( $task );
   $git->push;   # best-effort propagate to remote
