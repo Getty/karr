@@ -51,7 +51,7 @@
       `{"name":"..."}` — byte-identical to the wrapped form of a scalar key
       called `name`, with nothing in the payload to tell the two apart, and a
       consumer reading it as `{"board": ...}` silently got the wrong shape.
-      Mappings and lists are now `{"board":{...}}` and `{"statuses":[...]}`;
+      Mappings and lists now carry their key too, as `board` and `statuses`;
       scalars are unchanged. That also makes `get KEY --json` a one-key subset
       of the `config show --json` object rather than a second schema. This is
       a deliberate break of a machine-readable interface, not a bug fix:
