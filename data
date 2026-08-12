@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-08-12T00:02:49Z
+claimed_by: agent-jsonwrap
+class: standard
+completed: 2026-08-12T00:02:49Z
+created: 2026-08-11T19:26:40Z
+id: 131
+priority: low
+started: 2026-08-12T00:02:49Z
+status: done
+tags:
+- config
+- json
+title: config get --json wraps scalar values but not ref values
+updated: 2026-08-12T00:02:49Z
+---
+
+karr config get KEY --json is inconsistent about wrapping:
+
+    $ karr config get claim_timeout --json
+    {"claim_timeout":"1h"}          # wrapped in its key
+
+    $ karr config get board --json
+    {"name":"App::karr"}            # the bare value, NOT wrapped
+
+    $ karr config get statuses --json
+    ["backlog",...]                 # bare too
+
+So a consumer cannot tell a wrapped scalar from a bare mapping: the board
+answer looks exactly like the wrapped form and is not one. Reading it as
+{"board": ...} silently yields the wrong shape, and there is no key in the
+payload to disambiguate.
+
+Found while fixing #130, deliberately left alone there: unifying this is a
+break in a machine-readable interface with no actual bug behind it, so it
+wants its own decision rather than a drive-by change. Options are to wrap
+consistently (breaks anyone reading list/mapping keys today) or to never
+wrap (breaks anyone reading scalar keys today). t/49 and t/64 pin the
+current behaviour for ref values.
