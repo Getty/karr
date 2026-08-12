@@ -1,39 +1,97 @@
-# ABSTRACT: The one way karr writes a bundled skill file to disk
+# ABSTRACT: The one way karr finds and writes a bundled skill file
 
 package App::karr::Role::SkillFile;
 our $VERSION = '0.500';
 use Moo::Role;
-# Loaded without importing, for the reason spelled out in
+# All loaded without importing, for the reason spelled out in
 # App::karr::Role::Output: a Moo::Role composes every sub in its package into
 # its consumers, so `use App::karr::Error qw( user_error )` here would quietly
-# make user_error and clean_error methods on `karr skill` and `karr init`.
+# make user_error and clean_error methods on `karr skill` and `karr init`, and
+# `use Path::Tiny;` would do the same with path() (ticket #38, t/121).
 use App::karr::Error ();
+use Path::Tiny ();
+use File::ShareDir ();
 
-# Nothing is required of the consumer. _write_skill is handed both the target
-# and the content, and reaches for nothing else -- which is the point of the
-# role: `karr skill` is board-less while `karr init` composes
-# App::karr::Role::BoardDiscovery, and the only way one helper can serve both
-# is by depending on neither (the rule is ticket #141's, read from the other
-# side).
+# Nothing is required of the consumer. _skill_content takes no arguments and
+# _write_skill is handed both the target and the content, and neither reaches
+# for anything on $self -- which is the point of the role: `karr skill` is
+# board-less while `karr init` composes App::karr::Role::BoardDiscovery, and the
+# only way one helper can serve both is by depending on neither (the rule is
+# ticket #141's, read from the other side).
 
 =head1 DESCRIPTION
 
-Two commands put the bundled skill file on disk -- C<karr skill install> /
-C<karr skill update>, and C<karr init --claude-skill>, which writes the same
-F<.claude/skills/karr/SKILL.md> that C<karr skill install --agent claude-code>
-does. This role is the single place that knows I<how> that write has to happen,
-so the rule cannot be fixed in one command and left wrong in the other, which is
-exactly what happened between tickets #142 and #145.
+Three commands need the bundled skill file: C<karr skill install> and
+C<karr skill update> write it, C<karr skill show> prints it, and
+C<karr init --claude-skill> writes the same F<.claude/skills/karr/SKILL.md> that
+C<karr skill install --agent claude-code> does. This role is the single place
+that knows both I<where that file comes from> and I<how> it has to be written,
+so neither rule can be fixed in one command and left wrong in the other, which
+is exactly what happened between tickets #142 and #145.
 
-The rule: the target is written B<in place>, keeping its inode, so a F<SKILL.md>
-that is one link of a hardlink chain shared across projects stays part of that
-chain.
+The lookup: F<share/claude-skill.md> via L<File::ShareDir> when the dist is
+installed, and out of the source tree this file was loaded from when it is not.
+
+The write: the target is written B<in place>, keeping its inode, so a
+F<SKILL.md> that is one link of a hardlink chain shared across projects stays
+part of that chain.
 
 =head1 SEE ALSO
 
 L<App::karr::Cmd::Skill>, L<App::karr::Cmd::Init>
 
 =cut
+
+# Where this file was loaded from, and how far above it the dist root sits.
+# Both are derived from the package name so they cannot drift apart if the role
+# is ever renamed or moved: lib/App/karr/Role/SkillFile.pm is four name parts
+# below lib/, and lib/ is one more below the tree that also holds share/.
+my @NAME_PARTS   = split /::/, __PACKAGE__;
+my $OWN_INC_KEY  = join( '/', @NAME_PARTS ) . '.pm';
+my $DIST_ROOT_UP = @NAME_PARTS + 1;
+
+# The bundled skill file, as characters (slurp_utf8 is Path::Tiny's own
+# character-level read, which is what the file edge is allowed to use; decoding
+# on top of it would be the double decode App::karr::Encoding forbids).
+#
+# Two places to look, in order: File::ShareDir, which is where share/ lands when
+# the dist is installed, and -- when it is not, i.e. a checkout being run with
+# -Ilib -- share/ in that checkout.
+#
+# The second half has to know where that checkout is, and the only thing that
+# knows is a file of the dist Perl has already loaded. Cmd::Skill and Cmd::Init
+# each asked %INC for their own ($INC{'App/karr/Cmd/Skill.pm'} against
+# $INC{'App/karr/Cmd/Init.pm'}), and that one line was the whole difference
+# between their two copies of this sub (ticket #146). Naming either command's
+# file from here would be the wrong fix twice over: it answers for one caller
+# and sends the other silently on to the die below, and since MooX::Cmd decides
+# which command classes get loaded, whether the miss happens would depend on how
+# karr was invoked rather than showing up the first time. This file is the
+# honest anchor instead. It belongs to the same dist as the share/ being looked
+# for, it cannot fail to be loaded while one of its own methods is running, and
+# it sits at the same depth below lib/ as the two command classes, so the climb
+# is the one both copies made.
+sub _skill_content {
+  my ($self) = @_;
+
+  # Installed dist: File::ShareDir knows where share/ went.
+  my $installed = eval {
+    my $dir = File::ShareDir::dist_dir('App-karr');
+    my $file = Path::Tiny::path($dir)->child('claude-skill.md');
+    $file->slurp_utf8 if $file->exists;
+  };
+  return $installed if defined $installed && length $installed;
+
+  # Not installed: the share/ of the tree this file came out of.
+  my $own_path = $INC{$OWN_INC_KEY};
+  if ($own_path) {
+    my $share = Path::Tiny::path($own_path)->parent($DIST_ROOT_UP)
+                                           ->child('share/claude-skill.md');
+    return $share->slurp_utf8 if $share->exists;
+  }
+
+  die "Could not find claude-skill.md. Is App::karr properly installed?\n";
+}
 
 # Written in place, on purpose. Path::Tiny's spew_utf8 writes a temp file and
 # renames it over the target, so the path it wrote comes back on a *new* inode.

@@ -13,12 +13,12 @@ use App::karr::Role::ExitCodes;
 use App::karr::Role::SkillFile;
 use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
-use File::ShareDir ();
 
 # ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
 # is board-less, so it does not inherit ExitCodes via BoardDiscovery.
-# SkillFile: _write_skill, shared with `karr init --claude-skill`, which writes
-# the same file this command writes for the claude-code agent (ticket #145).
+# SkillFile: _skill_content and _write_skill, shared with `karr init
+# --claude-skill`, which writes the same file this command writes for the
+# claude-code agent (tickets #145, #146).
 with 'App::karr::Role::Output', 'App::karr::Role::CliArgs',
      'App::karr::Role::ExitCodes', 'App::karr::Role::SkillFile';
 
@@ -253,7 +253,9 @@ sub _read_skill {
 # _write_skill -- the in-place write, and why it has to be one -- lives in
 # App::karr::Role::SkillFile, composed above: `karr init --claude-skill` writes
 # the very same .claude/skills/karr/SKILL.md, and kept its own spew_utf8 copy of
-# this rule until ticket #145 because the rule lived here (#142).
+# this rule until ticket #145 because the rule lived here (#142). _skill_content,
+# which finds the bundled file in the first place, followed it there in #146 --
+# it was duplicated in Cmd::Init down to the last line but one.
 
 sub _target_agents {
   my ($self) = @_;
@@ -284,27 +286,6 @@ sub _skill_dir {
     ? path($ENV{HOME})->child($spec->{global})
     : path('.')->child($spec->{project});
   return $base->child('karr');
-}
-
-sub _skill_content {
-  my ($self) = @_;
-
-  # Try File::ShareDir (installed dist)
-  my $installed = eval {
-    my $dir = File::ShareDir::dist_dir('App-karr');
-    my $file = path($dir)->child('claude-skill.md');
-    $file->slurp_utf8 if $file->exists;
-  };
-  return $installed if defined $installed && length $installed;
-
-  # Fallback: relative to module location (development)
-  my $module_path = $INC{'App/karr/Cmd/Skill.pm'};
-  if ($module_path) {
-    my $share = path($module_path)->parent(5)->child('share/claude-skill.md');
-    return $share->slurp_utf8 if $share->exists;
-  }
-
-  die "Could not find claude-skill.md. Is App::karr properly installed?\n";
 }
 
 1;

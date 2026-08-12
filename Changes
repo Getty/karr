@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - The lookup for the bundled skill file has one implementation instead of
+      two (ticket #146). `App::karr::Cmd::Init::_find_skill_source` and
+      `App::karr::Cmd::Skill::_skill_content` were the same sub twice over —
+      byte-identical apart from the `$INC` key each read to find its own source
+      tree for the development fallback — which is the shape that made ticket
+      #142 fix the skill *write* in one command and left #145 to fix it again
+      in the other three commits later. Both are now `_skill_content` on
+      `App::karr::Role::SkillFile`, next to the `_write_skill` #145 collapsed
+      the same way, and the role still requires nothing of its consumer, which
+      is what lets it serve board-less `karr skill` and board-composing
+      `karr init` alike. The fallback anchors on the role's own loaded path
+      rather than on a command's: naming either command's file would answer for
+      one caller and send the other silently on to "Could not find
+      claude-skill.md", and since MooX::Cmd decides which command classes get
+      loaded, whether that happened would depend on how karr was invoked. No
+      change in behaviour: both lookups, both fallback triggers and both
+      commands are exercised end to end in t/26-skill-share-dir.t, including
+      through the CLI with File::ShareDir made to fail the way an uninstalled
+      dist makes it fail.
+
     - `karr metrics` no longer averages impossible cycle times (ticket #140).
       A completed card whose `completed` precedes its `started` measures a
       negative duration, which is not a cycle time; it is now left out of that

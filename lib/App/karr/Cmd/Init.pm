@@ -7,15 +7,13 @@ use MooX::Cmd;
 use MooX::Options (
   usage_string => 'USAGE: karr init [--name TEXT] [--statuses LIST] [--claude-skill]',
 );
-use Path::Tiny;
-use File::ShareDir ();
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Config;
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::SkillFile;
 
-# SkillFile: _write_skill, shared with `karr skill`, which installs the same
-# file --claude-skill installs (ticket #145).
+# SkillFile: _skill_content and _write_skill, shared with `karr skill`, which
+# installs the same file --claude-skill installs (tickets #145, #146).
 with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SkillFile';
 
 =head1 SYNOPSIS
@@ -180,7 +178,11 @@ sub _install_claude_skill {
   eval { $skill_dir->mkpath; 1 }
     or user_error( "Could not create $skill_dir: ", clean_error($@) );
 
-  my $skill_content = $self->_find_skill_source;
+  # Also App::karr::Role::SkillFile's, since ticket #146: finding the bundled
+  # file was a second copy of `karr skill`'s _skill_content, identical to it
+  # except for the one $INC key that told the development fallback which
+  # command's source tree to look next to.
+  my $skill_content = $self->_skill_content;
   # Through App::karr::Role::SkillFile, not spew_utf8: this is the same file
   # `karr skill install --agent claude-code` writes, and in a checkout wired up
   # by manage-skills it is one link of a hardlink chain. spew_utf8 renames a
@@ -191,27 +193,6 @@ sub _install_claude_skill {
   # description of how a skill file gets written rather than two that drift.
   $self->_write_skill( $skill_dir->child('SKILL.md'), $skill_content );
   print "Installed Claude Code skill to .claude/skills/karr/SKILL.md\n";
-}
-
-sub _find_skill_source {
-  my ($self) = @_;
-
-  # Try File::ShareDir (installed dist)
-  my $installed = eval {
-    my $dir = File::ShareDir::dist_dir('App-karr');
-    my $file = path($dir)->child('claude-skill.md');
-    $file->slurp_utf8 if $file->exists;
-  };
-  return $installed if defined $installed && length $installed;
-
-  # Fallback: relative to module location (development)
-  my $module_path = $INC{'App/karr/Cmd/Init.pm'};
-  if ($module_path) {
-    my $share = path($module_path)->parent(5)->child('share/claude-skill.md');
-    return $share->slurp_utf8 if $share->exists;
-  }
-
-  die "Could not find claude-skill.md. Is App::karr properly installed?\n";
 }
 
 1;
