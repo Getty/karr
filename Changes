@@ -25,6 +25,27 @@
       references the `Config/priorities` and `Config/classes` instance
       methods.
 
+    - `karr edit --status X --release` no longer walks straight through the
+      `require_claim` guard and lands a card in a require_claim column with
+      no claim on it (ticket #150). `Cmd/Edit.pm` cleared the claim forty
+      lines after `apply_status_change` had already satisfied the guard with
+      that same claim, so `karr edit 1 --claim agent-a` followed by
+      `karr edit 1 --status in-progress --release` produced an unowned
+      in-progress card — a state `karr move` and `karr edit --status` both
+      refuse to create by any other route. `karr edit 2 --status in-progress
+      --claim agent-b --release` did it in one command. The fix has two
+      pieces: `--claim` and `--release` are rejected together at the flag
+      layer as a usage error (exit 2), matching kanban-md
+      (`cmd/edit.go:128-130`); and the `--release` block now runs before
+      `apply_status_change`, so the guard in
+      `Role::TaskMutation::apply_status_change` sees the post-release state
+      and refuses the status change, matching kanban-md's `validateEditPost`
+      firing after `applyFn` regardless of release
+      (`internal/board/mutate.go:442`). `--release` alone on a card already
+      in a require_claim column is intentionally left unchanged: it is the
+      same shape but outside the ticket's scope (kanban-md has the same
+      hole).
+
     - karr-foundation no longer throws away a successful agent run because of
       something it printed (ticket #160). The common-error scan ran on every
       run before anything asked whether the run had worked, over the whole
