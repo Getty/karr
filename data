@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-08-12T00:19:09Z
+claimed_by: agent-metrics
+class: standard
+completed: 2026-08-12T00:19:09Z
+created: 2026-08-11T03:28:09Z
+id: 126
+priority: low
+started: 2026-08-12T00:19:09Z
+status: done
+tags:
+- feature
+- parity
+title: 'metrics command: throughput, lead/cycle time, flow efficiency, aging work
+  items'
+updated: 2026-08-12T00:19:09Z
+---
+
+Moved onto the board from the roadmap block in CLAUDE.md, which was removed
+because it had never been reconciled with the board it pointed at. This is one
+of the two items in it that are real parity gaps.
+
+kanban-md has this: cmd/metrics.go, "Show flow metrics -- throughput, average
+lead/cycle time, flow efficiency, and aging work items". The metric names in
+its code are throughput, lead_time, cycle_time, flow_efficiency and wip.
+
+karr has the data already. The started / completed timestamps are stamped on
+every status change and have been correct on non-default boards since the
+terminal-status sweep (#67, #98, #101), and per-command activity logging (#64)
+records refs/karr/log/* entries that carry who did what and when. Two comments
+in Task.pm already name the cycle-time arithmetic as this command's job.
+
+What needs deciding rather than assuming, and best answered by reading
+kanban-md's implementation rather than reinventing it:
+
+- Which timestamps define lead versus cycle time here -- created to completed,
+  versus started to completed, is the usual split, but kanban-md's choice is
+  the one that keeps the numbers comparable between the two tools.
+- What flow efficiency divides by, given karr records blocked state
+  (blocked / block_reason) but not blocked durations.
+- Whether the window is fixed (last N days) or derived, and what an empty
+  board answers.
+- Whether it reads task timestamps only, or also the activity log -- the log
+  is richer but only exists for boards that were active after #64 landed, so
+  a metrics command built on it would report nothing for older boards without
+  saying why.
+
+--json belongs on it from the start, since a metrics command exists to be
+consumed.
