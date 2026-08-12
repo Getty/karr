@@ -20,6 +20,11 @@ weak back-reference to the owning foundation supplies shared options and helpers
 (C<dry_run>, C<_stream_to_terminal>, C<_prompt_for>, C<_append_log>,
 C<_say_verbose>).
 
+The command is a shell template, not a string karr rewrites: C<PROMPT>,
+C<KARR_REPO> and C<KARR_ROLE> are exported into the child's environment and
+C</bin/sh> expands them like any other parameter. A prompt's own backticks
+therefore stay text, and C<< awk '{print $2}' >> reaches awk intact.
+
 A C<.karr.log> it cannot open ends the run for that board B<before> the command
 is started, never after: the agent is refused rather than launched unwatched.
 Once the fork has happened the parent owes it a C<waitpid>, so nothing between
@@ -43,17 +48,32 @@ sub _run_command {
   my $max_runtime  = $karr->{max_runtime} // 1800;
   my $stream_terms = $self->foundation->_stream_to_terminal;
 
-  # Environment for the child (and all karr calls it spawns). Set before the
-  # substitution so a command template — including the synthesized claude
-  # command — can reference $PROMPT, $KARR_REPO, etc.
+  # Environment for the child (and all karr calls it spawns). The child inherits
+  # it across the fork/exec below, so a command template — including the
+  # synthesized claude command — expands $PROMPT, ${KARR_REPO}, $KARR_ROLE and
+  # every other variable foundation itself was started with as ordinary shell
+  # parameters.
   local $ENV{KARR_REPO} = "$repo";
   local $ENV{KARR_ROLE} = 'agent';
   local $ENV{PROMPT}    = $self->foundation->_prompt_for($karr);
 
-  # Env-var substitution in command string
-  $command =~ s/\$\{(\w+)\}/$ENV{$1} \/\/ ''/ge;
-  $command =~ s/\$(\w+)/$ENV{$1} \/\/ ''/ge;
-
+  # The expansion is the shell's, not ours (#159). Splicing %ENV into the command
+  # string here instead meant the shell went on to parse the *values*: a prompt
+  # is board content written in Markdown, so its backtick spans and $(...) ran as
+  # commands in the board's own directory, and the substitution reached inside
+  # single quotes, where sh guarantees a literal — awk '{print $2}' arrived as
+  # awk '{print }'. Parameter expansion has neither problem: sh does not rescan
+  # an expanded value for substitutions, and it leaves single quotes alone. A
+  # template that needs a value the shell cannot see gets it exported above,
+  # never spliced.
+  #
+  # So this logs the template, which is now exactly the string /bin/sh -c is
+  # handed. It used to log the substituted result, which after this change is not
+  # even computable without reimplementing the shell — and what an operator reads
+  # this line for is which command was resolved (--command vs default_command vs
+  # .karr vs synthesized claude), not a second copy of the prompt. It also no
+  # longer copies whatever an env var held — a wrapper's API key included — into
+  # a plaintext .karr.log.
   $self->foundation->_append_log( $repo, "START command=$command" );
   $self->foundation->_say_verbose("exec in $repo: $command");
 

@@ -1,5 +1,21 @@
 {{$NEXT}}
 
+    - karr-foundation no longer splices environment values into the agent
+      command string before `/bin/sh` parses it (ticket #159). `PROMPT`,
+      `KARR_REPO` and `KARR_ROLE` are exported into the child's environment
+      and the shell expands them, as it already could. Previously a prompt's
+      backtick spans and `$(...)` — board content, written in Markdown — were
+      executed as shell commands in the board's own directory, and the agent
+      then received an instruction nobody wrote; and the substitution reached
+      inside single quotes, where sh guarantees a literal, so the documented
+      output-shaping technique broke silently (`awk '{print $2}'` arrived at
+      awk as `'{print }'`). Every variable a command template could reference
+      before still expands, the `${VAR}` form included. The START line in
+      `.karr.log` now records the command template — the exact string handed
+      to `/bin/sh` — instead of the substituted result, and so no longer
+      copies environment values, a wrapper's API key included, into a
+      plaintext log.
+
     - karr-foundation can no longer start an agent and then walk away from it
       (ticket #147). `App::karr::Foundation::Runner` opened `.karr.log` after
       the fork, so a log it could not open was reported with the agent already
