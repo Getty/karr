@@ -528,8 +528,12 @@ sub delete_task {
 
 =head2 delete_task
 
-Deletes the ref for task C<$id> (C<refs/karr/tasks/ID/data>). Deleting a ref
-that does not exist is not an error -- see L<App::karr::Git/delete_ref>.
+Deletes the ref for task C<$id> (C<refs/karr/tasks/ID/data>). Returns C<1>
+when this call removed it and C<0> when there was no such task -- deleting a
+card that is not there is not an error. A removal that is attempted and
+refused C<die>s rather than returning C<0>, so a false answer here always
+means "no such card", never "it may still be on the board" (see
+L<App::karr::Git/delete_ref>).
 
     $store->delete_task(7);
 

@@ -360,6 +360,15 @@ sub break_lock {
     for my $ref ( $self->ref_name($task_id), $self->legacy_ref_name($task_id) ) {
         next unless $self->git->ref_exists($ref);
         $owner //= $self->git->read_ref($ref);
+
+        # The return value is deliberately not consulted: after
+        # App::karr::Git::delete_ref, the lock is gone whether this call
+        # removed it or another unlock did in the same breath, and a delete
+        # that was refused raises instead of answering. That is what makes
+        # $broke honest -- until #119 it only meant "the ref was there when I
+        # looked", and a refused delete was announced as a broken lock while
+        # the holder kept the card. Anything that goes back to reading a soft
+        # answer out of delete_ref has to earn this line again.
         $self->git->delete_ref($ref);
         $broke = 1;
     }
@@ -379,6 +388,12 @@ C<(0, "not locked")> if neither ref existed. This is the escape hatch
 L</release> deliberately is not: C<karr unlock> is built on this, not on
 L</release>, because the whole problem it solves is a holder that is never
 coming back to release anything.
+
+C<(1, $owner)> means the lock is really gone. When a lock ref exists and
+refuses to be removed, this C<die>s with the C<karr: could not delete ...>
+message from L<App::karr::Git/delete_ref> instead of reporting a break that
+did not happen (#119) -- an escape hatch that lies leaves the card locked for
+every other agent with nobody left to look at it.
 
 =cut
 

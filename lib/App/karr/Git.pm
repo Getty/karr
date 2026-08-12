@@ -892,9 +892,10 @@ C<0> when the ref had already moved or gone, or when another process
 currently holds its lock (C<GIT_ELOCKED> -- same contention handling as
 L</write_ref_cas>, #85). A caller getting C<0> is expected to be inside
 L</retry_contended> and retry. A genuine failure C<die>s with a C<karr:
-could not delete ...> message -- the one place this differs from
-L</delete_ref>, where the same kind of failure is folded silently into a
-C<0> return.
+could not delete ...> message, as L</delete_ref> does too since #119. What
+still separates the two is the guard, not the error handling: C<0> here means
+"the ref moved or went first", while C<0> from L</delete_ref> means "there
+was nothing to remove".
 
 =cut
 
@@ -937,7 +938,13 @@ newline, matching the old C<git cat-file> transport; empty string when there
 is nothing to read). Always returns both from the same read -- a
 compare-and-swap caller that fetched the OID and the content separately would
 be guarding against the wrong revision if the ref moved in between.
-L</load_task_ref_with_oid> is the task-shaped version of this.
+
+L</load_task_ref_with_oid> is the task-shaped version of this, and answers a
+missing task with C<(undef, undef)> rather than C<(undef, '')>: its second
+slot holds an L<App::karr::Task>, and there is no empty task the way there is
+an empty string. The half worth testing is the same in both -- absence is
+C<undef> in the first slot, which is where every caller in this distribution
+reads it from.
 
 =cut
 
@@ -970,12 +977,23 @@ repository can't be opened.
 
 =cut
 
-# Returns 1 only when this call actually removed the ref, 0 otherwise -- the
-# ref was not there, or libgit2 refused. It used to swallow the exception and
-# answer 1 regardless (#51), which made a delete that did nothing look like a
-# delete that worked, and bumped $WRITES either way. That counter is what
-# SyncGuard reads to decide whether local refs still need pushing, so it may
-# only ever count writes that landed.
+# Returns 1 when this call removed the ref and 0 when there was nothing to
+# remove. It used to swallow the exception and answer 1 regardless (#51), which
+# made a delete that did nothing look like a delete that worked, and bumped
+# $WRITES either way. That counter is what SyncGuard reads to decide whether
+# local refs still need pushing, so it may only ever count writes that landed.
+#
+# A delete that was attempted and refused dies, as every other ref mutation in
+# this class does. It used to answer 0 for that too -- the same 0 as "was never
+# there" -- and break_lock read that 0 as "gone", so `karr unlock` reported
+# "Broke lock on task N" over a lock that was still standing (#119). unlock is
+# the escape hatch for a holder that never came back; a false success there
+# leaves the card locked for everyone with nobody left to look.
+#
+# 0 therefore means "the ref is not on this board", never "we could not tell".
+# The one seam is an unopenable repository, which is not a refusal to delete
+# but the whole class degrading to no-ops -- during global destruction _repo is
+# false by design and nothing native may run or throw (#63).
 #
 # Contention retries on the same terms as write_ref: losing the race for
 # refs/<name>.lock is not a failed delete, it is one that has not been
@@ -986,17 +1004,18 @@ sub delete_ref {
 
     return $self->retry_contended( "ref $ref", sub {
         # Asking first keeps "nothing to delete" -- a no-op, not a write --
-        # apart from the failures below, which libgit2 reports the same way.
+        # apart from the failure below, which libgit2 reports the same way.
         return 0 unless $repo->reference_exists($ref);
 
-        my $outcome = try {
+        my $deleted = try {
             $repo->reference_delete($ref);
-            'deleted';
+            1;
         } catch {
-            _is_contended_ref_error( $_, 0 ) ? 'contended' : 'failed';
+            my $err = $_;
+            return 0 if _is_contended_ref_error( $err, 0 );
+            die _ref_error( 'delete', $ref, $err );
         };
-        return () if $outcome eq 'contended';
-        return 0  if $outcome eq 'failed';
+        return () unless $deleted;
         $WRITES++;
         return 1;
     } );
@@ -1007,13 +1026,18 @@ sub delete_ref {
     my $removed = $git->delete_ref($ref);
 
 Deletes C<$ref>. Retries transparently through L</retry_contended> while
-another process holds the ref's lock. Returns C<1> only when this exact call
-is the one that removed it; returns C<0> for every other outcome -- the ref
-was never there, the repository can't be opened, or the delete failed for a
-reason other than lock contention. Unlike L</delete_ref_cas>, a
-non-contention failure here is reported the same way as "already gone"
-rather than as an exception -- a caller that needs to tell those apart has no
-way to from the return value alone.
+another process holds the ref's lock. Returns C<1> when this exact call is
+the one that removed it and C<0> when there was nothing to remove -- the ref
+was not there, or the repository can't be opened at all (which includes the
+global-destruction refusal every native operation in this class degrades to,
+#63). A delete that was attempted and refused C<die>s with a C<karr: could
+not delete ...> message, the same way L</delete_ref_cas> and L</write_ref>
+report a real failure: C<0> means "not on the board", never "we could not
+tell". It used to fold that failure into the same C<0>, and
+L<App::karr::Lock/break_lock> read it as "already gone", so C<karr unlock>
+announced a broken lock that was still held (#119). Unlike
+L</delete_ref_cas>, the delete itself is unguarded -- whatever is at C<$ref>
+goes, last-writer-wins.
 
 =cut
 
@@ -2173,7 +2197,10 @@ for a caller (L<App::karr::Cmd::Pick>) that means to write it back under
 compare-and-swap -- pairing OID and content from one read for the same
 reason L</read_ref_with_oid> does. Returns C<(undef, undef)> when the task
 doesn't exist -- note this differs from L</read_ref_with_oid>, which answers
-a missing ref with C<(undef, '')>. Legacy boards
+a missing ref with C<(undef, '')>, because that one's second slot is text and
+this one's is an object. Test the OID, not the second slot: it is C<undef>
+for an absent thing in both, so a caller carrying a habit from one to the
+other still asks the right question. Legacy boards
 (L</board_is_legacy_encoded>) have their frontmatter repaired as part of the
 parse.
 
@@ -2436,10 +2463,15 @@ sub replace_board_refs {
     # Only now the refs the snapshot does not carry. One left behind means the
     # board holds more than the snapshot did -- worth saying out loud, but not
     # worth failing a restore whose data is already in place.
+    #
+    # This is the one caller that wants a refused delete to be survivable, so
+    # it is the one that catches it (#119). A 0 is not a refusal and not stuck:
+    # it means the ref went between the listing and the delete.
     my @stuck;
     for my $ref ( $self->list_refs(BOARD_ROOT) ) {
         next if exists $commit{$ref};
-        CORE::push @stuck, $ref unless $self->delete_ref($ref);
+        my $gone = try { $self->delete_ref($ref); 1 } catch { 0 };
+        CORE::push @stuck, $ref unless $gone;
     }
     warn "karr: restored the snapshot, but could not remove "
        . join( ', ', @stuck ) . "\n" if @stuck;
@@ -2470,7 +2502,16 @@ different one than the board had.
 
 sub delete_refs {
     my ( $self, $prefix ) = @_;
-    $self->delete_ref($_) for $self->list_refs($prefix);
+
+    # One ref refusing to go must not stop the others, or the report below
+    # would name whichever failed first instead of everything still standing.
+    # delete_ref dies on a refusal now (#119), and that exception is the only
+    # thing that says *why* a `karr destroy` is stuck -- so it is kept, not
+    # swallowed, and raised after every ref has had its turn.
+    my @why;
+    for my $ref ( $self->list_refs($prefix) ) {
+        try { $self->delete_ref($ref) } catch { CORE::push @why, $_ };
+    }
 
     # Re-read rather than trust the loop. Now that delete_ref can say no
     # (#51), swallowing that here would just move the old lie one level up and
@@ -2478,8 +2519,9 @@ sub delete_refs {
     # also the only answer that stays right when a ref vanished underneath us:
     # gone is gone, whoever removed it.
     my @left = $self->list_refs($prefix);
-    die "karr: could not delete " . join( ', ', @left ) . "\n" if @left;
-    return 1;
+    return 1 unless @left;
+    die join( '', @why ) if @why;
+    die "karr: could not delete " . join( ', ', @left ) . "\n";
 }
 
 =method delete_refs
@@ -2487,11 +2529,13 @@ sub delete_refs {
     $git->delete_refs($prefix);
 
 Deletes every ref currently under C<$prefix> (via L</delete_ref>, so each one
-is itself retried against lock contention). Re-reads the prefix afterwards
-rather than trusting the deletes to have all landed, and dies naming
-whichever refs are still there if any are -- this is what C<karr destroy>
-uses, and a partial destroy reported as a success would be worse than one
-that fails loudly.
+is itself retried against lock contention). Every ref is attempted even when
+an earlier one refuses. Re-reads the prefix afterwards rather than trusting
+the deletes to have all landed, and dies if anything is still there -- naming
+each refusal and its reason, or naming the leftover refs when nothing raised
+one. This is what C<karr destroy> uses, and a partial destroy reported as a
+success would be worse than one that fails loudly. A ref that another process
+removed in the meantime is not a failure: gone is gone.
 
 =cut
 

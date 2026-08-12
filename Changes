@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `karr unlock` no longer announces a lock it did not break (ticket #119).
+      `Git::delete_ref` returned `0` both for "the ref was never there" and
+      for "libgit2 refused the delete", so a caller could not tell them apart
+      — and `Lock::break_lock` read the second as the first: with the delete
+      refused, `karr unlock` printed "Broke lock on task N" and exited 0 while
+      the lock ref was still on disk and the card still held, with nobody left
+      to look at it. `delete_ref` now raises on a refusal, the way its
+      compare-and-swap twin and every other ref mutation in the class already
+      did: `1` means this call removed it, `0` means there was nothing to
+      remove, and a refusal is an exception carrying libgit2's reason. Lock
+      contention is unchanged — still the retry path, not a failure — and so
+      is the `0` for a repository that cannot be opened at all, since that is
+      the global-destruction teardown from #63 rather than a refusal. The
+      delete itself stays unguarded: `karr destroy`, `delete_refs` and
+      `break_lock` still remove whatever is there. `karr destroy` now reports
+      *why* it is stuck rather than just which refs are left, and attempts
+      every ref before raising instead of stopping at the first refusal;
+      `restore`'s best-effort cleanup catches the refusal, and no longer
+      mislabels a ref that vanished underneath it as stuck.
+
     - `karr config get KEY --json` now always wraps the answer in the key that
       was asked for (ticket #131). It wrapped scalars and printed lists and
       mappings bare, so `karr config get board --json` answered
