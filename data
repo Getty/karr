@@ -1,0 +1,59 @@
+---
+claimed_at: 2026-08-12T18:26:33Z
+claimed_by: karr-foundation-worker
+class: standard
+completed: 2026-08-12T18:26:26Z
+created: 2026-08-12T16:14:16Z
+id: 159
+priority: critical
+started: 2026-08-12T18:13:48Z
+status: done
+tags:
+- bug
+- foundation
+- security
+title: 'Foundation executes prompt text as shell: $PROMPT is spliced in Perl before
+  /bin/sh parses'
+updated: 2026-08-12T18:26:33Z
+---
+
+Found in a bug hunt, reproduced by the finder. I confirmed the code.
+
+Foundation/Runner.pm:54-55, against the synthesized template at
+Foundation.pm:758 (`$bin -p "$PROMPT" ...`):
+
+    $command =~ s/\$\{(\w+)\}/$ENV{$1} \/\/ ''/ge;
+    $command =~ s/\$(\w+)/$ENV{$1} \/\/ ''/ge;
+
+PROMPT is ALREADY exported into the child's environment at Runner.pm:51, so
+"$PROMPT" would be expanded safely by /bin/sh -- parameter expansion is not
+rescanned for command substitution. Instead these two passes splice the raw
+text into the command line before the shell parses it.
+
+Two consequences:
+
+1. Backticks and $(...) in a prompt become commands. A prompt is board
+   content, and Markdown -- the normal way anyone writes one -- is full of
+   backtick spans. Reproduced:
+
+       prompt: "Run `id -un > .../EXECUTED` first, keep the budget under $500"
+       START command=/bin/echo -p "Run `id -un > .../EXECUTED` first, ..."
+       SHELL COMMAND SUBSTITUTION RAN: marker file contains: getty
+
+   The agent also received "$500" as "00".
+
+2. Every $word anywhere in the command is replaced, including inside single
+   quotes, so the documented output-shaping technique breaks silently:
+
+       configured: command: echo "alpha beta" | awk '{print $2}'
+       by hand:    beta
+       through foundation: awk '{print }'   ->  alpha beta
+
+Cost: the agent silently receives a different instruction than the one on
+the board, and backtick spans in board content execute as shell in the
+board's own directory. Single quotes in a `command:` give no protection.
+
+Fix direction: drop the Perl substitution entirely and let the shell expand
+the variables that are already in the child's environment; if a template
+needs values the shell cannot see, export those too rather than splicing.
+Fixed in 80a922f by deleting the two substitution lines -- the variables were already exported, sh just had to be allowed to do its job. Proof both ways against pre-fix code via overlay @INC: backtick span in a prompt executed 'id' and handed its output to the agent as the instruction; after, one argument, glob unexpanded, nothing run. Inventory confirmed nothing was spliced that is not exported, so nothing had to be dropped. Foundation.pm needed NO change: _claude_command interpolates $bin/$perm/$turns in Perl at synthesis time, and the only shell-level variable is an already-double-quoted "$PROMPT" (proven by argc=6). START line now logs the template, which as a side effect stops copying env values -- a wrapper's API key included -- into a plaintext .karr.log.
