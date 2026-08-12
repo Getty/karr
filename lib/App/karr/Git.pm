@@ -1360,12 +1360,18 @@ Fetches the remote's board state into the C<refs/karr-remote/E<lt>remoteE<gt>/>
 mirror and reconciles the local board against it (see L</DESCRIPTION> for the
 full algorithm and the four cases it resolves). Returns C<1> when C<$remote>
 isn't configured (a no-op) or reconciliation completes, C<0> on a transport
-failure. Two situations are refused outright by C<die>-ing rather than
-returning C<0>: a reconciliation that would delete every remaining board ref
-(pass C<accept_wipe =E<gt> 1> -- C<karr sync --prune> -- to allow it), and a
-remote presenting a board with a different C<refs/karr/meta/board-id> (pass
-C<accept_foreign =E<gt> 1> -- C<karr sync --accept-foreign-board> -- to allow
-it). Either refusal leaves the mirror exactly as it was before the fetch.
+failure. Three situations C<die> rather than returning C<0>: a reconciliation
+that would delete every remaining board ref (pass C<accept_wipe =E<gt> 1> --
+C<karr sync --prune> -- to allow it), a remote presenting a board with a
+different C<refs/karr/meta/board-id> (pass C<accept_foreign =E<gt> 1> --
+C<karr sync --accept-foreign-board> -- to allow it), and a ref the
+reconciliation decided on but could not write locally, because another process
+holds its lock file or left a stale one behind. Either refusal leaves the
+mirror exactly as it was before the fetch; the unapplied-ref failure rolls the
+mirror back for the refs it could not apply, so the next pull decides them
+again instead of mistaking the stale local version for unpushed work and
+force-pushing it over the remote (#154). The exception is what stops the
+caller's push: this method never reports an unapplied ref as success.
 
 =cut
 
@@ -1401,7 +1407,7 @@ sub _check_board_identity {
         # Same rule as the wipe guard: put the mirror back first, or the
         # refusal is a one-shot -- the next pull would read the foreign board
         # as already-reconciled state and walk straight through.
-        $self->_restore_mirror( $remote, $tracked );
+        my @stale = $self->_restore_mirror( $remote, $tracked );
         die "karr: refusing to sync: the remote '$remote' is a different board.\n"
           . "This clone has been syncing with board $local_id, but the remote "
           . "now presents board $remote_id.\n"
@@ -1410,7 +1416,8 @@ sub _check_board_identity {
           . "Check the remote first (git remote -v). Then either republish this "
           . "board over it with 'karr sync --push', or -- if the remote's board "
           . "really is the one you want now -- adopt it with 'karr sync "
-          . "--accept-foreign-board'.\n";
+          . "--accept-foreign-board'.\n"
+          . $self->_mirror_rollback_note( $remote, \@stale );
     }
 
     if ( defined $local_id && !defined $remote_id ) {
@@ -1424,8 +1431,23 @@ sub _check_board_identity {
         my $remote_now = $self->ref_oids($prefix) || {};
         if ( %$remote_now ) {
             my ( $oid ) = $self->read_ref_with_oid(BOARD_ID_REF);
-            $self->_write_ref_untracked( $prefix . 'meta/board-id', $oid )
-                if defined $oid;
+            my $slot = $prefix . 'meta/board-id';
+            # Unchecked, this was the same defect as #154 one ref over: the
+            # mirror would keep saying the remote has no stamp, reconciliation
+            # would read that as "the remote deleted the id" and strip it here
+            # too, and the next clone to pull would meet a board that had lost
+            # its identity. Stopping leaves the local stamp untouched and the
+            # next push re-arms the remote, which is the outcome this branch is
+            # for anyway.
+            if ( defined $oid && !$self->_write_ref_untracked( $slot, $oid ) ) {
+                die "karr: could not update the tracking mirror for '$remote' "
+                  . "($slot).\n"
+                  . "Another karr process is writing it, or a .lock file under "
+                  . ".git/refs/ was left behind by one that was killed.\n"
+                  . "The pull stopped before reconciling: going on would strip "
+                  . "this board's identity stamp. Clear the lock and run 'karr "
+                  . "sync' again.\n";
+            }
         }
         return;
     }
@@ -1520,20 +1542,90 @@ sub _reconcile_with_mirror {
     $self->_refuse_wholesale_wipe( $remote, $tracked, $deletes )
         if $deletes && !$survivors && !$accept_wipe;
 
-    my @conflicts;
+    my ( @conflicts, @unapplied, @stale );
     for my $step (@plan) {
         my ( $ref, $oid, $displaced, $conflict ) = @$step;
         # Nothing to park when the local side of a conflict is a deletion:
         # there is no commit left to keep reachable, but the clone that made
-        # that deletion is still told the remote undid it.
-        $self->_park_conflicting_local( $remote, $ref, $displaced )
-            if defined $displaced;
-        $self->_adopt_remote_ref( $ref, $oid );
-        CORE::push @conflicts, $ref if $conflict;
+        # that deletion is still told the remote undid it. A park that did not
+        # land counts as the step failing: half-applying it would drop the
+        # local commit with nowhere to point the report at.
+        my $parked = defined $displaced
+            ? $self->_park_conflicting_local( $remote, $ref, $displaced )
+            : 1;
+
+        if ( $parked && $self->_adopt_remote_ref( $ref, $oid ) ) {
+            CORE::push @conflicts, $ref if $conflict;
+            next;
+        }
+
+        # The plan was right and the apply failed. Both halves matter: the
+        # mirror goes back to the value this ref had before the fetch, and the
+        # pull stops. See _rollback_mirror_ref for what the first one prevents.
+        CORE::push @unapplied, $ref;
+        CORE::push @stale, $self->_rollback_mirror_ref( $prefix, $tracked, $ref );
     }
 
+    # The conflicts that did land are real and still worth reporting, even on
+    # the way to the failure below.
     $self->_warn_conflicts( $remote, \@conflicts ) if @conflicts;
+    die $self->_unapplied_refs_error( $remote, \@unapplied, \@stale )
+        if @unapplied;
     return;
+}
+
+# The invariant the whole reconciliation rests on: the mirror may only claim
+# what is actually in place here.
+#
+# A ref that could not be applied has to leave the mirror at the value it had
+# before this fetch. Left advanced, the next pull reads the remote's version as
+# state this clone has already reconciled against, so the stale local ref comes
+# out as L != T, R == T -- "unpushed local work: keep it" -- and the forced,
+# pruning push writes it over the remote's newer card, in every clone, at exit
+# 0 (#154). Rolled back, the same pull sees the case it saw this time and
+# applies it. Returns the mirror ref name when even the rollback did not land.
+sub _rollback_mirror_ref {
+    my ( $self, $prefix, $tracked, $ref ) = @_;
+    my $name = $prefix . substr( $ref, length BOARD_ROOT );
+    my $ok   = exists $tracked->{$name}
+        ? $self->_write_ref_untracked( $name, $tracked->{$name} )
+        : $self->_delete_ref_untracked($name);
+    return $ok ? () : $name;
+}
+
+# A pull that decided what the remote says and could not put some of it in
+# place. Reported as an exception rather than a false return, because the
+# caller's next step is the push, and pushing after a partial pull is the
+# destructive step: this clone would force-write the older version it still
+# holds over the newer one it just failed to take (#154).
+sub _unapplied_refs_error {
+    my ( $self, $remote, $refs, $stale ) = @_;
+    my $names = join ', ', @$refs;
+    my $those = @$refs == 1 ? 'that ref' : 'those refs';
+    return "karr: could not apply the remote's version of $names.\n"
+      . "Another karr process is writing $those, or a .lock file under "
+      . ".git/refs/ was left behind by one that was killed.\n"
+      . "The pull stopped there and nothing was pushed: this clone still "
+      . "holds the older version of $those, and pushing it would overwrite "
+      . "the remote's.\n"
+      . "Clear the lock (or wait for the other process) and run 'karr sync' "
+      . "again.\n"
+      . $self->_mirror_rollback_note( $remote, $stale );
+}
+
+# Said out loud because nothing here can fix it: a mirror that could not be put
+# back leaves the refs it names claiming a remote state this clone never
+# reconciled against, which is exactly the shape that turns a stopped pull into
+# a lost card on the next one. The refusals below share it for the same reason
+# -- their rollback is what keeps them from being one-shots.
+sub _mirror_rollback_note {
+    my ( $self, $remote, $stale ) = @_;
+    return '' unless $stale && @$stale;
+    return "\nkarr: the tracking mirror for '$remote' could not be put back: "
+      . join( ', ', sort @$stale ) . ".\n"
+      . "Until it is, this clone believes it has already seen the remote's "
+      . "current state for those refs. Do not run a writing command against "
+      . "it before a 'karr sync' completes.\n";
 }
 
 # Refuse to reconcile a board out of existence.
@@ -1558,7 +1650,7 @@ sub _reconcile_with_mirror {
 # making the refusal a one-shot that never fires again.
 sub _refuse_wholesale_wipe {
     my ( $self, $remote, $tracked, $deletes ) = @_;
-    $self->_restore_mirror( $remote, $tracked );
+    my @stale = $self->_restore_mirror( $remote, $tracked );
     die "karr: refusing to sync: this would delete the whole board.\n"
       . "The remote '$remote' no longer has any of the $deletes board ref"
       . ( $deletes == 1 ? '' : 's' ) . " it had at the last sync.\n"
@@ -1567,29 +1659,38 @@ sub _refuse_wholesale_wipe {
       . "hosting-side restore look like.\n"
       . "Check the remote first (git remote -v). Then either republish this "
       . "board with 'karr sync --push', or accept the deletion with "
-      . "'karr sync --prune'.\n";
+      . "'karr sync --prune'.\n"
+      . $self->_mirror_rollback_note( $remote, \@stale );
 }
 
 # Put the mirror back the way the caller found it. Safe to do with bare OIDs:
 # the refs/karr/* refs still point at those commits (that is what makes this a
 # wholesale wipe), so nothing has become unreachable in between.
+#
+# Returns the mirror refs it could not put back, which both callers report:
+# this rollback is the only thing keeping their refusal from being a one-shot,
+# so a half-done one is not something to discover on the next pull (#154).
 sub _restore_mirror {
     my ( $self, $remote, $tracked ) = @_;
     my $prefix = $self->_mirror_prefix($remote);
     my $now    = $self->ref_oids($prefix) || {};
 
+    my @stale;
     for my $name ( keys %$tracked ) {
         next if _same_oid( $now->{$name}, $tracked->{$name} );
-        $self->_write_ref_untracked( $name, $tracked->{$name} );
+        CORE::push @stale, $name
+            unless $self->_write_ref_untracked( $name, $tracked->{$name} );
     }
     for my $name ( keys %$now ) {
-        $self->_delete_ref_untracked($name) unless exists $tracked->{$name};
+        next if exists $tracked->{$name};
+        CORE::push @stale, $name unless $self->_delete_ref_untracked($name);
     }
-    return;
+    return @stale;
 }
 
 # Put the remote's answer for one ref in place. An undefined OID is the
-# remote's answer too: it means the ref is gone there.
+# remote's answer too: it means the ref is gone there. Returns whether the
+# answer is now in place -- the caller has to act on that, see #154.
 sub _adopt_remote_ref {
     my ( $self, $ref, $oid ) = @_;
     return defined $oid
@@ -1609,17 +1710,77 @@ sub _same_oid {
 # $WRITES stays a count of real board edits -- SyncGuard reads it to decide
 # whether anything still needs pushing, and counting a pull's own bookkeeping
 # there would make read-only commands claim they had unpushed work (#34).
+#
+# Contention is retried on exactly the terms write_ref and delete_ref use, and
+# for the same reason: losing the race for refs/<name>.lock is not a failed
+# write, it is a write that has not been attempted yet (#46). Skipping that
+# here was half of #154 -- one ref the remote had moved on was not applied
+# because another karr held its lock for a few microseconds.
+#
+# What they do not do is die when the retries run out or the write is refused
+# outright. Every caller is bookkeeping that has to decide for itself what a
+# miss means: the reconciliation loop has to finish the rest of its plan and
+# put the mirror back before it reports, and the mirror rollback behind a
+# refusal runs with another exception already on its way out. So the answer is
+# a boolean -- and it has to be checked, which is the other half of #154.
+sub _retry_untracked {
+    my ( $self, $attempt ) = @_;
+    for my $try ( 1 .. CAS_ATTEMPTS ) {
+        my @answer = $attempt->();
+        return $answer[0] if @answer;
+        _cas_backoff($try);
+    }
+    return 0;
+}
+
 sub _write_ref_untracked {
     my ( $self, $ref, $oid ) = @_;
     my $repo = $self->_repo or return 0;
-    return try { $repo->reference_create( $ref, $oid, force => 1 ); 1 }
-           catch { 0 };
+
+    # Only the failing outcome reaches last_error: a collision that cleared on
+    # the second attempt is not something the next command that reads it
+    # should find lying around.
+    my $why;
+    my $ok = $self->_retry_untracked( sub {
+        my $wrote = try {
+            $repo->reference_create( $ref, $oid, force => 1 );
+            1;
+        } catch {
+            $why = _ref_error( 'write', $ref, $_ );
+            return _is_contended_ref_error( $_, 0 ) ? undef : 0;
+        };
+        return () unless defined $wrote;    # contended: not attempted yet
+        return $wrote;
+    } );
+    $self->{_last_error} = $why if !$ok && defined $why;
+    return $ok;
 }
 
+# "Gone" is the goal state, so a ref that is not there is this call's success
+# and not a failure to report -- unlike delete_ref, whose 0 answers the
+# different question of whether this call was the one that removed it (#119).
 sub _delete_ref_untracked {
     my ( $self, $ref ) = @_;
     my $repo = $self->_repo or return 0;
-    return try { $repo->reference_delete($ref); 1 } catch { 0 };
+
+    my $why;
+    my $ok = $self->_retry_untracked( sub {
+        return 1 unless $repo->reference_exists($ref);
+        my $deleted = try {
+            $repo->reference_delete($ref);
+            1;
+        } catch {
+            $why = _ref_error( 'delete', $ref, $_ );
+            # Someone else got there first, which is this call's goal state.
+            return 1 if blessed($_) && $_->isa('Git::Native::Error')
+                      && $_->is_not_found;
+            return _is_contended_ref_error( $_, 0 ) ? undef : 0;
+        };
+        return () unless defined $deleted;
+        return $deleted;
+    } );
+    $self->{_last_error} = $why if !$ok && defined $why;
+    return $ok;
 }
 
 # The losing side of a conflict, kept reachable. Without this the displaced
@@ -1627,11 +1788,16 @@ sub _delete_ref_untracked {
 # it, so "your edit was overwritten" would be a report with nothing behind it.
 # One slot per ref: bounded by board size, and a second conflict on the same
 # ref has already been reported once.
+#
+# Returns the parked ref name, or nothing when the park did not land -- in
+# which case the caller must leave the local ref alone rather than replace it
+# with the remote's, or the warning would point at a ref that was never
+# written and the local version really would be gone (#154).
 sub _park_conflicting_local {
     my ( $self, $remote, $ref, $oid ) = @_;
     my $parked =
         CONFLICT_ROOT . "/$remote/" . substr( $ref, length BOARD_ROOT );
-    $self->_write_ref_untracked( $parked, $oid );
+    return unless $self->_write_ref_untracked( $parked, $oid );
     return $parked;
 }
 
@@ -1647,6 +1813,14 @@ sub _warn_conflicts {
 
 # Make the mirror match the local board. Called after a successful push, where
 # the remote has just been made identical to it.
+#
+# The one place in this class where a ref write that does not land is harmless,
+# so the answers are deliberately not checked. A mirror slot left behind here
+# lags the remote instead of running ahead of it, and the next pull converges
+# on it either way: the local ref and the remote's already agree (L == R, the
+# first case in _reconcile_with_mirror), so the stale T is never consulted.
+# The failure mode #154 is about is the opposite one -- a mirror claiming an
+# OID that is not in place locally.
 sub _mirror_local_state {
     my ( $self, $remote ) = @_;
     return unless $self->_repo;

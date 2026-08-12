@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - Fixed data loss when a pull could not write a ref (ticket #154). The
+      apply step of the reconciliation used an unretried ref write whose
+      failure nobody checked, so a ref whose `.lock` file was held — by
+      another karr mid-write, or left behind by one that was killed — was not
+      applied, while the `refs/karr-remote/` mirror was advanced as if it had
+      been. The next reconciliation then read the stale local ref as unpushed
+      work and the forced, pruning push wrote it over the remote's newer card,
+      in every clone, at exit 0. Those writes now retry on the same terms as
+      every other ref write in `App::karr::Git`, a ref that still cannot be
+      applied leaves the mirror at its pre-fetch value so the next sync
+      decides it again, and the pull fails with a non-zero exit naming the ref
+      instead of proceeding to the push. The same fix covers a remote deletion
+      that could not be applied (which used to be pushed back as a
+      resurrection), a conflict whose local version could not be parked (the
+      local version is now kept rather than replaced), a mirror rollback
+      behind a refusal that only half succeeded (now reported), and the
+      board-identity stamp the mirror could not record.
+
     - karr-foundation no longer auto-blocks tasks its agent never touched
       (ticket #158). `_stuck_tasks` claimed to return "tasks the agent engaged
       (claimed / in-progress) but did not move" and tested only whether the
