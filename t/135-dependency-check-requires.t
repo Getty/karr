@@ -3,6 +3,7 @@ use warnings;
 use Test::More;
 use Path::Tiny qw( path );
 
+use App::karr::Role::DependencyArgs;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::TaskMutation;
 
@@ -24,14 +25,27 @@ use App::karr::Role::TaskMutation;
 #
 # The point of a `requires` is that it fails at composition, so that is what
 # these tests reproduce: a consumer without the suppliers must not compose.
+#
+# Ticket #137 finished the job. #128 could not declare the fifth call, json,
+# because one role carried two concerns: App::karr::Cmd::Create composed it for
+# the two set-time helpers alone and has no --json, so requiring json refused a
+# consumer that never reaches the reporting half. Splitting the set-time helpers
+# out into App::karr::Role::DependencyArgs let both halves name every
+# collaborator they have -- so this file no longer records an exception, it
+# records that there is none.
 
-my @REQUIRED = qw( store find_task usage_error quiet );
+my %REQUIRED = (
 
-# The one call dependency_report makes that is deliberately NOT required, and
-# why: App::karr::Cmd::Create composes this role for parse_dependency_ids and
-# assert_dependencies_exist alone, and has no --json of its own. See the last
-# subtest, which is the tripwire for that ever changing.
-my @UNDECLARED_BY_DESIGN = qw( json );
+    # The reporting half: reads depends_on when a card is taken up and warns.
+    # store for is_terminal_status, find_task to resolve each dependency id,
+    # json and quiet to pick the channel the warning comes out of.
+    'App::karr::Role::DependencyCheck' => [qw( find_task json quiet store )],
+
+    # The set-time half: turns --depends-on & friends into validated ids.
+    # usage_error to refuse the invocation, find_task to check each id exists --
+    # deliberately the same lookup the reporting half resolves ids with.
+    'App::karr::Role::DependencyArgs' => [qw( find_task usage_error )],
+);
 
 # A fresh package each time: Moo caches what it has applied to a class, and a
 # second failed composition into the same name would not be the same experiment.
@@ -44,12 +58,14 @@ sub compose_bare {
     return ( $ok, $@ );
 }
 
-subtest 'composing DependencyCheck without its suppliers is a composition error' => sub {
-    my ( $ok, $err ) = compose_bare('App::karr::Role::DependencyCheck');
+subtest 'composing either half without its suppliers is a composition error' => sub {
+    for my $role ( sort keys %REQUIRED ) {
+        my ( $ok, $err ) = compose_bare($role);
 
-    ok !$ok, 'a class that supplies none of them refuses to compose the role';
-    like $err, qr/\bmissing\b/, '...and says so as a missing-method error';
-    like $err, qr/\b\Q$_\E\b/, "...naming $_" for @REQUIRED;
+        ok !$ok, "$role refuses a class that supplies none of them";
+        like $err, qr/\bmissing\b/, '...and says so as a missing-method error';
+        like $err, qr/\b\Q$_\E\b/, "...naming $_" for @{ $REQUIRED{$role} };
+    }
 };
 
 subtest 'the requirement reaches consumers of TaskMutation' => sub {
@@ -61,7 +77,14 @@ subtest 'the requirement reaches consumers of TaskMutation' => sub {
     my ( $ok, $err ) = compose_bare('App::karr::Role::TaskMutation');
 
     ok !$ok, 'a bare consumer of TaskMutation refuses to compose too';
-    like $err, qr/\b\Q$_\E\b/, "...naming $_" for @REQUIRED;
+    like $err, qr/\b\Q$_\E\b/, "...naming $_"
+        for @{ $REQUIRED{'App::karr::Role::DependencyCheck'} };
+
+    # And only that half: since #137 the mutation path no longer drags the
+    # set-time contract along, so a command that changes a status is not asked
+    # for the collaborator only option parsing needs.
+    unlike $err, qr/\busage_error\b/,
+        'and not usage_error, which only the set-time half needs';
 };
 
 subtest 'a consumer that supplies them still gets the role' => sub {
@@ -71,21 +94,27 @@ subtest 'a consumer that supplies them still gets the role' => sub {
     my $ok = eval q{
         package StubConsumer;
         use Moo;
-        sub store       { }
-        sub find_task   { }
-        sub usage_error { }
-        sub quiet       { }
+        sub store     { }
+        sub find_task { }
+        sub json      { }
+        sub quiet     { }
         with 'App::karr::Role::TaskMutation';
         1;
     };
     ok $ok, 'the four stubs are enough to compose TaskMutation' or diag $@;
 
     ok( StubConsumer->can($_), "...and it has ->$_" )
-        for qw( check_dependencies dependency_report parse_dependency_ids
-                assert_dependencies_exist apply_status_change update_task_guarded );
+        for qw( check_dependencies dependency_report apply_status_change
+                update_task_guarded );
+
+    # The other half is not part of that bargain any more. A mutation command
+    # never parses a dependency option -- only create and edit do -- and #137 is
+    # what stopped it inheriting the helpers to do so anyway.
+    ok( !StubConsumer->can($_), "...and not ->$_, which is the set-time half" )
+        for qw( parse_dependency_ids assert_dependencies_exist );
 };
 
-subtest 'every command that composes the role today still composes it' => sub {
+subtest 'every command that composes either role today still composes it' => sub {
     # Moo reports a missing requires when the class is compiled, so loading each
     # consumer is the whole test: a name added to the list that one of them does
     # not have breaks `karr <cmd>` outright, not just this file.
@@ -95,55 +124,71 @@ subtest 'every command that composes the role today still composes it' => sub {
     }
 };
 
-subtest 'the declared list still covers everything the role calls' => sub {
+subtest 'each half declares everything it calls, with nothing left over' => sub {
     # A requires list is only as good as its last edit: the next `$self->foo` in
-    # this role would put the hole back without touching anything below. So read
-    # the calls out of the source and hold the declaration against them.
-    my $file = path( $INC{'App/karr/Role/DependencyCheck.pm'} );
-    ok $file->exists, 'found the role source to read' or return;
+    # either role would put the hole back without touching anything below. So
+    # read the calls out of the source and hold the declaration against them.
+    for my $role ( sort keys %REQUIRED ) {
+        ( my $inc_key = "$role.pm" ) =~ s{::}{/}g;
+        my $file = path( $INC{$inc_key} );
+        ok $file->exists, "found the source of $role to read" or next;
 
-    my $src = $file->slurp_utf8;
-    # POD and comments carry example code -- `$self->parse_dependency_ids(
-    # '--depends-on', $self->depends_on )` among them -- and prose that mentions
-    # method names. The declaration is about what actually executes.
-    $src =~ s/^=\w+.*?^=cut\b.*?$//msg;
-    $src =~ s/^\s*#.*$//mg;
+        my $src = $file->slurp_utf8;
+        # POD and comments carry example code -- `$self->parse_dependency_ids(
+        # '--depends-on', $self->depends_on )` among them -- and prose that
+        # mentions method names. The declaration is about what actually executes.
+        $src =~ s/^=\w+.*?^=cut\b.*?$//msg;
+        $src =~ s/^\s*#.*$//mg;
 
-    my %called = map { $_ => 1 } $src =~ /\$self->(\w+)/g;
-    my %own    = map { $_ => 1 } ( $src =~ /^sub (\w+)/mg, $src =~ /^has (\w+)/mg );
+        my %called = map { $_ => 1 } $src =~ /\$self->(\w+)/g;
+        my %own = map { $_ => 1 } ( $src =~ /^sub (\w+)/mg, $src =~ /^has (\w+)/mg );
 
-    my %declared =
-      map { $_ => 1 } @{ $Role::Tiny::INFO{'App::karr::Role::DependencyCheck'}{requires} || [] };
+        my %declared =
+          map { $_ => 1 } @{ $Role::Tiny::INFO{$role}{requires} || [] };
 
-    is_deeply [ sort keys %declared ], [ sort @REQUIRED ],
-        'the role declares exactly the expected requires';
+        is_deeply [ sort keys %declared ], [ sort @{ $REQUIRED{$role} } ],
+            "$role declares exactly the expected requires";
 
-    my @undeclared =
-      sort grep { !$own{$_} && !$declared{$_} } keys %called;
+        my @undeclared = sort grep { !$own{$_} && !$declared{$_} } keys %called;
 
-    # When this list shrinks, the name that left it can be required outright --
-    # move it up into the requires line instead of loosening the test. When it
-    # grows, the new call is a method nobody promised the role would have.
-    is_deeply \@undeclared, [ sort @UNDECLARED_BY_DESIGN ],
-        'the only call left undeclared is the documented exception';
+        # Empty, and it stays empty: a new call on either half is a method
+        # nobody promised the role would have, and the fix is to require it --
+        # not to add it here. There is no consumer left that composes half a
+        # role's methods, which is what forced the one exception this list used
+        # to hold (json, until #137).
+        is_deeply \@undeclared, [],
+            "$role leaves no call undeclared";
+    }
 };
 
-subtest 'why json is the exception' => sub {
-    # App::karr::Cmd::Create is the consumer that keeps json out of the list: it
-    # composes the role for the two set-time helpers and never reaches
-    # dependency_report, so requiring json would refuse a command that is using
-    # the role correctly. Splitting the set-time helpers from the reporting half
-    # -- or giving create a --json -- is what lets json be required, and this is
-    # the test that will say so when either happens.
+subtest 'the split is what lets DependencyCheck require json' => sub {
+    # App::karr::Cmd::Create is the consumer that used to keep json out of the
+    # list: it composed the whole role for the two set-time helpers and never
+    # reached dependency_report, so requiring json would have refused a command
+    # that was using the role correctly. It now composes the set-time half only.
     require App::karr::Cmd::Create;
 
-    ok( App::karr::Cmd::Create->can($_), "create supplies ->$_" ) for @REQUIRED;
-
-    ok( !App::karr::Cmd::Create->can('json'),
-        'create has no ->json, which is why json cannot be required yet' );
+    ok( App::karr::Cmd::Create->can($_), "create supplies ->$_" )
+        for @{ $REQUIRED{'App::karr::Role::DependencyArgs'} };
 
     ok( App::karr::Cmd::Create->can('parse_dependency_ids'),
-        'and it does use the set-time half of the role' );
+        'and it has the set-time half it composes the role for' );
+
+    # Still no --json, and that is now nobody's problem: a create cannot have a
+    # dependency warning to emit -- the card does not exist until it is written
+    # -- so it must not carry the emitting half at all.
+    ok( !App::karr::Cmd::Create->can('json'),
+        'create still has no ->json' );
+    ok( !App::karr::Cmd::Create->can($_), "and no ->$_ to call without one" )
+        for qw( check_dependencies dependency_report );
+
+    # The commands that do reach the reporting half all bring json, which is
+    # what makes requiring it safe rather than merely legal.
+    for my $cmd (qw( Edit Move Pick Handoff Delete Archive )) {
+        my $pkg = "App::karr::Cmd::$cmd";
+        require_ok($pkg) or next;
+        ok( $pkg->can('json'), "$cmd supplies the ->json it reports through" );
+    }
 };
 
 done_testing;

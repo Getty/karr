@@ -8,23 +8,22 @@ use Moo::Role;
 # declare nothing, and got away with it only because every consumer happened to
 # compose the roles that supply these: store from
 # App::karr::Role::BoardDiscovery, find_task from App::karr::Role::BoardAccess,
-# usage_error from App::karr::Role::ExitCodes, quiet from
+# json from App::karr::Role::Output, quiet from
 # App::karr::Role::SyncLifecycle. App::karr::Role::TaskMutation composes this
 # role, so the next command to reach for the mutation path would have inherited
-# four methods whose collaborators nobody had checked for -- and found out at
-# the moment a warning was due, as a "Can't locate object method", rather than
-# at compile time.
+# methods whose collaborators nobody had checked for -- and found out at the
+# moment a warning was due, as a "Can't locate object method", rather than at
+# compile time.
 #
-# `json` is the one call dependency_report makes that cannot be listed here.
-# App::karr::Cmd::Create composes this role for parse_dependency_ids and
-# assert_dependencies_exist alone and has no --json of its own, so requiring it
-# would refuse a consumer that never reaches the reporting half. Leaving it out
-# still narrows the hole the ticket names: `$self->json || $self->quiet`
-# evaluated quiet only when json was false, so a consumer missing quiet broke
-# only without --json -- json is evaluated first and unconditionally. Splitting
-# the set-time helpers from the reporting half is what would let json in too,
-# and that has to touch Create and Pick.
-requires qw( store find_task usage_error quiet );
+# json is on the list since ticket #137 split the set-time helpers off into
+# App::karr::Role::DependencyArgs. It could not be until then: this role also
+# carried parse_dependency_ids and assert_dependencies_exist, and the command
+# that composed it for those two alone -- create -- has no --json, so requiring
+# json refused a consumer that never reaches the reporting half. Leaving it out
+# was the narrower hole rather than none: `$self->json || $self->quiet`
+# evaluates json first and unconditionally, so a consumer missing it broke on
+# every warning, not only the ones without --json.
+requires qw( store find_task json quiet );
 
 =head1 DESCRIPTION
 
@@ -46,6 +45,13 @@ status through C<apply_status_change> is covered by the one call there, and
 directly by L<App::karr::Cmd::Pick>, which has its own compare-and-swap loop
 and does not go through that path.
 
+Setting the field is the other half, and a separate role:
+L<App::karr::Role::DependencyArgs> is what C<create> and C<edit> parse and
+validate their dependency options with. The two were one role until ticket
+#137; they are split because their contracts differ -- this half needs the
+command's output options to choose a channel for the warning, that half needs
+none of them and is composed by a command (C<create>) that has no C<--json>.
+
 =head2 What counts as satisfied
 
 A dependency in one of the board's own terminal statuses
@@ -66,9 +72,9 @@ absent when there is nothing to report.
 
 =head1 SEE ALSO
 
-L<karr>, L<App::karr>, L<App::karr::Role::TaskMutation>,
-L<App::karr::Cmd::Pick>, L<App::karr::Cmd::Move>, L<App::karr::Cmd::Show>,
-L<App::karr::Config>
+L<karr>, L<App::karr>, L<App::karr::Role::DependencyArgs>,
+L<App::karr::Role::TaskMutation>, L<App::karr::Cmd::Pick>,
+L<App::karr::Cmd::Move>, L<App::karr::Cmd::Show>, L<App::karr::Config>
 
 =cut
 
@@ -142,74 +148,6 @@ C<depends_on>, records nothing. Call it with the status the task is moving
 B<to>, not the one it is moving from -- or, where nothing is moving and the
 card is merely being taken up (C<< karr pick --claim >> with no C<--move>),
 with the status it stays in.
-
-=cut
-
-# The set-time half of the ticket pair (#124, gated on the CLI route existing;
-# the move-time warning above is #123). kanban-md does both too
-# (ValidateDependencyIDs, internal/task/validate.go:155) -- set-time catches a
-# typo while the author still remembers what they meant, move-time catches
-# state that changed afterwards, which set-time can never see.
-#
-# Both rejections here condemn the whole invocation rather than one id of a
-# batch: a malformed or unknown dependency id is wrong for every id at once, so
-# it is a usage error (exit 2) raised before anything is written -- ticket #54's
-# rule, the same reason Cmd::Create runs them before allocating an id. The one
-# per-id case, a self-reference, cannot live here: which id is "self" differs
-# per batch id, so the caller checks it inside its batch loop (#61).
-sub parse_dependency_ids {
-    my ( $self, $flag, $value ) = @_;
-    my ( @ids, %seen );
-    for my $raw ( split /,/, $value ) {
-        $self->usage_error(
-            qq{invalid $flag id "$raw" (ids are comma-separated numbers)} )
-            unless $raw =~ /\A[0-9]+\z/;
-        # Numified on purpose: YAML::XS and JSON::MaybeXS both encode by the
-        # scalar's own type, so a string "2" would round-trip as '2' / "2" --
-        # which go-yaml refuses to unmarshal into kanban-md's IntSlice. Same
-        # care run_batch takes when echoing batch ids. Deduplicated here, once
-        # for every flag, so `--depends-on 2,2` cannot store [2,2]: a repeated
-        # id carries no meaning in any of the three flags, and edit's
-        # append-unique only guards against ids the card already carries.
-        push @ids, $raw + 0 unless $seen{ $raw + 0 }++;
-    }
-    $self->usage_error("$flag requires at least one id") unless @ids;
-    return \@ids;
-}
-
-=method parse_dependency_ids
-
-    my $ids = $self->parse_dependency_ids( '--depends-on', $self->depends_on );
-
-Splits a comma-separated dependency option value into an arrayref of numeric
-ids, in order, duplicates collapsed. A value that is not a plain number is a
-usage error naming the flag and the value, raised before any task is touched
--- it condemns the invocation, never one id of a batch. The ids are returned
-as numbers so they round-trip numerically through the frontmatter and
-C<--json> (kanban-md models the field as an C<IntSlice>).
-
-=cut
-
-sub assert_dependencies_exist {
-    my ( $self, $ids ) = @_;
-    for my $dep_id (@$ids) {
-        $self->usage_error(
-            "dependency task $dep_id does not exist on this board" )
-            unless $self->find_task($dep_id);
-    }
-    return $ids;
-}
-
-=method assert_dependencies_exist
-
-    $self->assert_dependencies_exist($ids);
-
-Usage error unless every id names a task on this board, archived included --
-the same L<App::karr::Role::BoardAccess/find_task> lookup
-L</check_dependencies> resolves ids with, so set-time and move-time can never
-disagree about what exists. Called with ids that are about to be B<added>;
-removing an id the board no longer has must stay legal, because that is how a
-dependency on a deleted task is cleaned up.
 
 =cut
 

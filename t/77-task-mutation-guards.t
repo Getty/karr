@@ -255,7 +255,13 @@ subtest 'an id list that contains no ids is a usage error, not a silent no-op' =
     package MutationConsumer;
     use Moo;
     use MooX::Options;
-    with 'App::karr::Role::BoardAccess', 'App::karr::Role::TaskMutation';
+    # App::karr::Role::Output is not decoration here: TaskMutation reads
+    # $self->json in run_batch, and App::karr::Role::DependencyCheck requires it
+    # since ticket #137, so every real mutation command composes Output too.
+    # Leaving it out made this class the one consumer of the mutation path that
+    # could not have answered a run_batch failure.
+    with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+      'App::karr::Role::TaskMutation';
 }
 
 subtest 'the mutation and the write are the same revision (#56 mechanism)' => sub {

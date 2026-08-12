@@ -10,12 +10,19 @@ use MooX::Options (
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
+use App::karr::Role::DependencyArgs;
 use App::karr::Task;
 use App::karr::Config;
 use Time::Piece;
 
+# Both halves of the dependency pair, and the only command that needs both:
+# --add-depends-on/--remove-depends-on are parsed by DependencyArgs, and
+# --status takes the same warning path as move through TaskMutation, which
+# brings App::karr::Role::DependencyCheck with it. Named here since ticket #137
+# split the two; before that the set-time helpers arrived through TaskMutation
+# by accident of them sharing a role.
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::TaskMutation';
+     'App::karr::Role::TaskMutation', 'App::karr::Role::DependencyArgs';
 
 =head1 SYNOPSIS
 

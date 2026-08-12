@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - `App::karr::Role::DependencyCheck` is split in two (ticket #137). It
+      carried both halves of dependency handling under one name, with two
+      different contracts: parsing and validating `--depends-on` arguments at
+      set time, and warning at move time that a card's dependencies are
+      unfinished. `Cmd::Create` composed the whole thing for the first half
+      alone, which is why #128 could not put `json` in the role's `requires` —
+      `create` has no `--json`, and requiring it would have refused a consumer
+      that never reaches the reporting half. The set-time half is now
+      `App::karr::Role::DependencyArgs`, named beside the existing
+      `Role::CliArgs` for the same reason: it turns command-line values into
+      validated ids. Both halves now declare every method they call on their
+      consumer, `json` included. Only `Cmd::Create` and `Cmd::Edit` change
+      what they compose; `Cmd::Pick` and `Role::TaskMutation` keep the
+      reporting half under its old name, so external `L<...DependencyCheck>`
+      references stay correct. `Cmd::Edit` turned out to be getting
+      `parse_dependency_ids` by accident of the two halves sharing a role, and
+      now names `DependencyArgs` itself.
+
     - New command `karr metrics` (ticket #126), the last kanban-md feature
       karr did not have: throughput over fixed 7- and 30-day windows, average
       lead time (created to completed) and cycle time (started to completed),

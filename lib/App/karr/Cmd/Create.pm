@@ -8,11 +8,15 @@ use MooX::Options (
   usage_string => 'USAGE: karr create --title TEXT [--priority LEVEL] [--status STATUS] [options]',
 );
 use App::karr::Role::BoardAccess;
-use App::karr::Role::DependencyCheck;
+use App::karr::Role::DependencyArgs;
 use App::karr::Task;
 use App::karr::Config;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyCheck';
+# The set-time half only (ticket #137). A card that does not exist yet cannot be
+# taken up, so create never has a dependency warning to emit and must not
+# inherit the emitting half -- which is also the half that would require a
+# --json create has not got.
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyArgs';
 
 =head1 SYNOPSIS
 

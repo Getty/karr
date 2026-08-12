@@ -7,6 +7,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::ClaimTimeout;
 use App::karr::Role::CliArgs;
+use App::karr::Role::DependencyArgs;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::ExitCodes;
 use App::karr::Role::Output;
@@ -60,8 +61,8 @@ my $FRAMEWORK = qr{
 my %KNOWN_LEAK = ();
 
 my @ROLES = map { "App::karr::Role::$_" } qw(
-    BoardAccess BoardDiscovery ClaimTimeout CliArgs DependencyCheck
-    ExitCodes Output SyncLifecycle TaskMutation
+    BoardAccess BoardDiscovery ClaimTimeout CliArgs DependencyArgs
+    DependencyCheck ExitCodes Output SyncLifecycle TaskMutation
 );
 
 # Every sub in $pkg's symbol table, paired with the package it was really
@@ -141,11 +142,13 @@ subtest 'the mutation roles no longer compose Time::Piece over the builtins' => 
     # composition to go through. Composing the real supplier would pull in three
     # more roles and defeat the point of this class, which is to inherit nothing
     # but the roles under test. t/135-dependency-check-requires.t is where the
-    # requirement itself is checked.
-    sub store       { }
-    sub find_task   { }
-    sub usage_error { }
-    sub quiet       { }
+    # requirement itself is checked -- json joined the list and usage_error left
+    # it when ticket #137 split the set-time helpers out into
+    # App::karr::Role::DependencyArgs, which TaskMutation does not compose.
+    sub store     { }
+    sub find_task { }
+    sub json      { }
+    sub quiet     { }
     with 'App::karr::Role::TaskMutation';
 }
 
