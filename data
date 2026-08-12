@@ -1,0 +1,45 @@
+---
+claimed_at: 2026-08-12T05:01:26Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-08-12T05:01:20Z
+created: 2026-08-12T04:50:15Z
+id: 145
+priority: medium
+started: 2026-08-12T04:51:22Z
+status: done
+tags:
+- skill
+- manage-skills
+title: 'karr init --claude-skill breaks hardlink chains the same way #142 did'
+updated: 2026-08-12T05:01:26Z
+---
+
+Found while fixing #142, one command over, and left alone there only
+because that agent was scoped to Cmd/Skill.pm.
+
+lib/App/karr/Cmd/Init.pm, in `_install_claude_skill` (the
+`karr init --claude-skill` path), writes .claude/skills/karr/SKILL.md with
+the call #142 just removed from Cmd/Skill.pm:
+
+    eval { $target->spew_utf8($skill_content); 1 }
+      or user_error( "Could not write $target: ", clean_error($@) );
+
+spew_utf8 is temp+rename, so the target comes back on a new inode and the
+manage-skills chain breaks exactly as it did through `karr skill update`:
+that checkout gets the new text, the other links keep the old inode, link
+count drops silently.
+
+Minimal fix is the same one-liner:
+
+    $target->append_utf8( { truncate => 1 }, $skill_content )
+
+The fuller fix is to route it through the same helper as Cmd/Skill.pm's
+`_write_skill`, so there is one place that knows how a skill file has to
+be written, including the read-only fallback and its warning. Prefer that
+if the two commands can share it without contorting either -- a second
+copy of this rule is how the first one drifted.
+
+Reference for the in-place contract and the test shape:
+t/144-skill-write-in-place.t.
+Fixed in f4f3f90 by sharing, not copying: _write_skill moved into the new App::karr::Role::SkillFile, composed by both Cmd::Skill and Cmd::Init. It fits because the helper never touched $self -- one role can serve a board-less command and a board command by depending on neither. Init keeps its own mkpath guard ahead of the shared call, since 'Could not create .claude/...' is what actually fails there (pinned by t/120). Verified both commands get the same coderef. Test t/146-init-skill-write-in-place.t; the new role was added to t/121's leakage sweep so it is actually covered.
