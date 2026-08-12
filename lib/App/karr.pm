@@ -221,6 +221,7 @@ my @COMMANDS = (
   [ enable    => 'Re-enable automated agent runs on this board' ],
   [ context   => 'Generate board context summary' ],
   [ log       => 'Show activity log' ],
+  [ metrics   => 'Show flow metrics' ],
   [ backup    => 'Export refs/karr/* as YAML' ],
   [ restore   => 'Replace refs/karr/* from YAML' ],
   [ materialize => 'Write refs/karr/* out as a tasks/ file view' ],

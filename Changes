@@ -1,5 +1,30 @@
 {{$NEXT}}
 
+    - New command `karr metrics` (ticket #126), the last kanban-md feature
+      karr did not have: throughput over fixed 7- and 30-day windows, average
+      lead time (created to completed) and cycle time (started to completed),
+      flow efficiency, and aging work items — started, not terminal, no
+      completion — oldest first. `--since`, `--json` and `--compact` as
+      elsewhere; archived tasks are excluded the way `list` and `board`
+      exclude them, and like the other read commands it does not sync first
+      and refuses a repository holding no board rather than reporting zeroes.
+      Every figure comes from the lifecycle stamps on the cards and from
+      nothing else. The activity log was considered and rejected as a source:
+      its entries record the status a write left a task in, not the
+      transition, it only exists since #64, and `import`/`restore`/`repair`
+      write refs without logging — so a log-derived cycle time would come out
+      silently short on exactly the oldest boards and disagree with the cards.
+      Two departures from kanban-md, both deliberate: flow efficiency is the
+      summed cycle time over the summed lead time of the same cards, not one
+      average divided by another over different populations, which is how
+      kanban-md can report over 100%; and the JSON carries `lead_samples`,
+      `cycle_samples` and `unusable_timestamps` (the text render carries the
+      counts too), so a figure resting on two cards cannot pass for one
+      resting on two hundred. Cards whose stamps cannot carry a measurement —
+      an unreadable date, or a `started` that precedes the card's own
+      `created` — are left out of the averages that need them and named in a
+      note.
+
     - `karr unlock` no longer announces a lock it did not break (ticket #119).
       `Git::delete_ref` returned `0` both for "the ref was never there" and
       for "libgit2 refused the delete", so a caller could not tell them apart

@@ -298,6 +298,21 @@ karr log --task 5                            # filter by task
 karr log --last 50 --json                    # more entries, JSON
 ```
 
+### Flow metrics
+
+```bash
+karr metrics                                 # throughput, lead/cycle time, efficiency, aging
+karr metrics --since 2026-01-01              # only count tasks completed after this date
+karr metrics --compact                       # one line plus one per aging item
+karr metrics --json                          # JSON output
+```
+
+Every figure comes from the `created`/`started`/`completed` stamps on the
+cards, not from the activity log. Cards whose stamps cannot carry a
+measurement — an unreadable date, or a `started` that precedes the card's own
+`created` — are left out of the averages that need them and counted in
+`unusable_timestamps`, so a low sample count is visible rather than silent.
+
 ### Agent name
 
 ```bash

@@ -88,7 +88,7 @@ storage backend.
 | `unlock` | implemented | — (show and break pick locks) |
 | `archive` | implemented | `archive` |
 | `handoff` | implemented | `handoff` |
-| `metrics` | TODO | `metrics` |
+| `metrics` | implemented | `metrics` |
 | `log` | implemented | `log` |
 | `config` | implemented | `config` |
 | `context` | implemented | `context` |
