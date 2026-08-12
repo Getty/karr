@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-08-12T04:50:08Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-08-12T04:50:02Z
+created: 2026-08-12T03:58:31Z
+id: 142
+priority: medium
+started: 2026-08-12T04:20:16Z
+status: done
+tags:
+- skill
+- manage-skills
+title: karr skill update zerreißt Hardlink-Ketten (Path::Tiny spew_utf8)
+updated: 2026-08-12T04:50:08Z
+---
+
+Cmd/Skill.pm _write_skill nutzt spew_utf8 = temp+rename = neuer Inode. Auf einer manage-skills-Hardlink-Kette (karr SKILL.md: 31 Projekte, ein Inode) bricht update den editierten Pfad aus der Kette; die anderen 30 behalten den alten Stand. Fix-Idee: in-place schreiben (open '>', bestehender FD) oder zumindest Linkcount>1 erkennen und warnen. Gefunden beim Agent-Setup in kubernetes-ocp; dort wurde stattdessen 'karr skill show' + cat-Redirect benutzt.
+Fixed in 8232519. _install and _update both funnel through _write_skill, so one call site covered both: append_utf8({truncate=>1}) sysopens the existing inode and writes through it instead of temp+rename. Still Path::Tiny character-level UTF-8, so the Encoding boundary is unmoved. Fallback kept for a target that will not open for writing at all (read-only SKILL.md, which the rename handled since it only needed a writable directory) -- that path now warns when the link count was >1 instead of breaking the chain silently. Test t/144-skill-write-in-place.t, which also pins the premise that spew_utf8 really does rehome the inode. Same hazard still open in Cmd/Init.pm -- see follow-up ticket.
