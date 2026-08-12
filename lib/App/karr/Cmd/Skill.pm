@@ -10,13 +10,17 @@ use MooX::Options (
 use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
+use App::karr::Role::SkillFile;
 use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
 use File::ShareDir ();
 
 # ExitCodes: unknown option / bad option value exits 2, not 1 (ADR 0002). Skill
 # is board-less, so it does not inherit ExitCodes via BoardDiscovery.
-with 'App::karr::Role::Output', 'App::karr::Role::CliArgs', 'App::karr::Role::ExitCodes';
+# SkillFile: _write_skill, shared with `karr init --claude-skill`, which writes
+# the same file this command writes for the claude-code agent (ticket #145).
+with 'App::karr::Role::Output', 'App::karr::Role::CliArgs',
+     'App::karr::Role::ExitCodes', 'App::karr::Role::SkillFile';
 
 =head1 SYNOPSIS
 
@@ -246,53 +250,10 @@ sub _read_skill {
   return $content;
 }
 
-# Written in place, on purpose. Path::Tiny's spew_utf8 writes a temp file and
-# renames it over the target, so the path it wrote comes back on a *new* inode.
-# For a SKILL.md that is the wrong move: skill files are kept as hardlink
-# chains (manage-skills), one inode behind the same relative path in dozens of
-# projects, so the rename silently breaks the updated path out of its chain --
-# that one path gets the new text, every other project keeps the old inode with
-# the old text, and the link count drops with nothing said (ticket #142, found
-# in kubernetes-ocp, where the workaround was `karr skill show` into a shell
-# redirect).
-#
-# append_utf8 with truncate is the in-place counterpart: Path::Tiny sysopens
-# the existing inode for writing, locks it, truncates, and writes through it,
-# so every link sees the new content. It is Path::Tiny's own UTF-8, i.e. still
-# character-level, which is what the file edge is allowed to use -- encoding on
-# top of it would be the double encode App::karr::Encoding forbids. A target
-# that does not exist yet is created by the same call (">" with O_CREAT), so
-# install and update share this one path.
-sub _write_skill {
-  my ($self, $file, $content) = @_;
-
-  eval { $file->parent->mkpath; 1 }
-    or user_error( "Could not write $file: ", clean_error($@) );
-
-  return if eval { $file->append_utf8( { truncate => 1 }, $content ); 1 };
-  my $in_place_error = $@;
-
-  # Opening the file for writing is the one thing the rename never needed: it
-  # only needs a writable *directory*, so it used to update a read-only
-  # SKILL.md happily. Keep that working rather than turning a mode bit into a
-  # failure -- but this is now the only way a chain can break, so when the
-  # target really was hardlinked, say so instead of breaking it silently.
-  my $links = ( stat "$file" )[3];
-  eval { $file->spew_utf8($content); 1 }
-    or user_error( "Could not write $file: ", clean_error($in_place_error) );
-
-  if ( $links && $links > 1 ) {
-    my $others = $links - 1;
-    my $note = $others == 1
-      ? 'one other hardlink to it still holds the previous content.'
-      : "$others other hardlinks to it still hold the previous content.";
-    warn "Warning: $file could not be written in place ("
-      . clean_error($in_place_error)
-      . ") and was replaced instead;\n$note\n";
-  }
-
-  return;
-}
+# _write_skill -- the in-place write, and why it has to be one -- lives in
+# App::karr::Role::SkillFile, composed above: `karr init --claude-skill` writes
+# the very same .claude/skills/karr/SKILL.md, and kept its own spew_utf8 copy of
+# this rule until ticket #145 because the rule lived here (#142).
 
 sub _target_agents {
   my ($self) = @_;

@@ -11,6 +11,7 @@ use App::karr::Role::DependencyArgs;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::ExitCodes;
 use App::karr::Role::Output;
+use App::karr::Role::SkillFile;
 use App::karr::Role::SyncLifecycle;
 use App::karr::Role::TaskMutation;
 
@@ -62,7 +63,7 @@ my %KNOWN_LEAK = ();
 
 my @ROLES = map { "App::karr::Role::$_" } qw(
     BoardAccess BoardDiscovery ClaimTimeout CliArgs DependencyArgs
-    DependencyCheck ExitCodes Output SyncLifecycle TaskMutation
+    DependencyCheck ExitCodes Output SkillFile SyncLifecycle TaskMutation
 );
 
 # Every sub in $pkg's symbol table, paired with the package it was really

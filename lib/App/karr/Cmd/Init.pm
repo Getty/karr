@@ -12,8 +12,11 @@ use File::ShareDir ();
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Config;
 use App::karr::Role::BoardDiscovery;
+use App::karr::Role::SkillFile;
 
-with 'App::karr::Role::BoardDiscovery';
+# SkillFile: _write_skill, shared with `karr skill`, which installs the same
+# file --claude-skill installs (ticket #145).
+with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SkillFile';
 
 =head1 SYNOPSIS
 
@@ -41,7 +44,11 @@ Replaces the default status list with the comma-separated statuses you supply.
 
 =item * C<--claude-skill>
 
-Copies the bundled skill file to F<.claude/skills/karr/SKILL.md>.
+Copies the bundled skill file to F<.claude/skills/karr/SKILL.md> -- the same
+file L<App::karr::Cmd::Skill> installs for the C<claude-code> agent, and written
+the same way: B<in place>, keeping the inode of a F<SKILL.md> that is already
+there, so one that is a link of a hardlink chain shared across projects stays
+part of that chain.
 
 =back
 
@@ -165,14 +172,24 @@ sub _install_claude_skill {
   my ($self, $root) = @_;
   my $skill_dir = $root->child('.claude/skills/karr');
   # An unwritable .claude is the project's layout, not a karr bug: Path::Tiny
-  # would otherwise report this file and line at the user (#77).
+  # would otherwise report this file and line at the user (#77). Kept here
+  # rather than left to the mkpath inside _write_skill, which would report the
+  # same failure as "Could not write .../SKILL.md": at that point nothing has
+  # been written and nothing could be, because the directory is what karr could
+  # not create. Saying so is this command's own contract (t/120).
   eval { $skill_dir->mkpath; 1 }
     or user_error( "Could not create $skill_dir: ", clean_error($@) );
 
   my $skill_content = $self->_find_skill_source;
-  my $target = $skill_dir->child('SKILL.md');
-  eval { $target->spew_utf8($skill_content); 1 }
-    or user_error( "Could not write $target: ", clean_error($@) );
+  # Through App::karr::Role::SkillFile, not spew_utf8: this is the same file
+  # `karr skill install --agent claude-code` writes, and in a checkout wired up
+  # by manage-skills it is one link of a hardlink chain. spew_utf8 renames a
+  # temp file over the target, which breaks this project out of that chain and
+  # leaves every other one on the old inode with the old text -- the bug fixed
+  # in `karr skill` as ticket #142 and left standing here until #145. The role
+  # is also where the read-only fallback and its warning live, so there is one
+  # description of how a skill file gets written rather than two that drift.
+  $self->_write_skill( $skill_dir->child('SKILL.md'), $skill_content );
   print "Installed Claude Code skill to .claude/skills/karr/SKILL.md\n";
 }
 
