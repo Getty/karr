@@ -46,7 +46,7 @@ sub from_merged {
   return bless { data => $merged, file => undef }, $class;
 }
 
-=head2 from_merged
+=method from_merged
 
   my $config = App::karr::Config->from_merged($effective_hash);
 
@@ -71,7 +71,7 @@ sub save {
   DumpFile($self->file->stringify, $self->data);
 }
 
-=head2 save
+=method save
 
   $config->save;
 
@@ -130,7 +130,7 @@ sub status_config {
   return undef;
 }
 
-=head2 status_config
+=method status_config
 
   my $sc = $config->status_config('in-progress');
   # { name => 'in-progress', require_claim => 1 }
@@ -157,7 +157,7 @@ sub priorities {
     : qw( low medium high critical );
 }
 
-=head2 priorities
+=method priorities
 
   my @priorities = $config->priorities;
 
@@ -175,7 +175,7 @@ sub classes {
   } $self->_list('classes');
 }
 
-=head2 classes
+=method classes
 
 Returns the configured class-of-service names in board order, accepting both
 the mapping form C<< { name => 'expedite', wip_limit => 1 } >> and a bare
@@ -190,7 +190,7 @@ sub claim_timeout {
   return $self->data->{claim_timeout} // '1h';
 }
 
-=head2 claim_timeout
+=method claim_timeout
 
   my $raw = $config->claim_timeout;   # '1h', unparsed
 
@@ -211,7 +211,7 @@ sub foundation_enabled {
   return $f->{enabled} ? 1 : 0;
 }
 
-=head2 foundation_enabled
+=method foundation_enabled
 
 Returns true when automated agent runs (L<App::karr::Foundation>) are allowed on
 this board. The flag lives in the board config under C<foundation.enabled> and
@@ -232,7 +232,7 @@ sub foundation_reason {
   return ( defined $reason && length $reason ) ? $reason : undef;
 }
 
-=head2 foundation_reason
+=method foundation_reason
 
 Returns the free-text reason recorded alongside C<foundation.enabled>, or undef
 when none was given. Only meaningful while the board is disabled.
@@ -252,7 +252,7 @@ sub parse_bool {
   die "Invalid boolean: $value (use true/false, yes/no, on/off, 1/0)\n";
 }
 
-=head2 parse_bool
+=method parse_bool
 
 Coerces a CLI-supplied boolean string to C<1> or C<0>, dying on anything else.
 Needed because a bare C<"false"> from the command line is true in Perl.
@@ -300,7 +300,7 @@ sub parse_duration {
   return $sign * $seconds;
 }
 
-=head2 parse_duration
+=method parse_duration
 
 Parses a Go C<time.ParseDuration> string into seconds, returning C<undef> when
 it is not a duration at all. kanban-md writes C<claim_timeout> in that grammar,
@@ -330,7 +330,7 @@ sub validate_status {
   _usage_error( 'status', $value, 'valid: ' . join(', ', @statuses) );
 }
 
-=head2 validate_status
+=method validate_status
 
 Dies unless the value is one of the board's configured statuses, returning the
 value otherwise so it can be used inline.
@@ -346,7 +346,7 @@ sub validate_priority {
   _usage_error( 'priority', $value, 'valid: ' . join(', ', @priorities) );
 }
 
-=head2 validate_priority
+=method validate_priority
 
 Dies unless the value is one of the board's configured priorities.
 
@@ -359,7 +359,7 @@ sub validate_class {
   _usage_error( 'class', $value, 'valid: ' . join(', ', @classes) );
 }
 
-=head2 validate_class
+=method validate_class
 
 Dies unless the value is one of the board's configured classes of service.
 
@@ -380,7 +380,7 @@ sub validate_due {
   return $value;
 }
 
-=head2 validate_due
+=method validate_due
 
 Dies unless the value is a real calendar date in C<YYYY-MM-DD>, the only form
 kanban-md's C<date.Date> accepts.
@@ -469,7 +469,7 @@ sub validate {
   return 1;
 }
 
-=head2 validate
+=method validate
 
 Checks a fully merged board config and dies with a C<Board config is invalid:>
 message on the first problem, mirroring kanban-md's C<Config.Validate>. Only the
@@ -497,7 +497,7 @@ sub priority_order {
   return (critical => 0, high => 1, medium => 2, low => 3);
 }
 
-=head2 priority_order
+=method priority_order
 
 Returns a hash for sorting tasks by priority.
 
@@ -511,7 +511,7 @@ sub class_order {
   return (expedite => 0, 'fixed-date' => 1, standard => 2, intangible => 3);
 }
 
-=head2 class_order
+=method class_order
 
 Returns a hash for sorting tasks by class of service.
 
@@ -535,7 +535,7 @@ sub is_terminal_status {
   return ( grep { $_ eq $status } $self->terminal_statuses ) ? 1 : 0;
 }
 
-=head2 is_terminal_status
+=method is_terminal_status
 
 Returns true if the given status is terminal for this board.
 
@@ -569,7 +569,7 @@ sub terminal_statuses {
   return grep { !$seen{$_}++ } ( $final, ARCHIVED_STATUS );
 }
 
-=head2 terminal_statuses
+=method terminal_statuses
 
 Returns the board's terminal status names, C<done>-equivalent first.
 
@@ -612,7 +612,7 @@ sub handoff_status {
     'board configures no review column and has no non-terminal column to hand off to' );
 }
 
-=head2 handoff_status
+=method handoff_status
 
 Returns the status C<karr handoff> moves a task to on this board.
 
@@ -639,7 +639,7 @@ sub status_requires_claim {
   return $sc->{require_claim} ? 1 : 0;
 }
 
-=head2 status_requires_claim
+=method status_requires_claim
 
   if ($config->status_requires_claim('in-progress')) {
       # move/pick into this status must carry --claim
@@ -663,7 +663,7 @@ sub effective_config {
   return _merge_hashes($defaults, $overrides // {});
 }
 
-=head2 effective_config
+=method effective_config
 
   my $ec = App::karr::Config->effective_config($overrides);
   my $ec = App::karr::Config->effective_config($overrides, name => 'My Board');
@@ -772,7 +772,7 @@ sub file_view_config {
   return $view;
 }
 
-=head2 file_view_config
+=method file_view_config
 
 Returns the effective config reshaped for the materialized kanban-md file view:
 boolean-typed keys become real YAML booleans instead of Perl's C<1>/C<0>, and
@@ -807,7 +807,7 @@ sub reconcile_view_config {
   return _merge_hashes( $overrides // {}, _view_overrides($view) );
 }
 
-=head2 reconcile_view_config
+=method reconcile_view_config
 
 Folds a file view's F<config.yml> into the board's existing sparse overrides and
 returns the reconciled overrides. The view wins for every key it carries and

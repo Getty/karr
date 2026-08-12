@@ -40,7 +40,7 @@ sub board_exists {
     return $self->git->ref_exists('refs/karr/config');
 }
 
-=head2 board_exists
+=method board_exists
 
 True when this repository holds an initialized board, which means exactly one
 thing: C<refs/karr/config> is there. It used to accept C<refs/karr/meta/next-id>
@@ -63,7 +63,7 @@ sub has_board_refs {
     return @refs ? 1 : 0;
 }
 
-=head2 has_board_refs
+=method has_board_refs
 
 True when anything at all lives under C<refs/karr/>, initialized board or not.
 This is the question the commands that clean up or read raw refs
@@ -81,7 +81,7 @@ sub load_config_overrides {
     return ref $data eq 'HASH' ? $data : {};
 }
 
-=head2 load_config_overrides
+=method load_config_overrides
 
 Returns the board's raw config overrides -- whatever C<refs/karr/config>
 currently holds, decoded but not merged with the code defaults. A board with
@@ -101,7 +101,7 @@ sub load_config {
     return App::karr::Config->effective_config( $self->load_config_overrides );
 }
 
-=head2 load_config
+=method load_config
 
 Reads L</load_config_overrides> and merges them over the code defaults via
 L<App::karr::Config/effective_config>, returning a plain hash reference --
@@ -117,7 +117,7 @@ sub effective_config {
     return $self->{_effective_config} //= $self->load_config;
 }
 
-=head2 effective_config
+=method effective_config
 
 The board's merged config, cached for the lifetime of this C<$store>
 instance. The first call runs L</load_config>; every call after returns the
@@ -143,7 +143,7 @@ sub all_status_names {
     return map { ref $_ ? $_->{name} : $_ } @{$ec->{statuses} // []};
 }
 
-=head2 all_status_names
+=method all_status_names
 
 Returns a list of all status names from the effective config.
 
@@ -157,7 +157,7 @@ sub status_requires_claim {
         ->status_requires_claim($status_name);
 }
 
-=head2 status_requires_claim
+=method status_requires_claim
 
 Returns true if the given status requires a claim.
 
@@ -175,7 +175,7 @@ sub is_terminal_status {
         ->is_terminal_status($status_name);
 }
 
-=head2 is_terminal_status
+=method is_terminal_status
 
 Returns true if the status is terminal for this board -- its final configured
 status, or C<archived>.
@@ -192,7 +192,7 @@ sub foundation_enabled {
         ->foundation_enabled;
 }
 
-=head2 foundation_enabled
+=method foundation_enabled
 
 Returns true when automated agent runs are allowed on this board
 (C<foundation.enabled> in C<refs/karr/config>; boards default to enabled).
@@ -209,7 +209,7 @@ sub foundation_reason {
         ->foundation_reason;
 }
 
-=head2 foundation_reason
+=method foundation_reason
 
 Returns the reason recorded with the disable flag, or undef when none was
 given.
@@ -231,7 +231,7 @@ sub set_foundation_enabled {
     return $self->save_config($effective);
 }
 
-=head2 set_foundation_enabled
+=method set_foundation_enabled
 
 Writes the board-level agent switch and its optional reason back into
 C<refs/karr/config>. Re-enabling drops the reason, and because C<enabled> then
@@ -259,7 +259,7 @@ sub save_config {
     return $self->git->write_config_ref($overrides);
 }
 
-=head2 save_config
+=method save_config
 
 Validates a config and writes it back to C<refs/karr/config> as sparse
 overrides. C<$effective> may be a full effective config or the sparse
@@ -284,7 +284,7 @@ sub peek_next_id {
     return $self->git->read_next_id_ref;
 }
 
-=head2 peek_next_id
+=method peek_next_id
 
 Returns the board's next-id counter as it currently stands, without
 allocating or advancing it. Contrast with L</allocate_next_id>, which hands
@@ -299,7 +299,7 @@ sub allocate_next_id {
     return $self->git->allocate_next_id_ref;
 }
 
-=head2 allocate_next_id
+=method allocate_next_id
 
 Returns the next free task id and moves the counter past it, atomically. Two
 agents running C<karr create> at the same time are guaranteed different ids;
@@ -315,7 +315,7 @@ sub set_next_id {
     return $self->git->write_next_id_ref($next_id);
 }
 
-=head2 set_next_id
+=method set_next_id
 
 Writes the next-id counter directly to C<$next_id>, with no compare-and-swap
 and no check that the value only moves forward -- callers that need either of
@@ -340,7 +340,7 @@ sub ensure_next_id {
     return $self->set_next_id($floor);
 }
 
-=head2 ensure_next_id
+=method ensure_next_id
 
 Seeds the id counter without ever handing out an id that is already taken. On a
 fresh board that is C<1>; on a board C<init> is completing rather than creating
@@ -358,7 +358,7 @@ sub stamp_encoding_version {
     return $self->git->write_encoding_version;
 }
 
-=head2 stamp_encoding_version
+=method stamp_encoding_version
 
 Records in C<refs/karr/meta/encoding> that this board's payloads follow the
 current character-encoding contract, so nothing reading it applies the
@@ -382,7 +382,7 @@ sub board_id {
     return $self->git->read_board_id_ref;
 }
 
-=head2 board_id
+=method board_id
 
 The board's identity from C<refs/karr/meta/board-id>, or undef when the board
 predates identities (or does not exist). The id is what a pull compares
@@ -398,7 +398,7 @@ sub ensure_board_id {
     return $self->git->ensure_board_id_ref;
 }
 
-=head2 ensure_board_id
+=method ensure_board_id
 
 Stamps the board's identity ref when it is missing and returns the id,
 existing or new. It never re-keys a board: changing the id under a live board
@@ -422,7 +422,7 @@ sub load_tasks {
     return grep { defined } map { $self->git->load_task_ref($_) } @ids;
 }
 
-=head2 load_tasks
+=method load_tasks
 
 Returns every task on the board as a list of L<App::karr::Task> objects, in
 ascending id order (L<App::karr::Git/list_task_refs> sorts numerically). Any
@@ -441,7 +441,7 @@ sub find_task {
     return $self->git->load_task_ref($id);
 }
 
-=head2 find_task
+=method find_task
 
 Returns the L<App::karr::Task> for C<$id>, or C<undef> when its ref does not
 exist or resolves to no C<data> blob at all -- the same tolerant case
@@ -458,7 +458,7 @@ sub find_task_with_oid {
     return $self->git->load_task_ref_with_oid($id);
 }
 
-=head2 find_task_with_oid
+=method find_task_with_oid
 
 Returns C<< ($oid, $task) >> for one task: the card, plus the OID of the commit
 it was read from. Pair it with L</save_task_cas> to write the card back only if
@@ -479,7 +479,7 @@ sub save_task {
     return $self->git->save_task_ref($task);
 }
 
-=head2 save_task
+=method save_task
 
 Writes C<$task> to its ref (C<refs/karr/tasks/ID/data>), unconditionally --
 no compare-and-swap, so a concurrent writer's change can be lost under it;
@@ -502,7 +502,7 @@ sub save_task_cas {
     return $self->git->save_task_ref_cas( $task, $expected_oid );
 }
 
-=head2 save_task_cas
+=method save_task_cas
 
 Writes a card back only if its ref still points at C<$expected_oid>, the OID
 L</find_task_with_oid> read it from. Returns true when the write landed and
@@ -526,7 +526,7 @@ sub delete_task {
     return $self->git->delete_ref("refs/karr/tasks/$id/data");
 }
 
-=head2 delete_task
+=method delete_task
 
 Deletes the ref for task C<$id> (C<refs/karr/tasks/ID/data>). Returns C<1>
 when this call removed it and C<0> when there was no such task -- deleting a
@@ -544,7 +544,7 @@ sub list_karr_refs {
     return $self->git->list_refs('refs/karr/');
 }
 
-=head2 list_karr_refs
+=method list_karr_refs
 
 Returns every ref name under C<refs/karr/>, board and metadata refs alike --
 the same broad question L</has_board_refs> asks with just a boolean answer.
@@ -558,7 +558,7 @@ sub delete_all_karr_refs {
     return $self->git->delete_refs('refs/karr/');
 }
 
-=head2 delete_all_karr_refs
+=method delete_all_karr_refs
 
 Deletes every ref under C<refs/karr/> -- the whole board, metadata included.
 Used only by C<karr destroy>; there is no per-piece variant, because a board
@@ -618,7 +618,7 @@ sub materialize_to {
     return $board_dir;
 }
 
-=head2 materialize_to
+=method materialize_to
 
 Writes the board out to C<$board_dir> as a kanban-md file view: a F<config.yml>
 plus a F<tasks/> directory of cards. Stale cards from an earlier run are swept
@@ -652,7 +652,7 @@ sub file_view_gitignore_entries {
     return ( 'tasks/', 'config.yml' );
 }
 
-=head2 file_view_gitignore_entries
+=method file_view_gitignore_entries
 
 Returns the exact two path entries the materialized file view claims --
 C<tasks/> and C<config.yml>, named exactly as L</materialize_to> writes them.
@@ -672,7 +672,7 @@ sub project_owned_view_paths {
         $self->file_view_gitignore_entries;
 }
 
-=head2 project_owned_view_paths
+=method project_owned_view_paths
 
 Which of the C<file_view_gitignore_entries> the project already has content of
 its own at, named exactly as F<.gitignore> would have named them. Empty is the
@@ -738,7 +738,7 @@ sub ensure_gitignore {
     return @missing;
 }
 
-=head2 ensure_gitignore
+=method ensure_gitignore
 
 Idempotently appends any of L</file_view_gitignore_entries> missing from
 F<$board_dir/.gitignore> (creating the file, and a header comment, on first
@@ -897,7 +897,7 @@ sub serialize_from {
     return 1;
 }
 
-=head2 serialize_from
+=method serialize_from
 
 Reads a file view at C<$board_dir> back into C<refs/karr/*>: task refs are
 replaced by the cards, refs the view does not mention are pruned, and the id
@@ -938,7 +938,7 @@ sub snapshot {
     };
 }
 
-=head2 snapshot
+=method snapshot
 
 Reads every ref under C<refs/karr/> into a plain hash reference:
 C<< { version => 1, refs => { $ref_name => $content, ... } } >>, where
@@ -968,7 +968,7 @@ sub restore_snapshot {
     return $ok;
 }
 
-=head2 restore_snapshot
+=method restore_snapshot
 
 Makes the board consist of exactly the refs in the snapshot. Every ref name is
 checked and every commit object built before the first ref moves, so a snapshot

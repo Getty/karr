@@ -95,7 +95,7 @@ sub run_batch {
     return ( \@results, $failed );
 }
 
-=head2 run_batch
+=method run_batch
 
 Runs one callback per id and keeps going when an id fails, so that a bad id in
 the middle of the list cannot skip the ids after it. Returns the collected
@@ -124,7 +124,7 @@ sub report_batch_failure {
     App::karr::Error::user_error( sprintf '%d of %d ids failed', $failed, $total );
 }
 
-=head2 report_batch_failure
+=method report_batch_failure
 
     $self->report_batch_failure( $failed, scalar @ids );
 
@@ -166,7 +166,7 @@ sub update_task_guarded {
     } );
 }
 
-=head2 update_task_guarded
+=method update_task_guarded
 
 Reads the task, runs the callback against it, and writes it back only if the
 task ref is still exactly where it was when it was read. If another agent got
@@ -230,7 +230,7 @@ sub delete_task_guarded {
     return $task;
 }
 
-=head2 delete_task_guarded
+=method delete_task_guarded
 
 Deletes a task, but only if the task ref is still exactly where it was when the
 claim rule was applied to it. If another agent got in first the check is re-run
@@ -297,7 +297,7 @@ sub apply_status_change {
     return $old_status;
 }
 
-=head2 apply_status_change
+=method apply_status_change
 
 The only place a task's status is assigned. Rejects a status the board does not
 configure, applies C<require_claim> and the lifecycle stamps, records any

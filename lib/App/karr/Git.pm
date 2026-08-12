@@ -385,7 +385,7 @@ sub is_tracked {
     return $status & ( GIT_STATUS_WT_NEW | GIT_STATUS_IGNORED ) ? 0 : 1;
 }
 
-=head2 is_tracked
+=method is_tracked
 
 Returns true when the given working-tree path is under version control -- known
 to the index or to C<HEAD>. Untracked and ignored paths, paths outside the work
@@ -444,7 +444,7 @@ sub is_tracked_under {
     return length $run->{out} ? 1 : 0;
 }
 
-=head2 is_tracked_under
+=method is_tracked_under
 
 Returns true when the index has an entry at C<$path>, or -- when C<$path> is a
 directory -- anywhere under it. Unlike L</is_tracked>, this asks the index

@@ -230,7 +230,7 @@ command run, the same guard L</log_task_write> uses.
 
 =cut
 
-=head2 log_action
+=method log_action
 
 The action name recorded for this command's writes: the class's own name
 segment, hyphenated (C<App::karr::Cmd::AgentName> gives C<agent-name>). Naming
@@ -247,7 +247,7 @@ sub log_action {
     return lc $name;
 }
 
-=head2 log_agent
+=method log_agent
 
 Who a log entry is attributed to: this command's C<--claim> if it takes one,
 else whoever holds the task, else the Git identity behind the board.
@@ -265,7 +265,7 @@ sub log_agent {
     return $git->git_user_name || $git->git_user_email || 'unknown';
 }
 
-=head2 log_task_write
+=method log_task_write
 
     $self->log_task_write( $task->id, $task->status, $task );
 

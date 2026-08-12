@@ -92,7 +92,7 @@ has _errors => (
 
 =head1 METHODS
 
-=head2 done
+=method done
 
     $guard->done;
 
@@ -111,7 +111,7 @@ sub done {
     return;
 }
 
-=head2 flush_armed
+=method flush_armed
 
     my $count = App::karr::SyncGuard->flush_armed;
 
@@ -158,7 +158,7 @@ sub flush_armed {
     return $flushed;
 }
 
-=head2 errs
+=method errs
 
     my @errors = $guard->errs;
 

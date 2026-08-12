@@ -144,7 +144,7 @@ sub _build_config {
     return App::karr::Config->from_merged($merged);
 }
 
-=head2 require_board
+=method require_board
 
     $self->sync_before;
     $self->require_board;
@@ -214,7 +214,7 @@ sub require_board {
         . "and keeps what is already there.\n";
 }
 
-=head2 require_local_board
+=method require_local_board
 
     $self->require_local_board;   # no sync_before: reads stay offline
     $self->require_local_board( hint => "...one more sentence.\n" );

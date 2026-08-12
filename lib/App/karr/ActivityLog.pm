@@ -56,7 +56,7 @@ has git => (
     required => 1,
 );
 
-=head2 role
+=attr role
 
 The actor role, C<user> (default) or C<agent>. Read from C<KARR_ROLE> when not
 given explicitly.
@@ -123,7 +123,7 @@ sub _role {
     return defined $role && length $role ? $role : 'user';
 }
 
-=head2 identity
+=method identity
 
     my $id = $log->identity;   # e.g. "agent/getty%40conflict.industries"
 
@@ -139,7 +139,7 @@ sub identity {
          . $self->_encode_component( $self->_email );
 }
 
-=head2 decode_identity
+=method decode_identity
 
     my ($role, $email) = App::karr::ActivityLog->decode_identity($id);
 
@@ -183,7 +183,7 @@ sub _legacy_refs {
     return grep { $_ ne $current } @refs;
 }
 
-=head2 log_entry
+=method log_entry
 
     $log->log_entry(
         agent   => 'agent-fox',
@@ -226,7 +226,7 @@ sub log_entry {
     };
 }
 
-=head2 entries
+=method entries
 
     my @entries = $log->entries;
 
@@ -256,7 +256,7 @@ sub _entries_from {
     return @entries;
 }
 
-=head2 last_entry
+=method last_entry
 
     my $entry = $log->last_entry;
 

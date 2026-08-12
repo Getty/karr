@@ -48,7 +48,7 @@ by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
 
 =head1 METHODS
 
-=head2 sync_before
+=method sync_before
 
     $self->sync_before;
 
@@ -107,7 +107,7 @@ sub sync_before {
     return $guard;
 }
 
-=head2 sync_after
+=method sync_after
 
     $self->sync_after;  # push with up to 3 attempts
 
