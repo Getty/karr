@@ -196,6 +196,15 @@ sub execute {
   # one must not update the first half of a batch (ticket #54). --status is not
   # here because it goes through apply_status_change, which is the one place a
   # status change happens and therefore the one place its name is checked.
+  #
+  # --claim and --release are mutually exclusive: --claim sets a claim --release
+  # is about to discard, so the require_claim guard in apply_status_change would
+  # be satisfied by a claim the same command is clearing and let the task land
+  # in a require_claim column with no claim on it (ticket #150). kanban-md
+  # rejects the pair at the flag layer too (cmd/edit.go:128-130); we match.
+  $self->usage_error('cannot use --claim and --release together')
+      if (defined $self->claim && length $self->claim) && $self->release;
+
   my $config = App::karr::Config->from_merged( $self->store->effective_config );
   $config->validate_priority( $self->priority ) if defined $self->priority;
   App::karr::Config->validate_due( $self->due ) if defined $self->due;
@@ -240,6 +249,18 @@ sub execute {
       # validateEditClaim (cmd/edit.go).
       $self->check_claim($task, $self->claim) unless $self->release;
 
+      # Clear the claim BEFORE the status change so the require_claim guard
+      # in apply_status_change sees the post-release state: --release sets up
+      # a claim the guard was about to satisfy, and a status change into a
+      # require_claim column would otherwise walk straight through and leave
+      # the card with no owner (ticket #150). kanban-md's equivalent check
+      # (validateEditPost, internal/board/mutate.go:442) fires after applyFn
+      # regardless of release.
+      if ($self->release) {
+        $task->clear_claimed_by;
+        $task->clear_claimed_at;
+      }
+
       $task->title($self->title)       if $self->title;
       $self->apply_status_change($task, $self->status, $self->claim) if $self->status;
       $task->priority($self->priority) if $self->priority;
@@ -280,11 +301,6 @@ sub execute {
       if ($self->claim) {
         $task->claimed_by($self->claim);
         $task->claimed_at(gmtime->datetime . 'Z');
-      }
-
-      if ($self->release) {
-        $task->clear_claimed_by;
-        $task->clear_claimed_at;
       }
 
       if ($self->block) {
