@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - `karr metrics` now says how much of its lead average cannot be believed
+      (ticket #139). A card whose `completed` precedes its own `created`
+      contributes a negative lead time, and it still does: unlike `started`,
+      which karr manufactured and `karr repair` rewrites, `created` and
+      `completed` are original data, so a negative lead time is evidence of a
+      bad completion rather than something to normalise away — and every value
+      a clamp could pick would be an invention (`created` is too early,
+      `started` asserts a zero cycle time, and the end of the day a bare date
+      bounds was never written down). So the sample stays in the average and
+      is qualified instead of cleaned: `negative_lead_samples` under `--json`,
+      always present including as 0, and a closing note in the default and
+      compact renderings stating the same figure. Deliberately *not* folded
+      into `unusable_timestamps`, which counts cards missing from at least one
+      average — these are missing from nothing; both definitions are now
+      spelled out in the POD, along with the fact that one card can be in
+      both. The command also stops implying an hour precision its data does
+      not have: boards written before ticket #68 (karr 0.403) carry
+      day-granular `started`/`completed` stamps, bare `YYYY-MM-DD` read as
+      midnight, which is where every negative duration comes from, and on such
+      a board an average printed to the hour is finer than what it rests on.
+      On karr's own board 51 of 138 lead samples are negative, averaging
+      -10.1 hours; discarding them would raise the printed average from 6h 39m
+      to 16h 28m, which is why the figure is reported with the 51 beside it
+      rather than tidied up with the evidence removed. No data migration:
+      `karr repair` is untouched and the stored stamps stay exactly as they
+      are.
+
     - `App::karr::Role::TaskMutation` now declares the five methods it calls
       on its consumer (ticket #141): `git` and `store` from
       `Role::BoardDiscovery`, `save_task` and `log_task_write` from

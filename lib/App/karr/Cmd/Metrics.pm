@@ -50,7 +50,10 @@ but does not move them.
 =item * B<Average lead time>
 
 Mean of C<completed - created> over every completed task: the whole time a
-request existed, queue time included.
+request existed, queue time included. Never clamped, and so never quite a
+measurement on a board old enough to hold day-granular stamps -- how many of
+its samples are impossible is reported alongside it as
+C<negative_lead_samples>. See L</DATA SOURCE>.
 
 =item * B<Average cycle time>
 
@@ -90,12 +93,15 @@ two hundred. The lead average is not clamped: a card whose C<completed>
 precedes its C<created> -- reachable by hand-editing, by another tool, or by a
 pre-0.403 karr that stamped C<completed> as a bare date -- contributes a
 negative duration and is left visible as one, because a metrics command that
-quietly normalises impossible data is how impossible data survives. The cycle
-average is the one figure that impossible data is kept out of rather than left
-in: a card whose stamps cannot order into a duration is excluded and counted in
-C<unusable_timestamps> instead, which makes it visible by the other route the
-command has. Neither figure is ever silently normalised; see L</DATA SOURCE>
-for which cards that costs, and how many.
+quietly normalises impossible data is how impossible data survives. What it
+does instead is say how much of the average rests on such samples:
+C<negative_lead_samples> counts them, and the closing note of the other two
+renderings states the same figure, so the number is both left standing and
+readable. The cycle average is the one figure that impossible data is kept out
+of rather than left in: a card whose stamps cannot order into a duration is
+excluded and counted in C<unusable_timestamps> instead, which makes it visible
+by the other route the command has. Neither figure is ever silently normalised;
+see L</DATA SOURCE> for which cards that costs, and how many.
 
 =head1 DATA SOURCE
 
@@ -112,7 +118,7 @@ bulk paths (C<import>, C<restore>, C<repair>) write refs without logging. A
 cycle time reconstructed from it would be silently short on exactly the boards
 whose history is oldest, and would disagree with the stamps on the cards.
 
-Four limitations follow from that choice, and all four are visible in the
+Five limitations follow from that choice, and all five are visible in the
 output rather than hidden:
 
 =over 4
@@ -149,19 +155,63 @@ below it, so the ordering fault moves from the start to the cycle. On karr's
 own board that turned 42 of 117 cycle samples negative and reported an average
 cycle time of 16 minutes with C<unusable_timestamps> at zero -- the figure
 whose job is to say what is missing, saying nothing (ticket #140).
-The lead time of such a card is a separate question, left open on purpose:
-C<completed - created> is still computed and can still be negative, per the
-non-clamping rule above.
+
+=item * The lead time of that same card is still computed, and can still be
+negative: C<created> and C<completed> are original data in a way C<started> is
+not, so there is no defensible value to clamp a bad completion to. C<created>
+is too early, C<started> asserts a cycle time of zero, and the end of the day
+the bare date bounds is an invention. So the impossible sample stays in the
+average, and the count of such samples is reported next to it as
+C<negative_lead_samples> (ticket #139).
 
 =back
 
+=head2 The honest answer about the hour
+
+A board written before ticket #68 (karr 0.403) carries day-granular
+C<started> and C<completed> stamps: bare C<YYYY-MM-DD>, which everything here
+reads as midnight UTC. That is the single cause behind the three ordering
+faults above -- a card filed at 15:49 and finished the same day carries a
+completion stamped nearly sixteen hours before its own creation, and the
+duration computed from it is negative for no reason but the missing clock.
+
+On such a board the averages are not wrong so much as finer than what they
+rest on. An average lead time printed as C<6h 39m> claims a precision the
+underlying stamps never had, and it is dragged down by every sample the
+day-granularity made negative: on karr's own board, when this was written,
+51 of 138 lead samples were negative, averaging -10.1 hours, and discarding
+them would have raised the printed average from 6h 39m to 16h 28m -- more than
+double. Neither of those is the truth: the first is what the board says, the
+second is what it would say with the evidence removed. karr prints the first
+and states the 51, because the honest report of day-granular history is the
+figure plus how much of it cannot be believed, not a tidier figure arrived at
+by dropping the inconvenient cards (ticket #139).
+
+=head2 The two counters, and why they are two
+
 C<unusable_timestamps> counts cards, not stamps. It is the number of tasks --
 after C<--since>, and never counting archived ones -- that carry at least one
-lifecycle stamp karr could not use, and that are missing from at least one of
-the two averages for that reason; a card with two such stamps counts once. A
+lifecycle stamp karr could not use, and that are B<missing from at least one of
+the two averages> for that reason; a card with two such stamps counts once. A
 card that is merely incomplete is not counted there: one with no C<started> at
 all has nothing unusable about it, contributes no cycle time, and is already
 accounted for by the difference between the two per-average sample counts.
+
+C<negative_lead_samples> counts the opposite case: cards that are B<in> the
+lead average and should not be believed. It is the number of tasks -- same
+population, after C<--since> and never archived -- whose C<completed> precedes
+their own C<created>, so the lead time they contribute is negative. Every one
+of them is included in C<lead_samples>, and C<negative_lead_samples> is
+therefore never larger than it.
+
+The two are deliberately not summed, and one card can be in both -- a card
+with an unreadable C<started> and a completion below its own creation is
+missing from the cycle average and impossible in the lead one. They answer
+different questions: how much the averages could not see, and how much of what
+they did see cannot be true. Folding the negative lead samples into
+C<unusable_timestamps> would break that counter's definition -- those cards are
+missing from nothing -- and would leave the lead average with no caveat of its
+own again.
 
 =head1 OUTPUT MODES
 
@@ -172,23 +222,26 @@ accounted for by the difference between the two per-average sample counts.
 A Markdown-flavoured plaintext block: C<# Flow Metrics>, one C<label: value>
 line per figure, and -- when there are any -- an C<## Aging Work Items>
 section of C<- id | title | status | age:...> lines, the same line shape
-C<karr board> uses.
+C<karr board> uses. Below that, one closing note per counter that is not zero:
+what the lead average cannot be believed on, and what the averages left out.
 
 =item * C<--compact>
 
 One C<Throughput: ... | Lead: ... | Cycle: ... | Efficiency: ...> line,
 followed by one C<Aging: #id [status] title (age)> line per aging item, as in
-kanban-md's compact rendering.
+kanban-md's compact rendering. The same closing notes follow, because a
+caveat dropped for brevity is a caveat the reader never had.
 
 =item * C<--json>
 
 kanban-md's payload -- C<throughput_7d>, C<throughput_30d>,
 C<avg_lead_time_hours>, C<avg_cycle_time_hours>, C<flow_efficiency>,
-C<aging_items> -- plus C<lead_samples>, C<cycle_samples> and
-C<unusable_timestamps>, so a consumer can tell a real zero from an empty
-population. C<unusable_timestamps> carries exactly the count the closing note
-of the other two renderings states, under the definition above: cards, not
-stamps, and each one missing from at least one average.
+C<aging_items> -- plus C<lead_samples>, C<cycle_samples>,
+C<unusable_timestamps> and C<negative_lead_samples>, so a consumer can tell a
+real zero from an empty population, and a believable average from one built on
+impossible stamps. The two counters carry exactly the figures the closing notes
+of the other two renderings state, under the definitions above; both are always
+present, including as C<0>.
 An average that has no samples is omitted, as it is there.
 C<aging_items> is always present, as an empty array when nothing is aging.
 
@@ -255,7 +308,8 @@ sub execute {
   my ( $throughput_short, $throughput_long ) = ( 0, 0 );
   my ( $lead_sum, $lead_n, $cycle_sum, $cycle_n, $paired_lead_sum ) = ( 0, 0, 0, 0, 0 );
   my @aging;
-  my $unusable = 0;
+  my $unusable      = 0;
+  my $negative_lead = 0;
 
   for my $task (@tasks) {
     my $created   = _epoch( $task->created );
@@ -288,7 +342,8 @@ sub execute {
     # check passes by construction and the impossible order lands here instead.
     # Unguarded that was 42 negative samples out of 117 on karr's own board,
     # averaging to a cycle time of 16 minutes (ticket #140). The lead time of
-    # such a card is deliberately left alone -- see ticket #139.
+    # such a card gets no symmetric guard: it is qualified rather than excluded,
+    # for the reason on $negative_lead below (ticket #139).
     my $cycle_measurable =
       $start_measurable && defined $completed && $completed >= $started;
 
@@ -311,6 +366,16 @@ sub execute {
         my $lead = ( $completed - $created ) / SECONDS_PER_HOUR;
         $lead_sum += $lead;
         $lead_n++;
+        # Deliberately still summed in. `created` and `completed` are original
+        # data -- unlike `started`, which karr manufactured and #138 rewrote --
+        # so a negative lead time is evidence of a bad completion, and there is
+        # no value to clamp it to that would not be an invention: `created` is
+        # too early, `started` asserts a zero cycle time, and the end of the day
+        # a bare date bounds was never written down. The sample stays and gets
+        # counted instead, so the average is qualified rather than cleaned
+        # (ticket #139). Not folded into $unusable: that counter means "missing
+        # from an average", and this card is missing from nothing.
+        $negative_lead++ if $lead < 0;
         if ($cycle_measurable) {
           $cycle_sum += ( $completed - $started ) / SECONDS_PER_HOUR;
           $cycle_n++;
@@ -351,6 +416,13 @@ sub execute {
   my $efficiency =
     ( $cycle_n && $paired_lead_sum > 0 ) ? $cycle_sum / $paired_lead_sum : undef;
 
+  # Order matters: the lead caveat qualifies a figure that is printed, so it
+  # comes before the one that says what was left out entirely.
+  my @notes = (
+    ( $negative_lead ? _negative_lead_note( $negative_lead, $lead_n ) : () ),
+    ( $unusable      ? _unusable_note($unusable)                      : () ),
+  );
+
   if ( $self->json ) {
     $self->print_json( {
       throughput_7d         => $throughput_short,
@@ -358,6 +430,7 @@ sub execute {
       lead_samples          => $lead_n,
       cycle_samples         => $cycle_n,
       unusable_timestamps   => $unusable,
+      negative_lead_samples => $negative_lead,
       aging_items           => \@aging,
       ( defined $avg_lead   ? ( avg_lead_time_hours  => _round( $avg_lead,  2 ) ) : () ),
       ( defined $avg_cycle  ? ( avg_cycle_time_hours => _round( $avg_cycle, 2 ) ) : () ),
@@ -374,7 +447,7 @@ sub execute {
     printf "Aging: #%d [%s] %s (%s)\n",
       $_->{id}, $_->{status}, $_->{title}, _format_duration( $_->{age_hours} )
       for @aging;
-    print _unusable_note($unusable) if $unusable;
+    print join "\n", @notes if @notes;
     return;
   }
 
@@ -398,7 +471,22 @@ sub execute {
     . "completion stamp.\n"
     if !$lead_n && !$cycle_n && !@aging;
 
-  print "\n", _unusable_note($unusable) if $unusable;
+  print "\n", join( "\n", @notes ) if @notes;
+}
+
+# What the lead average rests on. The samples are in the figure above by
+# design (see the comment on $negative_lead), which is exactly why they have to
+# be named here: an unclamped impossible number that nothing points at reads as
+# a measurement.
+sub _negative_lead_note {
+  my ( $count, $samples ) = @_;
+  return sprintf
+      "Note: %d of the %d lead times behind the average above %s negative -- a\n"
+    . "`completed` that precedes the card's own `created`. Nothing is clamped, so\n"
+    . "the average reads lower than the work took. A karr older than 0.403 stamped\n"
+    . "`completed` as a bare date, read here as midnight: on such a board an\n"
+    . "average printed to the hour is finer than the data underneath it.\n",
+    $count, $samples, ( $count == 1 ? 'is' : 'are' );
 }
 
 # What the averages left out, and why. Never silent: a card missing from a

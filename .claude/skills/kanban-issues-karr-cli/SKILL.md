@@ -322,6 +322,16 @@ measurement — an unreadable date, a `started` that precedes the card's own
 averages that need them and counted in `unusable_timestamps` (cards, not
 stamps), so a low sample count is visible rather than silent.
 
+Lead time is the deliberate exception: a `completed` that precedes its own
+`created` is still averaged in, negative and all, because every value it could
+be clamped to would be an invention. Such samples are counted separately in
+`negative_lead_samples` and named in the closing note, so the average is
+qualified instead of cleaned — they are *in* the figure, not missing from it,
+which is why they are not in `unusable_timestamps`. They come from boards
+written before karr 0.403, which stamped `started`/`completed` as a bare
+`YYYY-MM-DD` that reads as midnight; on such a board an average printed to the
+hour is finer than the data underneath it.
+
 ### Agent name
 
 ```bash
