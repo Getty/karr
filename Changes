@@ -1,5 +1,30 @@
 {{$NEXT}}
 
+    - `karr pick` ranks candidates and `karr context --sections in-progress`
+      lists in-progress tasks by the board's own `priorities` and `classes`
+      lists, not by a hardcoded table (ticket #149). `Cmd/Pick.pm` used to
+      sort through `App::karr::Config->priority_order` and `->class_order` —
+      class methods that only knew the four default priorities and four
+      default classes. On a board imported from kanban-md with a longer
+      priorities list (or any class name the table did not recognise),
+      every unknown priority collapsed into the `// 2` fallback, the sort
+      became a no-op on that axis, and the wrong card went out — silently
+      and consistently, while `karr list --sort priority` showed the right
+      order right next to it. The reproduction in the ticket was a board
+      with priorities `[low, medium, high, critical, blocker]`: `karr pick`
+      handed out the merely-critical card because `blocker` was unknown to
+      the table, and `karr context --sections in-progress` listed
+      `critical` above `blocker` for the same reason. The fix reads
+      `$self->config->priorities` and `$self->config->classes` and sorts
+      by class index (lower = more urgent) then by priority index (higher
+      = most urgent), matching kanban-md's `internal/board/pick.go:74-90`.
+      `App::karr::Config->priority_order` and `->class_order` are removed
+      rather than left in place: their only callers were the two bug sites,
+      and leaving them around invites a future caller to use the wrong one
+      again. The `=attr priority` / `=attr class` POD in `Task.pm` now
+      references the `Config/priorities` and `Config/classes` instance
+      methods.
+
     - karr-foundation no longer throws away a successful agent run because of
       something it printed (ticket #160). The common-error scan ran on every
       run before anything asked whether the run had worked, over the whole
