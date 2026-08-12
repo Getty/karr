@@ -80,6 +80,26 @@ sub _state_set {
   $state_file->spew_utf8( json_encode( $data ) );
 }
 
+# Drop keys entirely rather than null them: .karr.state is read by an operator
+# as much as by karr, and a key that is still there describes the last run. A
+# last_error left behind by a run three cooldowns ago, sitting next to
+# last_exit: 0, reads as a contradiction nobody can resolve (#160).
+sub _state_del {
+  my ( $self, $repo, @keys ) = @_;
+  return if $self->foundation->dry_run;
+  my $state_file = $self->_state_file( $repo );
+  return unless $state_file->exists;
+  my $data = try { json_decode( $state_file->slurp_utf8 ) } catch { {} };
+  my $gone = 0;
+  for my $key ( @keys ) {
+    next unless exists $data->{$key};
+    delete $data->{$key};
+    $gone++;
+  }
+  return unless $gone;
+  $state_file->spew_utf8( json_encode( $data ) );
+}
+
 # ---------------------------------------------------------------------------
 # Exponential cooldown (1, 2, 4, 8, ... minutes, capped) on common-error
 # ---------------------------------------------------------------------------

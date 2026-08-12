@@ -15,7 +15,11 @@ L<App::karr::Foundation>. It forks the command under C</bin/sh -c>, reads its
 combined stdout/stderr over a native pipe, and tees each chunk to the
 persistent C<.karr.log>, the terminal (when streaming), and an in-memory buffer
 used for error scanning, enforcing the per-run C<max_runtime> timeout. It also
-classifies observable common errors (rate limit, auth, network, 5xx, ...). A
+classifies observable common errors (rate limit, auth, network, 5xx, ...) in
+that buffer: a symptom word counts only next to a failure word on the same
+line, or inside a phrase an API really emits, and an HTTP status only where
+something adjacent marks it as one. The drain asks at all only for a run that
+made no progress -- see L<App::karr::Foundation>'s "Drain semantics". A
 weak back-reference to the owning foundation supplies shared options and helpers
 (C<dry_run>, C<_stream_to_terminal>, C<_prompt_for>, C<_append_log>,
 C<_say_verbose>).
@@ -200,24 +204,147 @@ sub _run_command {
 # Common-error detection
 # ---------------------------------------------------------------------------
 
+# What the drain scans an agent's transcript for: a failure the agent reports
+# while still exiting 0 -- a rate limit, a dead key, a 5xx -- because that run
+# produced nothing and starting the next one immediately just spends the next
+# window on the same wall.
+#
+# These were bare case-insensitive substrings (network, quota, credentials,
+# 401, 403, 429, 503, ...) matched against the whole transcript. That is not a
+# near-miss instrument, it is a word search over everything the agent printed,
+# and an agent working a karr board prints the board: a backlog line reading
+# "retry the network fetch on 503" tripped it twice over, and "403" tripped on
+# a diffstat (#160). So a symptom word on its own never counts here. It counts
+# next to a failure word on the same line ($SIGNAL / _near), or inside one of
+# the fixed phrases an API really emits. Numbers are the worse half -- 403 is a
+# line count, a byte count, a task id -- so an HTTP status counts only where
+# something adjacent says it is one (_http).
+#
+# Every quantifier below is bounded and every gap stays inside one line: this
+# runs over megabytes of agent output, and an unbounded gap between two classes
+# that share characters backtracks quadratically over a banner rule.
+
+# A word that turns a symptom into a report of failure. Deliberately excludes
+# "retry", "limit" and "timeout" on their own: those are what a backlog full of
+# networking tickets says, not what a failing API says.
+my $SIGNAL = qr/\b(?:
+    error | errors | failed | failing | failure | refused | rejected | denied
+  | unavailable | unreachable | invalid | missing | expired | revoked | unable
+  | exceeded | exhausted
+)\b/xi;
+
+# Limits are reported with verbs of their own.
+my $LIMIT = qr/\b(?:
+    exceed(?:ed|s|ing)? | reach(?:ed|ing)? | hit | hitting | exhausted
+  | throttl(?:ed|ing) | error | over
+)\b/xi;
+
+# $symptom counts only within one line of a failure word, in either order.
+sub _near {
+  my ( $symptom, $signal ) = @_;
+  $signal //= $SIGNAL;
+  return qr/ (?: $symptom [^\n]{0,40}? $signal ) | (?: $signal [^\n]{0,40}? $symptom ) /x;
+}
+
+# An HTTP status, only where something adjacent marks it as one: an
+# http/status/code/error token just before it -- with nothing but punctuation,
+# a "code"/"status" word or a protocol version in between -- or its own reason
+# phrase directly after it. " | 403 ++++++" and "line 403" mark neither.
+my $GAP = qr/[ \t:=,.\-\/\(\[]{0,8}/;
+
+sub _http {
+  my ( $code, $phrase ) = @_;
+  return qr/
+      (?: \b (?: https? | status | code | error | err | response ) \b
+          $GAP (?: code | status | \d+\.\d+ )? $GAP \b $code \b )
+    | (?: \b $code \b [ \t:,\-\(\[]{0,4} $phrase )
+  /xi;
+}
+
+# [ name => regex ]. The name is what reaches .karr.log and .karr.state, and it
+# keeps the wording of the substring it replaces so an operator's grep for
+# "COMMON-ERROR rate limit" still finds it.
+# Middle field: lowercase literals the pattern cannot match without. It is a
+# pre-filter, not a pattern (see _match_error) -- these regexes are 30x the
+# work of the substrings they replace, and a transcript is megabytes.
+my @DEFAULT_PATTERNS = (
+  # rate limiting / capacity
+  [ 'rate limit', ['rate'],
+    _near( qr/\brate[_ -]?limit(?:s|ed|ing)?\b/i, $LIMIT ) ],
+  [ 'rate limit', ['rate_limit_error'],    qr/\brate_limit_error\b/i ],
+  [ 'usage limit', ['usage limit'],        _near( qr/\busage limit\b/i, $LIMIT ) ],
+  [ 'quota', ['quota'],                    _near( qr/\bquotas?\b/i, $LIMIT ) ],
+  [ 'overloaded', ['overloaded_error'],    qr/\boverloaded_error\b/i ],
+  [ 'overloaded', ['overload','overcapacity'],
+    _near( qr/\bover(?:loaded|capacity)\b/i ) ],
+  [ 'too many requests', ['too many requests'], qr/\btoo many requests\b/i ],
+  [ '429', ['429'],                        _http( 429, qr/too many requests/i ) ],
+  [ '529', ['529'],                        _http( 529, qr/overloaded/i ) ],
+  # authentication
+  [ 'invalid api key', ['api'],
+    qr/\b(?:invalid|missing|expired|revoked|no)\s+api[_ -]?key\b
+     | \bapi[_ -]?key\b [^\n]{0,24}?
+       \b(?:invalid|missing|expired|revoked|required|not\s+found)\b/xi ],
+  [ 'authentication', ['authentication_error'], qr/\bauthentication_error\b/i ],
+  [ 'authentication', ['authenticat'],     _near( qr/\bauthenticat(?:ion|ed|e)\b/i ) ],
+  [ 'credentials', ['credential'],         _near( qr/\bcredentials?\b/i ) ],
+  [ 'unauthorized', ['unauthori'],         _near( qr/\bunauthori[sz]ed\b/i ) ],
+  [ 'forbidden', ['forbidden'],            _near( qr/\bforbidden\b/i ) ],
+  [ '401', ['401'],                        _http( 401, qr/unauthori[sz]ed/i ) ],
+  [ '403', ['403'],                        _http( 403, qr/forbidden/i ) ],
+  # network / transport
+  [ 'network', ['network'],                _near( qr/\bnetwork\b/i ) ],
+  [ 'connection', ['connection'],
+    qr/\bconnection\s+(?:refused|reset|closed|aborted|error|failed)\b/i ],
+  [ 'connection',
+    [qw( econnrefused econnreset etimedout ehostunreach enetunreach enotfound eai_again )],
+    qr/\bE(?:CONNREFUSED|CONNRESET|TIMEDOUT|HOSTUNREACH|NETUNREACH|NOTFOUND|AI_AGAIN)\b/i ],
+  [ 'fetch failed', ['fetch failed'],      qr/\bfetch failed\b/i ],
+  # /x eats a literal space, so every phrase here spells it \s+.
+  [ 'name resolution', ['resolve host','name resolution','service not known'],
+    qr/\bcould\s+not\s+resolve\s+host\b
+     | \btemporary\s+failure\s+in\s+name\s+resolution\b
+     | \bname\s+or\s+service\s+not\s+known\b/xi ],
+  [ 'timed out', ['time'],
+    qr/\b(?:connection|connect|request|socket|read|write|handshake|operation|upstream)\b
+       [^\n]{0,16}? \btimed?[ _-]?out\b/xi ],
+  # server side
+  [ 'service unavailable', ['service unavailable'],   qr/\bservice unavailable\b/i ],
+  [ 'internal server error', ['internal server error'], qr/\binternal server error\b/i ],
+  [ 'bad gateway', ['bad gateway'],        qr/\bbad gateway\b/i ],
+  [ '500', ['500'],                        _http( 500, qr/internal server error/i ) ],
+  [ '502', ['502'],                        _http( 502, qr/bad gateway/i ) ],
+  [ '503', ['503'],                        _http( 503, qr/service unavailable/i ) ],
+);
+
 sub _error_patterns {
   my ( $self, $karr ) = @_;
-  my @default = (
-    'rate limit', 'rate-limit', 'usage limit', 'quota exceeded', 'quota',
-    'overloaded', 'too many requests', '429', '529',
-    'unauthorized', 'forbidden', 'authentication', 'invalid api key',
-    'credentials', '401', '403',
-    'connection refused', 'connection reset', 'network', 'timed out',
-    'service unavailable', '503', '500 internal',
-  );
-  return [ @default, @{ $karr->{error_patterns} // [] } ];
+  # A board's own error_patterns stay what they were documented as: plain
+  # case-insensitive substrings. Somebody who configures one has seen the
+  # string their agent prints and means exactly it -- the narrowing above is
+  # for the defaults, which have to hold for every board. Such a pattern is
+  # its own pre-filter.
+  my @custom = map { [ $_, [ lc $_ ], qr/\Q$_\E/i ] }
+               @{ $karr->{error_patterns} // [] };
+  return [ @DEFAULT_PATTERNS, @custom ];
 }
 
 sub _match_error {
   my ( $self, $text, $patterns ) = @_;
   return undef unless defined $text && length $text;
+  # The pre-filter earns its keep on the output that has none of this in it,
+  # which is nearly all of it: index() over a whole transcript is a memory
+  # scan, these patterns are not, and skipping one that cannot match costs a
+  # single index instead of a full pass. A trigger that does not occur in what
+  # its own pattern matches would silently switch that pattern off, so t/152
+  # checks the two against each other over the corpus.
+  my $lc;
   for my $p ( @$patterns ) {
-    return $p if $text =~ /\Q$p\E/i;
+    my ( $name, $triggers, $re ) =
+      ref $p eq 'ARRAY' ? @$p : ( $p, [ lc $p ], qr/\Q$p\E/i );
+    $lc //= lc $text;
+    next unless grep { index( $lc, $_ ) >= 0 } @$triggers;
+    return $name if $text =~ $re;
   }
   return undef;
 }

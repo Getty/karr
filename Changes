@@ -1,5 +1,39 @@
 {{$NEXT}}
 
+    - karr-foundation no longer throws away a successful agent run because of
+      something it printed (ticket #160). The common-error scan ran on every
+      run before anything asked whether the run had worked, over the whole
+      transcript, against bare substrings — network, quota, credentials, 401,
+      403, 429, 503. An agent working a karr board prints the board, so a
+      backlog line reading "retry the network fetch on 503" matched, and so
+      did a diffstat of 403 changed lines. The drain aborted, the cards the
+      agent had just moved were credited to nobody, and the cooldown climbed
+      1m, 2m, 4m … 64m without ever resetting, because the next run printed
+      the same words: a healthy board throttled to one discarded run per hour.
+      What a run did is now asked before what it printed. A run that exited 0
+      and moved the board is progress whatever scrolled past, and is never
+      reclassified by its own output; the scan is evidence only where there is
+      none other, a run that moved nothing — which is what a rate-limited or
+      unauthenticated agent looks like. A pattern seen in a run that did move
+      the board is noted in `.karr.log` and otherwise ignored. The default
+      patterns are narrow to match: a symptom word counts next to a failure
+      word on the same line ("network error", "invalid credentials", "quota
+      exceeded"), never on its own, and an HTTP status only where something
+      adjacent marks it as one ("API error: 429", "429 Too Many Requests") —
+      not in a diffstat, a byte count, a line number or a commit hash. Genuine
+      failures reported by an agent that still exits 0 keep triggering the
+      backoff, which is what the scan is for. A board's own `error_patterns`
+      are unchanged: plain case-insensitive substrings.
+
+    - `.karr.state` no longer keeps a `last_error` from a run three cooldowns
+      ago sitting next to `last_exit: 0` with nothing to explain the pair
+      (ticket #160). `last_error` describes the last run and is dropped by the
+      next run that is not a common error. Where the pair is real — an agent
+      that reports a rate limit and still exits 0 — it is now said out loud:
+      `.karr.log` records "COMMON-ERROR rate limit — agent exited 0, run
+      discarded", and `karr-foundation --status` names the reason beside the
+      wait ("cooldown 240s (rate limit)").
+
     - Fixed data loss when a pull could not write a ref (ticket #154). The
       apply step of the reconciliation used an unretried ref write whose
       failure nobody checked, so a ref whose `.lock` file was held — by

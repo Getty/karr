@@ -149,8 +149,21 @@ Each iteration runs `command` once, then classifies result:
 |---------|---------|--------|
 | **progress** | board changed | keep draining |
 | **stall** | a task *this run's agent engaged* didn't move | bump attempt counter; auto-block after `max_attempts` |
-| **common-error** | bad exit, timeout, or error pattern | exponential backoff, no task penalty |
+| **common-error** | bad exit, timeout, or an error pattern in a run that moved *nothing* | exponential backoff, no task penalty |
 | **idle** | agent did nothing, grabbed nothing | stop |
+
+**What a run did is asked before what it printed.** A run that exited 0 and
+moved the board is progress whatever scrolled past it, and is never
+reclassified by its own transcript; the output is scanned only for a run that
+moved nothing at all — which is what a rate-limited or unauthenticated agent
+looks like. A pattern seen in a run that *did* move the board is noted in
+`.karr.log` and otherwise ignored. The default patterns are narrow to match: a
+symptom word counts next to a failure word on the same line (`network error`,
+`invalid credentials`, `quota exceeded`), and an HTTP status only where
+something adjacent marks it as one (`API error: 429`, `429 Too Many Requests`)
+— not in a diffstat, a byte count or a line number. Before that, an agent
+printing its own board tripped the scan on a backlog title and throttled a
+healthy board to one run per hour (#160).
 
 ### Auto-block
 
@@ -173,7 +186,8 @@ than guess (#158).
 ### Exponential cooldown
 
 On common-error: repo waits `cooldown_base × 2^level` minutes (capped at `cooldown_max`).
-Level resets on next clean (non-error) run.
+Level resets on next clean (non-error) run, which also drops `last_error` from
+`.karr.state` — it describes the last run, not a past one.
 
 ## State files (gitignored)
 

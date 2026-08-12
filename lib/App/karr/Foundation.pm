@@ -112,7 +112,7 @@ has _state => (
   is      => 'lazy',
   handles => [qw(
     _lock_held _acquire_lock _release_lock
-    _state_get _state_set
+    _state_get _state_set _state_del
     _cooldown_active _set_cooldown _clear_cooldown
     _bump_attempts _reset_attempts
   )],
@@ -180,7 +180,7 @@ B<Per-repo .karr file:>
   cooldown_base: 1          # cooldown minutes at level 0 (default: 1)
   cooldown_max: 64          # cooldown ceiling in minutes (default: 64)
   error_patterns:           # extra case-insensitive substrings → common-error
-    - my custom api error
+    - my custom api error   # (added to the defaults; matched as written)
 
 C<claude>, C<claude_bin>, C<claude_max_turns>, C<claude_permission_mode>,
 C<command> and C<prompt>/C<default_prompt> may also be set globally in the
@@ -246,17 +246,35 @@ C<karr>, an unreadable log — foundation auto-blocks B<nothing> rather than
 guess: the drain then simply ends on its iteration cap, which is far cheaper
 than blocking a human's in-progress card out from under them (#158).
 
-=item * B<common-error> — a non-zero/timeout exit or a C<error_patterns> match
-(rate limit, auth, network, 5xx, …). No task is penalized; the repo enters an
-exponential cooldown (C<cooldown_base> × 2^level minutes, capped at
-C<cooldown_max>, reset on the next clean run) and is skipped until it expires.
+=item * B<common-error> — a non-zero/timeout exit, or an error pattern in the
+output of a run that moved B<nothing> (rate limit, auth, network, 5xx, …). No
+task is penalized; the repo enters an exponential cooldown (C<cooldown_base> ×
+2^level minutes, capped at C<cooldown_max>, reset on the next clean run) and is
+skipped until it expires.
+
+What the run did is asked before what it printed: a run that exited 0 and moved
+the board is progress whatever text scrolled past, and is never reclassified by
+its own transcript. The scan is evidence only where there is no other — a run
+that produced no board movement at all, which is what a rate-limited or
+unauthenticated agent looks like. A pattern seen in a run that B<did> move the
+board is noted in F<.karr.log> and otherwise ignored.
+
+The default patterns are correspondingly narrow: a symptom word counts next to
+a failure word on the same line ("network error", "invalid credentials",
+"quota exceeded"), not on its own, and an HTTP status counts only where
+something adjacent marks it as one ("API error: 429", "429 Too Many Requests"),
+not in a diffstat or a line number. Before this, an agent that printed its own
+board tripped the scan on a backlog title, and a diffstat of 403 changed lines
+tripped it on C<403> (#160).
 
 =item * B<idle> — the agent did nothing and grabbed nothing; stop.
 
 =back
 
 All state files are gitignored: C<.karr.state> (board hash, per-task attempts,
-cooldown, last error), C<.karr.lock>, C<.karr.log>.
+cooldown, last error), C<.karr.lock>, C<.karr.log>. C<last_error> describes the
+B<last> run and is removed again by the next run that is not a common error, so
+it never outlives the cooldown it caused.
 
 =cut
 
@@ -469,11 +487,15 @@ sub _process_repo {
   };
   $self->_release_lock( $repo );
 
-  # Exponential cooldown bookkeeping: grow on common-error, reset otherwise
+  # Exponential cooldown bookkeeping: grow on common-error, reset otherwise.
+  # A run that was not a common error also drops last_error — it describes the
+  # last run, and one left standing outlives the cooldown it caused and reads
+  # as a contradiction against the last_exit written just below (#160).
   if ( ( $result->{outcome} // '' ) eq 'common-error' ) {
     $self->_set_cooldown( $repo, $karr );
   } else {
     $self->_clear_cooldown( $repo );
+    $self->_state_del( $repo, 'last_error' );
   }
 
   # Update state
@@ -714,19 +736,49 @@ sub _drain_repo {
     $first     = 0;
     $iter++;
 
-    # Common error we can observe (bad exit, timeout, or a known log pattern):
-    # don't penalize any task — leave the board untouched and back off.
-    my $err = ( $exit != 0 ) ? "exit=$exit" : undef;
-    $err //= $self->_match_error( $output, $patterns );
+    my $hash_after = $self->_ref_hash( $repo ) // '';
+    my $progressed = ( $hash_before ne $hash_after ) ? 1 : 0;
+
+    # Common error we can observe (bad exit, timeout, or a known output
+    # pattern): don't penalize any task — leave the board untouched and back
+    # off. What the run *did* is asked before what it *printed* (#160): a run
+    # that exited 0 and moved the board did work, whatever text went past on
+    # the way, and re-reading its own transcript is the one way to lose that
+    # work — the drain aborted, the progress was credited to nobody, and the
+    # cooldown climbed on every following run because the board still said the
+    # same words. So the output is evidence only where there is nothing else:
+    # a run that produced no board movement at all. The genuine case the scan
+    # exists for looks exactly like that, because an agent that hit a rate
+    # limit or a dead key could not move anything.
+    my $err;
+    if ( $exit != 0 ) {
+      $err = "exit=$exit";     # or -1, the timeout — a hard signal, no scan
+    }
+    else {
+      my $seen = $self->_match_error( $output, $patterns );
+      if ( defined $seen && $progressed ) {
+        # Worth saying once: an agent that reports a rate limit and still gets
+        # a card moved is on its last legs, and the operator should hear it
+        # from the log rather than from the next run's cooldown.
+        $self->_append_log( $repo,
+          "NOTE '$seen' in output, but the board moved \x{2014} not treated as an error" );
+      }
+      else {
+        $err = $seen;
+      }
+    }
+
     if ( defined $err ) {
-      $self->_append_log( $repo, "COMMON-ERROR $err" );
+      # An exit-0 run that is thrown away is the surprising one; .karr.state
+      # would otherwise carry last_exit: 0 next to last_error with nothing
+      # anywhere saying why the run did not count.
+      my $why = $exit == 0 ? " \x{2014} agent exited 0, run discarded" : '';
+      $self->_append_log( $repo, "COMMON-ERROR $err$why" );
       $self->_state_set( $repo, last_error => $err );
       $outcome = 'common-error';
       last;
     }
 
-    my $hash_after = $self->_ref_hash( $repo ) // '';
-    my $progressed = ( $hash_before ne $hash_after ) ? 1 : 0;
     $outcome = 'progress' if $progressed;
 
     my %after = $self->_task_states( $repo );
