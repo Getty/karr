@@ -61,6 +61,180 @@ has completed    => ( is => 'rw', predicate => 1, clearer => 1 );
 has extra        => ( is => 'rw', default => sub { {} } );
 has file_path    => ( is => 'rw', predicate => 1 );
 
+=attr id
+
+The task's numeric identifier, immutable once set (C<< is => 'ro' >>). For a
+task created through C<karr create> this comes from
+L<App::karr::BoardStore/allocate_next_id>, which hands out the next free
+integer atomically; L</from_file> and L</from_string> instead take whatever
+C<id> the parsed frontmatter carries. Feeds both L</filename> (zero-padded to
+three digits) and the ref path C<refs/karr/tasks/ID/data> that
+L<App::karr::Git> writes to.
+
+=attr title
+
+The task's display title, required at construction. Lowercased and slugified
+by L</slug> to build L</filename>, so renaming the title changes the
+filename that L</save> would use when given a C<$dir>; L</save> called with
+no C<$dir> keeps rewriting whatever L</file_path> already points at, even
+after a rename.
+
+=attr status
+
+The task's current lifecycle column, defaulting to C<backlog> when not
+given. This default is a fixed fallback for direct construction rather than
+a board-aware one: C<karr create> resolves its own default from the
+materialized board config (C<< $self->status // $defaults->{status} //
+'backlog' >>) before this attribute's default is ever reached.
+L<App::karr::Task> itself does not validate C<status> against the board's
+configured statuses -- that is L<App::karr::Config/validate_status>'s job,
+called by the commands that accept a C<--status> option.
+
+=attr priority
+
+The task's priority level, defaulting to C<medium>. Same relationship to
+board config as L</status>: this default is the fallback for direct
+construction, C<karr create> resolves its own default from
+C<< $defaults->{priority} >> first, and validation against the board's
+configured priority names happens in L<App::karr::Config/validate_priority>,
+not here. C<karr pick> ranks candidates by it via
+L<App::karr::Config/priority_order>.
+
+=attr assignee
+
+Optional free-text "who this task belongs to", set via C<karr create
+--assignee> or C<karr edit --assignee> and filtered on by C<karr list
+--assignee>. Distinct from L</claimed_by>: this is a human-maintained note
+with no expiry, while L</claimed_by> is the machine-enforced pick/claim lock
+that C<karr pick> times out on its own.
+
+=attr tags
+
+Arrayref of free-text tag strings, defaulting to C<[]>. C<BUILD> guarantees
+it is always an arrayref after construction -- a scalar frontmatter value
+here (C<tags: urgent> instead of a YAML list) is rejected as a usage error at
+parse time rather than dying later at a dereference in L</to_frontmatter>
+(ticket #125). Every CLI surface that accepts tags (C<create>, C<edit>,
+C<pick --tags>, C<list --tag>) does its own comma-splitting; this attribute
+only ever holds the already-split list.
+
+=attr due
+
+Optional due date, stored as the bare C<YYYY-MM-DD> string kanban-md's
+C<date.Date> expects. L<App::karr::Task> does not validate the format itself
+-- L<App::karr::Config/validate_due> does, called by C<karr create>/C<edit>
+before the value ever reaches here. Read by C<karr context>'s C<overdue>
+section, compared against today's date as a string.
+
+=attr estimate
+
+Optional free-text time estimate, set via C<karr create --estimate>. Kept
+verbatim with no parsing or validation anywhere in karr; C<karr show> prints
+it as given.
+
+=attr class
+
+The task's class of service, defaulting to C<standard>. Same relationship to
+board config as L</status> and L</priority>: this default is a fixed
+fallback, C<karr create> resolves its own default from
+C<< $defaults->{class} >> first, and L<App::karr::Config/validate_class>
+does the validation. C<karr pick> ranks candidates by it, ahead of priority,
+via L<App::karr::Config/class_order>.
+
+=attr parent
+
+Optional parent-task id, round-tripped through the frontmatter like any
+other modelled field. Nothing in karr currently sets or reads it: no command
+offers a C<--parent> option, and no filtering, rendering, or dependency logic
+consults it. A document carrying a C<parent> key survives a karr write
+unchanged, but today it is inert data as far as karr's own commands are
+concerned.
+
+=attr depends_on
+
+Arrayref of task ids this task depends on, defaulting to C<[]>, normalized
+the same way as L</tags> (a lone scalar value is a parse-time usage error,
+ticket #125). C<karr create --depends-on> validates every id against the
+board before the new task's own id is allocated, so a rejected create burns
+no id (ticket #124, under the same ordering rule as #54); C<karr
+move>/C<edit --status>/C<pick> warn -- but do not block -- when a task is
+taken up while a dependency listed here has not yet reached one of the
+board's terminal statuses (L<App::karr::Role::DependencyCheck>, ticket #123).
+
+=attr body
+
+The Markdown body below the frontmatter delimiters, defaulting to C<''>.
+Included in L</to_markdown> and L</to_json_hash> only when it has non-zero
+length -- tested by length, not truth, so a body of literal C<"0"> is still
+a body (ticket #78).
+
+=attr created
+
+Full C<YYYY-MM-DDTHH:MM:SSZ> timestamp set once at construction and never
+changed again (C<< is => 'ro' >>). Contrast with L</updated>, which starts
+at the same value but moves on every later write.
+
+=attr updated
+
+Full timestamp, defaulting to the same "now" as L</created> at construction.
+L<App::karr::Task> itself never bumps this; L<App::karr::BoardStore/save_task>
+and L<App::karr::BoardStore/save_task_cas> do, stamping "now" on every write
+to a ref that already exists, so a brand-new task keeps C<updated> equal to
+C<created> until its first real edit. The restore/import path bypasses the
+bump entirely (writing via L<App::karr::Git/save_task_ref> directly) to
+preserve a document's original timestamps.
+
+=attr claimed_by
+
+Optional agent name holding a C<karr pick> claim, distinct from
+L</assignee>. An empty string is treated as "unclaimed" -- kanban-md's own
+idiom for C<omitempty> on this field -- and is normalized away to "unset" by
+C<BUILD> rather than left as a predicate-true, empty-string claim (ticket
+#98). Set together with L</claimed_at> by C<karr pick> and C<karr edit
+--claim>; cleared together by the same commands' unclaim paths.
+
+=attr claimed_at
+
+Timestamp paired with L</claimed_by>, stamped when a claim is taken. C<karr
+pick> compares it against the board's configured C<claim_timeout> to decide
+whether an existing claim has expired and the task can be picked again.
+
+=attr blocked
+
+Boolean-only blocked flag; the invariant every reader relies on is that
+C<has_blocked> is true if and only if the task is blocked (never "blocked
+but false"). Only ever set through L</block>/L</unblock> or by parsing a
+document -- writing C<< $task->blocked($reason) >> directly is exactly the
+bug ticket #58 fixed. A legacy document with a free-text C<blocked> value
+(karr up to 0.402) is migrated to the boolean-plus-L</block_reason> shape on
+read.
+
+=attr block_reason
+
+Optional free-text reason paired with L</blocked>, set via L</block> or a
+parsed document. Deliberately not symmetrical with L</unblock>: a document
+that says C<blocked: false> while still carrying a C<block_reason> keeps
+that reason, because dropping it would be the same silent frontmatter
+deletion ticket #69 fixed -- only an explicit L</unblock> throws the reason
+away.
+
+=attr started
+
+Full timestamp stamped by L</update_timestamps> on the first move out of the
+board's first configured status, or backfilled to "now" when a task is
+dragged straight to a terminal status without ever passing through
+in-progress. Never reset by a later move, including a reopen -- the work did
+begin then (ticket #68).
+
+=attr completed
+
+Full timestamp stamped by L</update_timestamps> when a task reaches one of
+the board's terminal statuses. Cleared when the task is reopened (moved back
+out of a terminal status), but B<not> re-stamped by a later terminal-to-
+terminal move -- C<done> -> C<archived> keeps the original completion
+time, a deliberate difference from kanban-md, which re-stamps on every such
+move (ticket #68).
+
 =attr extra
 
 Frontmatter keys karr does not model, kept verbatim so they survive a write.
@@ -73,6 +247,16 @@ passthrough field lands in alphabetical position rather than where the author
 put it.
 
     my $kept = $task->extra->{custom_field};
+
+=attr file_path
+
+Set by L</from_file> and by L</save>, and has a predicate
+(C<has_file_path>) but no clearer -- nothing in karr ever needs to forget
+where a task was last written. Its absence is meaningful: a task that lives
+only in C<refs/karr/*> and was never materialized to a file has no
+C<file_path>, and L</save> called with no C<$dir> dies rather than guessing
+one, directing the caller to L<App::karr::BoardStore/save_task> instead
+(ticket #77).
 
 =cut
 
@@ -334,7 +518,7 @@ sub filename {
 Returns the on-disk filename this task would use in a materialized file
 view: the id zero-padded to three digits, a dash, and L</slug>, matching
 kanban-md's own C<^(\d+)-> naming convention. Used by L</save> when writing
-into a directory rather than to an already-known C<file_path>.
+into a directory rather than to an already-known L</file_path>.
 
 =cut
 
@@ -550,7 +734,7 @@ sub from_file {
   my $task = App::karr::Task->from_file('/path/to/007-fix-login-bug.md');
 
 Reads C<$file>, parses it the same way L</from_string> does, and sets
-C<file_path> to it so a later L</save> with no directory argument rewrites
+L</file_path> to it so a later L</save> with no directory argument rewrites
 the same file. Every failure -- an unparseable document, a missing required
 field -- dies with the file path appended, stripping Moo's own "at ... line
 N" suffix first so the message names the file that is wrong instead of a
@@ -575,16 +759,16 @@ sub save {
   $task->save;          # rewrite the file this task was loaded from
 
 Writes L</to_markdown> to disk and records the file written as
-C<file_path>. Given C<$dir>, the filename is derived fresh from the current
+L</file_path>. Given C<$dir>, the filename is derived fresh from the current
 L</slug> (so a renamed task moves to a new filename, and can leave the old
 one behind -- callers that materialize a whole board sweep stale files
 separately; see L<App::karr::BoardStore/materialize_to>). With no C<$dir>,
-rewrites C<file_path> as it stands, so a task loaded via L</from_file> saves
+rewrites L</file_path> as it stands, so a task loaded via L</from_file> saves
 back to the same name it was read from even after a rename.
 
 Dies -- C<Task has no file_path; ref-backed tasks must be persisted via
 BoardStore/save_task> -- when called with no C<$dir> on a task that has never
-had a C<file_path>, i.e. every task that lives only in C<refs/karr/*> and was
+had a L</file_path>, i.e. every task that lives only in C<refs/karr/*> and was
 never materialized to a file. This is deliberate: the canonical write path
 for such a task is L<App::karr::BoardStore/save_task>, and a silent no-op or
 an implicit directory guess here would let a card go unwritten instead of
