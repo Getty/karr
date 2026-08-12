@@ -317,9 +317,10 @@ karr metrics --json                          # JSON output
 
 Every figure comes from the `created`/`started`/`completed` stamps on the
 cards, not from the activity log. Cards whose stamps cannot carry a
-measurement — an unreadable date, or a `started` that precedes the card's own
-`created` — are left out of the averages that need them and counted in
-`unusable_timestamps`, so a low sample count is visible rather than silent.
+measurement — an unreadable date, a `started` that precedes the card's own
+`created`, or a `completed` that precedes that `started` — are left out of the
+averages that need them and counted in `unusable_timestamps` (cards, not
+stamps), so a low sample count is visible rather than silent.
 
 ### Agent name
 

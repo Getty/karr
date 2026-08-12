@@ -54,13 +54,14 @@ request existed, queue time included.
 
 =item * B<Average cycle time>
 
-Mean of C<completed - started> over every completed task that also carries a
-usable start: the time from picking the work up to finishing it. karr stamps
-C<started> whenever it stamps C<completed>, even for a card dragged straight
-into a terminal status (see L<App::karr::Task/update_timestamps>), so on a
-board written by a current karr the two populations are the same set. They
-differ where a card was imported without a start, or carries one that precedes
-its own creation (see L</DATA SOURCE>).
+Mean of C<completed - started> over every completed task whose two stamps can
+carry that measurement: the time from picking the work up to finishing it.
+karr stamps C<started> whenever it stamps C<completed>, even for a card dragged
+straight into a terminal status (see L<App::karr::Task/update_timestamps>), so
+on a board written by a current karr the two populations are the same set. They
+differ where a card was imported without a start, carries one that precedes its
+own creation, or carries a completion that precedes that start (see
+L</DATA SOURCE>).
 
 =item * B<Flow efficiency>
 
@@ -85,10 +86,16 @@ where kanban-md could lean on its file order).
 An average over no tasks is reported as C<--> rather than as C<0>, and the
 default and compact renderings state how many tasks each average was taken
 over, so a figure resting on two cards cannot be mistaken for one resting on
-two hundred. Neither average is clamped: a card whose C<completed> precedes its
-C<created> -- reachable by hand-editing, or by another tool -- contributes a
+two hundred. The lead average is not clamped: a card whose C<completed>
+precedes its C<created> -- reachable by hand-editing, by another tool, or by a
+pre-0.403 karr that stamped C<completed> as a bare date -- contributes a
 negative duration and is left visible as one, because a metrics command that
-quietly normalises impossible data is how impossible data survives.
+quietly normalises impossible data is how impossible data survives. The cycle
+average is the one figure that impossible data is kept out of rather than left
+in: a card whose stamps cannot order into a duration is excluded and counted in
+C<unusable_timestamps> instead, which makes it visible by the other route the
+command has. Neither figure is ever silently normalised; see L</DATA SOURCE>
+for which cards that costs, and how many.
 
 =head1 DATA SOURCE
 
@@ -105,7 +112,7 @@ bulk paths (C<import>, C<restore>, C<repair>) write refs without logging. A
 cycle time reconstructed from it would be silently short on exactly the boards
 whose history is oldest, and would disagree with the stamps on the cards.
 
-Three limitations follow from that choice, and all three are visible in the
+Four limitations follow from that choice, and all four are visible in the
 output rather than hidden:
 
 =over 4
@@ -131,7 +138,30 @@ its average lead time -- a flow efficiency of 107.3%.
 The start is still good enough to say the work is in flight, so the aging list
 below uses it.
 
+=item * A card whose C<completed> precedes its C<started> is counted there too,
+and contributes no cycle time either -- a cycle time may not be negative. This
+is the same pre-#68 bare date on the other stamp: C<completed> was written as
+C<YYYY-MM-DD> as well, on more cards than C<started> was. Until C<karr repair>
+gained its start clamp (ticket #138) such a card was usually already out of the
+cycle average through the check above, because its start was impossible too;
+the clamp raises that start to C<created> and leaves the bare-date completion
+below it, so the ordering fault moves from the start to the cycle. On karr's
+own board that turned 42 of 117 cycle samples negative and reported an average
+cycle time of 16 minutes with C<unusable_timestamps> at zero -- the figure
+whose job is to say what is missing, saying nothing (ticket #140).
+The lead time of such a card is a separate question, left open on purpose:
+C<completed - created> is still computed and can still be negative, per the
+non-clamping rule above.
+
 =back
+
+C<unusable_timestamps> counts cards, not stamps. It is the number of tasks --
+after C<--since>, and never counting archived ones -- that carry at least one
+lifecycle stamp karr could not use, and that are missing from at least one of
+the two averages for that reason; a card with two such stamps counts once. A
+card that is merely incomplete is not counted there: one with no C<started> at
+all has nothing unusable about it, contributes no cycle time, and is already
+accounted for by the difference between the two per-average sample counts.
 
 =head1 OUTPUT MODES
 
@@ -156,7 +186,10 @@ kanban-md's payload -- C<throughput_7d>, C<throughput_30d>,
 C<avg_lead_time_hours>, C<avg_cycle_time_hours>, C<flow_efficiency>,
 C<aging_items> -- plus C<lead_samples>, C<cycle_samples> and
 C<unusable_timestamps>, so a consumer can tell a real zero from an empty
-population. An average that has no samples is omitted, as it is there.
+population. C<unusable_timestamps> carries exactly the count the closing note
+of the other two renderings states, under the definition above: cards, not
+stamps, and each one missing from at least one average.
+An average that has no samples is omitted, as it is there.
 C<aging_items> is always present, as an empty array when nothing is aging.
 
 =back
@@ -247,6 +280,18 @@ sub execute {
     my $start_measurable =
       defined $started && ( !defined $created || $started >= $created );
 
+    # And a completion that precedes that start is not the end of a cycle: a
+    # cycle time may not be negative. The check above used to catch these cards
+    # by their start alone, because a board old enough to hold a bare-date
+    # `completed` holds bare-date `started` stamps too -- until `karr repair`
+    # (ticket #138) raised those starts to `created`, after which the start
+    # check passes by construction and the impossible order lands here instead.
+    # Unguarded that was 42 negative samples out of 117 on karr's own board,
+    # averaging to a cycle time of 16 minutes (ticket #140). The lead time of
+    # such a card is deliberately left alone -- see ticket #139.
+    my $cycle_measurable =
+      $start_measurable && defined $completed && $completed >= $started;
+
     # Counted once per task, not once per stamp: what the reader needs to know
     # is how many cards are missing from the figures below. Counted after the
     # --since filter, so a card the caller asked to leave out is not reported
@@ -255,7 +300,8 @@ sub execute {
       if !defined $created
       || ( $task->has_started   && !defined $started )
       || ( $task->has_completed && !defined $completed )
-      || ( defined $started     && !$start_measurable );
+      || ( defined $started     && !$start_measurable )
+      || ( defined $completed   && $start_measurable && !$cycle_measurable );
 
     if ( defined $completed ) {
       $throughput_short++ if $completed > $window_short;
@@ -265,7 +311,7 @@ sub execute {
         my $lead = ( $completed - $created ) / SECONDS_PER_HOUR;
         $lead_sum += $lead;
         $lead_n++;
-        if ($start_measurable) {
+        if ($cycle_measurable) {
           $cycle_sum += ( $completed - $started ) / SECONDS_PER_HOUR;
           $cycle_n++;
           # The efficiency denominator: the lead time of the same tasks the
@@ -360,9 +406,9 @@ sub execute {
 sub _unusable_note {
   my ($count) = @_;
   return sprintf
-    "Note: %d task%s carr%s a timestamp karr could not use -- unreadable, or a\n"
-    . "start that precedes the card's own creation -- and %s left out of the\n"
-    . "averages that need it.\n",
+    "Note: %d task%s carr%s a timestamp karr could not use -- unreadable, a\n"
+    . "start that precedes the card's own creation, or a completion that\n"
+    . "precedes that start -- and %s left out of the averages that need it.\n",
     $count, ( $count == 1 ? '' : 's' ), ( $count == 1 ? 'ies' : 'y' ),
     ( $count == 1 ? 'is' : 'are' );
 }

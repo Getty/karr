@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - `karr metrics` no longer averages impossible cycle times (ticket #140).
+      A completed card whose `completed` precedes its `started` measures a
+      negative duration, which is not a cycle time; it is now left out of that
+      average and counted in `unusable_timestamps`, the same way a `started`
+      that precedes its own card's `created` already was. The start check had
+      quietly stopped catching these: #138's `karr repair` clamp raises
+      `started` to `created`, so the old condition holds by construction on
+      every card it touched, and the pre-#68 bare-date `completed` — midnight
+      of its day — then falls below the new start. On karr's own board that
+      was 42 of 117 cycle samples negative, an average cycle time of 16
+      minutes, and `unusable_timestamps` reporting 0 — the figure whose whole
+      job is to say what is missing from the averages, saying nothing.
+      `unusable_timestamps` is now documented as what it has always counted:
+      cards, not stamps, each one missing from at least one of the two
+      averages. Lead time is deliberately unchanged and can still be negative
+      where `completed` precedes `created`; whether it gets the same guard is
+      an open decision on ticket #139, and clamping it silently here would
+      have pre-empted it. `completed` equal to `started` stays measurable — a
+      card moved straight into a terminal status has a cycle time of zero, and
+      zero is a measurement.
+
     - `karr repair` gained a second migration (ticket #138): it raises a
       `started` stamp that precedes its own card's `created` up to that
       `created`. karr wrote `started` as a bare date until #68, which reads as
