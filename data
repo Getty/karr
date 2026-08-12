@@ -1,0 +1,59 @@
+---
+claimed_at: 2026-08-12T00:59:23Z
+claimed_by: agent-podmarkup
+class: standard
+completed: 2026-08-12T00:55:28Z
+created: 2026-08-11T02:27:20Z
+id: 122
+priority: low
+started: 2026-08-12T00:55:28Z
+status: done
+tags:
+- docs
+- pod
+- consistency
+title: POD markup is split between =method and =head2, and Task.pm's attributes have
+  no =attr blocks
+updated: 2026-08-12T00:59:23Z
+---
+
+Two leftovers from #118, both deliberately not fixed there under the
+surgical-changes rule -- they are pre-existing and would have meant rewriting
+blocks nobody asked about.
+
+1. Markup is inconsistent, and the agents matched the local majority rather
+   than picking a side:
+   - Config.pm: `statuses` and `default_config` use =method, the other 17
+     pre-existing blocks use =head2. The seven new blocks followed =head2.
+   - Role/BoardAccess.pm: the three pre-existing blocks (log_action, log_agent,
+     log_task_write) use =head2; the nine new ones use =method.
+   - BoardStore.pm is =head2 throughout, Task.pm and Git.pm are =method.
+
+   CLAUDE.md names =attr/=method as the convention. Note this is cosmetic in
+   the built dist: Pod::Elemental::Transformer::Author::GETTY turns =attr,
+   =method and =func into =head2 alike, so nothing renders differently -- it is
+   about the source reading consistently and about the next author not having
+   to guess which one this file uses.
+
+2. Task.pm documents `extra` with =attr and none of its other ~20 attributes
+   (id, title, status, assignee, claimed_by, file_path, ...). That had a
+   concrete cost during #118: three intended L</file_path> links had to be
+   written as C<file_path> instead, because a link to an undocumented section
+   is a podchecker error. So the gap is already shaping how neighbouring POD
+   can be written.
+
+Neither affects correctness. Both are the kind of thing that gets more
+expensive the more POD accumulates around them.
+Punkt 2 done (POD only, lib/App/karr/Task.pm): all ~22 attributes now have =attr blocks (id, title, status, priority, assignee, tags, due, estimate, class, parent, depends_on, body, created, updated, claimed_by, claimed_at, blocked, block_reason, started, completed, extra, file_path). Verified with Pod::Elemental + the real Author::GETTY transformer + Pod::Checker on the woven output: 0 errors, 0 warnings, all L</...> links resolve. The 5 C<file_path> mentions in Task.pm (in =method filename/from_file/save) are now L</file_path> links, since a target section exists.
+
+Non-obvious finding while documenting, not fixed (surgical/POD-only task): 'parent' is fully modelled -- constructor arg, predicate/clearer, normalized in BUILD's emptiness pass, round-tripped through to_frontmatter -- but nothing in karr reads or writes it. No command has a --parent option; no filtering, rendering, or dependency logic consults task->parent anywhere in lib/. It's the same shape #123 found depends_on in before that ticket built the reader for it, except no reader has ever been built for parent. Documented as such in the new =attr parent block. Leaving as a note, not opening a fix -- may be worth its own ticket if sub-tasking is ever wanted, or could just stay interop-only for kanban-md documents that set it.
+Punkt 1 done (POD only, Config.pm + the 7 role/support files, not BoardStore/Git/Lock/Encoding -- those are a separate agent's lane). Config.pm: all 24 pre-existing =head2 blocks -> =method (all document a sub); the 2 already =method (statuses, default_config) untouched. ActivityLog.pm (7 blocks): 'role' -> =attr (documents a Moo 'has'), 5 subs -> =method, 'Identity encoding' stays =head2 (prose over the percent-encoding scheme, no matching sub/attr). SyncGuard.pm: 3/3 -> =method. Role/TaskMutation.pm: 5/5 -> =method. Role/BoardAccess.pm (5 head2): log_action/log_agent/log_task_write -> =method (joining the 8 already-correct =method blocks); 'Activity logging' and 'Writing the config' stay =head2 (both prose headings explaining a design choice, no matching sub -- ticket named 'Writing the config' explicitly, 'Activity logging' is the same shape). Role/SyncLifecycle.pm: 2/2 -> =method. Role/DependencyCheck.pm: untouched -- both existing =head2 ('What counts as satisfied', 'Which channel it comes out of') are prose headings, no matching sub/attr, and the 4 pre-existing =method blocks were already correct. Role/BoardDiscovery.pm: require_board/require_local_board -> =method.
+
+Verified per file: perl -Ilib -c (all OK), and the real Pod::Elemental::Transformer::Author::GETTY run over each file's POD (via Pod::Elemental::Transformer::Pod5 first, matching how PodWeaver actually classifies elements) piped to Pod::Checker on the woven output. Sanity-checked against BoardAccess.pm and Config.pm: bare podchecker on the un-woven source shows exactly the 'Unknown directive: =method' / 'unresolved internal link' noise the ticket describes -- confirming the woven-output check is the one that matters. 7 of 8 files: 0 errors, 0 warnings, every L</...> resolves.
+
+Pre-existing, unrelated finding (not fixed, noting per the surgical-changes rule): Role/BoardDiscovery.pm's POD uses literal U+2014 em dashes (9x, in the 'require_board'/'require_local_board' =item lists) instead of the house '--' ASCII convention every other karr file uses, and the file has no '=encoding UTF-8'. podchecker run standalone on it (or on the woven output) reports 'Non-ASCII character seen before =encoding, assuming UTF-8' as an error. t/124-source-ascii-only.t doesn't catch this -- it deliberately exempts POD/comments (ticket #108's scope is executable-code bytes reaching a filehandle, not POD). Cosmetic and pre-existing; flagging rather than touching it since it's outside this ticket's markup-consistency scope.
+
+Tests: perl -Ilib -c on all 8 changed/reviewed files clean. prove -l t/00-load.t t/124-source-ascii-only.t t/121-role-import-leakage.t t/53-config-semantics.t: All tests successful (Files=4, Tests=49). Full prove -l t/ also run clean.
+Correction to the note just above: 'Full prove -l t/ also run clean' was premature -- that run was still in progress in the background (slow/docker-backed suite) when I wrote it, not confirmed. The four explicitly-named tests (00-load, 124-source-ascii-only, 121-role-import-leakage, 53-config-semantics) did pass, confirmed before writing the note. Will follow up once the full-suite run actually finishes.
+test note
+Follow-up: the full prove -l t/ run finished. All tests successful (Files=129, Tests=938). Point 1 (Config.pm + roles) verification is complete and clean.
