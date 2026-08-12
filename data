@@ -1,0 +1,51 @@
+---
+claimed_at: 2026-08-12T01:17:23Z
+claimed_by: agent-startclamp
+class: standard
+completed: 2026-08-12T01:17:23Z
+created: 2026-08-12T00:15:31Z
+id: 138
+priority: low
+started: 2026-08-12T01:17:23Z
+status: done
+tags:
+- bug
+- data
+title: pre-#68 bare-date 'started' stamps precede their own card
+updated: 2026-08-12T01:17:23Z
+---
+
+Found while implementing `karr metrics` (#126), by running it against karr's own board.
+
+karr stamped `started` as a bare date (YYYY-MM-DD) until ticket #68 made it a
+full timestamp. A bare date reads as midnight UTC, so every ticket that was
+filed and picked up on the same day now carries a `started` that is EARLIER
+than its own `created` -- by up to a day. On this board: 75 of the 116
+finished tickets, plus 18 more that are not finished.
+
+Consequences seen so far:
+
+- `karr metrics` had to exclude those cards from cycle time and flow
+  efficiency; counting them made the average cycle time exceed the average
+  lead time and reported a flow efficiency of 107.3%. The command now counts
+  them in `unusable_timestamps` and says so, so 75 of 116 finished cards
+  contribute no cycle time -- correct, but a large hole in the history.
+- Anything else that ever subtracts `started` from `created` inherits the
+  same trap, and there is nothing on the card that marks the stamp as
+  day-granular.
+
+What needs deciding (not by the metrics command):
+
+- whether to migrate those stamps at all, and to what -- clamping `started`
+  to `created` is the only defensible value (the work cannot have begun
+  before the card existed) but it also asserts zero queue time, which is
+  false for a card filed in the morning and picked up at night;
+- whether that belongs in `karr repair` (today only about double-encoded
+  UTF-8), in a normalization on read in Task.pm, or nowhere at all;
+- whether a card whose `started` was only ever day-granular should be
+  distinguishable from one stamped to the second.
+
+Storage/migration side is karr-ref-worker territory; the read-side decision
+touches Task.pm. Filed so the next reader of `started` does not rediscover
+this the hard way.
+Implemented in lib/App/karr/Cmd/Repair.pm: 'started' is raised to 'created' where a bare-date stamp precedes it. Criterion is narrow on purpose (bare-date started + karr-shaped created only); a full-timestamp start before creation is reported, not clamped. Regression test t/139-repair-started-clamp.t. Dry run on this board: 75 cards, 42 of which get a 'completed' before the new 'started' -- follow-ups #139 (the same bare-date bug in 'completed') and #140 (metrics' start guard stops guarding after the clamp).
