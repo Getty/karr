@@ -1,0 +1,38 @@
+---
+claimed_at: 2026-08-12T15:39:44Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-08-12T15:39:37Z
+created: 2026-08-12T05:01:33Z
+id: 146
+priority: low
+started: 2026-08-12T15:25:18Z
+status: done
+tags:
+- refactor
+title: Cmd::Init and Cmd::Skill still carry two copies of the share-file lookup
+updated: 2026-08-12T15:39:44Z
+---
+
+Found while doing #145, and left there deliberately.
+
+#145 collapsed the two skill *writers* into App::karr::Role::SkillFile.
+The two skill *readers* are still duplicated:
+
+    App::karr::Cmd::Init::_find_skill_source
+    App::karr::Cmd::Skill::_skill_content
+
+They are byte-identical apart from the $INC{...} key each uses for the
+dev-tree fallback. That is the same "second copy of a rule" shape that
+produced #145 in the first place: #142 fixed the write in one command and
+#145 had to fix it again in the other, three commits later, because there
+were two copies to keep right.
+
+Not urgent -- a share-file lookup changes far less often than a write
+path, and nothing is wrong with either copy today. But the argument for
+collapsing them is the same one, and Role::SkillFile is now the obvious
+home.
+
+t/26-skill-share-dir.t pins both names, so this is a deliberate change
+with a test to update, not a silent tidy-up.
+Fixed in 58859a3. The $INC difference turned out not to be about the caller at all -- it is a hand-rolled 'where is this dist's source tree', and the role's own file is the honest answer, so the anchor and the climb are both derived from __PACKAGE__ and cannot drift if the role moves. Naming a command's file was explicitly rejected: MooX::Cmd loads command classes on demand, so $INC{'App/karr/Cmd/Skill.pm'} is populated during 'karr skill show' but not during a direct Cmd::Init call -- the miss would have been intermittent, not first-run. Dev fallback exercised for both commands with File::ShareDir forced to fail, against a real and a fake checkout, and the same four probes run against pre-change code from 'git archive HEAD': identical. t/26 grew from 1 to 7 subtests, mutation-checked three ways.
