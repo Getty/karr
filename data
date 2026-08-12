@@ -1,0 +1,77 @@
+---
+claimed_at: 2026-08-12T00:05:45Z
+claimed_by: agent-refdelete
+class: standard
+completed: 2026-08-12T00:05:45Z
+created: 2026-08-11T02:26:42Z
+id: 119
+priority: high
+started: 2026-08-11T23:45:52Z
+status: done
+tags:
+- bug
+- git
+- error-handling
+title: delete_ref folds a real libgit2 failure into the same 0 it returns for 'never
+  existed'
+updated: 2026-08-12T00:05:45Z
+---
+
+Found by karr-pod-writer while documenting Git.pm for #118 -- writing the
+contract down is what made it visible.
+
+App::karr::Git::delete_ref returns 0 in two unrelated situations:
+
+    return 0 unless $repo->reference_exists($ref);   # never existed
+    ...
+    return 0  if $outcome eq 'failed';               # libgit2 refused
+
+So a caller cannot tell "already gone, nothing to do" from "the delete was
+attempted and failed". Verified by reading the sub, not inferred.
+
+Its own CAS sibling does not behave this way: delete_ref_cas dies on that same
+class of failure. Every other CAS pair in the file is consistent between the
+two variants, which is what makes this look unintentional rather than chosen.
+
+Consequence to weigh: a command that deletes refs and treats 0 as "fine, it was
+not there" would silently continue after a real failure. Whether any current
+caller does that is the first thing to check -- if one does, this is a live bug
+rather than a latent one, and the ticket should be re-prioritised on the spot.
+
+Fix directions, to be decided rather than assumed: distinguish the two (undef
+vs 0, or a second return value), or make delete_ref die on real failure like
+delete_ref_cas does and let callers that want the soft answer check
+reference_exists first. The second is more consistent with the file but changes
+behaviour for existing callers, so it needs the call sites reviewed.
+
+Related, same family, cheaper: load_task_ref_with_oid answers a missing task
+with (undef, undef), while the read_ref_with_oid it is built on answers a
+missing ref with (undef, ''). Both are now documented as they are, but a caller
+copying one pattern to the other gets bitten. Worth settling in the same pass.
+Die im Ticket offene Frage ist beantwortet: es gibt einen solchen Aufrufer, also ist das ein Live-Bug.
+
+App::karr::Lock::break_lock (Lock.pm:363) verwirft den Rückgabewert:
+
+    next unless $self->git->ref_exists($ref);
+    $owner //= $self->git->read_ref($ref);
+    $self->git->delete_ref($ref);
+    $broke = 1;
+
+$broke wird gesetzt, weil der Ref existierte -- nicht, weil er weg ist. Lehnt
+libgit2 den Delete ab (outcome "failed" -> 0), meldet karr unlock trotzdem
+"Broke lock on task N (was held by X)" und liefert unter --json broken: true,
+waehrend der Lock steht. Cmd/Unlock.pm:131-139 hat nichts anderes, woran es
+den Erfolg messen koennte.
+
+Das trifft ausgerechnet den Notausgang: unlock existiert fuer den Fall, dass
+ein Halter nicht zurueckkommt. Eine falsche Erfolgsmeldung heisst dort, dass
+die Karte fuer alle anderen Agenten gesperrt bleibt und niemand mehr hinsieht,
+weil das Werkzeug gesagt hat, es sei erledigt.
+
+Die uebrigen Aufrufer sind unauffaellig: Cmd::Delete geht ueber
+delete_task_guarded (CAS, stirbt bei echtem Fehler), delete_refs_under liest
+nach der Schleife neu statt ihr zu trauen (Git.pm:2469). break_lock ist der
+eine, der 0 verschluckt.
+
+Deshalb hier von medium auf high.
+delete_ref now dies on a refused delete (direction b): 1 = removed by this call, 0 = nothing to remove, exception = attempted and refused. Live bug was Lock::break_lock, which set broke=1 off ref_exists and swallowed the 0, so karr unlock announced a broken lock that still stood -- it now surfaces the karr: could not delete ... message instead. The two callers that must survive a refusal say so explicitly: Git::delete_refs (destroy) keeps going and raises every refusal after the loop, Git::replace_board_refs (restore) catches and warns. t/92's 'unguarded on purpose' decision is untouched: that is about the OID guard, not about error handling, and delete_ref is still unguarded. The (undef,undef) vs (undef,'') half is settled as documentation, not behaviour -- the second slot holds a Task in one and text in the other, every caller keys off the OID; both PODs now say so and why. Tests: prove -l t/132-delete-ref-refusal.t (new, 6 subtests, 3 fail against the pre-fix tree incl. the break_lock one); prove -l t/ = 126 files, 888 tests, PASS. Not committed, Changes not touched.
