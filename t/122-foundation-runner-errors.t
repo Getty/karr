@@ -6,11 +6,14 @@ use warnings;
 # That is also why this lives in its own file: fork is unusable for the rest of
 # the process afterwards, and the other error-message tests drive bin/karr
 # through IPC::Open3.
-our $FORK_FAILS;    # a package variable so the subtest below can localize it
+our $FORK_FAILS;      # a package variable so the subtest below can localize it
+our $LAST_CHILD_PID;  # ditto: how the parent below finds the real child to reap
 BEGIN {
     *CORE::GLOBAL::fork = sub {
         return undef if $FORK_FAILS;
-        return CORE::fork();
+        my $pid = CORE::fork();
+        $LAST_CHILD_PID = $pid if $pid;    # true only in the parent; child sees 0
+        return $pid;
     };
 }
 
@@ -75,6 +78,14 @@ subtest 'a log file that cannot be opened is reported the same way' => sub {
     # owes a clean message for the case where it does not.
     $repo->child('.karr.log')->mkpath;
 
+    # Unlike the subtest above, this one does not set $FORK_FAILS: the
+    # open-log failure it means to exercise only happens in the parent, after
+    # a real fork has already produced a real child (which just chdirs into
+    # $repo, dups the pipe onto STDOUT/STDERR, and execs `true`). _run_command
+    # dies via user_error() as soon as the log open fails -- before it ever
+    # reaches its own waitpid -- so that child is left for this subtest to
+    # reap, not the library.
+    local $LAST_CHILD_PID;
     eval { $runner->_run_command( $repo, { command => 'true', max_runtime => 5 } ) };
     my $err = $@;
 
@@ -86,6 +97,22 @@ subtest 'a log file that cannot be opened is reported the same way' => sub {
         or diag "error was:\n$err";
     unlike $err, qr/Runner\.pm/, 'no karr module path'
         or diag "error was:\n$err";
+
+    # Ticket #143: this subtest used to leave that child unreaped. If it died
+    # before its exec (e.g. a chdir into a repo that vanished under it --
+    # exactly what a concurrent test run did to a sibling of this file), the
+    # only trace was Test::Builder's own "Forked inside subtest, but subtest
+    # never finished!" diagnostic, printed on the child's still-shared STDERR
+    # -- never a counted failure, so the file stayed green regardless. Reaping
+    # it here and asserting on its exit status turns that into a real, failing
+    # assertion.
+    ok defined $LAST_CHILD_PID, 'the run really forked a child, which is ours to reap'
+        or diag 'no child pid was captured by the fork override';
+    if ( defined $LAST_CHILD_PID ) {
+        waitpid( $LAST_CHILD_PID, 0 );
+        is $?, 0, 'the forked child exited cleanly (no chdir/dup/exec failure in it)'
+            or diag "child \$? was $?";
+    }
 };
 
 done_testing;
