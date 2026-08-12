@@ -492,34 +492,6 @@ sub _has_duplicates {
   return scalar grep { $seen{$_}++ } @_;
 }
 
-sub priority_order {
-  my ($class) = @_;
-  return (critical => 0, high => 1, medium => 2, low => 3);
-}
-
-=method priority_order
-
-Returns a hash for sorting tasks by priority.
-
-    my %order = App::karr::Config->priority_order;
-    # (critical => 0, high => 1, medium => 2, low => 3)
-
-=cut
-
-sub class_order {
-  my ($class) = @_;
-  return (expedite => 0, 'fixed-date' => 1, standard => 2, intangible => 3);
-}
-
-=method class_order
-
-Returns a hash for sorting tasks by class of service.
-
-    my %order = App::karr::Config->class_order;
-    # (expedite => 0, 'fixed-date' => 1, standard => 2, intangible => 3)
-
-=cut
-
 # The status kanban-md calls "archived": always terminal, and the one name it
 # hardcodes (internal/config/config.go, ArchivedStatus).
 use constant ARCHIVED_STATUS => 'archived';

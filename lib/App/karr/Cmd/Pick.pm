@@ -50,6 +50,11 @@ claim; it is how kanban-md spells "unclaimed".
 =item * Ordering
 
 Candidates are sorted by class of service, then by priority, then by task id.
+The class and priority lists come from the board's own configuration
+(C<priorities> and C<classes> in C<config.yml>), not from a hardcoded table --
+so a board imported from kanban-md with a longer priorities list ranks
+according to its own list. Lower class index is more urgent; higher priority
+index is more urgent (matches kanban-md's pick.go).
 
 =item * C<--move>
 
@@ -149,13 +154,30 @@ sub execute {
   # its own lock before anything is written (see EXCLUSIVITY above).
   my @tasks = grep { $self->_is_pickable($_, $timeout) } $self->load_tasks;
 
-  # Sort by class priority, then by priority
-  my %class_order = App::karr::Config->class_order;
-  my %pri_order   = App::karr::Config->priority_order;
+  # Sort by class priority, then by priority. Both axes are driven by the
+  # board's configured lists -- not by a hardcoded table that only knew the
+  # four default priorities and classes. A board imported from kanban-md
+  # can name anything (ticket #149: a `blocker` priority beat a `critical`
+  # one on a non-default board); picking against the hardcoded table gave
+  # the wrong card out while `karr list --sort priority` showed the right
+  # one right next to it.
+  #
+  # Convention, matching kanban-md's pick.go: lower class index = more
+  # urgent class; higher priority index = more urgent priority. So the
+  # sort key for priority is `(max - priority_index)` -- most-urgent-last
+  # in the config list comes out first.
+  my $cfg = App::karr::Config->from_merged($ec);
+  my @priorities = $cfg->priorities;
+  my @classes    = $cfg->classes;
+  my %pri_idx; $pri_idx{$priorities[$_]} = $_ for 0 .. $#priorities;
+  my %cls_idx; $cls_idx{$classes[$_]}    = $_ for 0 .. $#classes;
+  my $max_pri = $#priorities;
+  my $std_cls_idx = $cls_idx{standard} // 0;
 
   @tasks = sort {
-    ($class_order{$a->class} // 2) <=> ($class_order{$b->class} // 2)
-    || ($pri_order{$a->priority} // 2) <=> ($pri_order{$b->priority} // 2)
+    ( ($cls_idx{$a->class}    // $std_cls_idx) <=> ($cls_idx{$b->class}    // $std_cls_idx) )
+    || ( ($max_pri - ($pri_idx{$a->priority} // -1))
+         <=> ($max_pri - ($pri_idx{$b->priority} // -1)) )
     || $a->id <=> $b->id
   } @tasks;
 

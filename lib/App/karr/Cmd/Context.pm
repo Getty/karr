@@ -338,10 +338,18 @@ sub _recent_activity {
   } reverse @entries;
 }
 
+# The in-progress section is the briefing's "what is being worked on right
+# now", sorted most-urgent-first. The order comes from the board's own
+# priorities list -- a hardcoded table used to give the wrong answer for any
+# priority the default set did not know (ticket #149). Convention matches
+# pick / kanban-md: higher index in the list = more urgent.
 sub _pri_order {
   my ($self, $task) = @_;
-  my %order = App::karr::Config->priority_order;
-  return $order{$task->priority} // 2;
+  my @priorities = $self->config->priorities;
+  my %index;
+  $index{$priorities[$_]} //= $_ for 0 .. $#priorities;
+  my $max = $#priorities;
+  return $max - ( $index{ $task->priority } // -1 );
 }
 
 sub _count_overdue {

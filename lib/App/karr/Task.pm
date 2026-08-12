@@ -97,8 +97,9 @@ board config as L</status>: this default is the fallback for direct
 construction, C<karr create> resolves its own default from
 C<< $defaults->{priority} >> first, and validation against the board's
 configured priority names happens in L<App::karr::Config/validate_priority>,
-not here. C<karr pick> ranks candidates by it via
-L<App::karr::Config/priority_order>.
+not here. C<karr pick> ranks candidates by it via the board's own
+C<priorities> list (L<App::karr::Config/priorities>), with the most urgent
+priority being the last entry in the list.
 
 =attr assignee
 
@@ -139,7 +140,8 @@ board config as L</status> and L</priority>: this default is a fixed
 fallback, C<karr create> resolves its own default from
 C<< $defaults->{class} >> first, and L<App::karr::Config/validate_class>
 does the validation. C<karr pick> ranks candidates by it, ahead of priority,
-via L<App::karr::Config/class_order>.
+via the board's own C<classes> list (L<App::karr::Config/classes>), with
+the most urgent class being the first entry.
 
 =attr parent
 
