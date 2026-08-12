@@ -1,59 +1,25 @@
 {{$NEXT}}
 
-    - `karr init --claude-skill` writes .claude/skills/karr/SKILL.md in place
-      too (ticket #145). It installs the very file `karr skill install --agent
-      claude-code` installs, and it still did so with the `spew_utf8` that
-      ticket #142 had just removed one command over: a temp file renamed over
-      the target, so the path came back on a new inode. Where a skill file is
-      one link of a hardlink chain shared between projects, that broke this
-      project out of the chain and left every other one on the old inode with
-      the old text. Both commands now go through one shared implementation —
-      App::karr::Role::SkillFile — rather than a copy each, because the copy
-      is how the rule came to be right in one place and wrong in the other; it
-      carries the in-place write, the fallback for a target that cannot be
-      opened for writing at all, and the warning that says so when a chain was
-      there. `karr init` still reports a directory it cannot create as "Could
-      not create .claude/...", which is what actually failed, and `karr skill`
-      behaves exactly as before.
-
-    - `App::karr::Role::ClaimTimeout` now declares the one method it calls on
-      its consumer (ticket #144): `store`, from `Role::BoardDiscovery`. It
-      declared nothing at all and composed cleanly into anything, which is the
-      state #128 found `Role::DependencyCheck` in and #141 fixed for
-      `Role::TaskMutation` — so a consumer without `store` was still handed
-      `check_claim`, karr's one claim-ownership rule, and would have found out
-      from inside a mutation as a "Can't locate object method", on the one run
-      where a task was actually claimed by somebody else. No command changes:
-      all seven that compose the role, directly or through
-      `Role::TaskMutation`, already bring `store` along via
-      `Role::BoardAccess`, which is what hid the gap. One name is the whole
-      list — the role's four other calls reach subs defined in the role itself,
-      and unlike `Role::TaskMutation` this one composes no role at all, so
-      nothing arrives by composition either. Requiring any of them could never
-      fail: Role::Tiny installs a role's methods into the consumer before
-      checking its requires, so the check finds what the composition just put
-      there. With this, the three roles on the mutation path all say what they
-      call.
-
-    - `karr skill install` and `karr skill update` write the target SKILL.md in
-      place instead of replacing it (ticket #142). Path::Tiny's `spew_utf8`
-      writes a temp file and renames it over the destination, so the path it
-      wrote came back on a new inode -- right for an ordinary file, wrong for a
-      skill file: skills are shared between projects as a hardlink chain, one
-      inode behind the same relative path in dozens of checkouts, and the
-      rename broke the updated path out of its chain. That one project got the
-      new skill, all the others kept the old inode with the old text, and the
-      link count dropped with nothing said. Found during agent setup in an
-      unrelated repository, where the workaround was piping `karr skill show`
-      into a shell redirect. The write now truncates the existing file and
-      writes through it, so every link sees the update; it is still
-      Path::Tiny's character-level UTF-8, so the encoding boundary is unmoved.
-      A target that does not exist yet is still created and a symlinked target
-      is still written through. A target that cannot be opened for writing at
-      all -- a read-only SKILL.md, which the rename handled because it only
-      needed a writable directory -- is still updated by replacement rather
-      than turned into a failure, but that is the one case left where a chain
-      cannot survive, so it is now reported instead of done silently.
+    - `karr metrics` no longer averages impossible cycle times (ticket #140).
+      A completed card whose `completed` precedes its `started` measures a
+      negative duration, which is not a cycle time; it is now left out of that
+      average and counted in `unusable_timestamps`, the same way a `started`
+      that precedes its own card's `created` already was. The start check had
+      quietly stopped catching these: #138's `karr repair` clamp raises
+      `started` to `created`, so the old condition holds by construction on
+      every card it touched, and the pre-#68 bare-date `completed` — midnight
+      of its day — then falls below the new start. On karr's own board that
+      was 42 of 117 cycle samples negative, an average cycle time of 16
+      minutes, and `unusable_timestamps` reporting 0 — the figure whose whole
+      job is to say what is missing from the averages, saying nothing.
+      `unusable_timestamps` is now documented as what it has always counted:
+      cards, not stamps, each one missing from at least one of the two
+      averages. Lead time is deliberately untouched here and can still be
+      negative where `completed` precedes `created` — that was ticket #139's
+      decision to take, and it is the entry below. `completed` equal to
+      `started` stays measurable — a
+      card moved straight into a terminal status has a cycle time of zero, and
+      zero is a measurement.
 
     - `karr metrics` now says how much of its lead average cannot be believed
       (ticket #139). A card whose `completed` precedes its own `created`
@@ -82,6 +48,42 @@
       `karr repair` is untouched and the stored stamps stay exactly as they
       are.
 
+    - `karr skill install` and `karr skill update` write the target SKILL.md in
+      place instead of replacing it (ticket #142). Path::Tiny's `spew_utf8`
+      writes a temp file and renames it over the destination, so the path it
+      wrote came back on a new inode -- right for an ordinary file, wrong for a
+      skill file: skills are shared between projects as a hardlink chain, one
+      inode behind the same relative path in dozens of checkouts, and the
+      rename broke the updated path out of its chain. That one project got the
+      new skill, all the others kept the old inode with the old text, and the
+      link count dropped with nothing said. Found during agent setup in an
+      unrelated repository, where the workaround was piping `karr skill show`
+      into a shell redirect. The write now truncates the existing file and
+      writes through it, so every link sees the update; it is still
+      Path::Tiny's character-level UTF-8, so the encoding boundary is unmoved.
+      A target that does not exist yet is still created and a symlinked target
+      is still written through. A target that cannot be opened for writing at
+      all -- a read-only SKILL.md, which the rename handled because it only
+      needed a writable directory -- is still updated by replacement rather
+      than turned into a failure, but that is the one case left where a chain
+      cannot survive, so it is now reported instead of done silently.
+
+    - `karr init --claude-skill` writes .claude/skills/karr/SKILL.md in place
+      too (ticket #145). It installs the very file `karr skill install --agent
+      claude-code` installs, and it still did so with the `spew_utf8` that
+      ticket #142 had just removed one command over: a temp file renamed over
+      the target, so the path came back on a new inode. Where a skill file is
+      one link of a hardlink chain shared between projects, that broke this
+      project out of the chain and left every other one on the old inode with
+      the old text. Both commands now go through one shared implementation —
+      App::karr::Role::SkillFile — rather than a copy each, because the copy
+      is how the rule came to be right in one place and wrong in the other; it
+      carries the in-place write, the fallback for a target that cannot be
+      opened for writing at all, and the warning that says so when a chain was
+      there. `karr init` still reports a directory it cannot create as "Could
+      not create .claude/...", which is what actually failed, and `karr skill`
+      behaves exactly as before.
+
     - `App::karr::Role::TaskMutation` now declares the five methods it calls
       on its consumer (ticket #141): `git` and `store` from
       `Role::BoardDiscovery`, `save_task` and `log_task_write` from
@@ -102,26 +104,24 @@
       deliberate, since a role that lets one it happens to compose declare a
       collaborator on its behalf is how this gap opened.
 
-    - `karr metrics` no longer averages impossible cycle times (ticket #140).
-      A completed card whose `completed` precedes its `started` measures a
-      negative duration, which is not a cycle time; it is now left out of that
-      average and counted in `unusable_timestamps`, the same way a `started`
-      that precedes its own card's `created` already was. The start check had
-      quietly stopped catching these: #138's `karr repair` clamp raises
-      `started` to `created`, so the old condition holds by construction on
-      every card it touched, and the pre-#68 bare-date `completed` — midnight
-      of its day — then falls below the new start. On karr's own board that
-      was 42 of 117 cycle samples negative, an average cycle time of 16
-      minutes, and `unusable_timestamps` reporting 0 — the figure whose whole
-      job is to say what is missing from the averages, saying nothing.
-      `unusable_timestamps` is now documented as what it has always counted:
-      cards, not stamps, each one missing from at least one of the two
-      averages. Lead time is deliberately unchanged and can still be negative
-      where `completed` precedes `created`; whether it gets the same guard is
-      an open decision on ticket #139, and clamping it silently here would
-      have pre-empted it. `completed` equal to `started` stays measurable — a
-      card moved straight into a terminal status has a cycle time of zero, and
-      zero is a measurement.
+    - `App::karr::Role::ClaimTimeout` now declares the one method it calls on
+      its consumer (ticket #144): `store`, from `Role::BoardDiscovery`. It
+      declared nothing at all and composed cleanly into anything, which is the
+      state #128 found `Role::DependencyCheck` in and #141 fixed for
+      `Role::TaskMutation` — so a consumer without `store` was still handed
+      `check_claim`, karr's one claim-ownership rule, and would have found out
+      from inside a mutation as a "Can't locate object method", on the one run
+      where a task was actually claimed by somebody else. No command changes:
+      all seven that compose the role, directly or through
+      `Role::TaskMutation`, already bring `store` along via
+      `Role::BoardAccess`, which is what hid the gap. One name is the whole
+      list — the role's four other calls reach subs defined in the role itself,
+      and unlike `Role::TaskMutation` this one composes no role at all, so
+      nothing arrives by composition either. Requiring any of them could never
+      fail: Role::Tiny installs a role's methods into the consumer before
+      checking its requires, so the check finds what the composition just put
+      there. With this, the three roles on the mutation path all say what they
+      call.
 
     - `karr repair` gained a second migration (ticket #138): it raises a
       `started` stamp that precedes its own card's `created` up to that
