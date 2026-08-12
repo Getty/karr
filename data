@@ -1,0 +1,64 @@
+---
+claimed_at: 2026-08-12T15:43:02Z
+claimed_by: karr-foundation-worker
+class: standard
+completed: 2026-08-12T15:42:55Z
+created: 2026-08-12T05:03:05Z
+id: 147
+priority: medium
+started: 2026-08-12T15:25:07Z
+status: done
+tags:
+- bug
+- foundation
+title: Foundation::Runner leaks the forked child when opening the log fails
+updated: 2026-08-12T15:43:02Z
+---
+
+Read out of the code while reviewing the test fix for #143. NOT verified
+against a running foundation -- the reasoning is from the source, so
+reproduce it before fixing.
+
+lib/App/karr/Foundation/Runner.pm, _run_command:
+
+    my $pid = fork;
+    user_error("fork failed: $!") unless defined $pid;
+
+    if ( $pid == 0 ) {
+      close $reader;
+      chdir "$repo" or die "chdir $repo: $!";
+      open( STDOUT, '>&', $writer ) or die "dup stdout: $!";
+      open( STDERR, '>&STDOUT' )    or die "dup stderr: $!";
+      exec( '/bin/sh', '-c', $command ) or die "exec: $!";
+    }
+
+    # parent
+    close $writer;
+    open( my $log_fh, '>>', "$log_file" ) or user_error("open log $log_file: $!");
+
+The child is already forked and, in the normal case, has already exec'd
+the agent command. If the parent's `open log` then fails, user_error
+croaks and _run_command never reaches its waitpid -- so the parent
+abandons a running agent process. That is #143's cause seen from the
+library side rather than the test side: the test could not reap what the
+library dropped.
+
+Whether it matters depends on what catches that croak. If it terminates
+the whole karr-foundation run, init reaps and the damage is one orphaned
+agent command still writing into a pipe nobody reads. If the drain loop
+catches it per repo and moves to the next board, every affected board
+leaves another one behind for the lifetime of the run.
+
+Two things to decide:
+
+- reap (or kill) the child on any failure between fork and waitpid. The
+  log open is the only one today, but the shape invites more.
+- whether an unopenable log should abort the run for that repo at all
+  once a child is already executing. Starting the agent and then refusing
+  to watch it is the worst of the three options; the other two are
+  refusing to start it (check the log before forking) or running it with
+  logging degraded.
+
+Checking the log file is openable BEFORE the fork would remove the window
+entirely and is probably the smaller change.
+Fixed in 2968651 -- but the ticket as filed was half wrong, and the reachable half was somewhere else. The log-open window I described needs a genuine TOCTOU race to reach: _append_log('START ...') twenty lines earlier opens the same file in the same mode via Path::Tiny and croaks first on every stable cause (EISDIR/EACCES/EROFS/ENOENT), and EMFILE is ruled out because the parent closes the pipe's write end immediately before. The defect that needs no race is the TIMEOUT _append_log between the read loop and the SIGTERM/SIGKILL/waitpid: an agent that removes or replaces .karr.log during its own up-to-30-minute run takes that append down and skips the only thing that stops it. Reproduced full-chain over two boards: run() returns 0, one live unwatched agent per board, both .karr.lock files released -- so the next tick starts a second agent on top. My guess about the drain loop catching per repo was right (Foundation.pm:286 and :451).
