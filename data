@@ -1,0 +1,56 @@
+---
+claimed_at: 2026-08-12T04:44:38Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-08-12T04:44:32Z
+created: 2026-08-12T00:59:48Z
+id: 139
+priority: medium
+started: 2026-08-12T04:20:04Z
+status: done
+tags:
+- bug
+- data
+title: '''completed'' carries the same pre-#68 bare-date bug as ''started'''
+updated: 2026-08-12T04:44:38Z
+---
+
+Found while implementing the `started` clamp for #138, by surveying every card
+on this board.
+
+`started` was not the only lifecycle stamp karr wrote as a bare `YYYY-MM-DD`
+date before ticket #68. `completed` was too, and it is the larger population:
+
+    138 cards on this board
+    110 carry a bare-date `completed`; 51 of those fall before their own `created`
+     93 carry a bare-date `started`;   75 of those fall before their own `created`
+      0 bare-date `created`, 0 bare-date `updated`
+      0 cards whose `updated` precedes their `created`
+
+Two consequences, one already live and one created by #138:
+
+- `karr metrics` computes lead time whenever `created` and `completed` both
+  parse, with no ordering check at all (that is deliberate -- see its POD on
+  not clamping impossible durations). So those 51 cards already contribute
+  negative lead times to the board's average lead time today.
+- #138 raises `started` to `created` on 75 cards. On 42 of them the bare-date
+  `completed` then falls *before* the new `started`: their cycle time reads
+  negative where before the clamp it was merely absent. `karr repair` names
+  those cards on a line of its own and in `started_clamped_over_completed`
+  under `--json`, because the clamp creates that ordering rather than
+  inheriting it -- but it does not fix it.
+
+Not decided here, and deliberately not decided inside #138:
+
+- whether `completed` gets a clamp of its own, and to what. Unlike `started`
+  there is no single defensible value: `created` is too early (the work was
+  not finished the moment it was filed) and `started` asserts zero cycle time.
+  End-of-day (`T23:59:59Z`) is the only value the bare date actually bounds,
+  but it is an invention.
+- whether the honest answer is instead that this board's history before #68 is
+  day-granular, and every reader of it has to say so rather than pretend to
+  hours. See the companion ticket on `karr metrics`.
+
+Storage/migration side is karr-ref-worker; the reader-side rule is
+karr-board-worker.
+Resolved in 007c7c4 per maintainer decision: no clamp, no migration, karr repair untouched. The reader side was made honest instead -- negative_lead_samples under --json plus a note in both other renderings, kept separate from unusable_timestamps, and a POD section stating that boards before #68 are day-granular so an hour-precise average is finer than its data. Measured on this board: 51 of 138 lead samples negative, averaging -10.1h; dropping them would move the printed average from 6h39m to 16h28m. Regression test t/143-metrics-negative-lead.t.
