@@ -1,0 +1,44 @@
+---
+claimed_at: 2026-08-12T05:02:57Z
+claimed_by: karr-test-writer
+class: standard
+completed: 2026-08-12T05:02:51Z
+created: 2026-08-12T04:37:51Z
+id: 143
+priority: medium
+started: 2026-08-12T04:51:35Z
+status: done
+tags:
+- bug
+- tests
+- foundation
+title: t/122-foundation-runner-errors.t reports ok while four of its tests fail
+updated: 2026-08-12T05:02:57Z
+---
+
+Found while running the full suite for #141, and confirmed pre-existing by
+running the file in a detached worktree at clean HEAD (d21f0b8), where it
+fails identically. Nothing in #140/#141 touches it.
+
+The file prints four `Failed test` diagnostics -- `chdir /tmp/...: No such
+file or directory` where the test expects `open log` -- and still exits
+`ok`. The reason is in its own output:
+
+    Forked inside subtest, but subtest never finished!
+
+The failures happen in a forked child, so they never reach the parent's
+plan and cannot fail the suite. Two separate defects sit on top of each
+other:
+
+- the chdir error itself: the runner is chdir'ing into a directory that
+  no longer exists (or was never created) at that point, and reports it
+  as an unopenable log.
+- a test that structurally cannot fail. It has been reporting PASS over
+  a real error for however long the fork has been there; every green run
+  of `prove -l t/` since then has been overstating what it verified.
+
+The second is the more expensive of the two -- fix the fork/plan handling
+first, so the first defect becomes visible as a failure, then fix it.
+Cause analysis in the body is contested and NOT yet verified. It came from the agent on #141; the agent on #139 saw the same four failures in its own full-suite run and reports the opposite reading: three agents were running 'prove -l t/' concurrently in one tree, the diagnostics name a tempdir that had been cleaned out from under the test, and run alone t/122 is clean (PASS, no diagnostics). The #141 worker's 'reproduced at clean HEAD in a detached worktree' run was itself concurrent with the others, so it does not settle it. Verify t/122 alone in a quiet tree before touching Foundation/Runner.pm -- the chdir error may be pure test-parallelism fallout. What is NOT in doubt either way, and is the real content of this ticket: a forked subtest whose child can fail without the file failing.
+Verified: t/122 run alone in a quiet tree is clean -- 'Files=1, Tests=2, All tests successful', no diagnostics, no chdir error. So the four failures were test-parallelism fallout (three agents running 'prove -l t/' concurrently, one clearing a tempdir under another), NOT a defect in Foundation/Runner.pm. Scratch the chdir half of the body. What remains, and is the whole of this ticket: the fork/subtest structure means a child can fail without the file failing, which is why parallel-run damage showed up as diagnostics under an 'ok' instead of as a red test. Fix the plan handling; there is no runner bug to chase behind it.
+Fixed in 3131e98. Root cause found: subtest 2 does NOT set $FORK_FAILS, so _run_command performs a real fork, and the parent croaks on 'open log' before reaching its own waitpid -- leaving the child for the test to reap, which it never did. A child dying before exec surfaced only as Test::Builder's fork diagnostic on shared STDERR, never as a counted failure. Fix: the file's existing fork override now records the child pid; the subtest reaps it and asserts on its exit status. Proven both ways by injecting a vanishing repo: old file PASSes with four failure diagnostics, new file FAILs. Other forking tests audited -- t/33 reaches _run_command's own waitpid on every path, t/75 and t/83 already use the correct POSIX::_exit pattern, t/78 and t/93 have a weaker but non-silent shape (skip_all on repeated failure) and were left alone.
