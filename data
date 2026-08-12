@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-08-12T04:37:30Z
+claimed_by: karr-worker
+class: standard
+completed: 2026-08-12T04:37:24Z
+created: 2026-08-12T01:13:16Z
+id: 141
+priority: low
+started: 2026-08-12T04:20:10Z
+status: done
+tags:
+- roles
+- refactor
+title: Role::TaskMutation declares none of the six methods it calls on its consumer
+updated: 2026-08-12T04:37:30Z
+---
+
+Found while doing #137. App::karr::Role::DependencyCheck now declares its four collaborators and App::karr::Role::DependencyArgs its two, but the role that composes the first one -- App::karr::Role::TaskMutation -- still declares nothing at all, while calling six methods on its consumer:
+
+    run_batch              $self->json
+    update_task_guarded    $self->git, $self->save_task
+    delete_task_guarded    $self->git, $self->check_claim, $self->log_task_write
+    apply_status_change    $self->store, $self->check_dependencies
+
+Only check_dependencies is its own (composed from DependencyCheck); the other five are the same unchecked assumption #128 was filed about, one module over. Every real command happens to compose BoardAccess and Output, so nothing is broken today -- exactly the state DependencyCheck was in before #128.
+
+It is not theoretical: t/77-task-mutation-guards.t built a MutationConsumer out of BoardAccess + TaskMutation without Output, so run_batch would have died on "Can't locate object method json" the first time a batch id failed. That consumer only started failing when #137 put json on DependencyCheck's list, i.e. by accident. #137 fixed the test class (it composes Output now); the missing requires line is the drift left behind.
+
+    requires qw( git store save_task check_claim log_task_write json );
+
+json would then be declared twice, here and on DependencyCheck -- harmless, and each role should name what it calls itself rather than lean on a role it happens to compose.
+Fixed in 6f97b01. The ticket's list of six was wrong: check_claim comes from Role::ClaimTimeout, which TaskMutation composes, exactly as check_dependencies comes from Role::DependencyCheck -- requiring either could never fail, since Role::Tiny installs a role's methods into the consumer before checking requires. Five names declared. Tripwire: t/142-task-mutation-requires.t. Two test-only stub consumers (t/121, t/135) were composing by accident and now say what they supply.
