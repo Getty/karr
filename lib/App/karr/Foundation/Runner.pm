@@ -3,7 +3,7 @@
 package App::karr::Foundation::Runner;
 our $VERSION = '0.500';
 use Moo;
-use App::karr::Error qw( user_error );
+use App::karr::Error qw( clean_error user_error );
 use Encode ();
 use IO::Select;
 use IO::Handle ();
@@ -19,6 +19,11 @@ classifies observable common errors (rate limit, auth, network, 5xx, ...). A
 weak back-reference to the owning foundation supplies shared options and helpers
 (C<dry_run>, C<_stream_to_terminal>, C<_prompt_for>, C<_append_log>,
 C<_say_verbose>).
+
+A C<.karr.log> it cannot open ends the run for that board B<before> the command
+is started, never after: the agent is refused rather than launched unwatched.
+Once the fork has happened the parent owes it a C<waitpid>, so nothing between
+the two may throw.
 
 =cut
 
@@ -59,13 +64,24 @@ sub _run_command {
 
   my $log_file = $repo->child('.karr.log');
 
+  # Opened before the command is started, not after (#147). Everything from the
+  # fork below to the waitpid at the end of this method runs with a live agent
+  # on the other side, and the drain loop that calls this catches per repo and
+  # moves on to the next board — so a croak in that window releases the board's
+  # lock with its agent still running and leaves one behind for the rest of the
+  # foundation run. Refusing to start an agent whose log cannot be written is
+  # the honest failure, and it is the one the foundation's own
+  # _append_log("START ...") above already makes for the same file.
+  # A resource the OS refused is the operator's problem, not a bug report, so
+  # this and the two below carry the errno and no call site into this file (#77).
+  open( my $log_fh, '>>', "$log_file" ) or user_error("open log $log_file: $!");
+  $log_fh->autoflush(1);
+
   # Native pipe: the child writes stdout+stderr, the parent reads. The parent
   # is the tee — it fans each chunk to the persistent log, the terminal (when
   # streaming), and an in-memory buffer for error scanning. No external tee
   # process to race, and the run's output is captured directly (no re-slurping
   # the log via byte offsets).
-  # A resource the OS refused is the operator's problem, not a bug report, so
-  # these three carry the errno and no call site into this file (#77).
   pipe( my $reader, my $writer ) or user_error("pipe failed: $!");
 
   my $pid = fork;
@@ -80,10 +96,11 @@ sub _run_command {
     exec( '/bin/sh', '-c', $command ) or die "exec: $!";
   }
 
-  # parent
+  # parent. From here to the waitpid below there is a running agent, so nothing
+  # in between may die: no croaking call, and no unguarded call into the
+  # foundation (its _append_log throws when the log file is gone). Keep it that
+  # way — the tee loop below reports its errors by ending, not by dying.
   close $writer;
-  open( my $log_fh, '>>', "$log_file" ) or user_error("open log $log_file: $!");
-  $log_fh->autoflush(1);
 
   my $started   = time;
   my $output    = '';
@@ -127,11 +144,24 @@ sub _run_command {
   my $exit_code;
   if ($timed_out) {
     my $elapsed = time - $started;
-    $self->foundation->_append_log( $repo, "TIMEOUT after ${elapsed}s \x{2014} sending SIGTERM to $pid" );
+    # The one call that has to happen here rather than after the kill: it is the
+    # only record of why the agent was stopped, and the kill/waitpid pair below
+    # can block for as long as the child stays unkillable. So it runs
+    # best-effort — a log the OS took away mid-run (#147) must not cost us the
+    # SIGTERM/SIGKILL and the reap, which are all that stop a hung agent. The
+    # failure is reported once the child is safely gone, and the END line below
+    # raises it for real if the log is still unwritable by then.
+    my $log_err;
+    eval {
+      $self->foundation->_append_log( $repo,
+        "TIMEOUT after ${elapsed}s \x{2014} sending SIGTERM to $pid" );
+      1;
+    } or $log_err = clean_error($@);
     kill 'TERM', $pid;
     sleep 2;
     kill 'KILL', $pid;
     waitpid( $pid, 0 );
+    warn "karr-foundation: cannot write $log_file: $log_err\n" if $log_err;
     $exit_code = -1;
   } else {
     waitpid( $pid, 0 );

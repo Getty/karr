@@ -78,13 +78,9 @@ subtest 'a log file that cannot be opened is reported the same way' => sub {
     # owes a clean message for the case where it does not.
     $repo->child('.karr.log')->mkpath;
 
-    # Unlike the subtest above, this one does not set $FORK_FAILS: the
-    # open-log failure it means to exercise only happens in the parent, after
-    # a real fork has already produced a real child (which just chdirs into
-    # $repo, dups the pipe onto STDOUT/STDERR, and execs `true`). _run_command
-    # dies via user_error() as soon as the log open fails -- before it ever
-    # reaches its own waitpid -- so that child is left for this subtest to
-    # reap, not the library.
+    # Unlike the subtest above, this one does not set $FORK_FAILS -- it does not
+    # need to. Since ticket #147 the log is opened before the fork, so the
+    # failure below happens with no child in existence at all.
     local $LAST_CHILD_PID;
     eval { $runner->_run_command( $repo, { command => 'true', max_runtime => 5 } ) };
     my $err = $@;
@@ -98,20 +94,18 @@ subtest 'a log file that cannot be opened is reported the same way' => sub {
     unlike $err, qr/Runner\.pm/, 'no karr module path'
         or diag "error was:\n$err";
 
-    # Ticket #143: this subtest used to leave that child unreaped. If it died
-    # before its exec (e.g. a chdir into a repo that vanished under it --
-    # exactly what a concurrent test run did to a sibling of this file), the
-    # only trace was Test::Builder's own "Forked inside subtest, but subtest
-    # never finished!" diagnostic, printed on the child's still-shared STDERR
-    # -- never a counted failure, so the file stayed green regardless. Reaping
-    # it here and asserting on its exit status turns that into a real, failing
-    # assertion.
-    ok defined $LAST_CHILD_PID, 'the run really forked a child, which is ours to reap'
-        or diag 'no child pid was captured by the fork override';
-    if ( defined $LAST_CHILD_PID ) {
+    # Ticket #143 made this subtest reap the child the pre-#147 Runner forked
+    # before it died here, because a child that failed before its exec left no
+    # trace but Test::Builder's "Forked inside subtest, but subtest never
+    # finished!" on the shared STDERR -- never a counted failure, so the file
+    # stayed green regardless. Ticket #147 moved the log open in front of the
+    # fork, so there is now nothing to reap, and that is what this pins: the
+    # error above is raised with no agent started. t/148 covers the leak itself.
+    is $LAST_CHILD_PID, undef, 'the failure happened before any fork'
+        or diag "a child was forked before the log open failed: $LAST_CHILD_PID";
+    if ( defined $LAST_CHILD_PID ) {    # a regression must not litter the box
+        kill 'KILL', $LAST_CHILD_PID;
         waitpid( $LAST_CHILD_PID, 0 );
-        is $?, 0, 'the forked child exited cleanly (no chdir/dup/exec failure in it)'
-            or diag "child \$? was $?";
     }
 };
 

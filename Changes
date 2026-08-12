@@ -1,5 +1,31 @@
 {{$NEXT}}
 
+    - karr-foundation can no longer start an agent and then walk away from it
+      (ticket #147). `App::karr::Foundation::Runner` opened `.karr.log` after
+      the fork, so a log it could not open was reported with the agent already
+      exec'd, and that `user_error` came before the parent's own `waitpid`.
+      Not fatal to the run, which is what made it expensive: `_run_command` is
+      called from the drain loop, which `_process_repo` catches per repo and
+      then releases the board's lock anyway, so every affected board was left
+      with a live, unwatched agent and a lock file saying nobody was running —
+      and the next tick would start a second one on top of it. The log is now
+      opened before the fork, which turns an unwritable log into a refusal with
+      nothing started: the same answer the foundation's own `_append_log` for
+      the START line already gives one call earlier, and the reason that window
+      needed a race to reach at all, since a log that is a directory or
+      unwritable fails there first. The one that needed no race is the
+      `TIMEOUT` line, appended between the read loop and the
+      SIGTERM/SIGKILL/`waitpid` that are the only things that stop a hung
+      agent: an agent that removed or replaced `.karr.log` during its own
+      half-hour run took that append down with it and outlived the timeout it
+      had earned. That append is now best-effort, and its failure is warned
+      once the child is safely reaped instead of thrown in front of the kill;
+      the END line still raises it for real if the log is unwritable by then.
+      Nothing between the fork and the `waitpid` can throw any more.
+      t/148-foundation-runner-child-leak.t pins both halves, and t/122's #143
+      assertion that the child gets reaped became the assertion that there is
+      no child to reap.
+
     - The lookup for the bundled skill file has one implementation instead of
       two (ticket #146). `App::karr::Cmd::Init::_find_skill_source` and
       `App::karr::Cmd::Skill::_skill_content` were the same sub twice over —
