@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `App::karr::Role::TaskMutation` now declares the five methods it calls
+      on its consumer (ticket #141): `git` and `store` from
+      `Role::BoardDiscovery`, `save_task` and `log_task_write` from
+      `Role::BoardAccess`, `json` from `Role::Output`. It declared nothing at
+      all, and composed cleanly into anything, which is the state #128 found
+      `Role::DependencyCheck` in — so a future command reaching for
+      `update_task_guarded` would have inherited a compare-and-swap loop whose
+      collaborators nobody had checked for, and learned about it from inside
+      the callback as a "Can't locate object method". No command changes: all
+      five on the mutation path already compose both supplying roles, which is
+      what hid the gap. The ticket proposed six names; `check_claim` is not
+      one, because it comes from `Role::ClaimTimeout`, which this role
+      composes, exactly as `check_dependencies` comes from
+      `Role::DependencyCheck`. Requiring either would never fail — Role::Tiny
+      installs a role's methods into the consumer before checking its
+      requires, so the check finds what the composition just put there. `json`
+      is now declared twice, here and on `Role::DependencyCheck`; that is
+      deliberate, since a role that lets one it happens to compose declare a
+      collaborator on its behalf is how this gap opened.
+
     - `karr metrics` no longer averages impossible cycle times (ticket #140).
       A completed card whose `completed` precedes its `started` measures a
       negative duration, which is not a cycle time; it is now left out of that

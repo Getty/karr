@@ -20,6 +20,31 @@ use App::karr::Role::DependencyCheck;
 
 with 'App::karr::Role::ClaimTimeout', 'App::karr::Role::DependencyCheck';
 
+# What this role calls on its consumer, said out loud (ticket #141; the rule is
+# ticket #128's). It declared nothing at all until then, and got away with it
+# only because every command on the mutation path composes the roles that supply
+# these: git and store from App::karr::Role::BoardDiscovery, save_task and
+# log_task_write from App::karr::Role::BoardAccess, json from
+# App::karr::Role::Output. Same accident App::karr::Role::DependencyCheck lived
+# on before #128, one module over -- and a worse one to leave standing, because
+# this role is how a command reaches update_task_guarded without ever naming the
+# collaborators that path needs.
+#
+# Two of the calls below are deliberately not on the list: check_claim and
+# check_dependencies come from the two roles composed above, so they are this
+# role's own methods and not the consumer's. Requiring one of them would be
+# worse than redundant -- it could never fail. Role::Tiny installs a role's
+# methods into the consumer *before* it checks the requires
+# (role_application_steps), so the check would find the name the composition had
+# just put there, in every consumer, always, and read as a guarantee that is not
+# one.
+#
+# json is declared here and on App::karr::Role::DependencyCheck both. The
+# duplication is intended: run_batch reads $self->json for its own per-id
+# warnings, and a role that lets a role it happens to compose declare a
+# collaborator on its behalf is the arrangement this ticket is about.
+requires qw( git store save_task log_task_write json );
+
 =head1 DESCRIPTION
 
 Commands that change a task that already exists -- C<move>, C<edit>, C<delete>,

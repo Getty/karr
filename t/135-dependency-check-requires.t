@@ -73,7 +73,8 @@ subtest 'the requirement reaches consumers of TaskMutation' => sub {
     # DependencyCheck` by hand on a new mutation command, they write `with
     # TaskMutation` and get it. Role::Tiny hands an unmet requires of a composed
     # role up to whoever composes the composer, so the error has to arrive here
-    # too even though TaskMutation declares nothing itself.
+    # too -- these four alongside the ones TaskMutation declares on its own
+    # behalf since ticket #141, which are t/142-task-mutation-requires.t's.
     my ( $ok, $err ) = compose_bare('App::karr::Role::TaskMutation');
 
     ok !$ok, 'a bare consumer of TaskMutation refuses to compose too';
@@ -89,19 +90,25 @@ subtest 'the requirement reaches consumers of TaskMutation' => sub {
 
 subtest 'a consumer that supplies them still gets the role' => sub {
     # The negative tests above are only worth something if the requirement is
-    # satisfiable by exactly these four names and nothing else -- otherwise they
-    # would pass just as well against a role that cannot be composed at all.
+    # satisfiable -- otherwise they would pass just as well against a role that
+    # cannot be composed at all. The four this file is about, plus the three
+    # TaskMutation declares on its own behalf since ticket #141 (git, save_task,
+    # log_task_write); t/142-task-mutation-requires.t is where that list is the
+    # subject rather than the toll.
     my $ok = eval q{
         package StubConsumer;
         use Moo;
-        sub store     { }
-        sub find_task { }
-        sub json      { }
-        sub quiet     { }
+        sub store          { }
+        sub find_task      { }
+        sub json           { }
+        sub quiet          { }
+        sub git            { }
+        sub save_task      { }
+        sub log_task_write { }
         with 'App::karr::Role::TaskMutation';
         1;
     };
-    ok $ok, 'the four stubs are enough to compose TaskMutation' or diag $@;
+    ok $ok, 'the stubs are enough to compose TaskMutation' or diag $@;
 
     ok( StubConsumer->can($_), "...and it has ->$_" )
         for qw( check_dependencies dependency_report apply_status_change

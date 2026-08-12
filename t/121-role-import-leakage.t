@@ -145,10 +145,18 @@ subtest 'the mutation roles no longer compose Time::Piece over the builtins' => 
     # requirement itself is checked -- json joined the list and usage_error left
     # it when ticket #137 split the set-time helpers out into
     # App::karr::Role::DependencyArgs, which TaskMutation does not compose.
-    sub store     { }
-    sub find_task { }
-    sub json      { }
-    sub quiet     { }
+    #
+    # git, save_task and log_task_write are TaskMutation's own, added by ticket
+    # #141: it called all three on its consumer while declaring nothing, so this
+    # class composed by accident rather than by contract.
+    # t/142-task-mutation-requires.t is that list's own test.
+    sub store          { }
+    sub find_task      { }
+    sub json           { }
+    sub quiet          { }
+    sub git            { }
+    sub save_task      { }
+    sub log_task_write { }
     with 'App::karr::Role::TaskMutation';
 }
 
