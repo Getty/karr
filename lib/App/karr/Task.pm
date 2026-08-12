@@ -226,6 +226,12 @@ dragged straight to a terminal status without ever passing through
 in-progress. Never reset by a later move, including a reopen -- the work did
 begin then (ticket #68).
 
+Before #68 this was stamped as a bare date, which reads as midnight and so
+precedes the C<created> of any card filed and begun on the same day. Such a
+stamp is not fixed on read; L<App::karr::Cmd::Repair> migrates it, and
+anything measuring a duration from it has to reckon with the ordering until
+that has been run.
+
 =attr completed
 
 Full timestamp stamped by L</update_timestamps> when a task reaches one of

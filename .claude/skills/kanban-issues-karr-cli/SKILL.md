@@ -258,6 +258,14 @@ board is detected on read and repaired on the fly, so nothing is broken in the
 meantime; this migrates the stored refs once so the workaround stops being
 needed. A board created by a later version needs nothing here and says so.
 
+The same command also raises a `started` stamp that precedes its own card's
+`created` up to that `created` — karr wrote `started` as a bare date until
+ticket #68, which reads as midnight and so lands before a card created later
+the same day. A clamped card then asserts zero queue time and no longer
+records that its stamp was ever day-granular, so the dry run tells you how
+many cards that is before you apply it. It reports, but does not touch,
+`completed` stamps with the same day-granular problem.
+
 ### Backup and restore
 
 ```bash

@@ -1,5 +1,27 @@
 {{$NEXT}}
 
+    - `karr repair` gained a second migration (ticket #138): it raises a
+      `started` stamp that precedes its own card's `created` up to that
+      `created`. karr wrote `started` as a bare date until #68, which reads as
+      midnight and therefore lands before any card filed and begun on the same
+      day — 75 of 138 cards on karr's own board. Both migrations are reported
+      and applied together but kept apart in the output, since a board can
+      need either without the other, and neither bumps `updated`: a migration
+      is not an edit, and stamping every card it rewrites would destroy the
+      history it is repairing. Only the pre-#68 bare-date shape is clamped; a
+      `started` that precedes `created` while carrying a time of day is a
+      different and unknown fault, so it is reported and left alone rather
+      than having its evidence erased. What the clamp costs is stated by the
+      command rather than left to be discovered: a clamped card asserts zero
+      queue time, which is false for one filed in the morning and picked up at
+      night, and nothing on it marks the stamp as having been day-granular any
+      more — the rewrite cannot be undone from the data. The dry run says how
+      many cards that is before `--yes` applies it. `repair` also no longer
+      returns early when the encoding is already current, since otherwise the
+      clamp could never run on a board written by a current karr; `up_to_date`
+      in the JSON keeps answering for the encoding migration alone, and says
+      so.
+
     - `App::karr::Role::DependencyCheck` is split in two (ticket #137). It
       carried both halves of dependency handling under one name, with two
       different contracts: parsing and validating `--depends-on` arguments at
