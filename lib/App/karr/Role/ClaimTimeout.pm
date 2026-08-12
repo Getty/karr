@@ -20,6 +20,34 @@ use Moo::Role;
 use Time::Piece ();
 use App::karr::Config;
 
+# What this role calls on its consumer, said out loud (ticket #144; the rule is
+# ticket #128's, and this is the last of the three mutation-path roles to get
+# it). It declared nothing at all until then, and composed cleanly into
+# anything, while claim_timeout_secs reads $self->store to find the board's
+# configured claim_timeout -- store being App::karr::Role::BoardDiscovery's
+# attribute, which every consumer happens to bring along via
+# App::karr::Role::BoardAccess. That is the accident, not the guarantee: a
+# consumer without it got check_claim regardless, and would have learned about
+# the gap from inside a mutation as "Can't locate object method", on the one run
+# where a task was actually claimed.
+#
+# One name, not more. The other four calls in this file -- _parse_timeout,
+# _parse_claim_stamp, _claim_expired, claim_timeout_secs -- are subs defined
+# right here, so the consumer never supplies them; requiring one would be worse
+# than redundant, since Role::Tiny installs a role's methods into the consumer
+# *before* it checks the requires (role_application_steps), so the check would
+# find what the composition had just put there, in every consumer, always, and
+# read as a promise that had been verified when nothing had. Unlike
+# App::karr::Role::TaskMutation, which composes two roles and gets check_claim
+# and check_dependencies from them, this role composes nothing -- so "the role's
+# own" here means only "defined in this file".
+#
+# $self->claim appears once more below, in the =method check_claim synopsis. It
+# is an example of what a command passes in, not a call this role makes, and no
+# consumer is asked for it. t/147-claim-timeout-requires.t reads the calls out
+# of this source with the POD stripped for exactly that reason.
+requires qw( store );
+
 =head1 DESCRIPTION
 
 Shared helper role for commands that need to interpret C<claim_timeout> values

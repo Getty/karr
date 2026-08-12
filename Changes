@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - `App::karr::Role::ClaimTimeout` now declares the one method it calls on
+      its consumer (ticket #144): `store`, from `Role::BoardDiscovery`. It
+      declared nothing at all and composed cleanly into anything, which is the
+      state #128 found `Role::DependencyCheck` in and #141 fixed for
+      `Role::TaskMutation` — so a consumer without `store` was still handed
+      `check_claim`, karr's one claim-ownership rule, and would have found out
+      from inside a mutation as a "Can't locate object method", on the one run
+      where a task was actually claimed by somebody else. No command changes:
+      all seven that compose the role, directly or through
+      `Role::TaskMutation`, already bring `store` along via
+      `Role::BoardAccess`, which is what hid the gap. One name is the whole
+      list — the role's four other calls reach subs defined in the role itself,
+      and unlike `Role::TaskMutation` this one composes no role at all, so
+      nothing arrives by composition either. Requiring any of them could never
+      fail: Role::Tiny installs a role's methods into the consumer before
+      checking its requires, so the check finds what the composition just put
+      there. With this, the three roles on the mutation path all say what they
+      call.
+
     - `karr skill install` and `karr skill update` write the target SKILL.md in
       place instead of replacing it (ticket #142). Path::Tiny's `spew_utf8`
       writes a temp file and renames it over the destination, so the path it

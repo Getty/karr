@@ -15,6 +15,13 @@ use App::karr::Task;
 {
   package TimeoutConsumer;
   use Moo;
+  # store is the role's one requirement since ticket #144: claim_timeout_secs
+  # reads $self->store->effective_config, and until then the role declared
+  # nothing, so this class composed by accident rather than by contract. The
+  # stub can stay empty -- every method exercised below takes its timeout as an
+  # argument and never asks the board for one. t/147-claim-timeout-requires.t is
+  # that one-name list's own test.
+  sub store { }
   with 'App::karr::Role::ClaimTimeout';
 }
 
