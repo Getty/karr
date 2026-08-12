@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-08-12T04:59:04Z
+claimed_by: karr-worker
+class: standard
+completed: 2026-08-12T04:58:59Z
+created: 2026-08-12T04:37:58Z
+id: 144
+priority: low
+started: 2026-08-12T04:51:29Z
+status: done
+tags:
+- roles
+- refactor
+title: 'Role::ClaimTimeout declares nothing either -- the last of the #128 run'
+updated: 2026-08-12T04:59:04Z
+---
+
+Found while doing #141, one module further along the same drift.
+
+App::karr::Role::ClaimTimeout declares no `requires` at all while
+`claim_timeout_secs` calls `$self->store` on its consumer. Same unchecked
+assumption #128 filed against Role::DependencyCheck and #141 just closed
+on Role::TaskMutation:
+
+    requires qw( store );
+
+It is the last one in that run, so closing it finishes what #128 started
+and the three mutation-path roles then all say what they call.
+
+One consumer has to be fixed with it: t/72-claim-timeout.t line 18
+composes the role with no supplier at all, so it will fail to compile the
+moment the requires line lands -- exactly the way t/121 and t/135 did in
+#141. That is the point of the change, not a reason against it, but it
+has to be part of the same commit.
+
+Check the list against the code rather than against this ticket: #141's
+proposed list of six turned out to be five, because a name the role
+installs itself can never fail its own requires check.
+Fixed in 07458d2. Verified against the code, not the ticket: the list is exactly 'store'. The role's four other calls are subs defined in the file, and unlike TaskMutation this role composes nothing, so 'own' here means only 'defined here'. One trap avoided: $self->claim appears in the check_claim POD synopsis but is a command's option, never a call this role makes -- the tripwire strips POD before scanning. t/72's bare TimeoutConsumer was the one consumer that would have broken. Tripwire t/147-claim-timeout-requires.t, mutation-checked (3 of 5 subtests fail without the requires line). This closes the run #128 started.
