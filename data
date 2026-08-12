@@ -1,0 +1,69 @@
+---
+claimed_at: 2026-08-12T18:33:43Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-08-12T18:33:36Z
+created: 2026-08-12T16:12:55Z
+id: 154
+priority: critical
+started: 2026-08-12T18:13:33Z
+status: done
+tags:
+- bug
+- sync
+- dataloss
+title: sync silently drops a pulled ref it cannot write, then force-pushes the stale
+  card over the remote
+updated: 2026-08-12T18:33:43Z
+---
+
+DATA LOSS. Found in a bug hunt, reproduced by the finder with a control run,
+and independently re-reproduced by me with the same control.
+
+Git.pm:1612 (_write_ref_untracked), reached from _adopt_remote_ref (:1593)
+whose return value is DISCARDED at :1531 in _reconcile_with_mirror:
+
+    return try { $repo->reference_create( $ref, $oid, force => 1 ); 1 }
+           catch { 0 };
+
+Every other ref write in the class goes through retry_contended, on the
+stated grounds that "losing the race for refs/<name>.lock is not a failed
+write, it is a write that has not been attempted yet" (#46). This path has
+no retry and no caller checks the 0.
+
+So when refs/karr/tasks/N/data.lock exists -- another karr mid-write, or a
+lock left behind by a killed process -- the remote's version of that card is
+NOT written locally, pull still returns 1, and the mirror refs/karr-remote/
+is left claiming the remote OID is in place.
+
+That inverts the NEXT reconciliation: the ref reads as L != T, R == T, i.e.
+"unpushed local work: keep it". The stale local card is kept and the forced,
+pruning push writes it over the remote. The remote's newer card is gone from
+every clone.
+
+Reproduction (stale lock file, no timing involved):
+
+    e1: create "Original title", sync
+    e2: sync
+    e1: edit 1 --title "IMPORTANT EDIT FROM E1", sync
+    e2: touch .git/refs/karr/tasks/1/data.lock
+    e2: karr sync            -> "Done." exit=0
+
+    e2 then sees:  Task #1: Original title
+    e1 after sync: Task #1: Original title      <- the edit is gone everywhere
+
+Control, identical script without the .lock file:
+
+    f2 sees: Task #1: IMPORTANT EDIT FROM F1    <- correct
+
+Cost: committed board state lost across every clone, from one `karr sync`
+that reports success. This is the #40 failure mode reintroduced through a
+silent path, and the wipe guard, conflict parking and board-identity guard
+are all blind to it, because the PLAN was computed correctly -- only the
+apply step failed.
+
+The same unchecked call also backs _delete_ref_untracked (a remote deletion
+not applied), _restore_mirror (the wipe guard's rollback, which its own
+comment says must not be one-shot) and _park_conflicting_local (a conflict
+warning pointing at a parked ref that was never written).
+Fixed in f38320a. One correction to this ticket: the loss lands in sync #1, not two syncs later -- 'karr sync' pulls and pushes in the same process, so the poisoned mirror is consumed immediately. The two-sync shape is what happens when pull and push are separate processes (sync --pull, or sync_before/sync_after around a command body); the regression test pins both. All three defects needed fixing: retry alone does not help because a stale lock never clears, and dying alone does not help because refs later in the plan keep their advanced mirror entries and inherit the same inverted verdict. So the loop runs to the end, rolls each unapplied ref's mirror slot back to its PRE-FETCH value, then dies. Four sibling callers had the same defect (deletion, park, mirror rollback, identity stamp); _mirror_local_state is deliberately left unchecked -- a miss there makes the mirror lag rather than run ahead, and the next pull converges anyway. Verified against my own reproduction: e1 keeps its edit where it used to lose it.
