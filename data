@@ -1,0 +1,40 @@
+---
+claimed_at: 2026-08-12T01:15:44Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-08-12T01:15:44Z
+created: 2026-08-11T23:56:40Z
+id: 137
+priority: low
+started: 2026-08-12T01:12:42Z
+status: done
+tags:
+- roles
+- refactor
+title: Role::DependencyCheck bundles set-time and report-time, so json cannot be required
+updated: 2026-08-12T01:15:44Z
+---
+
+Fallout from #128, filed rather than folded in because it has to touch Cmd::Create and Cmd::Pick.
+
+Role::DependencyCheck now declares `requires qw( store find_task usage_error quiet )`. The fifth call it makes, $self->json in dependency_report, could not go on the list: Cmd::Create composes the whole role for parse_dependency_ids/assert_dependencies_exist alone -- the set-time half -- and has no --json of its own, so requiring json refuses a consumer that never reaches the reporting half:
+
+    Cant apply App::karr::Role::DependencyCheck to App::karr::Cmd::Create
+      - missing json at lib/App/karr/Cmd/Create.pm line 15.
+
+So one role carries two concerns with two different contracts:
+
+  set-time    parse_dependency_ids, assert_dependencies_exist
+              needs usage_error, find_task
+              consumers: Create, Edit
+
+  report-time check_dependencies, dependency_report, _dependency_warnings
+              needs store, find_task, json, quiet
+              consumers: TaskMutation (and through it Move/Edit/Delete/Archive/Handoff), Pick
+
+Splitting them lets each half declare its own requires in full, and stops Create inheriting two methods it must never call. It changes the `with` line in Cmd::Create, Cmd::Pick and Role::TaskMutation, which is why it is not part of #128.
+
+The alternative -- give create a --json and require json outright -- is a user-visible CLI change and a separate decision.
+
+t/135-dependency-check-requires.t has the tripwire: its last subtest asserts Cmd::Create still has no ->json, and the requires-coverage subtest asserts json is the only undeclared call left. Both fail when this is fixed, which is the reminder to move json up into the requires line.
+Split done. Role::DependencyCheck keeps the report-time half (check_dependencies, dependency_report, _dependency_warnings) and now declares requires qw( store find_task json quiet ) -- json included, which was the point. New Role::DependencyArgs holds the set-time half (parse_dependency_ids, assert_dependencies_exist) with requires qw( find_task usage_error ). Wiring: Create composes DependencyArgs only (no longer inherits the reporting half), Edit adds DependencyArgs next to TaskMutation, Pick and TaskMutation are unchanged -- the ticket expected their with-lines to move, but with the reporting half keeping the DependencyCheck name they do not. t/135 pulled forward: both tripwires replaced by the new promise (each role declares every call it makes, nothing undeclared; create has no reporting half at all). New t/140-dependency-role-split.t asserts the halves are disjoint and which consumer gets which. t/77 MutationConsumer now composes Role::Output, which it always needed for run_batch's $self->json. Test: prove -l t/135-dependency-check-requires.t t/140-dependency-role-split.t -> PASS; full prove -l -j4 t/ -> 131 files, 953 tests, PASS. Not committed, Changes untouched.
