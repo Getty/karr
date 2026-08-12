@@ -1,0 +1,59 @@
+---
+claimed_at: 2026-08-12T00:19:15Z
+claimed_by: agent-skillsync
+class: standard
+completed: 2026-08-12T00:19:15Z
+created: 2026-08-11T01:47:35Z
+id: 117
+priority: low
+started: 2026-08-11T23:46:17Z
+status: done
+tags:
+- docs
+- infrastructure
+- drift
+title: skill doc has no check against actual karr commands
+updated: 2026-08-12T00:19:15Z
+---
+
+Found while updating the skill for the missing commands.
+
+Two copies of the same document exist:
+
+- .claude/skills/kanban-issues-karr-cli/SKILL.md -- what agents in THIS repo read
+- share/claude-skill.md -- what `karr skill install` writes into other people's
+  projects, shipped via File::ShareDir
+
+Before this update they were byte-identical except for line 2, the frontmatter
+`name:` (kanban-issues-karr-cli vs karr). So they are being kept in sync by
+hand, and nothing enforces it.
+
+That already cost something: both had drifted from the CLI. Neither documented
+`materialize`, `import` or `repair`, both spelled `karr agentname` where the
+command table says `agent-name`, and the handoff description still said the
+target is literally `review`, which stopped being the whole truth with #102.
+The repo copy being wrong is an internal annoyance; share/claude-skill.md being
+wrong ships to every user who runs `karr skill install`.
+
+Fix directions, in rough order of effort:
+
+- A test that asserts the two files are identical apart from the frontmatter
+  name. Cheap, catches the drift the moment it happens, does not care why.
+- Or generate one from the other at build time, so there is only one source.
+  dist.ini would need the generated file to land in share/.
+- Or drop the repo copy and point .claude/skills at share/claude-skill.md,
+  if the tooling tolerates the different `name:` -- worth checking, since a
+  skill directory whose name does not match the frontmatter may not resolve.
+
+Whichever way, the acceptance is that no future edit can update one and leave
+the other, because that is exactly what happened here and it was only caught
+by chance.
+Maintainer decision 2026-08-11: sync by hand for now, solve it properly later. Both files were brought back in step in this session (the repo copy edited, share/claude-skill.md copied over it with line 2 set back to 'name: karr'), so nothing is drifting right now -- this ticket is about making that state enforceable rather than incidental, and is not urgent.
+Correction 2026-08-11, my error: this ticket's premise is wrong. t/62-skill-doc-sync.t already exists and enforces exactly what I proposed building -- the two files' bodies must be byte-identical, only the YAML frontmatter may differ. It skips rather than fails outside a full source checkout, since .claude/ is not shipped in a dzil build, but under prove -l t/ it runs. I filed this without checking whether the guard existed.
+
+What actually happened today was NOT drift between the copies. Both were identical to each other and both were equally stale against the CLI: neither documented materialize, import or repair, both spelled 'karr agentname', and both described handoff as targeting a literal review, which stopped being true with #102. t/62 compares the two files to each other and has no opinion about whether either matches the tool -- so it stayed green through all of that, correctly.
+
+The real gap, and the only thing worth keeping this ticket open for: nothing checks the skill against the commands that exist. A test that walks lib/App/karr/Cmd/*.pm and asserts each command name appears in the skill would have caught unlock, materialize, import and repair years earlier, and would catch the next command someone adds without documenting it. That check belongs next to t/62 and would have to allow for the two-word names (agent-name, set-refs, get-refs) that MooX::Cmd derives from the class names.
+
+Retitling accordingly is part of the work; the title still describes the wrong problem.
+Added t/136-skill-command-coverage.t: walks lib/App/karr/Cmd/*.pm, derives each command's dashed CLI name generally (split class basename on capitalised-letter boundaries, e.g. AgentName -> agent-name, SetRefs -> set-refs) instead of hardcoding the three known two-word names, and asserts each name is mentioned in share/claude-skill.md (the copy that ships to users; t/62 already keeps the repo copy identical to it). Verified against the real CLI (perl -Ilib bin/karr --help) - all 28 current commands derive correctly and are already documented, so the test is green right now (29 assertions, all pass). It will go red the moment a new Cmd/*.pm lands undocumented - e.g. the in-flight metrics command (#126), which is expected and by design; the skill is not being touched here for that one. No content changes to either skill copy were needed in this pass - both already had materialize/import/repair/agent-name fixed from the earlier session.
