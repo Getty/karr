@@ -113,8 +113,10 @@ subtest 'Encoding.pm documents %ENV as an edge it owns' => sub {
     my $src = path('lib/App/karr/Encoding.pm')->slurp_utf8;
     like( $src, qr/%ENV.*to_octets_for_env/s,
         'the %ENV edge lists to_octets_for_env in DESCRIPTION' );
-    like( $src, qr/=func to_octets_for_env\b/, 'to_octets_for_env has a =func block' );
-    like( $src, qr/=func from_octets_from_env\b/, 'from_octets_from_env has a =func block' );
+    like( $src, qr/=(?:func|head2)\s+to_octets_for_env\b/,
+        'to_octets_for_env has a documented block' );
+    like( $src, qr/=(?:func|head2)\s+from_octets_from_env\b/,
+        'from_octets_from_env has a documented block' );
     like( $src, qr/^  to_octets_for_env$/m, 'to_octets_for_env is in @EXPORT_OK' );
     like( $src, qr/^  from_octets_from_env$/m, 'from_octets_from_env is in @EXPORT_OK' );
 };
