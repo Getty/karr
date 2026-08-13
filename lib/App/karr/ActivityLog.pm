@@ -216,11 +216,22 @@ sub log_entry {
         return 0;
     }
 
-    my $existing = $self->git->read_ref($ref);
     my $line = json_encode(\%entry);
-    my $new = $existing ? "$existing\n$line" : $line;
-    return try { $self->git->write_ref($ref, $new) }
-    catch {
+    # Read-modify-write appended to the log ref used unguarded write_ref; two
+    # concurrent writers both read the same existing content, both wrote their
+    # append, and the loser overwrote the winner -- ticket #156: a task is
+    # saved, its log entry is dropped, and the log starts lying about what
+    # happened. read_ref_with_oid + write_ref_cas inside retry_contended turns
+    # the race into a textbook CAS that backs off and re-reads on contention.
+    # retry_contended treats an empty return as "lost the race, try again";
+    # write_ref_cas returns 0 on contention, so we map that to () here.
+    return try {
+        $self->git->retry_contended( "log entry to $ref", sub {
+            my ( $current_oid, $current ) = $self->git->read_ref_with_oid($ref);
+            my $new = $current ? "$current\n$line" : $line;
+            return $self->git->write_ref_cas( $ref, $new, $current_oid ) ? 1 : ();
+        } );
+    } catch {
         warn "karr: activity log write to '$ref' failed: $_";
         0;
     };

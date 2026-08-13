@@ -4,6 +4,7 @@ package App::karr::Foundation::Runner;
 our $VERSION = '0.500';
 use Moo;
 use App::karr::Error qw( clean_error user_error );
+use App::karr::Encoding qw( to_octets_for_env );
 use Encode ();
 use IO::Select;
 use IO::Handle ();
@@ -57,10 +58,14 @@ sub _run_command {
   # it across the fork/exec below, so a command template — including the
   # synthesized claude command — expands $PROMPT, ${KARR_REPO}, $KARR_ROLE and
   # every other variable foundation itself was started with as ordinary shell
-  # parameters.
-  local $ENV{KARR_REPO} = "$repo";
-  local $ENV{KARR_ROLE} = 'agent';
-  local $ENV{PROMPT}    = $self->foundation->_prompt_for($karr);
+  # parameters. %ENV is a byte boundary owned by App::karr::Encoding, so each
+  # value is encoded through to_octets_for_env before the assignment (#167):
+  # a non-ASCII prompt would otherwise emit "Wide character in setenv" on
+  # stderr and the bytes the child receives would depend on the IO layers in
+  # scope at the call site.
+  local $ENV{KARR_REPO} = to_octets_for_env("$repo");
+  local $ENV{KARR_ROLE} = to_octets_for_env('agent');
+  local $ENV{PROMPT}    = to_octets_for_env( $self->foundation->_prompt_for($karr) );
 
   # The expansion is the shell's, not ours (#159). Splicing %ENV into the command
   # string here instead meant the shell went on to parse the *values*: a prompt
