@@ -471,7 +471,7 @@ sub _config_string {
     my ( $self, $key ) = @_;
     my $repo = $self->_repo or return '';
     my $val = try { $repo->config_string($key) } catch { undef };
-    return defined $val ? $val : '';
+    return defined $val ? from_octets($val) : '';
 }
 
 sub git_user_email {
@@ -2119,6 +2119,14 @@ sub _run_git {
 
     waitpid $pid, 0;
     @result{qw( ok failure status )} = ( 1, '', $? );
+    # The buffers hold raw bytes from the child git process, exactly like the
+    # bytes config_string hands back: the :encoding(UTF-8) layer on the
+    # binmode'd handle that reads them would encode them a second time on
+    # their way out as a karr error message (#157). Decode here so callers
+    # below this line see character strings, the same as the rest of the
+    # class.
+    $result{out} = from_octets( $result{out} );
+    $result{err} = from_octets( $result{err} );
     return \%result;
 }
 
@@ -2614,6 +2622,13 @@ ref like C<refs/heads/main> at a board commit.
 # neither touches a ref, so a failure leaves the board exactly as it was.
 # Phase two then overwrites in place instead of starting from an empty
 # namespace, so the board is never empty in between.
+#
+# Phase two is also atomic across its own writes: every ref's pre-restore
+# content is snapshotted before the first write, and any die out of
+# _write_ref_oid unwinds the writes that already landed before raising --
+# otherwise a write failure on the second of eight refs would leave a
+# board with the snapshot's config and the live board's tasks, which is
+# the half-apply disaster recovery is supposed to prevent (#155).
 sub replace_board_refs {
     my ( $self, $refs ) = @_;
     my $repo = $self->_repo
@@ -2632,7 +2647,47 @@ sub replace_board_refs {
             $self->_commit_for_content( $repo, $refs->{$ref} // '' );
     }
 
-    $self->_write_ref_oid( $_, $commit{$_} ) for @wanted;
+    # Snapshot the current OID+content of every ref the restore is about to
+    # touch, so a phase-two failure can put each one back where it was.
+    # Anything that existed before the restore but is not in @wanted is also
+    # captured, because the cleanup loop below would have deleted it on
+    # success and the unwind has to undo that too.
+    my %pre_exist = map { $_ => 1 } $self->list_refs(BOARD_ROOT);
+    my %pre_oid;
+    for my $ref ( sort keys %pre_exist, @wanted ) {
+        my ($oid) = $self->read_ref_with_oid($ref);
+        $pre_oid{$ref} = $oid;
+    }
+
+    my $undo = sub {
+        # Restore every ref that was here before the restore, including the
+        # ones the cleanup loop would have removed, and delete anything the
+        # snapshot managed to land before the failure. The goal is "the board
+        # reads back exactly as it did before this call entered", not a
+        # best-effort cleanup, so the failures themselves are warned but not
+        # raised -- the original exception is the one the caller wants to see.
+        for my $ref ( sort keys %pre_oid ) {
+            my $pre_oid = $pre_oid{$ref};
+            my $now_oid = ( $self->read_ref_with_oid($ref) )[0];
+            next if defined $pre_oid && defined $now_oid && $pre_oid eq $now_oid;
+            try {
+                if ( defined $pre_oid ) {
+                    $repo->reference_create( $ref, $pre_oid, force => 1 );
+                } else {
+                    $repo->reference_delete($ref);
+                }
+            } catch {
+                warn "karr: failed to roll $ref back after restore error: $_\n";
+            };
+        }
+    };
+
+    try {
+        $self->_write_ref_oid( $_, $commit{$_} ) for @wanted;
+    } catch {
+        $undo->();
+        die $_;
+    };
 
     # Only now the refs the snapshot does not carry. One left behind means the
     # board holds more than the snapshot did -- worth saying out loud, but not

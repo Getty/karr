@@ -51,8 +51,11 @@ sub execute {
 
   my @pos = $self->positional_args($args_ref);
   my $id_str = $pos[0] or die "Usage: karr archive ID[,ID,...]\n";
-
+  # See the note in Cmd::Move: a comma with no ids around it is truthy here and
+  # splits to nothing, so the command used to exit 0 having done nothing
+  # (ticket #152).
   my @ids = $self->parse_ids($id_str);
+  die "Usage: karr archive ID[,ID,...]\n" unless @ids;
 
   # This loop was already the shape ADR 0002 asks for -- warn on a bad id, keep
   # going, report failure at the end -- and is now the shared one, so move, edit

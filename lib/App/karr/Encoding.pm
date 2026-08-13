@@ -53,6 +53,12 @@ C<LoadFile> B<are> character-level and are used unwrapped.)
 C<decode_json> functions are octet-level for the same reason and are likewise
 not used directly.
 
+=item * B<C<%ENV>> — L</to_octets_for_env> and L</from_octets_from_env>.
+Perl's C<%ENV> is a byte boundary: assigning a character string warns
+C<Wide character in setenv>, and C<$ENV{NAME}> reads back whatever bytes
+were stored. The crossing is named here so neither side is handled ad hoc
+at the call site.
+
 =back
 
 =head2 Legacy boards
@@ -77,6 +83,8 @@ our @EXPORT_OK = qw(
   enable_std_utf8
   to_octets
   from_octets
+  to_octets_for_env
+  from_octets_from_env
   yaml_dump
   yaml_load
   json_encode
@@ -129,6 +137,42 @@ sub from_octets {
   return $octets unless defined $octets;
   my $chars = eval { decode( 'UTF-8', $octets, FB_CROAK | LEAVE_SRC ) };
   return defined $chars ? $chars : $octets;
+}
+
+=func to_octets_for_env
+
+  my $bytes = to_octets_for_env($characters);
+
+The character-to-octet edge for C<%ENV>. C<undef> passes through. Assigning a
+character string to C<$ENV{NAME}> makes Perl emit C<Wide character in setenv>
+and emit bytes whose encoding depends on the IO layers in scope; encoding
+explicitly here makes the warning impossible to emit and the bytes the child
+process receives well-defined. Equivalent to L</to_octets>; the dedicated
+name marks the call site as an ENV crossing, the way L</decode_argv> marks
+argv.
+
+=cut
+
+sub to_octets_for_env {
+  my ($chars) = @_;
+  return to_octets($chars);
+}
+
+=func from_octets_from_env
+
+  my $characters = from_octets_from_env($bytes);
+
+The octet-to-character edge for C<%ENV>. C<%ENV> stores bytes; reading a
+non-ASCII value back through C<$ENV{NAME}> gives octets, not characters.
+A payload that is not valid UTF-8 is returned unchanged, for the same
+reason L</from_octets> does. Equivalent to L</from_octets>; the dedicated
+name marks the call site as an ENV crossing.
+
+=cut
+
+sub from_octets_from_env {
+  my ($octets) = @_;
+  return from_octets($octets);
 }
 
 =func decode_argv

@@ -169,11 +169,14 @@ sub execute {
     class    => $self->class    // $defaults->{class}     // 'standard',
   );
 
-  $task_args{assignee}   = $self->assignee if $self->assignee;
-  $task_args{tags}       = [split /,/, $self->tags] if $self->tags;
+  # length, not truth: a literal "0" is a meaningful assignee, tag, due or
+  # estimate (ticket #153, extending ticket #78's rule from --body to its
+  # siblings). --depends_on was already on the #78 pattern (see above).
+  $task_args{assignee}   = $self->assignee   if defined $self->assignee   && length $self->assignee;
+  $task_args{tags}       = [split /,/, $self->tags] if defined $self->tags && length $self->tags;
   $task_args{depends_on} = $depends_on if $depends_on;
-  $task_args{due}        = $self->due if $self->due;
-  $task_args{estimate}   = $self->estimate if $self->estimate;
+  $task_args{due}        = $self->due        if defined $self->due        && length $self->due;
+  $task_args{estimate}   = $self->estimate   if defined $self->estimate   && length $self->estimate;
   # length, not truth: --body 0 is a body (ticket #78).
   $task_args{body}       = $self->body if defined $self->body && length $self->body;
 

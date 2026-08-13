@@ -1,5 +1,77 @@
 {{$NEXT}}
 
+    - Three karr-foundation fixes (#165, #166, #168). `max_runtime: 0`
+      no longer silently turns `drain: true` into a single run: the
+      drain's wall-clock guard now reads `&& $max_runtime > 0`, so 0
+      means "no per-run timeout and no drain budget" matching the
+      documented intent, and a positive value bounds the drain as
+      before (#165). `_discover_repos` deduplicates by canonical path,
+      so a repo reachable through both `dirs:` and `scan:` is processed
+      exactly once per tick: realpath (with absolute as fallback) keyed
+      by path, first-seen order preserved so an explicit `dirs:` entry
+      wins over a `scan:` hit (#166). A pull that refuses no longer
+      aborts the whole foundation run: `_process_repo`'s pull is now
+      wrapped in the same try/catch that already protects the other
+      per-repo steps (`_drain_repo` below it, `_process_repo` itself
+      from #162), so a refusal from the wholesale-wipe guard, the
+      board-identity guard, or the unapplied-refs guard warns and lets
+      the run continue — and the board whose pull refused is not then
+      processed as if it were up to date (#168).
+
+    - Four fixes in karr's character/octet boundary and refs-backed
+      storage guarantees (tickets #155, #156, #157, #167). `karr restore`
+      is now atomic across its write phase: `replace_board_refs` snapshots
+      every `refs/karr/*` OID and every ref the snapshot is about to
+      introduce before the first `_write_ref_oid` call, and any die out
+      of the write loop unwinds every ref that landed — restoring the
+      original OID for refs that existed, deleting refs the snapshot
+      managed to create — so the board reads back exactly as it did
+      before the failed restore. `Cmd::Restore`'s POD promise ('a snapshot
+      karr cannot apply ... is refused with the board exactly as it was')
+      is now true for the directory/file name conflict that previously
+      half-applied, and for the CAS-exhaustion path that previously
+      half-applied without any manual editing at all (#155). The
+      activity log no longer loses entries under concurrency: log_entry
+      wraps its read-and-write in `write_ref_cas` + `retry_contended`,
+      matching `save_task_cas` and `allocate_next_id_ref`, so the
+      existing CAS plumbing handles contention transparently and a
+      board running N parallel `karr create` writes N log entries
+      (#156). `git_user_name` and friends no longer leak libgit2's
+      octets into karr's character strings: `Git.pm:_config_string`
+      and `_run_git`'s captured stderr decode through `from_octets`,
+      so a non-ASCII `user.name` is no longer written double-encoded
+      into the log ref and `karr repair` does not need to undo it on
+      read (#157). `%ENV` is now an octet crossing `App::karr::Encoding`
+      owns: two new helpers, `to_octets_for_env` and
+      `from_octets_from_env`, match the POD style of the existing
+      helpers and delegate to the canonical codec, and the three
+      `Foundation/Runner.pm` writes go through `to_octets_for_env` —
+      so the 'Wide character in setenv' warning on a non-ASCII prompt
+      is gone, and the house rule that Encoding owns every crossing
+      is complete (#167).
+
+    - Three board commands no longer treat a value the user did pass as
+      if it had not been given (tickets #151, #152, #153). `Cmd/Log.pm`
+      refused `--last < 1` only via truth, so `karr log --last 0` dumped
+      the full log (the bound silently removed) and `karr log --last -3`
+      reported an empty log and exited 0 — indistinguishable from a board
+      with no activity. `Cmd/Archive.pm:55` read `$pos[0] under `or die`,
+      so the truthy comma in `karr archive ,` passed the guard, parse_ids
+      split to nothing, and run_batch iterated zero items with no output
+      and exit 0. `Cmd/{Edit,Create,Handoff}.pm` carried 17 sibling
+      options whose presence was tested with `if ($self->foo)` rather
+      than `defined && length`, so the literal value `0` was
+      indistinguishable from "not given" — the write still ran, `updated`
+      was bumped, an activity-log entry was appended, the command printed
+      success, and `--block 0` left the card unblocked (the sharp edge:
+      `karr pick` would have handed it out). The fix is the rule already
+      written down for `--body` in ticket #78 (`defined && length`)
+      applied to the siblings; `--last < 1` raises a usage error matching
+      `Show.pm:161-162` and `Context.pm:97-99` exactly (same exit 2,
+      same error format); `karr archive ,` raises the same usage error
+      as `move ,` / `edit ,` / `delete ,` already do. The audit trail no
+      longer records edits that did not happen.
+
     - `karr-foundation` now keeps an agent it started alive in three
       situations where it used to silently lose it: a pipeline/`&`/shell-
       builtin command where the real agent was the shell's child, not the

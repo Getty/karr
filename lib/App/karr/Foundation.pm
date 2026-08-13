@@ -505,7 +505,20 @@ sub _discover_repos {
     }
   }
 
-  return @repos;
+  # A repo reachable through both dirs: (explicit) and scan: (its parent) was
+  # processed twice per tick — the agent ran twice and the overview printed
+  # the board twice (#166). The two Path::Tiny objects can be the same string,
+  # differ only by trailing slash, or even be a symlink and its target; the
+  # key is the canonical filesystem path. First-seen wins so the explicit
+  # dirs: order is preserved over whatever order scan: happened to find them.
+  my %seen;
+  my @uniq;
+  for my $repo ( @repos ) {
+    my $key = try { $repo->realpath } catch { $repo->absolute };
+    next if $seen{$key}++;
+    push @uniq, $repo;
+  }
+  return @uniq;
 }
 
 # True when $dir is *itself* the root of a karr-init'd repo — resolves via
@@ -571,8 +584,25 @@ sub _process_repo {
     return;
   }
 
-  # Pull latest refs
-  $self->_sync_pull( $repo );
+  # Pull latest refs. A pull that refuses -- the wholesale-wipe guard, the
+  # board-identity guard, and (since #154) the unapplied-refs guard all die
+  # rather than return false -- must not abort the drain loop. The other
+  # per-repo step that can die (_drain_repo below) is wrapped in its own
+  # try and turned into a structured error result; the pull sits at the same
+  # level and is isolated the same way, so a refusal from one board warns
+  # and is skipped here while the rest of run() continues to the next.
+  # The pull happens before the lock is taken, so "release whatever it
+  # holds" is a no-op today; the wrap is for the structural isolation
+  # (clean separation, karr-shaped error message) and is forward-compatible
+  # with any future caller that takes the lock before pulling.
+  my $pull_ok = try {
+    $self->_sync_pull( $repo );
+    1;
+  } catch {
+    warn "karr-foundation: pull error in $repo: $_\n";
+    0;
+  };
+  return unless $pull_ok;
 
   # The pull may have just brought the disable flag in from another machine —
   # re-check before committing to a drain, so a board disabled elsewhere is
@@ -849,9 +879,15 @@ sub _drain_repo {
     my @actionable = grep { $self->_is_actionable( $before{$_} ) } keys %before;
 
     # Once we have run at least once, stop when the board is drained, the
-    # wall-clock budget is spent, or we hit the hard iteration cap.
+    # wall-clock budget is spent, or we hit the hard iteration cap. The
+    # wall-clock check is skipped when max_runtime is 0: that value disables
+    # the per-run timeout entirely (documented, Runner.pm), and the drain's
+    # budget must not silently inherit the same "no limit" sentinel as a
+    # hard zero — `>= 0` is always true after the first iteration and would
+    # turn drain: true into a single run (#165). With max_runtime: 0 the
+    # drain runs until the board is drained or the iteration cap.
     last if !$first && !@actionable;
-    last if !$first && ( time - $loop_start ) >= $max_runtime;
+    last if !$first && $max_runtime > 0 && ( time - $loop_start ) >= $max_runtime;
     last if $iter >= $max_iter;
 
     my $hash_before = $self->_ref_hash( $repo ) // '';

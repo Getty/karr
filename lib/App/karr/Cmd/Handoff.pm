@@ -132,13 +132,15 @@ sub execute {
     $task->claimed_by($self->claim);
     $task->claimed_at(gmtime->datetime . 'Z');
 
-    # Block if requested
-    if ($self->block) {
+    # Block if requested. length, not truth: --block 0 is a reason (ticket #153,
+    # extending ticket #78's rule to the handoff path).
+    if (defined $self->block && length $self->block) {
       $task->block($self->block);
     }
 
-    # Append note
-    if ($self->note) {
+    # Append note. length, not truth: --note 0 is a note (ticket #153, the
+    # same fix as --append_body in edit).
+    if (defined $self->note && length $self->note) {
       my $note_text = $self->note;
       if ($self->timestamp) {
         $note_text = gmtime->strftime('%Y-%m-%d %H:%M') . ' ' . $note_text;

@@ -261,27 +261,31 @@ sub execute {
         $task->clear_claimed_at;
       }
 
-      $task->title($self->title)       if $self->title;
-      $self->apply_status_change($task, $self->status, $self->claim) if $self->status;
-      $task->priority($self->priority) if $self->priority;
-      $task->assignee($self->assignee) if $self->assignee;
-      $task->due($self->due)           if $self->due;
-      $task->body($self->body)         if defined $self->body;
+      # length, not truth: a literal "0" is a meaningful title, status,
+      # priority, assignee, due, body, append, tag or block reason (ticket
+      # #153, extending ticket #78's rule from --body to its siblings).
+      $task->title($self->title)       if defined $self->title && length $self->title;
+      $self->apply_status_change($task, $self->status, $self->claim) if defined $self->status && length $self->status;
+      $task->priority($self->priority) if defined $self->priority && length $self->priority;
+      $task->assignee($self->assignee) if defined $self->assignee && length $self->assignee;
+      $task->due($self->due)           if defined $self->due && length $self->due;
+      $task->body($self->body)         if defined $self->body && length $self->body;
 
-      if ($self->append_body) {
+      if (defined $self->append_body && length $self->append_body) {
         # length, not truth: appending to a body of "0" must not replace it
-        # (ticket #78).
+        # (ticket #78). The outer guard had drifted back to truth while the
+        # comment still read length-not-truth (ticket #153).
         my $have = defined $task->body && length $task->body;
         $task->body(($have ? $task->body . "\n" : '') . $self->append_body);
       }
 
-      if ($self->add_tag) {
+      if (defined $self->add_tag && length $self->add_tag) {
         my @new = split /,/, $self->add_tag;
         my %existing = map { $_ => 1 } @{$task->tags};
         push @{$task->tags}, grep { !$existing{$_} } @new;
       }
 
-      if ($self->remove_tag) {
+      if (defined $self->remove_tag && length $self->remove_tag) {
         my %remove = map { $_ => 1 } split /,/, $self->remove_tag;
         $task->tags([grep { !$remove{$_} } @{$task->tags}]);
       }
@@ -298,12 +302,12 @@ sub execute {
         $task->depends_on([grep { !$remove{$_} } @{$task->depends_on}]);
       }
 
-      if ($self->claim) {
+      if (defined $self->claim && length $self->claim) {
         $task->claimed_by($self->claim);
         $task->claimed_at(gmtime->datetime . 'Z');
       }
 
-      if ($self->block) {
+      if (defined $self->block && length $self->block) {
         $task->block($self->block);
       }
 
