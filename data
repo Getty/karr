@@ -1,0 +1,44 @@
+---
+class: standard
+completed: 2026-08-13T00:34:38Z
+created: 2026-08-12T16:15:22Z
+depends_on:
+- 163
+id: 164
+priority: high
+started: 2026-08-13T00:34:38Z
+status: done
+tags:
+- bug
+- foundation
+title: An agent killed by a signal is booked as a clean exit 0 run
+updated: 2026-08-13T00:34:38Z
+---
+
+Found in a bug hunt, reproduced at unit level and through the full chain. I
+confirmed the code.
+
+Foundation/Runner.pm:168 -- `$exit_code = $? >> 8`, which is 0 for a child
+that died from a signal. `$? & 127` is never looked at.
+
+    OOM-killer / external SIGKILL -> exit_code=0  drain: CLEAN RUN
+    SIGTERM from outside          -> exit_code=0  drain: CLEAN RUN
+    crash (SIGSEGV)               -> exit_code=0  drain: CLEAN RUN
+
+Full chain, agent `exec /bin/sleep 20`, SIGKILL at t+3 standing in for the
+OOM killer:
+
+    END elapsed=3s exit=0
+    .karr.state: {"last_exit":0,"last_run":"..."}
+
+Contrast, same failure expressed as exit 1:
+
+    {"cooldown_level":1,"cooldown_until":...,"last_error":"exit=1","last_exit":1}
+
+Cost: the exact failure the cooldown exists for -- an agent the machine
+keeps killing -- is the one that never triggers it. No last_error, no
+backoff, last_exit: 0; foundation relaunches at full rate every tick and the
+operator's state file says the last run was fine.
+## Fix: Foundation::Runner::_classify_exit now reads both halves of $?: a signal death is 128 + signum (the shell convention; SIGTERM=143, SIGKILL=137, SIGSEGV=139, SIGINT=130); a normal exit is still ($? >> 8) & 255. The timeout path's exit code (143, 128+SIGTERM) already used this convention; the classifier now matches it for every signal, including the ones we don't fire ourselves (OOM-killer, external SIGTERM, SIGSEGV).
+
+Regression test: t/164-foundation-signal-exit.t. Unit tests pin the classifier across exit codes (0, 7, 255, undef) and signals (TERM, KILL, SEGV, INT). Integration: wrapper agent execs /bin/sleep 20, parent sends SIGKILL, runner's END line shows exit=137 (not 0). A second integration test sends SIGTERM then SIGKILL with the wrapper ignoring SIGTERM, proving the reported exit is the actual kill signal (137), not the escalation signal (143).
