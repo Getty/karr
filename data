@@ -1,0 +1,82 @@
+---
+claimed_at: 2026-08-13T02:32:40Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:32:40Z
+created: 2026-08-12T16:09:25Z
+id: 149
+priority: high
+started: 2026-08-12T22:35:36Z
+status: done
+tags:
+- bug
+- pick
+title: karr pick ranks by a hardcoded table, not the board's config
+updated: 2026-08-13T02:32:40Z
+---
+
+Found in a bug hunt, reproduced twice for priority and once for class,
+and confirmed against the reference implementation.
+
+Cmd/Pick.pm:153-160 sorts candidates with App::karr::Config->class_order
+and ->priority_order -- fixed CLASS-METHOD tables (critical/high/medium/low,
+expedite/fixed-date/standard/intangible). The board's own `priorities` and
+`classes` lists are never consulted. Any name outside those tables hits the
+`// 2` default, collapses into the medium/standard bucket, and the tie-break
+becomes the task id.
+
+Cmd/List.pm:291-305 does it correctly -- it reads $self->config->priorities
+-- and its POD asserts the invariant "the top of a priority-sorted list is
+the task App::karr::Cmd::Pick would hand out". That invariant is false on
+any board with a custom list. kanban-md sorts pick candidates through
+cfg.PriorityIndex / cfg.ClassIndex (internal/board/pick.go:74-90).
+
+Reproduction, board with priorities: low, medium, high, critical, blocker
+
+    $ karr create "merely critical" --priority critical   # id 1
+    $ karr create "a blocker"       --priority blocker    # id 2
+    $ karr list --sort priority --compact
+    #2       backlog a blocker
+    #1       backlog merely critical
+    $ karr pick --claim tester
+    Picked task 1: merely critical
+
+With names the table knows nothing about (p3, p2, p1, p0), priority stops
+influencing the pick entirely -- it hands out id 1, the least urgent.
+Classes behave the same: on a board declaring classes [standard, expedite],
+pick hands out the expedite card.
+
+`karr context --sections in-progress` (Cmd/Context.pm:343) uses the same
+table and orders critical above blocker for the same reason.
+
+Note `priorities`/`classes` are not settable via `karr config set` (they are
+read-only there) but ARE in %VIEW_KEY (Config.pm:796-799), so a custom list
+arrives exactly the way a custom status list does: through `karr import` of
+a kanban-md config.yml.
+
+Cost: on any board imported from kanban-md with a non-default priority or
+class list, every automated agent is handed the wrong work, silently and
+consistently, while `karr list --sort priority` shows the correct order
+right next to it.
+
+Same class of bug as ticket #67 (hardcoded `done`), still standing for
+priority and class.
+short test note
+## Fix
+
+Removed `App::karr::Config->priority_order` / `->class_order` (the hardcoded class methods that only knew the four default priorities and four default classes).
+
+`karr pick` (`Cmd/Pick.pm`) now reads the board's own `priorities` and `classes` lists via `App::karr::Config->from_merged(effective_config)` and sorts by class index (lower = more urgent), then by priority index (higher = more urgent), then by task id -- matching kanban-md's `internal/board/pick.go:74-90`. The `// 2` fallback that hid the bug on unfamiliar names is gone.
+
+`karr context --sections in-progress` (`Cmd/Context.pm:_pri_order`) now reads `$self->config->priorities` the same way; the briefing used to hang a `blocker` card in the middle of the list on a board that had it as the most urgent priority.
+
+`Config.pm` lost the two helpers entirely rather than leaving them around. The only two callers were the bug sites, and leaving them invites a future caller to use the wrong one again.
+
+`Task.pm` POD for `=attr priority` and `=attr class` now references the `Config/priorities` and `Config/classes` instance methods instead of the removed helpers.
+
+Files: `lib/App/karr/Cmd/Pick.pm`, `lib/App/karr/Cmd/Context.pm`, `lib/App/karr/Config.pm`, `lib/App/karr/Task.pm`.
+
+Test: `t/153-pick-custom-priorities.t` -- 6 subtests. Four of them (custom priorities, custom class set, class+priority combo, `context --sections in-progress`) fail on the old code with exactly the symptoms from the bug report and pass on the new one; the alphabetical / fully custom priorities subtest pins the exhaustive ordering so any future "fall back to a default" regression fails here; the default-board subtest is a sanity check.
+
+`prove -l t/`: 144 files, 1033 tests, all green.
+Moved to review. Config helpers removed; pick / context read the board own lists; 144 files / 1033 tests green.
