@@ -1,0 +1,60 @@
+---
+claimed_at: 2026-08-13T02:21:39Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:21:39Z
+created: 2026-08-12T16:10:18Z
+id: 153
+priority: medium
+started: 2026-08-13T01:00:40Z
+status: done
+tags:
+- bug
+- cli
+title: Falsy option values are silently dropped by edit, create and handoff
+updated: 2026-08-13T02:21:39Z
+---
+
+Found in a bug hunt; reproduced and re-verified independently.
+
+Cmd/Edit.pm:243,246,250,257,263,290,294; Cmd/Create.pm:172-176;
+Cmd/Handoff.pm:136,141 guard their options on truth rather than
+definedness/length, so the value "0" is indistinguishable from "not given".
+
+The write still happens: the task ref is rewritten, `updated` is bumped by
+BoardStore::save_task_cas, an activity-log entry is appended, and the
+command prints "Updated task N: <old title>" and exits 0.
+
+--body was converted to `defined ... && length` for ticket #78 in both edit
+(line 248) and create (line 178); its siblings were not. The --append-body
+case is self-contradicting -- its guard is `if ($self->append_body)` while
+the comment immediately inside it reads "length, not truth: appending to a
+body of "0" must not replace it (ticket #78)".
+
+Reproduction:
+
+    $ karr edit 1 --title 0
+    Updated task 1: original title        exit=0
+    $ karr edit 1 --block 0
+    Updated task 1: original title        exit=0
+
+    $ karr show 1 --json
+    {... "title":"original title", ...}   # nothing landed, no `blocked`
+                                          # but `updated` moved
+    $ karr edit 1 --title 00              # works -- the giveaway that this
+                                          # is truthiness, not validation
+
+Same for create: `karr create "x" --tags 0 --assignee 0 --estimate 0`
+records none of the three.
+
+Cost: mostly narrow (a literal "0"), but --block 0 is the sharp edge -- karr
+reports the card updated, the card is NOT blocked, and pick will hand it
+straight out. Every case also writes a log entry and an `updated` bump for a
+change that was discarded, so the audit trail records an edit that did not
+happen.
+
+kanban-md errors with "no changes specified" when an edit changes nothing
+(internal/board/mutate.go:413-415); karr writes and reports success.
+
+Fix: the #78 rule (`defined && length`) applied to the siblings, and
+possibly a "no changes specified" refusal.
