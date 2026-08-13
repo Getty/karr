@@ -1,0 +1,56 @@
+---
+class: standard
+completed: 2026-08-13T00:34:15Z
+created: 2026-08-12T16:15:00Z
+depends_on:
+- 163
+id: 161
+priority: high
+started: 2026-08-13T00:34:15Z
+status: done
+tags:
+- bug
+- foundation
+title: max_runtime is not enforced once the agent closes its output -- waitpid blocks
+  forever holding the board lock
+updated: 2026-08-13T00:34:15Z
+---
+
+Found in a bug hunt, reproduced at unit level and through the full chain.
+
+Foundation/Runner.pm:135 (`last if $n == 0`) into :167 (`waitpid($pid, 0)`).
+The deadline is enforced only inside the IO::Select read loop. A child that
+redirects or closes its stdout/stderr while still running gives the parent
+EOF; the parent leaves the loop with $timed_out == 0 and enters the else
+branch -- a bare waitpid, no deadline, no WNOHANG. max_runtime is silently
+gone, .karr.lock stays held, and every later board in the same run waits
+behind it.
+
+Unit-level reproduction:
+
+    command: exec >/dev/null 2>&1; sleep 20
+    max_runtime: 2
+    returned after 20s, exit=0
+    TIMEOUT NOT ENFORCED: waited for the command, not for max_runtime
+
+Full chain, two boards, max_runtime 2 on both, b1's agent is
+`exec >> agent-out.log 2>&1; sleep 25` -- a config shape an operator writes
+to keep their own agent log:
+
+    t+5s:  foundation STILL RUNNING, b1 .karr.lock HELD, b2 not processed
+    t+10s: same
+    START command=exec >> agent-out.log 2>&1; sleep 25
+    END elapsed=10s exit=143     (only because the harness killed it;
+                                  no TIMEOUT line -- that path never ran)
+
+Cost: the one guarantee foundation makes about an unattended agent -- that
+it stops after max_runtime -- does not hold for a whole class of commands,
+and the failure mode is an indefinite stall of the entire run with a board
+locked.
+
+Distinct from #148: there the process group survives the kill; here the
+direct child is alive and waitpid is correct, the deadline is simply never
+armed.
+## Fix: Foundation::Runner::_run_command now arms SIGALRM with a handler that sets $timed_out and closes the read end of the pipe, independent of the IO::Select read loop. After the loop ends on EOF, a deadline-aware WNOHANG wait loop polls until the child exits OR the wall clock reaches max_runtime, in which case it falls through to the same SIGTERM-then-SIGKILL-then-reap path the SIGALRM uses. arm_alarm() re-arms on each can_read wakeup so a long-running command never inherits a stale timer from an earlier iteration.
+
+Regression test: t/161-foundation-deadline-on-eof.t. Agent `exec >/dev/null 2>&1; sleep 20` with max_runtime 2 -- the EOF-before-deadline shape. Asserts the run returns within ~4s with exit=143, not 20s with exit=0.
