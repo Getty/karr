@@ -1,0 +1,38 @@
+---
+claimed_at: 2026-08-13T02:22:06Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:22:06Z
+created: 2026-08-12T16:15:39Z
+id: 165
+priority: medium
+started: 2026-08-13T01:11:20Z
+status: done
+tags:
+- bug
+- foundation
+title: 'max_runtime: 0 silently turns drain: true into a single run'
+updated: 2026-08-13T02:22:06Z
+---
+
+Found in a bug hunt, reproduced.
+
+Foundation.pm:621 -- `last if !$first && ( time - $loop_start ) >= $max_runtime;`
+
+The same knob is both the per-command timeout and the whole drain's
+wall-clock budget, so the documented "max_runtime: 0 disables the per-run
+timeout entirely" makes this `>= 0`, true on every iteration.
+
+Reproduction, identical board, drain: true, max_iterations: 3, agent moves
+the board on every invocation:
+
+    max_runtime: 60  ->  agent invocations this drain: 3
+    max_runtime: 0   ->  agent invocations this drain: 1
+
+Cost: an operator who follows the POD to let a long agent run to completion
+also loses draining, with no message. The board advances one step per cron
+tick instead of being drained, and nothing in the log or .karr.state says
+why.
+
+Fix direction: separate the two budgets, or special-case 0 as "no wall-clock
+bound on the drain either".
