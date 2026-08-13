@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-08-13T02:21:46Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:21:46Z
+created: 2026-08-12T16:13:02Z
+id: 155
+priority: high
+started: 2026-08-13T01:02:00Z
+status: done
+tags:
+- bug
+- restore
+title: karr restore half-applies a snapshot when a ref write fails in phase two
+updated: 2026-08-13T02:21:46Z
+---
+
+Found in a bug hunt, reproduced by the finder.
+
+Git.pm:2461 -- `$self->_write_ref_oid( $_, $commit{$_} ) for @wanted;`
+
+Phase one validates names and builds every commit, which is what #47 added.
+But validate_board_ref only checks syntax and namespace; it cannot know
+whether a name is writable against the refs already on the board. A
+directory/file conflict (refs/karr/tasks/2 when refs/karr/tasks/2/data
+exists) passes validation, passes commit construction, then dies in the
+MIDDLE of the write loop -- after earlier refs were overwritten, before the
+prune step.
+
+Cmd::Restore's POD promises the opposite: "a snapshot karr cannot apply ...
+is refused with the board exactly as it was."
+
+Reproduction (hand-edited backup, which is the threat model
+validate_board_ref was written for):
+
+    before: #1 Alpha  #2 Beta  #3 Gamma
+    karr restore --yes --input evil.yml
+    karr: could not write refs/karr/tasks/2: cannot lock ref
+          'refs/karr/tasks/2', there are refs beneath that folder   exit=1
+    after:  #1 ALPHA-FROM-SNAPSHOT  #2 Beta  #3 Gamma
+
+Task 1 took the snapshot's content, 2 and 3 kept the board's. The board is
+a mixture that existed in neither place, and the error reads as "nothing
+happened".
+
+The D/F name needs a hand-edited backup, but the same half-apply follows
+from ANY failure in that loop -- _write_ref_oid dies after 32 exhausted
+attempts on a contended ref, which needs no hand editing at all, and
+restore takes no lock while other agents keep writing.
