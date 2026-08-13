@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-08-13T02:22:26Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:22:26Z
+created: 2026-08-12T18:33:50Z
+id: 168
+priority: medium
+started: 2026-08-13T01:18:18Z
+status: done
+tags:
+- bug
+- foundation
+title: Foundation::_sync_pull aborts the whole run when one repo's pull refuses
+updated: 2026-08-13T02:22:26Z
+---
+
+Found by the ref-worker while fixing #154, in a file outside its lane.
+
+Foundation.pm:497 (_sync_pull) calls $git->pull unguarded, and its caller
+at :439 has no eval. So a pull that refuses aborts the ENTIRE
+karr-foundation run rather than skipping the one repo and moving on.
+
+Pre-existing: the wholesale-wipe guard and the board-identity guard
+already die there. But #154 adds a third trigger, and the stale-lock case
+will be the common one -- a .lock left behind by a killed karr on one
+board now takes down every other board's tick with it.
+
+The drain loop already isolates per repo one level down: _process_repo is
+wrapped in a try that warns and moves on (Foundation.pm:286), and
+_drain_repo likewise (:451). The pull sits just outside that protection.
+
+Fix direction: bring the pull inside the same per-repo isolation, so a
+refusal warns, marks that board's outcome as an error, releases whatever
+it holds, and lets the run continue. Take care that a board which cannot
+pull is NOT then processed as if it were up to date -- skipping it is the
+point.
