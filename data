@@ -1,0 +1,48 @@
+---
+claimed_at: 2026-08-13T02:22:47Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:22:47Z
+created: 2026-08-12T16:10:11Z
+id: 152
+priority: medium
+started: 2026-08-13T01:26:56Z
+status: done
+tags:
+- bug
+- archive
+title: karr archive , does nothing, says nothing, exits 0
+updated: 2026-08-13T02:22:47Z
+---
+
+Found in a bug hunt; reproduced and re-verified independently.
+
+Cmd/Archive.pm:55 does
+
+    my $id_str = $pos[0] or die "Usage: ...";
+
+which passes, because "," is truthy. parse_ids(",") then splits to the empty
+list, run_batch iterates nothing, and the command falls through to exit 0
+with no output at all.
+
+move, edit and delete all carry the guard that was added for exactly this
+-- `die "Usage: ..." unless @ids;` at Move.pm:86, Edit.pm:193, Delete.pm:75,
+each with a comment describing this precise failure. Archive was left out.
+
+Reproduction:
+
+    $ karr archive ,                      exit=0   (no output, nothing archived)
+    $ karr archive ,, --json
+    []                                    exit=0
+
+    $ karr move , todo
+    Usage: karr move ID[,ID,...] [STATUS]           exit=2
+    $ karr edit , --title x
+    Usage: karr edit ID[,ID,...] [FLAGS]            exit=2
+    $ karr delete , --yes
+    Usage: karr delete ID[,ID,...] [--yes] [--json]  exit=2
+
+Cost: small but real -- a shell-built id list that comes out empty
+(`karr archive "\$IDS"` with IDS=",") reports success for an archive that
+never happened. ADR 0002 has no way to express "silently did nothing", which
+is why the other three were fixed.
