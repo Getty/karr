@@ -1,5 +1,60 @@
 {{$NEXT}}
 
+    - `karr-foundation` now keeps an agent it started alive in three
+      situations where it used to silently lose it: a pipeline/`&`/shell-
+      builtin command where the real agent was the shell's child, not the
+      shell (#148); an agent that closed its stdout before max_runtime
+      elapsed, where the runner fell through to a bare blocking waitpid
+      that held `.karr.lock` forever (#161); and a SIGTERM/INT/HUP to
+      foundation mid-drain, where the agent was reparented to init and
+      `.karr.lock` named a dead pid the next tick read as free (#163).
+      The runner wraps every agent in its own process group with
+      `setpgid(0,0)` in the child and `setpgid($pid,$pid)` in the parent
+      (the second call wins the fork race idempotently); the timeout,
+      SIGTERM and SIGKILL all signal the group with a negative pid, so
+      the shell, the agent and any grandchildren the agent forked all
+      receive the kill. `max_runtime` is now enforced independently of
+      IO activity by a SIGALRM handler that closes the read end of the
+      pipe, and the post-EOF wait is a deadline-aware WNOHANG poll that
+      falls through to the SIGTERM/SIGKILL/reap path when the wall clock
+      beats the child. Foundation installs a SIGTERM/INT/HUP handler for
+      the lifetime of `run()` that kills the agent's group, force-releases
+      the lock, and `POSIX::_exit(128 + signum)` — the conventional shell
+      exit shape, so systemd/cron see a signal-death exit and an operator
+      reading the log does not need a special case for "killed cleanly
+      mid-drain".
+
+    - `.karr.lock` is now a `flock(2)` on an open file descriptor the
+      foundation keeps for the lifetime of the lock, not an advisory pid
+      that two ticks could each write their own value into (#162). Two
+      ticks that overlap — the normal case, since a drain may run for
+      `max_runtime` (default 1800s) while cron fires every few minutes —
+      race on the file: the second tick gets `EWOULDBLOCK` from
+      `LOCK_EX|LOCK_NB` and returns immediately, without overwriting the
+      existing pid. `_release_lock` closes the open fd (closing drops the
+      flock) and only unlinks the file if the recorded pid still matches
+      `$$`, so a pid-recycled foundation cannot unlock its successor's
+      lock. `_lock_held` is the flock check, not a `kill(0,$pid)` against
+      a recorded pid the foundation wrote itself — a stale lock whose
+      holder died is held=false and a fresh tick takes over without
+      manual cleanup. Path::Tiny's `slurp_utf8` does an internal blocking
+      flock that hangs forever when the same process already holds one,
+      so the metadata read is a raw `sysread` loop.
+
+    - An agent killed by a signal is now booked as `128 + signum`, not as
+      a clean exit 0 (#164). The runner used to compute `$exit_code =
+      $? >> 8` — the high 8 bits, which are 0 for any child that died
+      from a signal. The OOM-killer, an external SIGTERM, a SIGSEGV, and
+      any other signal-death shape were all booked as a clean run:
+      `last_error` stayed unset, the cooldown that exists to back off
+      after a machine-killing agent never engaged, and the next cron
+      tick re-launched at full rate. The fix reads both halves of `$?`:
+      signal death becomes `128 + signum` (the shell convention, so
+      SIGTERM=143, SIGKILL=137, SIGSEGV=139, SIGINT=130); a normal exit
+      falls through to `( $? >> 8 ) & 255`. The timeout path's exit code
+      already used this convention; the classifier now matches it for
+      every signal, including the ones we don't fire ourselves.
+
     - `karr pick` ranks candidates and `karr context --sections in-progress`
       lists in-progress tasks by the board's own `priorities` and `classes`
       lists, not by a hardcoded table (ticket #149). `Cmd/Pick.pm` used to
