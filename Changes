@@ -1,5 +1,27 @@
 {{$NEXT}}
 
+    - Three board commands no longer treat a value the user did pass as
+      if it had not been given (tickets #151, #152, #153). `Cmd/Log.pm`
+      refused `--last < 1` only via truth, so `karr log --last 0` dumped
+      the full log (the bound silently removed) and `karr log --last -3`
+      reported an empty log and exited 0 — indistinguishable from a board
+      with no activity. `Cmd/Archive.pm:55` read `$pos[0] under `or die`,
+      so the truthy comma in `karr archive ,` passed the guard, parse_ids
+      split to nothing, and run_batch iterated zero items with no output
+      and exit 0. `Cmd/{Edit,Create,Handoff}.pm` carried 17 sibling
+      options whose presence was tested with `if ($self->foo)` rather
+      than `defined && length`, so the literal value `0` was
+      indistinguishable from "not given" — the write still ran, `updated`
+      was bumped, an activity-log entry was appended, the command printed
+      success, and `--block 0` left the card unblocked (the sharp edge:
+      `karr pick` would have handed it out). The fix is the rule already
+      written down for `--body` in ticket #78 (`defined && length`)
+      applied to the siblings; `--last < 1` raises a usage error matching
+      `Show.pm:161-162` and `Context.pm:97-99` exactly (same exit 2,
+      same error format); `karr archive ,` raises the same usage error
+      as `move ,` / `edit ,` / `delete ,` already do. The audit trail no
+      longer records edits that did not happen.
+
     - `karr-foundation` now keeps an agent it started alive in three
       situations where it used to silently lose it: a pipeline/`&`/shell-
       builtin command where the real agent was the shell's child, not the
