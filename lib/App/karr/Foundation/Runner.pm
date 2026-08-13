@@ -7,6 +7,7 @@ use App::karr::Error qw( clean_error user_error );
 use Encode ();
 use IO::Select;
 use IO::Handle ();
+use POSIX qw( SIGTERM SIGKILL SIGALRM WNOHANG setpgid );
 
 =head1 DESCRIPTION
 
@@ -117,6 +118,18 @@ sub _run_command {
     chdir "$repo" or die "chdir $repo: $!";
     open( STDOUT, '>&', $writer ) or die "dup stdout: $!";
     open( STDERR, '>&STDOUT' )    or die "dup stderr: $!";
+    # The agent becomes its own process group leader so the runner can signal
+    # the whole tree (the agent, its forked grandchildren, anything it
+    # backgrounded) without reaching the runner itself (#148). Before this the
+    # timeout SIGTERM hit only the shell — `sleep 300 & wait`, a pipeline, any
+    # command the agent backgrounded, all survived the kill because they were
+    # children of /bin/sh, not of the runner. setpgrp(0,0) puts the child in a
+    # group whose pgid is its own pid; the parent signals that group with
+    # kill 'TERM', -$pid. SIGALRM is also reset to default in the child — the
+    # timeout timer is the runner's, not the agent's.
+    setpgid( 0, 0 ) if defined &setpgid;
+    POSIX::setsid() if !defined &setpgid;    # fall back if POSIX::setpgid isn't there
+    $SIG{ALRM} = 'DEFAULT';
     exec( '/bin/sh', '-c', $command ) or die "exec: $!";
   }
 
@@ -126,10 +139,49 @@ sub _run_command {
   # way — the tee loop below reports its errors by ending, not by dying.
   close $writer;
 
+  # setpgid in the child may race with the parent's getpgid (the child has not
+  # called it yet when fork returns in the parent). setpgid( $pid, $pid ) in the
+  # parent is idempotent if the child has already done it, and is the
+  # documented way to guarantee the value is set before we signal the group.
+  setpgid( $pid, $pid ) if defined &setpgid;
+
+  # The runner is the only place that knows the agent's pid and pgid — the
+  # Foundation needs both so its SIGTERM handler can kill the agent's process
+  # group when the cron host stops us mid-drain (#163). Record them here, in
+  # the foundation's own attribute, so a handler installed in run() can reach
+  # them without re-reading the lock file (which it does anyway, defensively).
+  $self->foundation->_live_agent(
+    { repo => $repo, pid => $pid, pgid => $pid, lockfile => $self->foundation->_state->_lock_file( $repo ) }
+  );
+
   my $started   = time;
   my $output    = '';
   my $timed_out = 0;
   my $sel       = IO::Select->new($reader);
+
+  # Deadline arming: the deadline must fire regardless of IO activity, because
+  # an agent that closes its stdout/stderr while still running ends the read
+  # loop on EOF with $timed_out still 0, and the runner falls into a bare
+  # blocking waitpid that holds .karr.lock forever (#161). SIGALRM with a
+  # handler that sets $timed_out keeps the deadline independent of the read
+  # loop: the alarm fires at the deadline, the handler arms the flag, the
+  # next loop iteration sees it and ends the loop. arm_alarm() also re-arms on
+  # each can_read wakeup so a long-running command never gets a stale timer
+  # from a prior iteration — every iteration arms for "remaining from now",
+  # which is what the user expects max_runtime to mean.
+  my $alarm_target;
+  if ( $max_runtime > 0 ) {
+    $alarm_target = $started + $max_runtime;
+    $SIG{ALRM} = sub {
+      $timed_out = 1;
+      # Closing the read end of the pipe unblocks can_read with no data so
+      # the loop wakes immediately rather than waiting for the alarm delivery
+      # to reach it through sysread's EINTR. Cheap and signal-safe.
+      close $reader;
+      $sel = undef;
+    };
+    alarm $max_runtime;
+  }
 
   # The agent's output arrives as raw octets in 64k reads that can split a
   # multi-byte character, while STDOUT carries the :encoding(UTF-8) layer
@@ -140,22 +192,25 @@ sub _run_command {
   my $pending = '';
 
   while (1) {
-    my $wait;
-    if ( $max_runtime > 0 ) {
-      $wait = $max_runtime - ( time - $started );
-      if ( $wait <= 0 ) { $timed_out = 1; last }
+    last if $timed_out;
+    if ( !$sel ) {
+      # SIGALRM fired and closed $reader; nothing left to do but exit the loop
+      # so the kill path runs.
+      last;
     }
-    # undef $wait => block indefinitely (max_runtime: 0 disables the timeout).
-    my @ready = $sel->can_read($wait);
+    my @ready = $sel->can_read( $max_runtime > 0 ? $max_runtime - ( time - $started ) : undef );
+    last if $timed_out;
     unless (@ready) {
-      # Spurious wakeup (signal) or deadline. Only the deadline ends the loop.
+      # Spurious wakeup (signal) or genuine deadline. SIGALRM would have set
+      # the flag, but the deadline could also be reached by wall clock if a
+      # signal reset the alarm — check both and end the loop either way.
       next unless $max_runtime > 0;
-      if ( time - $started >= $max_runtime ) { $timed_out = 1; last }
+      last if time - $started >= $max_runtime;
       next;
     }
     my $chunk;
     my $n = sysread( $reader, $chunk, 65536 );
-    last if !defined $n;   # read error
+    last if !defined $n;   # read error (or SIGALRM closing the fd)
     last if $n == 0;       # EOF — the command closed its output
     print {$log_fh} $chunk;
     if ($stream_terms) {
@@ -164,6 +219,13 @@ sub _run_command {
     }
     $output .= $chunk;
   }
+
+  # Disarm the alarm before reap: a waitpid that takes longer than max_runtime
+  # would otherwise be cut short by SIGALRM (no handler anymore — the default
+  # action is to die, and Foundation is the parent). $max_runtime == 0 already
+  # never armed.
+  alarm 0;
+  $SIG{ALRM} = 'DEFAULT' if $max_runtime > 0;
 
   my $exit_code;
   if ($timed_out) {
@@ -178,26 +240,96 @@ sub _run_command {
     my $log_err;
     eval {
       $self->foundation->_append_log( $repo,
-        "TIMEOUT after ${elapsed}s \x{2014} sending SIGTERM to $pid" );
+        "TIMEOUT after ${elapsed}s \x{2014} sending SIGTERM to $pid (group -$pid)" );
       1;
     } or $log_err = clean_error($@);
-    kill 'TERM', $pid;
-    sleep 2;
-    kill 'KILL', $pid;
+    # Negative pid = process group (kill(2) group semantics, #148). The shell,
+    # the agent, any grandchildren the agent backgrounded, all receive the
+    # signal. SIGTERM is catchable, so we wait up to 2s before escalating.
+    kill 'TERM', -$pid;
+    my $deadline = time + 2;
+    while ( time < $deadline ) {
+      last if kill( 0, $pid ) == 0;
+      select undef, undef, undef, 0.05;
+    }
+    kill 'KILL', -$pid;
     waitpid( $pid, 0 );
     warn "karr-foundation: cannot write $log_file: $log_err\n" if $log_err;
-    $exit_code = -1;
+    # 128 + SIGTERM(15) = 143 — same convention as shells, distinct from a
+    # clean non-zero exit, and surfaces in cooldown/last_error so an agent
+    # that exceeded max_runtime triggers the backoff (#164 / #161).
+    $exit_code = 128 + SIGTERM;
   } else {
-    waitpid( $pid, 0 );
-    $exit_code = $? >> 8;
+    # The child may still be alive after the loop ended on EOF — a command
+    # whose stdout is closed while it keeps running (the classic
+    # `exec >/dev/null 2>&1; sleep N`, #161). Reap it with a wait loop that
+    # checks the wall-clock deadline: if the loop ended on EOF before
+    # max_runtime expired, this blocks until the child exits on its own or
+    # until the deadline arrives and we kill it via the timed_out path. The
+    # loop uses WNOHANG to keep checking; the deadline path is identical to
+    # the SIGALRM path above.
+    my $deadline;
+    if ( $max_runtime > 0 ) {
+      $deadline = $started + $max_runtime;
+      while (1) {
+        my $w = waitpid( $pid, WNOHANG );
+        last if $w > 0 || $w < 0;
+        if ( time >= $deadline ) {
+          $timed_out = 1;
+          kill 'TERM', -$pid;
+          my $term_deadline = time + 2;
+          while ( time < $term_deadline ) {
+            last if kill( 0, $pid ) == 0;
+            select undef, undef, undef, 0.05;
+          }
+          kill 'KILL', -$pid;
+          waitpid( $pid, 0 );
+          last;
+        }
+        select undef, undef, undef, 0.05;
+      }
+    } else {
+      waitpid( $pid, 0 );
+    }
+    $exit_code = _classify_exit($?);
+    $exit_code = 128 + SIGTERM if $timed_out && $exit_code == 0;
   }
 
-  close $reader;
+  close $reader if defined fileno $reader;
   close $log_fh;
+
+  # Clear the live-agent handle: the SIGTERM handler must not see this agent
+  # after we have reaped it. The next iteration of the drain (or the next
+  # repo) installs its own.
+  $self->foundation->_live_agent( undef );
 
   my $elapsed = time - $started;
   $self->foundation->_append_log( $repo, "END elapsed=${elapsed}s exit=$exit_code" );
   return ( $exit_code, $output );
+}
+
+# Translate the raw $? from waitpid(2) into the exit code the drain sees. A
+# child that exited normally: the high 8 bits are the status. A child that
+# died from a signal: the low 7 bits are the signal number and the high 8
+# bits are 0 — `$? >> 8` was 0 here, which is the bug #164 pins: the runner
+# reported the OOM-killed / SIGTERM'd / SIGSEGV'd agent as exit 0, the drain
+# read it as a clean run, and the cooldown that was supposed to catch a
+# machine-killing agent never engaged. Surface the signal as 128 + signum so
+# it is distinguishable from any real exit code (shells do the same), and
+# fall through to the normal high-bits path otherwise.
+#
+# Accept both forms: the runner calls this as a function
+# (`_classify_exit($?)`) and tests call it as a method (`$r->_classify_exit($?)`).
+# `use Moo;` turns every sub in the package into a method, so the method
+# form has $self as the first arg; the function form has $status as the first
+# arg. Inspect $_[0]: if it's a blessed reference, it's $self and we look at
+# $_[1] for $status.
+sub _classify_exit {
+  my $status = ( ref $_[0] ) ? $_[1] : $_[0];
+  return 0 unless defined $status;
+  my $sig = $status & 127;
+  return 128 + $sig if $sig;
+  return ( $status >> 8 ) & 255;
 }
 
 # ---------------------------------------------------------------------------

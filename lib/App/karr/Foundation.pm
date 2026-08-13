@@ -8,6 +8,7 @@ use MooX::Options (
 );
 use App::karr::Error qw( user_error );
 use Path::Tiny;
+use POSIX qw( SIGTERM SIGINT SIGHUP );
 use YAML::XS ();
 use Time::Piece;
 use Digest::MD5 qw( md5_hex );
@@ -111,7 +112,8 @@ sub _build__runner {
 has _state => (
   is      => 'lazy',
   handles => [qw(
-    _lock_held _acquire_lock _release_lock
+    _lock_held _acquire_lock _release_lock _force_release_lock
+    _read_lock_metadata
     _state_get _state_set _state_del
     _cooldown_active _set_cooldown _clear_cooldown
     _bump_attempts _reset_attempts
@@ -131,6 +133,40 @@ has _overview => (
 sub _build__overview {
   my ( $self ) = @_;
   return App::karr::Foundation::Overview->new( foundation => $self );
+}
+
+# Open file descriptors that hold flock(2) locks on .karr.lock files for the
+# boards currently being drained. The fd is what keeps the lock — closing it
+# would drop the flock immediately, so Foundation keeps it for the lifetime
+# of the drain. _keep_lock_fh / _take_lock_fh are the only writers/readers.
+has _lock_fhs => (
+  is      => 'ro',
+  default => sub { {} },
+);
+
+# The agent process this run currently has on the board: { repo, pid, pgid,
+# lockfile }. Set by the runner immediately after fork, cleared by the drain
+# after waitpid. The SIGTERM handler in run() reads it to know what to kill.
+# Undef between agents — the handler is a no-op on those gaps.
+has _live_agent => (
+  is      => 'rw',
+  default => sub { undef },
+);
+
+# fd stash accessors used by State.pm — kept private to the foundation/state
+# pair because they leak the internal "lock = open fd" model. Nobody else
+# should care.
+sub _keep_lock_fh {
+  my ( $self, $repo, $fh ) = @_;
+  $self->_lock_fhs->{ "$repo" } = $fh;
+  return;
+}
+
+sub _take_lock_fh {
+  my ( $self, $repo ) = @_;
+  my $key = "$repo";
+  my $fh  = delete $self->_lock_fhs->{$key};
+  return $fh;
 }
 
 =synopsis
@@ -313,6 +349,16 @@ sub run {
     return 0;
   }
 
+  # SIGTERM/SIGINT/SIGHUP mid-drain used to leave the agent reparented to init
+  # and the .karr.lock naming a dead pid, and the next cron tick read the dead
+  # pid as free and started a second agent on the same board (#163, #148).
+  # The handler kills the agent's process group, releases the lock, and exits
+  # non-zero — the same exit shape systemd/cron see on any other failure, so
+  # the operator's monitoring does not need a special case for "killed cleanly
+  # mid-drain". Installed for the lifetime of run() and restored to default on
+  # the way out so a stray post-run signal goes to the OS, not back into us.
+  $self->_install_signal_handlers;
+
   for my $repo ( @repos ) {
     try {
       $self->_process_repo( $repo );
@@ -320,7 +366,79 @@ sub run {
       warn "karr-foundation: error in $repo: $_\n";
     };
   }
+
+  $self->_restore_default_signal_handlers;
   return 0;
+}
+
+# SIGTERM/INT/HUP handler: kill the live agent's process group, release the
+# lock, exit non-zero. Built once at run() time and shared by all three
+# signals — the OS's default for SIGINT/SIGHUP is exit too, but those do not
+# wait for the agent to die, which is the whole problem.
+sub _install_signal_handlers {
+  my ( $self ) = @_;
+  my $handler = sub { $self->_handle_shutdown_signal(@_); };
+  $SIG{TERM} = $handler;
+  $SIG{INT}  = $handler;
+  $SIG{HUP}  = $handler;
+  return;
+}
+
+sub _restore_default_signal_handlers {
+  $SIG{TERM} = 'DEFAULT';
+  $SIG{INT}  = 'DEFAULT';
+  $SIG{HUP}  = 'DEFAULT';
+  return;
+}
+
+# Signal handler body. Perl signal handlers run in a restricted context — no
+# malloc, no PerlIO ops beyond safe ones, and certainly no $self->method on an
+# object whose class might be in the middle of compilation. Foundation is
+# already running and the methods called here are simple attribute reads and
+# POSIX ops, which are documented as safe in 5.16+. We do NOT call
+# Foundation's own _append_log or anything that opens files — the agent is
+# dying and the lock is going away; the operator gets the next run's log.
+sub _handle_shutdown_signal {
+  my ( $self, $sig_name ) = @_;
+  my $agent = $self->_live_agent;
+  if ( $agent && $agent->{pgid} ) {
+    # Negative pid = process group (kill(2) group semantics). The agent's
+    # pgid is the agent's own pid because Runner calls setpgrp(0,0) in the
+    # child right after fork, so kill 'TERM', -$pgid signals the whole group
+    # — including any grandchildren the agent itself forked (#148).
+    kill 'TERM', -$agent->{pgid};
+    # Give the group a moment to die. SIGTERM is catchable; a hung child
+    # needs SIGKILL. Two seconds matches the timeout path in Runner.
+    my $end = time + 2;
+    while ( time < $end ) {
+      last if kill( 0, $agent->{pid} ) == 0;
+      select undef, undef, undef, 0.05;
+    }
+    kill 'KILL', -$agent->{pgid};
+    # Reap without blocking — the SIGKILL will deliver but the actual wait
+    # is best-effort because we are already on the way out.
+    waitpid $agent->{pid}, 0 if $agent->{pid};
+  }
+  if ( $agent && $agent->{repo} ) {
+    # Force-release the lock: we may have lost the fd through a process
+    # restart, but the recorded pid in the file still matches $$ if this is
+    # the foundation that took it. _force_release_lock verifies and unlinks.
+    # Wrap the repo argument in path() in case it crossed a string boundary
+    # (some callers keep agent->{repo} as a string); State.pm's helpers all
+    # take a Path::Tiny object.
+    $self->_force_release_lock( path( $agent->{repo} ) );
+  }
+  # Restore defaults so the second delivery (e.g. impatient operator) kills us
+  # for real instead of looping in the handler.
+  $self->_restore_default_signal_handlers;
+  # Exit non-zero so cron/systemd can see we did not finish a clean run.
+  # $sig_name is "TERM" / "INT" / "HUP" — 128 + signal number is the
+  # conventional shell exit code for signal death.
+  my $sig_num = $sig_name eq 'TERM' ? SIGTERM
+              : $sig_name eq 'INT'  ? SIGINT
+              : $sig_name eq 'HUP'  ? SIGHUP
+              : 15;
+  POSIX::_exit( 128 + $sig_num );
 }
 
 =method run
@@ -477,8 +595,14 @@ sub _process_repo {
     return;
   }
 
-  # Acquire lock, drain, release
-  $self->_acquire_lock( $repo );
+  # Acquire lock — flock-based now, so two ticks that overlap race on the
+  # file rather than on a check-then-act gap a git pull apart (#162). Failure
+  # here means another foundation instance holds the board; we skip and move
+  # on instead of spewing over the existing lock.
+  unless ( $self->_acquire_lock( $repo ) ) {
+    $self->_say_verbose("skip $repo \x{2014} lock contended (another tick holds it)");
+    return;
+  }
   my $result = try {
     $self->_drain_repo( $repo, $karr, $cmd );
   } catch {
