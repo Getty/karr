@@ -1,0 +1,50 @@
+---
+class: standard
+completed: 2026-08-13T00:34:30Z
+created: 2026-08-12T16:15:15Z
+id: 163
+priority: high
+started: 2026-08-13T00:34:30Z
+status: done
+tags:
+- bug
+- foundation
+title: A foundation stopped mid-drain orphans its agent and leaves the board readable
+  as free
+updated: 2026-08-13T00:34:30Z
+---
+
+Found in a bug hunt, fully deterministic reproduction.
+
+Foundation/State.pm:33-42 -- _lock_held is kill(0, $pid) against
+foundation's OWN pid. The lock records the watcher, not the work. Foundation
+installs no SIGTERM handler, never kills its agent on the way out, and never
+removes the lock.
+
+Stop it mid-drain -- systemd TimeoutStopSec, systemctl restart, a deploy, an
+operator's kill -- and the agent survives, reparented to init with nothing
+left to enforce max_runtime, while the lock names a dead pid that kill(0)
+reports as free.
+
+Reproduction:
+
+    foundation 571315, agent 571322, lock says 571315
+    kill -TERM 571315
+      foundation alive?  no
+      agent alive?       yes -> 571322  ppid 1  /bin/sleep 40
+      .karr.lock:        571315 (a dead pid)
+    next tick fires:
+      tick 2 skipped as locked? 0
+      agents now running on the board: 2
+
+Cost: exactly the shape of #147/#148 but reachable with no race and no
+exotic command -- restarting the service doubles up every board that was
+mid-drain, and the orphan runs unbounded.
+
+Two parts to fix: a SIGTERM handler that kills the agent and releases the
+lock, and a lock that records something the next tick can actually verify
+(the agent, or a held file lock rather than an advisory pid).
+Cluster anchor — fixes #148, #161, #162, #163, #164 in one pass: lifecycle of an agent process (fork/exec/signal/exit/lock ownership) done right in Foundation/Runner.pm, Foundation/State.pm, and Foundation.pm.
+## Fix: Foundation::run now installs SIGTERM/INT/HUP handlers that kill the agent's process group (negative pid, #148), force-release the lock (verified against the recorded pid), and POSIX::_exit(128 + signum) so systemd/cron see the conventional signal-death exit. Lock state moved to an open fd + recorded pid (the fd is the lock; the pid is evidence), so the handler can both reach the lock and confirm it is still ours before unlinking. Handler installed at run() entry, restored to default at run() exit so a stray post-run signal goes to the OS.
+
+Regression test: t/163-foundation-sigterm-cleanup.t. Forks a driver child that installs the handler and runs _run_command on an agent `sleep 30`. Parent sends SIGTERM to the driver, then asserts the agent was killed (not reparented to init), .karr.lock is gone, and a fresh foundation instance sees the lock free.
