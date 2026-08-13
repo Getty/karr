@@ -1,0 +1,50 @@
+---
+claimed_at: 2026-08-13T02:21:53Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:21:53Z
+created: 2026-08-12T16:13:27Z
+id: 156
+priority: high
+started: 2026-08-13T01:02:13Z
+status: done
+tags:
+- bug
+- activity-log
+title: Activity log loses entries under concurrency -- read-modify-write with no CAS
+updated: 2026-08-13T02:21:53Z
+---
+
+Found in a bug hunt; reproduced by the finder and independently
+re-reproduced by me, five out of five rounds.
+
+ActivityLog.pm:206-228 reads the whole log ref, appends one line, and writes
+it back with the unguarded, last-writer-wins write_ref:
+
+    my $existing = $self->git->read_ref($ref);
+    my $new = $existing ? "$existing\n$line" : $line;
+    return try { $self->git->write_ref($ref, $new) } ...
+
+Two commands that read the same content both write their own single-line
+append; the loser's entry disappears. The log ref is keyed by Git identity
+and every agent in one clone shares user.email, so this is the NORMAL path
+on the multi-agent boards karr is built for, not an exotic race.
+
+allocate_next_id_ref and save_task_cas got compare-and-swap for exactly this
+reason (#44, #86). The log did not.
+
+My reproduction -- 24 parallel `karr create` in one repo, five rounds:
+
+    Runde 1: Task-Refs=24  Log-Eintraege=20  <<< VERLUST
+    Runde 2: Task-Refs=24  Log-Eintraege=20  <<< VERLUST
+    Runde 3: Task-Refs=24  Log-Eintraege=20  <<< VERLUST
+    Runde 4: Task-Refs=24  Log-Eintraege=20  <<< VERLUST
+    Runde 5: Task-Refs=24  Log-Eintraege=20  <<< VERLUST
+
+(A 16-way run happened to come out clean once, so a regression test needs
+enough parallelism to be reliable -- 24 was deterministic here.)
+
+Cost: the audit trail under-reports, permanently and silently. karr log,
+karr context (last_entry) and any handoff reconstruction see a board where
+work happened that nobody did. The tasks themselves are fine -- only the log
+loses entries.
