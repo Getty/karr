@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - Three karr-foundation fixes (#165, #166, #168). `max_runtime: 0`
+      no longer silently turns `drain: true` into a single run: the
+      drain's wall-clock guard now reads `&& $max_runtime > 0`, so 0
+      means "no per-run timeout and no drain budget" matching the
+      documented intent, and a positive value bounds the drain as
+      before (#165). `_discover_repos` deduplicates by canonical path,
+      so a repo reachable through both `dirs:` and `scan:` is processed
+      exactly once per tick: realpath (with absolute as fallback) keyed
+      by path, first-seen order preserved so an explicit `dirs:` entry
+      wins over a `scan:` hit (#166). A pull that refuses no longer
+      aborts the whole foundation run: `_process_repo`'s pull is now
+      wrapped in the same try/catch that already protects the other
+      per-repo steps (`_drain_repo` below it, `_process_repo` itself
+      from #162), so a refusal from the wholesale-wipe guard, the
+      board-identity guard, or the unapplied-refs guard warns and lets
+      the run continue — and the board whose pull refused is not then
+      processed as if it were up to date (#168).
+
     - Four fixes in karr's character/octet boundary and refs-backed
       storage guarantees (tickets #155, #156, #157, #167). `karr restore`
       is now atomic across its write phase: `replace_board_refs` snapshots
