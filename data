@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-08-13T02:23:00Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:23:00Z
+created: 2026-08-12T16:15:45Z
+id: 166
+priority: low
+started: 2026-08-13T02:07:33Z
+status: done
+tags:
+- bug
+- foundation
+title: 'A repo reachable through both dirs: and scan: is processed twice per tick'
+updated: 2026-08-13T02:23:00Z
+---
+
+Found in a bug hunt, reproduced.
+
+Foundation.pm:326-360 -- @repos is never deduplicated.
+
+    config lists b1 in dirs: AND its parent in scan:
+    b1 agent invocations in one tick: 2
+    overview shows it twice
+
+Cost: double the agent invocations -- real money and real board churn for a
+claude agent -- and a duplicated board in --status. Bounded, since the runs
+are sequential, which is why this is low.
