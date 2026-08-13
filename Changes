@@ -1,5 +1,37 @@
 {{$NEXT}}
 
+    - Four fixes in karr's character/octet boundary and refs-backed
+      storage guarantees (tickets #155, #156, #157, #167). `karr restore`
+      is now atomic across its write phase: `replace_board_refs` snapshots
+      every `refs/karr/*` OID and every ref the snapshot is about to
+      introduce before the first `_write_ref_oid` call, and any die out
+      of the write loop unwinds every ref that landed — restoring the
+      original OID for refs that existed, deleting refs the snapshot
+      managed to create — so the board reads back exactly as it did
+      before the failed restore. `Cmd::Restore`'s POD promise ('a snapshot
+      karr cannot apply ... is refused with the board exactly as it was')
+      is now true for the directory/file name conflict that previously
+      half-applied, and for the CAS-exhaustion path that previously
+      half-applied without any manual editing at all (#155). The
+      activity log no longer loses entries under concurrency: log_entry
+      wraps its read-and-write in `write_ref_cas` + `retry_contended`,
+      matching `save_task_cas` and `allocate_next_id_ref`, so the
+      existing CAS plumbing handles contention transparently and a
+      board running N parallel `karr create` writes N log entries
+      (#156). `git_user_name` and friends no longer leak libgit2's
+      octets into karr's character strings: `Git.pm:_config_string`
+      and `_run_git`'s captured stderr decode through `from_octets`,
+      so a non-ASCII `user.name` is no longer written double-encoded
+      into the log ref and `karr repair` does not need to undo it on
+      read (#157). `%ENV` is now an octet crossing `App::karr::Encoding`
+      owns: two new helpers, `to_octets_for_env` and
+      `from_octets_from_env`, match the POD style of the existing
+      helpers and delegate to the canonical codec, and the three
+      `Foundation/Runner.pm` writes go through `to_octets_for_env` —
+      so the 'Wide character in setenv' warning on a non-ASCII prompt
+      is gone, and the house rule that Encoding owns every crossing
+      is complete (#167).
+
     - Three board commands no longer treat a value the user did pass as
       if it had not been given (tickets #151, #152, #153). `Cmd/Log.pm`
       refused `--last < 1` only via truth, so `karr log --last 0` dumped
