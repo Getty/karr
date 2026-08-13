@@ -1,0 +1,64 @@
+---
+class: standard
+completed: 2026-08-13T00:34:08Z
+created: 2026-08-12T15:43:10Z
+depends_on:
+- 163
+id: 148
+priority: medium
+started: 2026-08-13T00:34:08Z
+status: done
+tags:
+- bug
+- foundation
+title: Foundation timeout kills the shell, not the process group -- the agent survives
+updated: 2026-08-13T00:34:08Z
+---
+
+Found and reproduced while fixing #147, and deliberately left out of it
+because it is pre-existing and independent: it behaves identically before
+and after that change.
+
+Foundation::Runner::_run_command execs the agent as
+
+    exec( '/bin/sh', '-c', $command )
+
+and its timeout path does
+
+    kill 'TERM', $pid;  sleep 2;  kill 'KILL', $pid;  waitpid( $pid, 0 );
+
+$pid is the shell. When the command string makes the shell fork instead
+of exec (anything with a pipeline, a `;`, a `&`, or a shell builtin in
+front of the real command), the agent is a *child of the shell*, not the
+shell. Killing the shell leaves the agent running, and it is reparented to
+init. `waitpid` then returns happily, having reaped the wrong process, and
+karr-foundation reports the run as timed out and stopped when it is
+neither.
+
+Visible today with no special setup: t/33-foundation-run.t leaves a
+`sleep 30` behind on every single run of the suite. Confirmed identical
+against HEAD before #147's change, so it is not a regression from it.
+
+Consequence in production is the same shape as #147's: an agent the
+foundation believes it stopped keeps running against the board, while the
+next cron tick starts another one.
+
+Fix sketch: setpgrp(0,0) in the child right after the fork, then signal
+the group rather than the pid:
+
+    kill 'TERM', -$pid;   # note the minus
+    ...
+    kill 'KILL', -$pid;
+
+Check what that does to terminal signal handling when
+_stream_to_terminal is on -- a new process group is no longer in the
+foreground group, so Ctrl-C reaches karr-foundation but no longer the
+agent, and the runner may have to forward it. That interaction is the
+real work here; the setpgrp itself is two lines.
+
+Regression test: an agent command whose shell forks (e.g. `sleep 300 &
+wait`), timed out, then assert nothing from that group survives. The
+existing t/148-foundation-runner-child-leak.t is the shape to follow.
+## Fix: Foundation::Runner::_run_command now wraps the agent in its own process group (setpgid(0,0) in the child, setpgid($pid,$pid) in the parent to win the fork race), and the timeout/SIGTERM/SIGKILL pair signals the group with `kill 'TERM', -$pid` rather than the shell. SIGTERM gets 2s, then SIGKILL the same group, then reap. PGID is recorded as the agent's live handle so #163's handler can reach the whole tree.
+
+Regression test: t/148-foundation-runner-group-kill.t. Forks an agent whose command forks (sleep 30 & exec sleep 30) so the bug shape is the backgrounded grandchild; verifies no orphan sleep 30 is left on the box and the timed-out run reports 143 within ~3s. Also forks an agent whose command is plain `sleep 5` and confirms via /proc/<pid>/stat that pgid == pid and != the test process's pgid.
