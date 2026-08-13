@@ -1,0 +1,79 @@
+---
+claimed_at: 2026-08-13T02:32:55Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:32:55Z
+created: 2026-08-12T16:09:31Z
+id: 150
+priority: high
+started: 2026-08-12T22:27:23Z
+status: done
+tags:
+- bug
+- claims
+title: edit --status X --release walks straight through require_claim
+updated: 2026-08-13T02:32:55Z
+---
+
+Found in a bug hunt; reproduced, and re-verified independently.
+
+Cmd/Edit.pm calls apply_status_change at line 244 but applies --release at
+line 285 -- forty lines later. So the require_claim guard in
+Role/TaskMutation.pm:295-298
+
+    die "Status '$new_status' requires --claim\n"
+        if $self->store->status_requires_claim($new_status)
+        && !( defined $claimant && length $claimant )
+        && !$task->has_claimed_by;
+
+is satisfied by a claim that the same command is about to throw away.
+--release also skips check_claim (Edit.pm:241), which is its documented job.
+
+Net effect: a card lands in a require_claim column with NO claim on it -- a
+state `karr move` and `karr edit --status` both refuse to create by any
+other route.
+
+Reproduction:
+
+    $ karr move 1 in-progress
+    Status 'in-progress' requires --claim
+    1 of 1 ids failed                              exit=1
+
+    $ karr edit 1 --claim agent-a
+    $ karr edit 1 --status in-progress --release
+    Updated task 1: Ticket one                     exit=0
+
+    $ karr show 1 --json
+    {... "status":"in-progress", ...}              # no claimed_by key
+
+`karr edit 2 --status in-progress --claim agent-b --release` produces the
+same result in ONE command with no prior claim needed. kanban-md rejects
+--claim together with --release outright (cmd/edit.go:128-130) and runs its
+equivalent guard outside the release branch (internal/board/mutate.go:442-445).
+
+Cost: require_claim is the guarantee karr's multi-agent coordination rests
+on (ticket #55). An unclaimed card in in-progress is work in flight for
+nobody -- invisible to pick, and it is what karr-foundation's engagement and
+auto-block logic reads. Reachable by accident through the perfectly
+reasonable `karr edit N --status in-progress --release`.
+## Fix: edit --status X --release no longer slips through require_claim
+
+**Files changed:** lib/App/karr/Cmd/Edit.pm
+**Test added:** t/154-edit-release-require-claim.t
+**Option chosen:** Option A (reject --claim + --release; clear --release before the require_claim guard runs).
+
+Option A matches kanban-md's design (cmd/edit.go:128-130 reject --claim + --release; internal/board/mutate.go:442 fire the post-edit require_claim check regardless of release). It was the safer choice: 'karr edit --status X --release' is what an operator would type, and it should refuse cleanly rather than silently produce an invalid state.
+
+The two changes:
+
+1. Reject --claim and --release together at the top of execute() as a usage error (exit 2). kanban-md rejects the pair at the flag layer too; we match.
+2. Move the --release block from the bottom of the per-id callback to right before apply_status_change(). The require_claim guard in Role::TaskMutation's apply_status_change is satisfied by an existing claim; clearing the claim first lets the guard see the post-release state and refuse a status change into a require_claim column. kanban-md's equivalent check (validateEditPost) fires after applyFn regardless of release, so the guard is no longer bypassable.
+
+'karr move' has no --release option, so the third bullet of the ticket ('also check whether karr move ID --status X --release has the same shape') is a no-op for karr; the bug is edit-only.
+
+The regression test t/154-edit-release-require-claim.t has three subtests:
+- --claim and --release together are rejected as a usage error (the ticket's single-command reproduction: 'karr edit N --status X --claim NAME --release').
+- The ticket's two-step reproduction (claim first, then 'karr edit N --status in-progress --release') is now refused with the same require_claim message 'karr move' gives, leaving the task untouched.
+- Unclaimed-then-release still works: --release alone clears the claim; --status in-progress without --claim is still refused; --status in-progress --claim NAME still lands the card and records the claim.
+
+prove -l t/ passes 1033 tests, 0 failures.
