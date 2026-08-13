@@ -1,0 +1,43 @@
+---
+claimed_at: 2026-08-13T02:22:20Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:22:20Z
+created: 2026-08-12T18:26:40Z
+id: 167
+priority: low
+started: 2026-08-13T01:08:43Z
+status: done
+tags:
+- bug
+- encoding
+- foundation
+title: '%ENV is an octet crossing App::karr::Encoding does not own'
+updated: 2026-08-13T02:22:20Z
+---
+
+Side finding from #159, pre-existing and independent of it.
+
+A non-ASCII prompt makes Perl emit
+
+    Wide character in setenv at .../Foundation/Runner.pm line 58
+
+on foundation's stderr. It fires at the KARR_REPO/KARR_ROLE/PROMPT
+assignments, i.e. it has been there as long as the env has been set, and
+#159 neither causes nor worsens it -- the bytes that reach the child are
+correct UTF-8 either way.
+
+But the house rule (CLAUDE.md) is that App::karr::Encoding owns every
+crossing between characters and octets, and %ENV is one it does not own.
+The warning is the symptom; the rule is the finding.
+
+Two things to settle:
+
+- where the crossing belongs. Encoding.pm already owns argv, std handles,
+  ref blobs, YAML and JSON; %ENV is the same kind of edge and should be
+  named there rather than handled ad hoc at the assignment.
+- whether anything READS a non-ASCII env var back in. The write side is
+  what warns; the read side is where a missing decode would corrupt.
+
+Low priority: no wrong output today, only a warning on stderr and a hole
+in a rule that is otherwise complete.
