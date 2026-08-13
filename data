@@ -1,0 +1,51 @@
+---
+claimed_at: 2026-08-13T02:22:00Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:22:00Z
+created: 2026-08-12T16:13:34Z
+id: 157
+priority: high
+started: 2026-08-13T01:02:27Z
+status: done
+tags:
+- bug
+- encoding
+title: 'git_user_name returns octets: the identity is written double-encoded and karr
+  repair cannot fix it'
+updated: 2026-08-13T02:22:00Z
+---
+
+Found in a bug hunt; reproduced by the finder and independently
+re-reproduced by me.
+
+Git.pm:470-475 (_config_string) returns what libgit2 hands back -- the raw
+bytes of the config file -- with no crossing through App::karr::Encoding.
+Every other octet crossing in that class goes through it
+(read_ref_with_oid calls from_octets); this one does not. A non-ASCII
+user.name enters the program as a byte string treated as characters.
+
+    git config user.name 'Ünicode Tester'
+    karr create "..."
+    karr log
+    2026-08-12T16:11:11Z  Ãnicode Tester create task#1 backlog
+
+The value is then JSON-encoded and written to the log ref, where to_octets
+encodes it a SECOND time: c3 83 c2 9c, i.e. Ü encoded twice. The task ref
+written by the same command is correct (c3 9c), so the corruption is
+specific to the identity.
+
+Two layers of cost:
+
+- output is wrong wherever an identity is printed, including --json, which
+  an agent parses.
+- the mojibake is written into refs on a board that karr init correctly
+  stamped as encoding version 2. So board_is_legacy_encoded is false,
+  repair_mojibake never runs on read, and `karr repair` answers "Board
+  encoding is already at version 2; nothing to repair." There is no path
+  from inside karr back to the correct text, and every new command adds
+  more of it.
+
+git_user_email has the same gap (it feeds the lock holder identity and
+Cmd::Pick's $email), and _run_git's captured stderr (Git.pm:1930) is the
+same class -- raw octets printed straight to a :encoding(UTF-8) handle.
