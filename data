@@ -1,0 +1,49 @@
+---
+class: standard
+completed: 2026-08-13T00:34:22Z
+created: 2026-08-12T16:15:07Z
+depends_on:
+- 163
+id: 162
+priority: high
+started: 2026-08-13T00:34:22Z
+status: done
+tags:
+- bug
+- foundation
+title: .karr.lock does not prevent two agents on one board -- check and acquire are
+  a git pull apart
+updated: 2026-08-13T00:34:22Z
+---
+
+Found in a bug hunt, reproduced with two ticks started together and no
+artificial widening; hit rate measured over ten rounds.
+
+Check at Foundation.pm:413, acquire at :450. Between them _process_repo does
+_sync_pull (network), a second disable check, _ref_hash and a full task
+load. Two ticks that overlap -- the normal case, since a drain may run for
+max_runtime (default 1800s) while cron fires every few minutes -- can both
+pass the check.
+
+_acquire_lock (Foundation/State.pm:44-55) then spews over whoever was there,
+and _release_lock removes the file without ever comparing the pid, so the
+first tick to finish unlocks the board for the one still running.
+
+Reproduction:
+
+    tick A pid 560905, tick B pid 560906
+    t+6s: concurrent agents: 2
+          .karr.lock says: 560906   (A=560905 B=560906)
+
+Hit rate, ten rounds:
+
+    no remote configured:            1, 1, 2, 2, 2
+    with an origin (git pull inside the window): 2, 1, 1, 1, 2
+
+Cost: two agents drain the same board simultaneously, racing each other's
+CAS writes and claims, while one holds a lock file naming the other. Roughly
+50% of genuinely simultaneous ticks in this measurement -- and a "tight
+while-loop", which the POD recommends as one option, hits it constantly.
+## Fix: .karr.lock is now a flock(2) on an open file descriptor the foundation keeps for the lifetime of the lock. _acquire_lock opens a fd and tries LOCK_EX|LOCK_NB; on EWOULDBLOCK it returns 0 immediately without overwriting the existing file. _release_lock closes the open fd (which drops the flock) and only unlinks the file if the recorded pid still matches $$. _lock_held is the flock check, not the kill(0, $pid) check, so a stale lock whose holder died is held=false and a fresh tick can take over without manual cleanup.
+
+Regression test: t/162-foundation-lock-race.t. Four subtests: two ticks race, only the first wins; a refused _acquire_lock does not overwrite the recorded pid; _release_lock from a tick that does not hold the lock is a no-op; _lock_held reports false on an un-flocked .karr.lock regardless of pid text. All four pin the new contract.
