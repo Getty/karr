@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-13T02:21:26Z
+claimed_by: orchestrator
+class: standard
+completed: 2026-08-13T02:21:26Z
+created: 2026-08-12T16:10:05Z
+id: 151
+priority: medium
+started: 2026-08-13T01:12:59Z
+status: done
+tags:
+- bug
+- log
+title: karr log --last 0 removes the bound; --last -N reports an empty log, exit 0
+updated: 2026-08-13T02:21:26Z
+---
+
+Found in a bug hunt; reproduced and re-verified independently.
+
+Cmd/Log.pm:65-70 and :109-111 apply the limit behind a truthiness guard,
+
+    if ($self->last && @entries > $self->last)
+
+with no range check on the option. 0 is falsy, so the one option whose job
+is to bound the output silently removes the bound. A negative passes the
+guard and slices @entries[-(-N) .. -1], i.e. N .. -1 -- the empty list -- so
+the command reports an empty log and exits 0.
+
+This is ticket #76, already fixed twice elsewhere in the same tree:
+Show.pm:161-162 raises a usage error for --last < 1, and Context.pm:97-99
+does the same for --activity-limit, with a comment spelling out this exact
+failure ("the falsy guard reads 0 as 'no bound at all' ... and a negative
+produced an empty section and exit 0, indistinguishable from 'nobody else
+acted'"). Cmd::Log carries the identical option and never got the fix.
+
+Reproduction (board with 6 log entries):
+
+    karr log --last 3   ->  3 lines   (correct)
+    karr log --last 0   ->  6 lines   (bound silently removed)
+
+    $ karr log --last -3
+    No log entries.                    exit=0
+    $ karr log --last -3 --json
+    []                                 exit=0
+
+    $ karr show --last 0
+    Usage error: --last must be 1 or greater (got 0)      exit=2
+    $ karr context --activity-limit 0
+    Usage error: --activity-limit must be 1 or greater    exit=2
+
+Cost: `karr log --last $N` with an $N that computes to 0 or below either
+dumps an unbounded log or claims the board has no activity at all -- both
+with exit 0, so a script cannot tell the difference.
+
+Fix is the rule already written down twice: usage error for < 1, per ADR 0002.
