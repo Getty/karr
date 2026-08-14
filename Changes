@@ -1,4 +1,4 @@
-{{$NEXT}}
+0.500     2026-08-13 23:57:25Z
 
     - Three karr-foundation fixes (#165, #166, #168). `max_runtime: 0`
       no longer silently turns `drain: true` into a single run: the
