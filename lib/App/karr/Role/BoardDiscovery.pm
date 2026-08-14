@@ -1,7 +1,7 @@
 # ABSTRACT: Role providing minimal board discovery and config access
 
 package App::karr::Role::BoardDiscovery;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo::Role;
 use MooX::Options;
 # Both loaded without importing, and every call below is qualified. A Moo::Role

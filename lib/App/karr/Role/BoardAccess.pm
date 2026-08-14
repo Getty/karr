@@ -1,7 +1,7 @@
 # ABSTRACT: Role providing board discovery, sync lifecycle, and task access
 
 package App::karr::Role::BoardAccess;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo::Role;
 use App::karr::Role::CliArgs;
 use App::karr::ActivityLog;

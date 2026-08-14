@@ -1,7 +1,7 @@
 # ABSTRACT: Migrate an old board off double-encoded UTF-8 and off impossible start stamps
 
 package App::karr::Cmd::Repair;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

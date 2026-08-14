@@ -1,7 +1,7 @@
 # ABSTRACT: Single-shot foundation daemon — periodic agent execution across karr boards
 
 package App::karr::Foundation;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo;
 use MooX::Options (
   usage_string => 'USAGE: karr-foundation [options]',

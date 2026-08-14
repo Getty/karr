@@ -1,7 +1,7 @@
 # ABSTRACT: Task object representing a single kanban card
 
 package App::karr::Task;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo;
 use Path::Tiny;
 use Time::Piece;

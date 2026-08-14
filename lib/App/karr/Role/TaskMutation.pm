@@ -1,7 +1,7 @@
 # ABSTRACT: The one guarded path for changing an existing task
 
 package App::karr::Role::TaskMutation;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo::Role;
 # No Time::Piece here on purpose: this role never asks for the time itself --
 # the lifecycle stamps are set by App::karr::Task::update_timestamps, which

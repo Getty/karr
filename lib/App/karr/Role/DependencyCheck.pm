@@ -1,7 +1,7 @@
 # ABSTRACT: Warn when a card is taken up while its dependencies are unfinished
 
 package App::karr::Role::DependencyCheck;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use Moo::Role;
 
 # What this role calls on its consumer, said out loud (ticket #128). It used to
