@@ -61,7 +61,9 @@ timeout -- one knob for both routes. Two limits to that half: it needs libgit2
 1.8 or newer (older ones reject the option and stay unbounded), and libgit2
 applies it to its own socket transports (C<git://>, C<http://>, C<https://>),
 not to C<ssh://>, whose reads go through libssh2. The CLI fallback is bounded
-either way.
+either way. L</remote_has_board> is the one call that does not try the native
+transport at all, for that reason: it runs unasked in front of a read command
+(#173), so it takes the only route whose deadline also holds for C<ssh://>.
 
 C<push> sends C<refs/karr/*> under a forced refspec, plus one delete refspec
 for every board ref this clone deleted and has not published yet. It
@@ -1250,6 +1252,87 @@ otherwise -- including when the repository can't be opened.
 
 =cut
 
+# The probe behind the automatic fetch in
+# App::karr::Role::BoardDiscovery/require_local_board (#173): does the remote
+# hold a board at all? It has to answer that without fetching, because the
+# caller's other outcome is a refusal, and it has to answer within a bounded
+# time, because it runs unasked in front of `karr list`.
+#
+# Deliberately the CLI and only the CLI. The native transport is the faster
+# route and the preferred one everywhere else, but it is also the one that
+# cannot be bounded for ssh:// -- libssh2 retries past libgit2's socket
+# timeout, so a remote that accepts the connection and then goes quiet parks
+# the process in a C call no Perl signal can reach (#174, measured). ssh is
+# what karr boards actually use, so a native probe here would put an
+# unbounded, unrequested network read in front of every read command in a
+# board-less repository. _run_git's deadline is the one bound that holds for
+# ssh, so the probe pays a fork to get it. Where the CLI is switched off
+# entirely (KARR_NO_CLI_FALLBACK) the question simply goes unanswered.
+#
+# Nothing here may prompt: this call is not one the user made, so a passphrase
+# prompt appearing in the middle of `karr list --json` would be a surprise
+# that only the deadline ends. GIT_TERMINAL_PROMPT=0 (set by _run_git) covers
+# git's own credential prompts; BatchMode covers ssh's, which git never sees.
+# It is appended to the user's own GIT_SSH_COMMAND rather than replacing it,
+# so a configured wrapper still runs -- and ssh takes the first value it is
+# given for an option, so an explicit BatchMode of theirs still wins.
+sub remote_has_board {
+    my ( $self, $remote ) = @_;
+    $remote //= 'origin';
+    return 0 unless $self->has_remote($remote);
+    return undef if $ENV{KARR_NO_CLI_FALLBACK};
+
+    local $ENV{GIT_SSH_COMMAND} =
+        ( $ENV{GIT_SSH_COMMAND} || 'ssh' ) . ' -o BatchMode=yes';
+    my $run = $self->_run_git( { timeout => _probe_timeout() },
+        'ls-remote', '--quiet', $remote, BOARD_ROOT . '*' );
+
+    if ( $run->{ok} && !$run->{status} ) {
+        # An answer with no ref in it is an answer: the remote has no board.
+        return $run->{out} =~ /\S/ ? 1 : 0;
+    }
+
+    # git's first line is the one that says what went wrong ("ssh: connect to
+    # host ...", "fatal: '/x' does not appear to be a git repository"); the
+    # rest is the standard advice underneath it, and this becomes one line in
+    # front of a refusal that has four of its own.
+    my $detail = $run->{err} // '';
+    $detail =~ s/\s+\z//;
+    $detail = ( split /\n/, $detail )[0] // '';
+    my $why =
+          $run->{failure} eq 'start'   ? "could not run git: $detail"
+        : $run->{failure} eq 'timeout' ? "no answer within $run->{timeout}s"
+        : length $detail               ? $detail
+        :                                "git ls-remote exited " . ( $run->{status} >> 8 );
+    $self->{_last_error} = $why;
+    return undef;
+}
+
+=method remote_has_board
+
+    my $there = $git->remote_has_board($remote);   # default 'origin'
+
+Asks C<$remote> whether it advertises anything under C<refs/karr/> without
+fetching. Three answers, and the third is not the second: C<1> when the remote
+has a board, C<0> when it answered and has none (C<$remote> not being
+configured included), and C<undef> when the question could not be put --
+unreachable remote, no C<git> CLI, C<KARR_NO_CLI_FALLBACK> set, or no answer
+within the probe's budget. L</last_error> carries the reason for C<undef>.
+
+The budget is C<KARR_TRANSPORT_TIMEOUT> capped at 10 seconds, and the cap
+applies to C<0> ("no limit") as well: this call runs unasked in front of a
+read command, and an unasked round trip that can hang forever is worse than
+one that gives up. It runs through the C<git> CLI even though the native
+transport would be faster, because for C<ssh://> the CLI is the only route
+whose timeout can be enforced (see L</DESCRIPTION> and #174), and it never
+prompts for credentials or an ssh passphrase.
+
+L<App::karr::Role::BoardDiscovery/require_local_board> is the caller: a fresh
+clone holds no C<refs/karr/*> because C<git clone> does not fetch them, which
+is indistinguishable from having no board until someone asks the remote.
+
+=cut
+
 # Default credentials callback: SSH-agent → ~/.ssh/id_ed25519 → ~/.ssh/id_rsa
 # → default → fail. Matches CLI `git`'s implicit auth chain.
 sub _default_credentials_cb {
@@ -2134,6 +2217,27 @@ sub _clear_pending_deletes {
     return;
 }
 
+sub has_pending_deletes {
+    my ($self) = @_;
+    my @tombstones = $self->list_refs( TOMBSTONE_ROOT . '/' );
+    return @tombstones ? 1 : 0;
+}
+
+=method has_pending_deletes
+
+    if ( $git->has_pending_deletes ) { ... }
+
+True when this clone has deleted board refs that no push has published yet
+(the tombstones under C<refs/karr-local/deleted/>; see L</push>).
+
+It is what tells a C<karr destroy> whose push has not landed apart from a
+fresh clone: both hold nothing under C<refs/karr/> while the remote still has
+the whole board, and the automatic fetch in
+L<App::karr::Role::BoardDiscovery/require_local_board> would answer the first
+one by fetching back exactly what was just destroyed.
+
+=cut
+
 sub push_ref {
     my ( $self, $ref, $remote ) = @_;
     $remote //= 'origin';
@@ -2326,6 +2430,24 @@ sub _transport_timeout {
     return $raw + 0;
 }
 
+# The budget for remote_has_board, which is not the transport budget: that one
+# is a ceiling for a transfer somebody asked for, this one bounds a round trip
+# nobody asked for, taken in front of a read command. `git ls-remote` against a
+# reachable remote answers in milliseconds, so ten seconds is already an
+# unreasonable remote rather than a slow one.
+use constant BOARD_PROBE_TIMEOUT => 10;
+
+# KARR_TRANSPORT_TIMEOUT lowers it and never raises it, 0 ("no limit")
+# included: an unasked probe that can hang forever is the thing #173's guard
+# clause exists to avoid, and the answer it produces is only ever the
+# difference between fetching now and printing "run karr sync".
+sub _probe_timeout {
+    my $configured = _transport_timeout();
+    return BOARD_PROBE_TIMEOUT
+        if !$configured || $configured > BOARD_PROBE_TIMEOUT;
+    return $configured;
+}
+
 # Run `git -C <work tree root> @args` and return
 #   { ok => 0|1, failure => ''|'start'|'timeout', status => $?, out, err,
 #     timeout => $seconds }
@@ -2355,10 +2477,15 @@ sub _transport_timeout {
 # clean exit from a death by signal (#42).
 sub _run_git {
     my ( $self, @args ) = @_;
+    # An optional leading hashref carries per-call options -- currently only
+    # `timeout`, for the one caller whose budget is not the transport's
+    # (remote_has_board, which runs unasked in front of a read command).
+    # Every other caller passes git's argv and nothing else.
+    my $opt = ref $args[0] eq 'HASH' ? shift @args : {};
 
     my $cwd     = $self->repo_root // $self->dir;
     my @cmd     = ( 'git', '-C', $cwd->stringify, @args );
-    my $timeout = _transport_timeout();
+    my $timeout = defined $opt->{timeout} ? $opt->{timeout} : _transport_timeout();
     my %result  = (
         ok => 0, failure => 'start', status => 0,
         out => '', err => '', timeout => $timeout,

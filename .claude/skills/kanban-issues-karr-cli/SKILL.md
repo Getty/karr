@@ -224,12 +224,18 @@ Use this when you want explicit control over board ref exchange with the remote
 instead of relying only on the implicit pull/push behavior of mutating
 commands.
 
-**A fresh clone has no board yet.** `git clone` does not fetch `refs/karr/*`,
-and the read commands (`board`, `list`, `show`, `log`, `context`, and `config
-show`/`config get`) do not pull — only mutating commands do. So they refuse
-with exit 1 and say so, rather than rendering an empty board. Run `karr sync`
-first; do **not** run `karr init` there, which would start a second, empty
-board beside the one on the remote.
+**A fresh clone fetches the board by itself.** `git clone` does not carry
+`refs/karr/*`, so a new checkout holds no board while the whole board sits on
+its remote. The read commands (`board`, `list`, `show`, `log`, `context`, and
+`config show`/`config get`) do not pull as a rule — only mutating commands do —
+but where there is nothing under `refs/karr/` at all and the remote has a
+board, they fetch it once and answer, with one line on STDERR (never STDOUT)
+saying where it came from. Where there is no remote, or the remote has no
+board, they still refuse with exit 1 rather than rendering an empty board:
+that is the only place `karr init` is the answer, and running it in a clone
+whose board is on the remote would start a second, empty board beside it.
+`KARR_NO_AUTO_FETCH=1` switches the fetch off where karr must not touch the
+network.
 
 ### File view (kanban-md interop)
 

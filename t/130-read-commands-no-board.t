@@ -43,6 +43,15 @@ use JSON::MaybeXS qw( decode_json );
 # karr refs; `karr sync` fetched 6 and the same command then said "Remote
 # Board". So the two states were byte-identical here as well.
 #
+# Ticket #173 later moved the fresh-clone half of this: refusing was right
+# about the local state and needlessly final about the world, since the remote
+# is configured and `git ls-remote origin 'refs/karr/*'` answers in
+# milliseconds. A read that finds nothing under refs/karr/ now asks the remote
+# and pulls the board if it is there, so the refusal below is reached through
+# KARR_NO_AUTO_FETCH -- the message and its ordering are unchanged, and are
+# still what a repository with no remote, or a remote with no board, gets.
+# t/173-fresh-clone-auto-fetch.t owns that behaviour and its guards.
+#
 # The resolution keeps both answers but stops them sharing one command
 # invocation: `show`/`get` answer for this board and refuse like every other
 # read, and `--defaults` asks for karr's built-in values on purpose. That makes
@@ -185,37 +194,62 @@ subtest 'a fresh clone is told the board is unfetched, not missing' => sub {
     my @refs = `git -C '$clone' for-each-ref --format='%(refname)' 'refs/karr/'`;
     is( scalar @refs, 0, 'setup: git clone fetched none of refs/karr/*' );
 
-    for my $argv (@READ_ARGV) {
-        my $label = _label(@$argv);
-        my $rv    = _run_karr( $clone, @$argv );
+    # #173 fetches this state instead of refusing it, so the message #135 wrote
+    # for it is now reached through the opt-out. The wording is still the
+    # contract: it is what a repository whose remote has no board gets, and
+    # what any fresh clone gets where karr must not touch the network.
+    {
+        local $ENV{KARR_NO_AUTO_FETCH} = 1;
 
-        is( $rv->{exit}, 1, "$label refuses in a fresh clone" );
-        is( $rv->{stdout}, '', "$label prints nothing on stdout" );
-        like( $rv->{stderr}, qr{git clone.*does not fetch}s,
-            "$label explains why a clone starts out board-less" );
-        like( $rv->{stderr}, qr{karr sync}, "$label offers the fetch first" );
-        # init stays in the message, but after sync: it is the answer for a
-        # repository that never had a board, not for one whose board is on the
-        # remote -- running it here would start a second, empty board.
-        like( $rv->{stderr}, qr{karr sync.*karr init}s,
-            "$label puts sync before init, not the other way round" );
+        for my $argv (@READ_ARGV) {
+            my $label = _label(@$argv);
+            my $rv    = _run_karr( $clone, @$argv );
+
+            is( $rv->{exit}, 1, "$label refuses in a fresh clone" );
+            is( $rv->{stdout}, '', "$label prints nothing on stdout" );
+            like( $rv->{stderr}, qr{git clone.*does not fetch}s,
+                "$label explains why a clone starts out board-less" );
+            like( $rv->{stderr}, qr{karr sync}, "$label offers the fetch first" );
+            # init stays in the message, but after sync: it is the answer for a
+            # repository that never had a board, not for one whose board is on
+            # the remote -- running it here would start a second, empty board.
+            like( $rv->{stderr}, qr{karr sync.*karr init}s,
+                "$label puts sync before init, not the other way round" );
+        }
+
+        # #136's measurement, in the state it was measured in: before the sync
+        # the clone must not answer the placeholder name for a board that has
+        # one.
+        my $before = _run_karr( $clone, 'config', 'get', 'board.name' );
+        unlike( $before->{stdout}, qr{Kanban Board},
+            'config get board.name does not answer the placeholder in a fresh clone' );
+
+        is( _run_karr( $clone, 'sync' )->{exit}, 0, 'the advice runs' );
+        my $after = _run_karr( $clone, 'board' );
+        is( $after->{exit}, 0, 'and the board reads afterwards' ) or diag $after->{stderr};
+        like( $after->{stdout}, qr{# Remote Board}, 'as the board it always was' );
+        like( $after->{stdout}, qr{a ticket that exists}, 'with the ticket that was never gone' );
+
+        my $name = _run_karr( $clone, 'config', 'get', 'board.name' );
+        is( $name->{exit},   0,                'config get board.name works after the sync' );
+        is( $name->{stdout}, "Remote Board\n", 'and answers the name the board really has' );
     }
 
-    # #136's measurement, in the state it was measured in: before the sync the
-    # clone must not answer the placeholder name for a board that has one.
-    my $before = _run_karr( $clone, 'config', 'get', 'board.name' );
-    unlike( $before->{stdout}, qr{Kanban Board},
-        'config get board.name does not answer the placeholder in a fresh clone' );
+    # And what a fresh clone gets by default: the same board, without the
+    # second command (#173). t/173 is where that behaviour and its guards are
+    # pinned; here it is the other half of this subtest's own claim -- the
+    # refusal above is a state karr chose, not the only thing it could do.
+    my $fresh = "$work/clone2";
+    system("git clone -q '$origin' '$fresh' 2>/dev/null");
+    system( 'git', '-C', $fresh, 'config', 'user.email', 'test@example.com' );
+    system( 'git', '-C', $fresh, 'config', 'user.name',  'Test User' );
 
-    is( _run_karr( $clone, 'sync' )->{exit}, 0, 'the advice runs' );
-    my $after = _run_karr( $clone, 'board' );
-    is( $after->{exit}, 0, 'and the board reads afterwards' ) or diag $after->{stderr};
-    like( $after->{stdout}, qr{# Remote Board}, 'as the board it always was' );
-    like( $after->{stdout}, qr{a ticket that exists}, 'with the ticket that was never gone' );
-
-    my $name = _run_karr( $clone, 'config', 'get', 'board.name' );
-    is( $name->{exit},   0,                'config get board.name works after the sync' );
-    is( $name->{stdout}, "Remote Board\n", 'and answers the name the board really has' );
+    my $rv = _run_karr( $fresh, 'board' );
+    is( $rv->{exit}, 0, 'a fresh clone reads the board without being told to sync' )
+        or diag $rv->{stderr};
+    like( $rv->{stdout}, qr{# Remote Board}, 'and it is the remote board' );
+    like( $rv->{stderr}, qr{fetched the board},
+        'with the one line that says where it came from -- on STDERR' );
 };
 
 subtest 'a half-board is read, not refused' => sub {

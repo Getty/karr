@@ -1,5 +1,30 @@
 {{$NEXT}}
 
+    - A fresh clone reads the board instead of being told to fetch
+      it (#173). `git clone` does not carry refs/karr/*, so every
+      read command in a new checkout answered "No karr board in this
+      repository ... Run 'karr sync' to fetch the board" -- accurate,
+      and karr had everything it needed to act on that advice itself:
+      the remote is configured and `git ls-remote origin
+      'refs/karr/*'` answers in milliseconds. It cost a human one
+      command and an agent the whole board, since agents read it as
+      "there is no board" and moved on. A read that finds nothing
+      under refs/karr/ now asks the remote and pulls the board when
+      it is there, saying so in one line on STDERR -- never STDOUT,
+      which --json and --compact consumers parse. The refusal is
+      unchanged where it is the truth: no remote, or a remote with no
+      board, which is where `karr init` really is the answer. It also
+      does not fire for a `karr destroy` whose push has not landed --
+      no local board with a whole board still on the remote is that
+      state too, and it is recognised by the tombstones under
+      refs/karr-local/deleted/ before any network call. Set
+      KARR_NO_AUTO_FETCH=1 to switch it off where karr must not touch
+      the network. The probe is `git ls-remote` through the git CLI,
+      bounded by KARR_TRANSPORT_TIMEOUT capped at 10 seconds, and it
+      never prompts: the native transport would be faster but cannot
+      be bounded for ssh:// (#174), and an unasked round trip in
+      front of `karr list` must not be able to hang it.
+
     - Stepping over an expired claim is no longer silent (#177).
       `move`, `edit`, `delete`, `archive` and `handoff` may all
       proceed once a claim is older than claim_timeout -- that is

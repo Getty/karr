@@ -233,11 +233,16 @@ read path:
 
 =over 4
 
-=item * nothing under C<refs/karr/> — refuse. Naming C<refs/karr/> says what
-was looked at, and where the repository has a remote the message leads with
-C<karr sync>, not C<karr init>: on a fresh clone the board exists and is
-merely unfetched, and C<init> is the one command that would answer that by
-starting a second, empty one.
+=item * nothing under C<refs/karr/> — fetch it, if there is anything to fetch;
+otherwise refuse. Where the repository has a remote and that remote advertises
+C<refs/karr/*>, the board is not missing, it is merely unfetched, and karr can
+see that from where it stands, so it pulls once and answers the question that
+was asked (#173). One line on STDERR says it did; C<KARR_NO_AUTO_FETCH=1>
+switches it off for good, in an environment where karr may not touch the
+network. The refusal stays for the case where it is the truth — no remote, or
+a remote with no board — and where there is a remote it still leads with
+C<karr sync> rather than C<karr init>, which is the one command that would
+answer an unfetched board by starting a second, empty one.
 
 =item * refs present, C<refs/karr/config> missing — a half-board: go on, and
 say so on STDERR. Refusing would hide tasks that are demonstrably there, which
@@ -283,6 +288,11 @@ sub require_local_board {
         return 1;
     }
 
+    # Nothing here at all -- which is what a fresh clone looks like, and what a
+    # repository that never had a board looks like, and the two want opposite
+    # things from the reader. Ask the remote before refusing (#173).
+    return $self->require_local_board(%args) if $self->_autofetch_board;
+
     my $advice = $store->git->has_remote
         ? "'git clone' does not fetch refs/karr/*, so a fresh clone starts out like\n"
         . "this. Run 'karr sync' to fetch the board, or 'karr init' to start one here.\n"
@@ -291,6 +301,92 @@ sub require_local_board {
       . "This is not an empty board -- nothing was read here at all.\n"
       . $advice
       . ( defined $args{hint} ? $args{hint} : '' );
+}
+
+# The fetch require_local_board tries before it refuses (#173). True when the
+# board is now here, false when it is not -- and either nothing at all or
+# exactly one line on STDERR, never STDOUT, because the --json and --compact
+# output this must not disturb is what the agents it exists for parse.
+#
+# `git clone` does not carry refs/karr/*, so every fresh clone starts out
+# holding no board while the whole board sits on its remote. The refusal that
+# used to be the only answer here was accurate and its advice was right, and it
+# still cost a second command to act on advice karr could act on itself: the
+# remote is configured, and `git ls-remote origin refs/karr/*` answers in
+# milliseconds. Agents took it hardest -- they read "no board" and moved on.
+#
+# Four things have to be true, and each of them is a case this must not touch:
+#
+#   KARR_NO_AUTO_FETCH unset. An opt-OUT, deliberately: an opt-in would be
+#   found only by people who already know their board is on the remote --
+#   precisely the ones who do not need it, since the state it repairs is
+#   invisible to everyone else. It firing unwanted costs one bounded round
+#   trip; it not existing costs a reader who concludes the board is gone.
+#
+#   A remote. Without one there is nothing to ask, and `karr init` really is
+#   the answer.
+#
+#   No unpublished deletions (App::karr::Git/has_pending_deletes). A `karr
+#   destroy` whose push did not land leaves exactly this state -- no local
+#   board, the whole board still on the remote -- and it must not be answered
+#   by fetching the board back. The refs/karr-remote mirror already decides
+#   that correctly on its own: a ref the mirror holds and the board no longer
+#   does reads as this clone's own deletion rather than as something
+#   unfetched, so reconciliation keeps it deleted (measured: with the mirror
+#   in place the pull adopts nothing). This check is the cheap half -- it
+#   costs no round trip per read -- and it is the only guard left where the
+#   mirror is empty but the deletions are unpublished, e.g. a board fetched
+#   into refs/karr by hand. A destroy that did land leaves neither tombstones
+#   nor a remote board, so the question below refuses it instead.
+#
+#   The remote actually advertises refs/karr/* (App::karr::Git/remote_has_board
+#   -- bounded and never prompting, so an unreachable or silent remote costs
+#   seconds, not the command). A remote without a board leaves the refusal
+#   exactly as it was: there `karr init` is right.
+#
+# Only then does it pull, through the ordinary App::karr::Git/pull -- the same
+# reconciliation `karr sync --pull` runs, with the same guards, on a board that
+# has nothing local to lose. Nothing is pushed: this is a read.
+sub _autofetch_board {
+    my ($self) = @_;
+    return 0 if $ENV{KARR_NO_AUTO_FETCH};
+
+    my $store = $self->store;
+    my $git   = $store->git;
+    return 0 unless $git->has_remote;
+    return 0 if $git->has_pending_deletes;
+
+    my $advertised = $git->remote_has_board;
+    if ( !defined $advertised ) {
+        # The probe could not ask. Say so in one line -- the reader has just
+        # waited for it, and the refusal that follows would otherwise look
+        # instant and offline -- then leave the refusal to speak for itself.
+        my $why = $git->last_error // 'unknown error';
+        $why =~ s/\s*\n.*//s;
+        print STDERR "karr: could not ask the remote whether it has the board: $why\n";
+        return 0;
+    }
+    return 0 unless $advertised;
+
+    # pull dies on the board-identity and wholesale-wipe guards and on a ref
+    # it could not apply. None of the three can fire on a board with no local
+    # refs, but this is not the place to be the second thing that knows that:
+    # an unasked fetch must not turn a read's refusal into someone else's
+    # exception.
+    my $ok = eval { $git->pull };
+    unless ($ok) {
+        my $why = $@ || $git->last_error || 'unknown error';
+        $why =~ s/\s*\n.*//s;
+        print STDERR "karr: could not fetch the board from the remote: $why\n";
+        return 0;
+    }
+    # The board can still be gone -- destroyed between the probe and the pull.
+    # Then this fetched nothing and the refusal below is the right answer.
+    return 0 unless $store->has_board_refs;
+
+    print STDERR
+        "karr: fetched the board from the remote ('git clone' does not carry refs/karr/*).\n";
+    return 1;
 }
 
 # How many task refs the repository holds. Through a list, because
