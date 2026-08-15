@@ -4,7 +4,7 @@
 
 use strict;
 use warnings;
-our $VERSION = '0.500';
+our $VERSION = '0.501';
 use App::karr;
 use App::karr::SyncGuard;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
