@@ -158,12 +158,18 @@ sub execute {
 
   $self->sync_after;
 
+  # A handoff re-stamps claimed_by, so it is the command that most thoroughly
+  # erases whoever held the card before -- and the one #176's agent, having lost
+  # its own claim name, reaches for. If check_claim above only let it through
+  # because the claim had expired, this is where that is said (#177).
+  my %expired = $self->expired_claim_report( $task->id );
+
   # The handoff target is a working column, so apply_status_change above will
   # have recorded any unsatisfied dependencies; this emits them (ticket #123).
   my %dependency = $self->dependency_report( $task->id );
 
   if ($self->json) {
-    $self->print_json({ %{ $task->to_json_hash }, %dependency });
+    $self->print_json({ %{ $task->to_json_hash }, %expired, %dependency });
     return;
   }
 

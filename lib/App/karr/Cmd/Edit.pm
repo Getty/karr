@@ -321,7 +321,12 @@ sub execute {
     # up gets the same dependency warning `karr move` does, for free and by
     # construction -- the #55 point again (ticket #123). An edit that changes
     # anything else records nothing, so this adds no key.
+    # --release skips check_claim entirely, so an edit that breaks a claim on
+    # purpose records nothing and adds no key here either: it is not an override
+    # that went unnoticed, it is the one command whose whole job is saying so
+    # (App::karr::Role::ClaimTimeout/expired_claim_report, #177).
     return { id => $task->id, title => $task->title,
+             $self->expired_claim_report( $task->id ),
              $self->dependency_report( $task->id ) };
   });
 

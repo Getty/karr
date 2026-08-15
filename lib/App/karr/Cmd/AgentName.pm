@@ -53,8 +53,11 @@ A name that was not captured is still recoverable from the board rather than
 lost: C<karr pick> prints C<(claimed by NAME)>, C<karr show ID> prints
 C<Claimed:>, and the refusal C<check_claim> raises names the current claimant.
 Minting a fresh one instead is the mistake. While the original claim is live
-the mismatch is at least refused; once it has expired the mutation goes
-through and re-stamps the card with a name no agent is holding.
+the mismatch is refused outright; once it has expired the mutation goes
+through and re-stamps the card, but no longer without saying so -- the
+override is reported with the name it stepped over
+(L<App::karr::Role::ClaimTimeout/expired_claim_report>), which is the same
+name to go back to.
 
 The generated name is deliberately not made stable per agent. Any handle that
 would survive across separate C<karr> processes -- the board, the Git

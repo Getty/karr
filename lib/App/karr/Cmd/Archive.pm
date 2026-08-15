@@ -102,11 +102,16 @@ sub execute {
     });
 
     printf "Archived task %d: %s\n", $task->id, $task->title unless $self->json;
+    # The claimant passed above is undef, so the only way a claimed card reaches
+    # here at all is an expired claim -- which makes archive one of the two
+    # commands (delete is the other) that can take a card away from a named
+    # holder with nothing on the card left to say so (#177).
     return {
       id         => $task->id,
       title      => $task->title,
       status     => 'archived',
       old_status => $old_status,
+      $self->expired_claim_report( $task->id ),
     };
   });
 

@@ -127,7 +127,14 @@ sub execute {
 
     $self->delete_task_guarded($task->id, undef);
     printf "Deleted task %d: %s\n", $task->id, $task->title unless $self->json;
-    return { id => $task->id, title => $task->title, deleted => \1 };
+    # Reported here and not before the prompt, because a card the operator
+    # answered "n" for had its claim examined but not overridden. The two
+    # check_claim calls on this path -- the one above and the one inside
+    # delete_task_guarded -- record into the same slot, so this is still one
+    # line (#177). Deleting the card is also the one case where nothing survives
+    # to be read afterwards, which is what makes the trace matter most here.
+    return { id => $task->id, title => $task->title, deleted => \1,
+             $self->expired_claim_report( $task->id ) };
   });
 
   $self->sync_after;

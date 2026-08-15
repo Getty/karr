@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - Stepping over an expired claim is no longer silent (#177).
+      `move`, `edit`, `delete`, `archive` and `handoff` may all
+      proceed once a claim is older than claim_timeout -- that is
+      what the timeout is for, and it has not changed -- but they
+      said nothing while doing it, and `move`/`handoff --claim` then
+      re-stamped claimed_by, so the previous holder was gone from the
+      card as well. The identical mismatch against a claim that is
+      still live is refused with "Task N is claimed by X", which is
+      how an agent recovers a claim name it lost; after expiry that
+      signal disappeared exactly where it would have helped most, and
+      karr-foundation, which attributes stalls per claim name, was
+      left with an attribution to a name nobody had held. The
+      override is now reported once the write has landed --
+      "Warning: task N: overriding the expired claim held by X
+      (claimed ...)" on STDERR, an `expired_claim` object under
+      `--json`, silenced by `--quiet`. Exit codes and what is allowed
+      are unchanged; the holder continuing under its own name after
+      its claim expired is not reported, since that is nobody else's
+      takeover.
+
     - A push can no longer delete a card another clone made (#178).
       Every push sent the board under a pruning refspec, and a prune
       declares the pusher's refs to be the whole namespace -- a claim

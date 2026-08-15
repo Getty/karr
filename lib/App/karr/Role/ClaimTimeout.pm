@@ -31,13 +31,25 @@ use App::karr::Config;
 # the gap from inside a mutation as "Can't locate object method", on the one run
 # where a task was actually claimed.
 #
-# One name, not more. The other four calls in this file -- _parse_timeout,
-# _parse_claim_stamp, _claim_expired, claim_timeout_secs -- are subs defined
-# right here, so the consumer never supplies them; requiring one would be worse
-# than redundant, since Role::Tiny installs a role's methods into the consumer
-# *before* it checks the requires (role_application_steps), so the check would
-# find what the composition had just put there, in every consumer, always, and
-# read as a promise that had been verified when nothing had. Unlike
+# json and quiet joined store in ticket #177, when check_claim stopped being a
+# pure decision and started reporting the one case it lets through silently (see
+# expired_claim_report). They are the same two names
+# App::karr::Role::DependencyCheck declares for the same reason, and every
+# consumer of this role already has both -- App::karr::Cmd::Unlock and
+# App::karr::Cmd::Pick compose App::karr::Role::Output for json and reach quiet
+# through App::karr::Role::SyncLifecycle, and App::karr::Role::TaskMutation's
+# five commands do too. That is what kept this a widening of the contract rather
+# than the role split ticket #137 needed: there, `create` composed
+# DependencyCheck for its set-time half alone and had no --json to declare.
+#
+# Three names, not more. The other five calls in this file -- _parse_timeout,
+# _parse_claim_stamp, _claim_expired, claim_timeout_secs and the _expired_claims
+# attribute -- are defined right here, so the consumer never supplies them;
+# requiring one would be worse than redundant, since Role::Tiny installs a
+# role's methods into the consumer *before* it checks the requires
+# (role_application_steps), so the check would find what the composition had
+# just put there, in every consumer, always, and read as a promise that had
+# been verified when nothing had. Unlike
 # App::karr::Role::TaskMutation, which composes two roles and gets check_claim
 # and check_dependencies from them, this role composes nothing -- so "the role's
 # own" here means only "defined in this file".
@@ -46,7 +58,7 @@ use App::karr::Config;
 # is an example of what a command passes in, not a call this role makes, and no
 # consumer is asked for it. t/147-claim-timeout-requires.t reads the calls out
 # of this source with the POD stripped for exactly that reason.
-requires qw( store );
+requires qw( store json quiet );
 
 =head1 DESCRIPTION
 
@@ -152,13 +164,24 @@ sub _claim_expired {
     return (Time::Piece::gmtime() - $claimed) > $timeout_secs;
 }
 
+# Keyed by task id rather than a flat list, for the reason spelled out above
+# check_claim: the check runs inside a compare-and-swap callback that re-runs on
+# contention, and `karr delete` applies it twice for one card. A keyed slot is
+# replaced by whichever call comes last; a list would grow a copy per attempt.
+# Same shape, and the same reason, as
+# App::karr::Role::DependencyCheck/_dependency_warnings.
+has _expired_claims => (
+    is      => 'ro',
+    default => sub { {} },
+);
+
 # The one claim-ownership rule, mirroring kanban-md's task.CheckClaim
 # (internal/task/validate.go): an unclaimed task is free, the current claimant
 # may always proceed, and an expired claim no longer blocks anybody. Anything
 # else belongs to an agent who is still working on it, and the mutation is
 # refused rather than silently taking the claim over (ticket #56).
 #
-# Two deliberate differences from kanban-md:
+# Three deliberate differences from kanban-md:
 #
 #   * an expired claim is not cleared here. kanban-md's CheckClaim blanks
 #     ClaimedBy as a side effect of asking the question; in karr that would
@@ -171,11 +194,44 @@ sub _claim_expired {
 #     has always used, rather than kanban-md's "add --claim X" hint: `karr
 #     delete` has no --claim option, so that hint would be unfollowable for one
 #     of the four callers.
+#
+#   * the expired case is recorded, because it used to be the one answer this
+#     method gave -- here and in kanban-md both -- with nothing said anywhere
+#     (ticket #177). A live claim held by somebody else is refused loudly and
+#     the refusal names the holder, which is how #176's confused agent gets its
+#     own lost claim name back; then the claim expires and that signal
+#     disappears, at the moment it is most useful. `move` and `handoff --claim`
+#     re-stamp claimed_by on the way through, so the previous holder is gone
+#     from the card too, and karr-foundation, which attributes stalls per claim
+#     name, is left attributing to a name nobody ever held.
+#
+# Recorded, not printed, and for the same reason as
+# App::karr::Role::DependencyCheck: check_claim runs inside
+# App::karr::Role::TaskMutation/update_task_guarded's callback, which re-runs
+# when another agent gets in first, so a print here would come out once per
+# attempt -- and once for an attempt that was then discarded. A slot keyed by
+# task id and cleared on entry is replaced by the attempt that wins instead,
+# which is also what collapses `karr delete`'s two checks (once outside the
+# guard to decide about the prompt, once inside it) into one line.
+#
+# What is *not* done here: nothing is refused that was not refused before, and
+# no new state goes on the card. Taking over an expired claim is the documented
+# purpose of claim_timeout, so this makes it audible, not harder. And the
+# takeover is not the same event as the holder outliving its own timeout: the
+# claimant-matches case returns above without reaching this, so a long-running
+# agent never gets warned about itself.
 sub check_claim {
     my ($self, $task, $claimant) = @_;
+    delete $self->_expired_claims->{ $task->id };
     return 1 unless $task->has_claimed_by && length $task->claimed_by;
     return 1 if defined $claimant && length $claimant && $task->claimed_by eq $claimant;
-    return 1 if $self->_claim_expired( $task, $self->claim_timeout_secs );
+    if ( $self->_claim_expired( $task, $self->claim_timeout_secs ) ) {
+        $self->_expired_claims->{ $task->id } = {
+            held_by    => $task->claimed_by,
+            claimed_at => $task->claimed_at,
+        };
+        return 1;
+    }
     die sprintf "Task %d is claimed by %s\n", $task->id, $task->claimed_by;
 }
 
@@ -195,9 +251,10 @@ C<"Task N is claimed by X\n">. Four cases, checked in order:
 >> exactly -- the current claimant may always proceed;
 
 =item * the claim is older than L</claim_timeout_secs> -- an expired claim no
-longer blocks anyone, but is not cleared as a side effect of asking (that
-stays kanban-md's behaviour, not karr's -- see the comment above this method
-for why);
+longer blocks anyone, but it is B<recorded> for L</expired_claim_report> so the
+override does not go unsaid, and it is not cleared as a side effect of asking
+(that stays kanban-md's behaviour, not karr's -- see the comment above this
+method for why);
 
 =item * otherwise -- the task belongs to someone still working on it, and the
 call dies rather than silently taking the claim over.
@@ -207,6 +264,53 @@ call dies rather than silently taking the claim over.
 Call it against the same task revision the caller then writes -- see
 L<App::karr::Role::TaskMutation/update_task_guarded> -- since a check made
 against a stale read can pass or fail against bytes that are no longer there.
+
+=cut
+
+# The channels are App::karr::Role::DependencyCheck/dependency_report's, not a
+# second convention: STDERR keeps STDOUT parseable, --json carries the same fact
+# as data because a JSON consumer never reads STDERR, and --quiet silences the
+# human copy only -- the pair is data, not chatter, so a drain loop that does not
+# want the line can still read who held the card.
+#
+# The pair is a structure rather than the sentence DependencyCheck ships,
+# because the caller this exists for is karr-foundation, which attributes stalls
+# per claim name and must not have to parse that name out of English.
+sub expired_claim_report {
+    my ( $self, $id ) = @_;
+
+    my $expired = $self->_expired_claims->{$id};
+    return () unless $expired;
+
+    printf STDERR
+      "Warning: task %s: overriding the expired claim held by %s (claimed %s)\n",
+      $id, $expired->{held_by}, $expired->{claimed_at}
+      unless $self->json || $self->quiet;
+
+    return ( expired_claim => $expired );
+}
+
+=method expired_claim_report
+
+    return { id => $task->id, ..., $self->expired_claim_report( $task->id ) };
+
+Emits whatever L</check_claim> recorded about an expired claim it let the caller
+step over, and returns it as the C<< expired_claim => { held_by => ...,
+claimed_at => ... } >> pair for the command's C<--json> payload -- or the empty
+list when no claim was overridden, so the key is absent rather than null.
+
+The takeover itself is allowed and stays allowed: an expired claim not blocking
+anybody is what C<claim_timeout> is for. What this adds is the trace it left
+nowhere. C<claimed_by> is re-stamped by C<move> and C<handoff> on the way
+through, so without this the previous holder is gone from the card, from STDOUT
+and from STDERR alike -- while the very same mismatch against a I<live> claim is
+refused with the holder's name in the message (ticket #177, the behavioural half
+of #176).
+
+Call it after the write has landed, never from inside the guarded callback, for
+the reason given at L<App::karr::Role::DependencyCheck/dependency_report>: a
+warning about a mutation that then lost its compare-and-swap is a warning about
+something that did not happen.
 
 =cut
 

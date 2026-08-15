@@ -22,6 +22,12 @@ use App::karr::Task;
   # argument and never asks the board for one. t/147-claim-timeout-requires.t is
   # that one-name list's own test.
   sub store { }
+  # json and quiet joined the list in ticket #177, when check_claim began
+  # recording the expired claims it lets through and expired_claim_report grew
+  # the two output options every other warning in karr is gated on. Nothing
+  # below reports, so the stubs stay empty here too.
+  sub json  { }
+  sub quiet { }
   with 'App::karr::Role::ClaimTimeout';
 }
 
