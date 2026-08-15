@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - Parallel writes no longer fail on a push that raced (#181).
+      Eight `karr create` at once in one clone kept every card, but
+      exited non-zero on some of them: the far side had rejected the
+      brand-new task refs two pushes were creating at the same time,
+      and since #84 a per-ref rejection is the server's final answer,
+      so the retry loop never ran. It is not the server's answer
+      here, and it is not a quirk of the local transport either --
+      measured against a real `git daemon` it is worse, because
+      receive-pack updates every ref in one transaction and one
+      contended ref takes the whole push down: 4 to 5 of 8 creates
+      failed in every run, against 3 of 10 runs with a path remote.
+      Both wordings for it -- libgit2's "a reference with that name
+      already exists" on the local transport, receive-pack's "failed
+      to update ref" everywhere else -- are now recognised as
+      contention, and the existing three attempts are spent on them,
+      after which it is reported as the ordinary failure to push it
+      is. A real refusal is untouched: a pre-receive hook, a
+      protected ref or a non-fast-forward still ends the push on the
+      first attempt, and one such ref among contended ones makes the
+      whole push final.
+
     - A fresh clone reads the board instead of being told to fetch
       it (#173). `git clone` does not carry refs/karr/*, so every
       read command in a new checkout answered "No karr board in this

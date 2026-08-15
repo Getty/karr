@@ -131,7 +131,10 @@ guard is marked done, so DESTROY does not repeat the attempt afterwards.
 
 A push the remote refused ref by ref is not retried, and the warning does not
 advise one: the far side already gave its answer, so it names what was refused
-instead of pointing at a C<karr sync> that would be refused identically.
+instead of pointing at a C<karr sync> that would be refused identically. A
+rejection that is only contention (L<App::karr::Git/push_contention>) is
+retried and, if it still stands after three attempts, reported as the ordinary
+failure it is.
 
 =cut
 
@@ -237,9 +240,17 @@ sub _insurance_push {
         # on the same signal (#84); this path is the one that runs *after* a
         # command failed, so reporting the least here was backwards (#96).
         #
+        # Contention is not that answer: two pushes raced for the same ref and
+        # the next attempt of the same refspec lands (#181). The insurance push
+        # is the last chance the board has to reach the remote, so it is the
+        # one place that must not mistake a race for a refusal.
+        #
         # The `can` is for the duck-typed git objects the sync tests drive this
         # class with, and matches how SyncLifecycle asks the same question.
-        last if $git->can('push_rejections') && @{ $git->push_rejections };
+        last
+          if $git->can('push_rejections')
+          && @{ $git->push_rejections }
+          && !( $git->can('push_contention') && $git->push_contention );
 
         sleep 1 if $attempt < 3;
     }
@@ -265,13 +276,17 @@ sub _insurance_push {
 }
 
 # Whether the last push failed because the remote refused refs, rather than
-# because it could not be reached.
+# because it could not be reached. Contention does not count: a race the three
+# attempts could not win is an ordinary failure to push, and the guidance for
+# it is "run karr sync", not "the remote will refuse this again" (#181).
 sub _rejected {
     my ($self) = @_;
     my $git = $self->git;
     return 0 unless $git && $git->can('push_rejections');
     my $rejected = $git->push_rejections;
-    return $rejected && @$rejected ? 1 : 0;
+    return 0 unless $rejected && @$rejected;
+    return 0 if $git->can('push_contention') && $git->push_contention;
+    return 1;
 }
 
 1;

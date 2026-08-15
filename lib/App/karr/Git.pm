@@ -105,6 +105,9 @@ success in that case: the per-ref outcome only exists in the
 L<Git::Native::Remote::Result> it hands back, and L</push_rejections> carries
 it on to the caller. The CLI fallback pushes with C<--porcelain> and parses
 the same outcomes, so both transports fail with the same per-ref reasons.
+Not every rejection is a refusal, though: two pushes racing for the same ref
+are refused by the receiving side and go through on the very next attempt, so
+L</push_contention> tells that case apart from a hook or a protected ref.
 
 =head1 SEE ALSO
 
@@ -1439,7 +1442,92 @@ same shape, so both transports answer the same way.
 L<App::karr::Role::SyncLifecycle> and L<App::karr::SyncGuard> both check this
 after a failed push and stop retrying once it is non-empty: the remote was
 reached and gave its answer, so further attempts would only collect the same
-refusal again.
+refusal again -- unless L</push_contention> says the answer was "someone else
+got here first", which is not an answer worth keeping.
+
+=cut
+
+# Reasons the receiving side gives for "another push got to this ref first",
+# as opposed to "I refuse this ref". The wording is all karr gets, so both
+# transports' phrasings are named here:
+#
+#   a reference with that name already exists
+#       libgit2's local transport -- a bare repo reached by a path or by
+#       file://, which is what the tests and the reproducers use. It looks the
+#       destination ref up, finds nothing, and creates it *without* force, so
+#       a ref another push created in between fails the create. karr never
+#       asks for a forceless create: the board refspec is +refs/karr/*.
+#
+#   failed to update ref
+#       git-receive-pack, which is what every real ssh/https/git:// remote
+#       runs, reported over either transport (libgit2's smart protocol, or
+#       `git push --porcelain`). It is receive-pack's status for a ref
+#       transaction that would not commit: the old value the pusher was
+#       advertised no longer matches, or the ref it wanted to create now
+#       exists. The detail goes to the sideband as "cannot lock ref 'X':
+#       reference already exists" and never into the status line, so this
+#       bare wording is what arrives.
+#
+#   cannot lock ref / failed to lock
+#       the same thing, where the detail does survive.
+#
+# This race is not a quirk of the local transport (#181): 8 parallel creates
+# in one clone left 3 of 10 runs with a failed create against a path remote,
+# and 4 to 5 of 8 creates failing in *every* run against a `git daemon` --
+# a real receive-pack, whose ref transaction is atomic, so one contended ref
+# takes the whole push down with it.
+#
+# Deliberately an allowlist. Everything else -- "pre-receive hook declined",
+# "protected ref", "non-fast-forward" -- stays what #84 made it: the server's
+# final answer, not retried. "failed to update ref" also covers ref-store
+# failures that will never come right (a directory/file conflict, a full
+# disk); those cost the caller its remaining attempts and then fail with the
+# ordinary "push failed" verdict, which is the cheaper way to be wrong.
+sub _is_contended_push_reason {
+    my ($reason) = @_;
+    return 0 unless defined $reason && length $reason;
+    return 1 if $reason =~ /reference with that name already exists/i;
+    return 1 if $reason =~ /reference already exists/i;
+    return 1 if $reason =~ /failed to update ref/i;
+    return 1 if $reason =~ /cannot lock ref/i;
+    return 1 if $reason =~ /failed to lock/i;
+    return 0;
+}
+
+sub push_contention {
+    my ($self) = @_;
+    my $rejected = $self->push_rejections;
+    return 0 unless @$rejected;
+    for my $entry (@$rejected) {
+        return 0 unless _is_contended_push_reason( $entry->{reason} );
+    }
+    return 1;
+}
+
+=method push_contention
+
+    if ( !$git->push and $git->push_contention ) {
+        # transient: the same push again can land
+    }
+
+Returns true when the last push was rejected I<and> every rejected ref was
+rejected because another push reached it first, rather than because the far
+side refused it. False when the push succeeded, when it failed as a whole, and
+whenever a single one of the rejected refs carries a reason that is a real
+refusal: one protected ref among ten contended ones still makes the push final,
+because pushing again cannot change that ref's answer.
+
+Two concurrent pushes creating the same brand-new ref are refused by the
+receiving side, and the next push of the same refspec goes through. libgit2's
+local transport says C<"failed to write reference 'X': a reference with that
+name already exists">; C<git-receive-pack> -- every real remote -- says
+C<"failed to update ref">, having also lost updates whose advertised old value
+moved underneath the push. Both are recognised here, so
+L<App::karr::Role::SyncLifecycle> and L<App::karr::SyncGuard> spend their
+retries on them instead of reporting a create that wrote its card as a failure
+(#181). It is not a local-transport quirk: against a real C<git daemon> it is
+the more common outcome of the two, because receive-pack updates all refs in
+one transaction and one contended ref fails the lot.
 
 =cut
 

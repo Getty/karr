@@ -121,7 +121,10 @@ from L<App::karr::SyncGuard/flush_armed> would only repeat the failure.
 
 A push the remote I<rejected> per ref (a pre-receive hook, a protected ref)
 is not retried at all: the connection worked and the far side gave its answer,
-which the error message carries ref by ref.
+which the error message carries ref by ref. A rejection that is only
+contention -- two pushes racing for the same ref, see
+L<App::karr::Git/push_contention> -- is retried like any other transient
+failure, because the same refspec lands on the next attempt.
 
 =cut
 
@@ -151,8 +154,18 @@ sub sync_after {
         # no, so two more attempts would only collect the same refusal twice
         # more, at a second each, on every writing command. The `can` is for
         # the duck-typed git objects the sync tests drive this role with.
+        #
+        # Except when the answer was "another push got to this ref first",
+        # which is contention and not a refusal: the same refspec lands on the
+        # next attempt. That is what the retry loop is for, and skipping it
+        # turned a `karr create` that had already written its card into a
+        # failed command on every parallel run (#181). Only a push whose
+        # rejections are *all* contention is retried, so one protected ref
+        # still ends it the way #84 requires.
         $rejected = $git->can('push_rejections')
                  && @{ $git->push_rejections } ? 1 : 0;
+        $rejected = 0
+          if $rejected && $git->can('push_contention') && $git->push_contention;
         last if $rejected;
 
         sleep 1 if $attempt < 3;
