@@ -1,5 +1,27 @@
 {{$NEXT}}
 
+    - A push can no longer delete a card another clone made (#178).
+      Every push sent the board under a pruning refspec, and a prune
+      declares the pusher's refs to be the whole namespace -- a claim
+      no clone is in a position to make. A card created in another
+      clone, or by another process a moment earlier, is simply a ref
+      this push does not have, so it was deleted off the remote; the
+      mirror update behind the push then made refs/karr-remote/ agree,
+      and on the clone that owned the card the next pull read it as a
+      deletion the remote had made and removed the card locally too --
+      silently, by design, since that branch exists for cards someone
+      really did delete. Eight parallel creates in one clone lost a
+      whole card in 2 of 20 runs that way, and a single `karr sync
+      --push` from a clone that had not pulled did it on its own. A
+      board push now publishes only what the clone actually did: its
+      own refs, plus one delete refspec per board ref it deleted
+      itself. Those deletions are recorded as tombstones under
+      refs/karr-local/deleted/ when the ref goes, so a deletion whose
+      push failed is still published by the next one -- which is what
+      prune used to achieve by accident -- and the mirror now follows
+      only the refs the push actually carried, instead of whatever the
+      board happened to hold when it returned.
+
     - Concurrent `karr create` no longer hands out the same task id
       twice (#172). Eight parallel creates in one clone gave id 8 to
       two different cards and one overwrote the other. The

@@ -63,15 +63,20 @@ applies it to its own socket transports (C<git://>, C<http://>, C<https://>),
 not to C<ssh://>, whose reads go through libssh2. The CLI fallback is bounded
 either way.
 
-C<push> sends C<refs/karr/*> under a forced, pruning refspec. C<pull> is its
-inverse, but it never fetches straight into the board: the remote state lands
-in a per-remote tracking mirror under C<refs/karr-remote/>, and the local
-board is then reconciled against it. That mirror is what tells a ref the
-remote I<deleted> apart from one that only exists locally because it has not
-been pushed yet -- the first is pruned, the second is kept. Where both sides
-changed the same ref the remote version takes the slot, the local one is
-parked under C<refs/karr-conflict/>, and a warning names both. Neither extra
-namespace is ever pushed.
+C<push> sends C<refs/karr/*> under a forced refspec, plus one delete refspec
+for every board ref this clone deleted and has not published yet. It
+deliberately does not prune: a prune makes the pusher's local refs the whole
+truth of the namespace, which is wrong the moment another clone holds a card
+this one has never seen -- that push took the card off the remote, and the
+mirror update behind it made the next pull delete it locally as well (#178).
+C<pull> is its inverse, but it never fetches straight into the board: the
+remote state lands in a per-remote tracking mirror under C<refs/karr-remote/>,
+and the local board is then reconciled against it. That mirror is what tells a
+ref the remote I<deleted> apart from one that only exists locally because it
+has not been pushed yet -- the first is deleted here as well, the second is
+kept. Where both sides changed the same ref the remote version takes the slot,
+the local one is parked under C<refs/karr-conflict/>, and a warning names
+both. Neither extra namespace is ever pushed.
 
 The id counter C<refs/karr/meta/next-id> is the one exception to
 last-writer-wins: it is merged forward rather than adopted, because a counter
@@ -619,10 +624,11 @@ sub validate_helper_ref {
         'refs/bisect/',
         'refs/replace/',
         'refs/karr/',
-        # Pick locks (App::karr::Lock). They were moved out of refs/karr/ so
-        # that no refspec could publish them (#93); `karr set-refs` names a ref
-        # and pushes it, so leaving it able to reach them would put the same
-        # hole back one command over.
+        # Pick locks (App::karr::Lock) and the deletion tombstones a push
+        # publishes from (TOMBSTONE_ROOT). Locks were moved out of refs/karr/
+        # so that no refspec could publish them (#93); `karr set-refs` names a
+        # ref and pushes it, so leaving it able to reach that namespace would
+        # put the same hole back one command over.
         'refs/karr-local/',
     );
 
@@ -648,8 +654,9 @@ Normalizes C<$ref> (L</normalize_ref_name>) and dies unless it is both a
 syntactically valid git ref name and outside every namespace karr itself owns
 or protects: C<refs/heads/>, C<refs/tags/>, C<refs/remotes/>, C<refs/bisect/>,
 C<refs/replace/>, C<refs/stash>, C<refs/karr/> (the board) and
-C<refs/karr-local/> (pick locks, deliberately kept out of reach of any
-refspec -- #93). Returns the normalized ref on success. This is the gate
+C<refs/karr-local/> (pick locks and deletion tombstones, deliberately kept
+out of reach of any refspec -- #93, #178). Returns the normalized ref on
+success. This is the gate
 C<karr set-refs>/C<get-refs> go through via L</push_ref>/L</pull_ref>, so a
 caller cannot point a helper ref at the board or at a branch.
 
@@ -946,6 +953,9 @@ sub delete_ref_cas {
     my $target = try { $reference->target } catch { undef };
     return 0 unless $target && $target->hex eq $expected_old;
 
+    # The OID is already in hand here; see _note_pending_delete.
+    $self->_note_pending_delete( $ref, $expected_old );
+
     my $deleted = try {
         $reference->delete;
         1;
@@ -1100,6 +1110,11 @@ sub delete_ref {
         # apart from the failure below, which libgit2 reports the same way.
         return 0 unless $repo->reference_exists($ref);
 
+        # Before the ref goes, not after: a crash in between leaves a
+        # tombstone for a ref that is still there, which the push skips,
+        # rather than a deletion no push will ever publish (#178).
+        $self->_note_pending_delete($ref);
+
         my $deleted = try {
             $repo->reference_delete($ref);
             1;
@@ -1184,6 +1199,20 @@ use constant MIRROR_ROOT => 'refs/karr-remote';
 # version replaces it. Outside refs/karr/, so it never reaches the remote and
 # never shows up on the board.
 use constant CONFLICT_ROOT => 'refs/karr-conflict';
+
+# Deleted board refs, remembered until a push has told the remote about them.
+# refs/karr-local/ is the namespace nothing pushes or fetches, so a tombstone
+# is local bookkeeping the way a pick lock is -- and it points at the commit
+# the deleted ref pointed at, which keeps that card reachable for a hand
+# recovery until the deletion is published.
+#
+# This is the record a push publishes deletions from, and it exists because
+# the two obvious alternatives both destroy cards under concurrency (#178):
+# pruning treats every remote ref the pusher does not have as deleted, and a
+# mirror-minus-local diff cannot tell a card this clone deleted from one
+# another process fetched a moment ago and has not adopted into the board yet.
+# A ref that was deliberately deleted here is the only thing that writes one.
+use constant TOMBSTONE_ROOT => 'refs/karr-local/deleted';
 
 # What _adopt_next_id_ref answers when the local counter was already the
 # further one: applied, in the sense that the two sides have converged on it,
@@ -1379,28 +1408,60 @@ sub push {
     $refspec //= BOARD_REFSPEC;
     $self->{_push_rejections} = [];
 
+    # A board push publishes exactly two things: the local refs as they stand
+    # here, and the deletions this clone recorded. It used to publish a third
+    # -- "and nothing else exists", via prune -- which is a claim no clone is
+    # in a position to make: a card another clone created a second ago is one
+    # this one has never seen, and pruning deleted it off the remote, after
+    # which _mirror_local_state made the mirror agree and the next pull read
+    # it as a deletion the remote had made and removed the card locally too.
+    # Eight parallel creates in one clone lost a whole card that way, and one
+    # `karr sync --push` from a clone that had not pulled did it on its own
+    # (#178).
+    #
+    # The snapshot is read before the push rather than after: the refspec is
+    # expanded inside the push, so a ref written in between is published
+    # without being in the snapshot -- which leaves the mirror lagging the
+    # remote, the direction that converges harmlessly (see
+    # _mirror_local_state). Reading it afterwards is the direction that
+    # loses cards: the mirror would claim refs the push never carried.
+    my $board = $refspec eq BOARD_REFSPEC;
+    my ( $local, $tombstones, @deletes );
+    if ($board) {
+        $local      = $self->ref_oids(BOARD_ROOT) || {};
+        $tombstones = $self->_pending_deletes;
+        # A tombstone whose ref is back on the board is stale, not a
+        # deletion: `karr restore` deletes refs/karr/meta/board-id on its way
+        # through and writes it straight back (#95), and publishing that
+        # tombstone would take the board's identity off the remote.
+        @deletes = grep { !exists $local->{$_} } sort keys %$tombstones;
+    }
+    my @refspecs = ( $refspec, map { ":$_" } @deletes );
+
     my $result;
     my $ok = try {
         my $r = $repo->remote($remote);
         $result = $r->push(
-            refspecs    => [$refspec],
+            refspecs    => \@refspecs,
             credentials => _default_credentials_cb(),
-            prune       => 1,
         );
         1;
     } catch {
         $self->{_last_error} = "$_";
-        $self->_cli_transport( 'push', $remote, [$refspec], prune => 1 );
+        $self->_cli_transport( 'push', $remote, \@refspecs );
     };
     return 0 unless $ok;
     return 0 unless $self->_accept_push_result( $remote, $result );
 
-    # A push that went through made the remote identical to the local board
-    # (forced refspec, prune), so the mirror has to follow. Without this every
-    # ref this clone ever pushed would still look "changed locally" on the next
-    # pull, and the other agent's perfectly ordinary update would be reported
-    # as a conflict.
-    $self->_mirror_local_state($remote) if $refspec eq BOARD_REFSPEC;
+    # A push that went through put the local refs on the remote and took the
+    # published deletions off it, so the mirror follows both. Without this
+    # every ref this clone ever pushed would still look "changed locally" on
+    # the next pull, and the other agent's perfectly ordinary update would be
+    # reported as a conflict.
+    if ($board) {
+        $self->_mirror_local_state( $remote, $local, \@deletes );
+        $self->_clear_pending_deletes( $tombstones, \@deletes );
+    }
     return 1;
 }
 
@@ -1408,15 +1469,22 @@ sub push {
 
     my $ok = $git->push( $remote, $refspec );
 
-Pushes C<$refspec> (default: the forced, pruning board refspec covering all
-of C<refs/karr/*>) to C<$remote> (default C<origin>). Returns C<1> when
+Pushes C<$refspec> (default: the forced board refspec covering all of
+C<refs/karr/*>) to C<$remote> (default C<origin>). Returns C<1> when
 C<$remote> isn't configured (a no-op) or the push lands, C<0> otherwise --
 including when the transport itself succeeded but the far side rejected some
 or all of the refs (see L</push_rejections>, and L</last_error> for the
 combined message). Tries the native transport first, falls back to the CLI on
-transport failure (L</DESCRIPTION>). Only a push of the default board refspec
-updates the C<refs/karr-remote/> mirror afterwards; a custom C<$refspec> (as
-L</push_ref> uses) does not.
+transport failure (L</DESCRIPTION>).
+
+A push of the default board refspec is the only one that carries board
+semantics: it adds a delete refspec for every ref this clone deleted and has
+not published yet (recorded under C<refs/karr-local/deleted/>, so the record
+outlives the process that made the deletion), and it updates the
+C<refs/karr-remote/> mirror afterwards. It does I<not> prune -- a ref on the
+remote that this clone has never seen is another agent's card, not a
+leftover, and pruning it is how a card was lost outright (#178). A custom
+C<$refspec> (as L</push_ref> uses) does neither.
 
 =cut
 
@@ -1978,8 +2046,11 @@ sub _warn_conflicts {
     return;
 }
 
-# Make the mirror match the local board. Called after a successful push, where
-# the remote has just been made identical to it.
+# Make the mirror follow what a push just published: %$local, the snapshot of
+# the board refs the push was built from, and @$deleted, the refs it told the
+# remote to drop. Nothing else -- a mirror slot the push did not touch belongs
+# to a ref another clone published, and claiming it here is how a card the
+# remote still has gets read as one the remote deleted (#178).
 #
 # The one place in this class where a ref write that does not land is harmless,
 # so the answers are deliberately not checked. A mirror slot left behind here
@@ -1989,21 +2060,76 @@ sub _warn_conflicts {
 # The failure mode #154 is about is the opposite one -- a mirror claiming an
 # OID that is not in place locally.
 sub _mirror_local_state {
-    my ( $self, $remote ) = @_;
+    my ( $self, $remote, $local, $deleted ) = @_;
     return unless $self->_repo;
 
     my $prefix = $self->_mirror_prefix($remote);
-    my $local  = $self->ref_oids(BOARD_ROOT) || {};
-    my $mirror = $self->ref_oids($prefix)    || {};
+    my $mirror = $self->ref_oids($prefix) || {};
 
-    for my $ref ( keys %$local ) {
+    for my $ref ( keys %{ $local || {} } ) {
         my $name = $prefix . substr( $ref, length BOARD_ROOT );
         next if _same_oid( $mirror->{$name}, $local->{$ref} );
         $self->_write_ref_untracked( $name, $local->{$ref} );
     }
-    for my $name ( keys %$mirror ) {
-        my $ref = BOARD_ROOT . substr( $name, length $prefix );
-        $self->_delete_ref_untracked($name) unless exists $local->{$ref};
+    for my $ref ( @{ $deleted || [] } ) {
+        my $name = $prefix . substr( $ref, length BOARD_ROOT );
+        $self->_delete_ref_untracked($name) if exists $mirror->{$name};
+    }
+    return;
+}
+
+# The tombstone for a board ref: same path, under TOMBSTONE_ROOT.
+sub _tombstone_name {
+    my ( $self, $ref ) = @_;
+    return TOMBSTONE_ROOT . '/' . substr( $ref, length BOARD_ROOT );
+}
+
+# Record that this clone deleted $ref, so the next push tells the remote.
+# $oid is the OID the ref points at; read here when the caller does not
+# already hold it.
+#
+# Only board refs leave a tombstone: pick locks under refs/karr-local/ are
+# never on the remote to begin with. A tombstone that cannot be written is not
+# an error the delete has to fail on -- it degrades to a deletion the remote
+# is not told about, which is the same place a killed process leaves it, and
+# raising here would fail a delete whose ref is about to go regardless.
+sub _note_pending_delete {
+    my ( $self, $ref, $oid ) = @_;
+    return unless index( $ref, BOARD_ROOT ) == 0;
+    $oid = ( $self->read_ref_with_oid($ref) )[0] unless defined $oid;
+    return unless defined $oid;
+    $self->_write_ref_untracked( $self->_tombstone_name($ref), $oid );
+    return;
+}
+
+# The board refs this clone has deleted and not yet published, as
+# { board ref => tombstone ref }.
+sub _pending_deletes {
+    my ($self) = @_;
+    my $prefix = TOMBSTONE_ROOT . '/';
+    my %pending;
+    for my $name ( $self->list_refs($prefix) ) {
+        $pending{ BOARD_ROOT . substr( $name, length $prefix ) } = $name;
+    }
+    return \%pending;
+}
+
+# Drop the tombstones a successful push has settled: the ones it published as
+# deletions, and the stale ones it skipped because the ref was back on the
+# board. Only the ones this push read -- a tombstone another process wrote in
+# between is that push's to publish, not this one's to discard.
+#
+# A skipped one is re-checked rather than dropped on the strength of the
+# snapshot: the tombstone goes down before the ref does, so a delete running
+# in another process is briefly a tombstone whose ref is still there, and
+# clearing that on sight would throw away a deletion the push that made it has
+# not published yet.
+sub _clear_pending_deletes {
+    my ( $self, $tombstones, $published ) = @_;
+    my %published = map { $_ => 1 } @{ $published || [] };
+    for my $ref ( sort keys %{ $tombstones || {} } ) {
+        next if !$published{$ref} && !$self->ref_exists($ref);
+        $self->_delete_ref_untracked( $tombstones->{$ref} );
     }
     return;
 }
