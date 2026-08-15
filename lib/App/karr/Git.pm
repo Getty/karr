@@ -73,6 +73,10 @@ changed the same ref the remote version takes the slot, the local one is
 parked under C<refs/karr-conflict/>, and a warning names both. Neither extra
 namespace is ever pushed.
 
+The id counter C<refs/karr/meta/next-id> is the one exception to
+last-writer-wins: it is merged forward rather than adopted, because a counter
+that moves backwards hands out an id a card already holds (#172).
+
 A reconciliation that would delete I<every> remaining board ref is refused
 with an exception instead of being applied, and the mirror is left as it was:
 that outcome is what a C<karr destroy> on another clone looks like, and
@@ -854,7 +858,22 @@ sub write_ref_cas {
         or die "karr: could not write $ref: "
              . ( $self->last_error // 'no usable git repository' ) . "\n";
 
-    my $commit_oid = $self->_commit_for_content( $repo, $content );
+    return $self->_cas_ref_oid( $ref,
+        $self->_commit_for_content( $repo, $content ), $expected_old );
+}
+
+# The guarded half of write_ref_cas, split out for the one caller that already
+# has the commit it wants the ref to point at: _adopt_next_id_ref, which moves
+# the counter onto the remote's own object rather than a copy of its content.
+# Same answers as write_ref_cas -- 1 landed, 0 someone else got there first,
+# die on a real failure -- and the same rule about $WRITES: a lost race must
+# not bump it, because SyncGuard reads it to decide whether to push.
+sub _cas_ref_oid {
+    my ( $self, $ref, $commit_oid, $expected_old ) = @_;
+    my $repo = $self->_repo
+        or die "karr: could not write $ref: "
+             . ( $self->last_error // 'no usable git repository' ) . "\n";
+
     my $wrote = try {
         $repo->reference_create( $ref, $commit_oid,
             expected_old => $expected_old );
@@ -979,6 +998,15 @@ sub read_ref_with_oid {
     my $oid = try { $repo->reference($ref)->target } catch { undef };
     return ( undef, '' ) unless $oid;
 
+    return ( $oid->hex, $self->_content_at_oid( $repo, $oid ) );
+}
+
+# The payload of one karr ref commit, addressed by OID instead of by ref name.
+# Split out of read_ref_with_oid so reconciliation can read what a mirror
+# commit says without going through a ref that may have moved since the plan
+# was made (#172). Takes an OID object or a hex string.
+sub _content_at_oid {
+    my ( $self, $repo, $oid ) = @_;
     my $content = try {
         my $commit = $repo->commit($oid);
         my $tree   = $commit->tree;
@@ -989,7 +1017,7 @@ sub read_ref_with_oid {
     $content = from_octets($content);
     # Match historical CLI behaviour: cat-file's trailing newline was chomped.
     chomp $content if defined $content;
-    return ( $oid->hex, $content );
+    return $content;
 }
 
 =method read_ref_with_oid
@@ -1132,6 +1160,12 @@ use constant BOARD_ROOT => 'refs/karr/';
 # textual point on, and _check_board_identity needs it.
 use constant BOARD_ID_REF => 'refs/karr/meta/board-id';
 
+# The id counter, declared up here with the other namespace constants for the
+# same reason BOARD_ID_REF is: use constant is only visible from its textual
+# point on, and the reconciliation below has to name this ref to keep it from
+# being walked backwards (#172). The allocator that owns it lives further down.
+use constant NEXT_ID_REF => 'refs/karr/meta/next-id';
+
 # Remote-tracking mirror: refs/karr-remote/<remote>/<X> holds the remote's
 # refs/karr/<X> as of the last successful fetch or push from this clone.
 #
@@ -1150,6 +1184,12 @@ use constant MIRROR_ROOT => 'refs/karr-remote';
 # version replaces it. Outside refs/karr/, so it never reaches the remote and
 # never shows up on the board.
 use constant CONFLICT_ROOT => 'refs/karr-conflict';
+
+# What _adopt_next_id_ref answers when the local counter was already the
+# further one: applied, in the sense that the two sides have converged on it,
+# but not by taking the remote's version -- which is the difference the
+# conflict report has to know about.
+use constant KEPT_LOCAL => 'kept-local';
 
 sub _mirror_prefix {
     my ( $self, $remote ) = @_;
@@ -1423,7 +1463,10 @@ sub pull {
 
 Fetches the remote's board state into the C<refs/karr-remote/E<lt>remoteE<gt>/>
 mirror and reconciles the local board against it (see L</DESCRIPTION> for the
-full algorithm and the four cases it resolves). Returns C<1> when C<$remote>
+full algorithm and the four cases it resolves). One ref is not reconciled
+last-writer-wins: the id counter C<refs/karr/meta/next-id> only ever moves
+forward, so a remote value behind the local one is left where it is and
+published by the next push instead (#172). Returns C<1> when C<$remote>
 isn't configured (a no-op) or reconciliation completes, C<0> on a transport
 failure. Three situations C<die> rather than returning C<0>: a reconciliation
 that would delete every remaining board ref (pass C<accept_wipe =E<gt> 1> --
@@ -1619,8 +1662,14 @@ sub _reconcile_with_mirror {
             ? $self->_park_conflicting_local( $remote, $ref, $displaced )
             : 1;
 
-        if ( $parked && $self->_adopt_remote_ref( $ref, $oid ) ) {
-            CORE::push @conflicts, $ref if $conflict;
+        my $applied = $parked && $self->_adopt_remote_ref( $ref, $oid );
+        if ($applied) {
+            # KEPT_LOCAL is the counter declining the remote's older value
+            # (see _adopt_next_id_ref). It is not a conflict to report: the
+            # warning says the remote version is now in place and the local
+            # one was parked, and for this ref neither is true.
+            CORE::push @conflicts, $ref
+                if $conflict && $applied ne KEPT_LOCAL;
             next;
         }
 
@@ -1758,9 +1807,62 @@ sub _restore_mirror {
 # answer is now in place -- the caller has to act on that, see #154.
 sub _adopt_remote_ref {
     my ( $self, $ref, $oid ) = @_;
+    return $self->_adopt_next_id_ref($oid)
+        if $ref eq NEXT_ID_REF && defined $oid;
     return defined $oid
         ? $self->_write_ref_untracked( $ref, $oid )
         : $self->_delete_ref_untracked($ref);
+}
+
+# The id counter is the one board ref whose value may only ever move forward,
+# so it is merged rather than adopted: the remote's value lands only when it
+# is ahead of the local one.
+#
+# Plain last-writer-wins walked it backwards two different ways, and either
+# one hands a live id out a second time. Reconciliation decides from a
+# snapshot of the local refs and applies that decision later with a forced
+# write, so a `karr create` that allocated in between is undone; and the
+# remote can legitimately be behind, because every push force-writes the whole
+# namespace and a push that started earlier may land after one that started
+# later. Eight parallel creates in one clone were enough: the pull reset the
+# counter from 7 to 4, the next two creates were handed 4 and 5 again, and
+# each overwrote the card already sitting on that ref (#172). The
+# compare-and-swap in allocate_next_id_ref cannot defend against this -- it is
+# the sole authority for handing out an id, but only while nothing else moves
+# the ref it counts on.
+#
+# The write is compare-and-swapped against the exact revision the comparison
+# was made on, so an allocation slipping in between makes the attempt lose and
+# read again instead of clobbering it. A local counter that is already ahead
+# is left alone and answered with KEPT_LOCAL -- applied, in that this is the
+# value both sides converge on and the next push publishes it, but not by
+# taking the remote's version, which is what keeps it out of the conflict
+# report.
+sub _adopt_next_id_ref {
+    my ( $self, $oid ) = @_;
+    my $repo = $self->_repo or return 0;
+    my $remote_id = _parse_next_id( $self->_content_at_oid( $repo, $oid ) );
+
+    my $why;
+    my $ok = try {
+        $self->_retry_untracked( sub {
+            my ( $local_oid, $raw ) = $self->read_ref_with_oid(NEXT_ID_REF);
+            return KEPT_LOCAL
+                if defined $local_oid && _parse_next_id($raw) >= $remote_id;
+            # 0 from the compare-and-swap is contention, not failure: read
+            # again and decide again, never retry with the value that lost.
+            return () unless $self->_cas_ref_oid( NEXT_ID_REF, $oid, $local_oid );
+            return 1;
+        } );
+    } catch {
+        # Same contract as _write_ref_untracked: a refusal is the caller's to
+        # interpret, so it comes back as a false answer with the reason parked
+        # in last_error, not as an exception out of the middle of a pull.
+        $why = "$_";
+        0;
+    };
+    $self->{_last_error} = $why if !$ok && defined $why;
+    return $ok;
 }
 
 sub _same_oid {
@@ -2572,8 +2674,6 @@ L</write_ref>.
 
 =cut
 
-use constant NEXT_ID_REF => 'refs/karr/meta/next-id';
-
 sub _parse_next_id {
     my ($raw) = @_;
     $raw = '' unless defined $raw;
@@ -2638,6 +2738,12 @@ Hands out one task id and advances the counter past it, atomically: the read
 and the compare-and-swapped write happen inside one L</retry_contended> loop,
 so two callers racing for the same id can never both receive it and silently
 overwrite each other's task (#44). Returns the allocated id.
+
+That makes this the sole authority for handing out an id, but only for as long
+as nothing else moves the counter: it was still possible for two creates to
+receive the same id when a pull walked the counter backwards between them
+(#172), which is why L</pull> merges that ref forward instead of adopting the
+remote's value.
 
 =cut
 

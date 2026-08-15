@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - Concurrent `karr create` no longer hands out the same task id
+      twice (#172). Eight parallel creates in one clone gave id 8 to
+      two different cards and one overwrote the other. The
+      compare-and-swap on refs/karr/meta/next-id was not at fault --
+      it is exclusive on its own -- but it is only the sole authority
+      for handing out an id while nothing else moves the ref it
+      counts on, and the pull did: reconciliation is last-writer-wins
+      per ref, so a remote counter behind the local one was
+      force-written over it and the next create was handed an id that
+      already had a card. A remote gets behind without anything being
+      wrong with it, because every push force-writes the whole
+      namespace and a push that started earlier can land after one
+      that started later. The counter is now merged rather than
+      adopted: a pull takes the remote's value only when it is ahead,
+      compare-and-swapped against the revision that comparison was
+      made on, so an allocation that slips in between makes the
+      attempt read again instead of clobbering it, and a local
+      counter that is already further along is kept and published by
+      the next push.
+
     - The documented `$(karr agentname)` idiom no longer teaches an
       agent to lose its own claim (#176). Every `karr agentname` call
       mints a new name and stores it nowhere, so the example in
