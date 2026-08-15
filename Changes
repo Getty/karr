@@ -1,5 +1,19 @@
 {{$NEXT}}
 
+    - A remote that accepts the connection and then goes quiet no
+      longer hangs karr forever (#170). `fetch` and `push` try the
+      native libgit2 transport first, and KARR_TRANSPORT_TIMEOUT
+      bounded only the git-CLI fallback, which runs after the native
+      call has returned -- so the one path that could block
+      indefinitely was the one the timeout could not reach (measured:
+      300 s in a blocking read, ended only from outside). The same
+      setting now also sets libgit2's own network timeouts when the
+      repository is opened, so one knob governs both routes, and 0
+      still means no limit. Note the reach of the native half: libgit2
+      applies it to git://, http:// and https://, while ssh:// reads go
+      through libssh2 and stay unbounded there -- for ssh the CLI
+      fallback remains the bounded route. Needs Git::Libgit2 0.007.
+
 0.500     2026-08-13 23:57:25Z
 
     - Three karr-foundation fixes (#165, #166, #168). `max_runtime: 0`

@@ -13,7 +13,12 @@ use Errno qw( EINTR );
 use POSIX qw( WNOHANG );
 use Scalar::Util qw( blessed );
 use Time::HiRes ();
-use Git::Libgit2 qw( GIT_ELOCKED );
+use Git::Libgit2 qw(
+    GIT_ELOCKED
+    GIT_OPT_SET_SERVER_CONNECT_TIMEOUT
+    GIT_OPT_SET_SERVER_TIMEOUT
+);
+use Git::Libgit2::FFI ();
 use App::karr::Error qw( clean_error );
 use App::karr::Encoding qw(
     BOARD_ENCODING_VERSION
@@ -50,7 +55,13 @@ fallback and surface native transport failures directly.
 
 Every CLI transport run is bounded by a wall-clock timeout, 120 seconds by
 default; C<KARR_TRANSPORT_TIMEOUT> overrides it (in seconds, C<0> disables
-it). A run that blows the timeout is killed and reported as a failure.
+it). A run that blows the timeout is killed and reported as a failure. The
+same setting bounds the native transport, as libgit2's per-read/write network
+timeout -- one knob for both routes. Two limits to that half: it needs libgit2
+1.8 or newer (older ones reject the option and stay unbounded), and libgit2
+applies it to its own socket transports (C<git://>, C<http://>, C<https://>),
+not to C<ssh://>, whose reads go through libssh2. The CLI fallback is bounded
+either way.
 
 C<push> sends C<refs/karr/*> under a forced, pruning refspec. C<pull> is its
 inverse, but it never fetches straight into the board: the remote state lands
@@ -225,7 +236,61 @@ sub _repo {
     return $self->{_repo} if $self->{_repo};
     return undef unless $self->is_repo;
     $self->{_repo} = Git::Native->open_ext( $self->dir->stringify );
+    _apply_native_transport_timeouts();
     return $self->{_repo};
+}
+
+# KARR_TRANSPORT_TIMEOUT used to bound _cli_transport and nothing else, and the
+# CLI only ever runs after the native transport has returned -- so it bounded
+# the one path that could not hang while leaving the one that could unbounded.
+# A peer that completes the TCP handshake and then never speaks kept every karr
+# command in a blocking read inside libgit2 forever (#170; measured at 300 s
+# with no end in sight, the process asleep at ~1.8% CPU). No callback fires in
+# that state, so nothing on the Perl side can interrupt it -- a Perl signal
+# handler is not delivered while the interpreter sits in a C call.
+#
+# libgit2 1.8 grew two globals for exactly this. They are milliseconds, and 0
+# means no limit, which is what KARR_TRANSPORT_TIMEOUT=0 already meant, so one
+# knob now governs both transports. As a bound this is weaker than the CLI's:
+# there the timeout is the whole run's wall clock, here it is one read or
+# write, so nothing that finishes under the CLI rule can fail under this one.
+#
+# git_libgit2_opts mutates process-global libgit2 state, not the repository
+# (the same story Git::Native->set_config_search_path tells about
+# GIT_OPT_SET_SEARCH_PATH), hence a package-level latch rather than per-object
+# state. It is keyed on the value so a caller that changes the environment
+# mid-process -- tests do -- is not answered from a stale global.
+#
+# Only libgit2's own socket transports honour these: git://, http:// and
+# https://. The ssh transport does its reads through libssh2, which retries
+# past the socket timeout, so an ssh:// remote still hangs the native path
+# (measured: still blocked after 75 s -- #174). The CLI fallback remains the
+# only bounded route for ssh.
+my $NATIVE_TRANSPORT_TIMEOUT;
+
+sub _apply_native_transport_timeouts {
+    my $seconds = _transport_timeout();
+    return if defined $NATIVE_TRANSPORT_TIMEOUT
+        && $NATIVE_TRANSPORT_TIMEOUT == $seconds;
+
+    # A sub-millisecond budget must not round down to 0 -- that is libgit2's
+    # "no limit", the exact opposite of what was asked for.
+    my $ms = int( $seconds * 1000 );
+    $ms = 1 if $seconds > 0 && $ms < 1;
+
+    # Both options were appended to libgit2's option enum in 1.8. An older
+    # library -- Debian bookworm ships 1.5.1, which karr's own CI runs on --
+    # answers -1 ("invalid option") and does nothing, leaving the native
+    # transport as unbounded as it was before. That is not worth a warning on
+    # every command: it would fire for purely local work, where no socket is
+    # involved and nothing can hang, and the CLI fallback still bounds the one
+    # path that reaches a network. The version requirement is in the POD
+    # instead.
+    Git::Libgit2::FFI::git_libgit2_opts_int( $_, $ms )
+        for GIT_OPT_SET_SERVER_CONNECT_TIMEOUT, GIT_OPT_SET_SERVER_TIMEOUT;
+
+    $NATIVE_TRANSPORT_TIMEOUT = $seconds;
+    return;
 }
 
 # The identity is read from git config once per process. The timestamp is not,
