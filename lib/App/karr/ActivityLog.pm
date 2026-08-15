@@ -47,6 +47,34 @@ collided (C<a b@x> and C<a-b@x> shared a ref) and produced names git rejects
 (C<a..b@x>, C<x@y.lock>). Refs written that way are not rewritten: L</entries>
 reads them alongside the current one so existing history stays visible.
 
+=head2 Segments
+
+One identity's log is a chain of refs, not one ref:
+
+    refs/karr/log/<role>/<email>          segment 0
+    refs/karr/log/<role>/<email>+000001   segment 1
+    refs/karr/log/<role>/<email>+000002   ...
+
+An entry is appended to the newest segment until that segment reaches
+L</segment_max_bytes>; the next entry then opens the following one, and the
+full segment is never rewritten again. A ref blob is rewritten whole on every
+append, so a single unbounded log ref made each entry cost a copy of the entire
+history: 10,000 entries of the ~93 bytes karr writes added up to about 4.6 GB
+of objects for a 1 MB log, growing quadratically (#171). Segmenting bounds one
+write by the cap instead of by the history, which makes the total linear.
+
+The layout needs no marker ref and no migration, unlike the encoding switch
+that C<refs/karr/meta/encoding> and L<App::karr::Cmd::Repair> exist for: which
+segments a log has is visible in the ref names. A board written before the
+split has segment 0 and nothing else -- indistinguishable from a board that has
+not rotated yet -- so it keeps being read and appended to as it was.
+
+Everything that reads the whole log by walking C<refs/karr/log/*> --
+C<karr log>, C<karr context> -- picks the segments up unchanged. C<karr
+context>, which excludes the invoking identity's own entries, uses
+L</owns_ref> rather than an equality test so a rotated segment does not read as
+another agent.
+
 =head1 METHODS
 
 =cut
@@ -66,6 +94,28 @@ given explicitly.
 has role => (
     is      => 'ro',
     default => sub { $ENV{KARR_ROLE} || 'user' },
+);
+
+# A log ref is rewritten in full on every append -- that is what a ref blob
+# is -- so an uncapped one makes the write path O(n): after 10,000 entries of
+# the ~93 bytes karr writes, the blobs written add up to ~93*10000**2/2, about
+# 4.6 GB of objects for a log that is 1 MB (#171). Capping a segment caps that:
+# a single entry never costs more than one blob of this size, and the total
+# written grows linearly. 8 KiB is roughly 80 karr entries, so a board gains
+# about one extra ref per 80 mutating commands.
+use constant SEGMENT_MAX_BYTES => 8192;
+
+=attr segment_max_bytes
+
+How large (in characters) the active log segment may grow before the next entry
+opens a new one; 8192 by default. Set explicitly only by the tests, which have
+to see rotation without writing the thousands of entries the real cap needs.
+
+=cut
+
+has segment_max_bytes => (
+    is      => 'ro',
+    default => sub { SEGMENT_MAX_BYTES },
 );
 
 # Percent-encode one identity component into a single git ref path component.
@@ -159,6 +209,95 @@ sub _ref {
     return 'refs/karr/log/' . $self->identity;
 }
 
+# One identity's log is a chain of segment refs, not a single ref:
+#
+#   refs/karr/log/<role>/<email>          segment 0 -- the only ref karr wrote
+#                                         before #171, and still the first one
+#                                         written on a fresh board
+#   refs/karr/log/<role>/<email>+000001   segment 1, opened when 0 is full
+#
+# '+' is legal in a git ref name and _encode_component never produces one (it
+# encodes to %2B), so a segment name can collide with no identity's own ref.
+# The segments are *siblings* of segment 0 rather than children of it, which
+# rules out the more obvious .../<email>/000001 spelling: git cannot hold a ref
+# and a directory of the same name, so that layout would be unwritable on every
+# board that already has a log.
+#
+# Nothing marks the format. The encoding switch needed refs/karr/meta/encoding
+# (see App::karr::Cmd::Repair) because the content could not tell you which of
+# two spellings it was in; here the layout is the ref names themselves. A board
+# written before #171 has segment 0 and nothing else, which is exactly what a
+# board that has not rotated yet looks like, so it is read -- and appended to --
+# without migration, and needs no repair pass.
+sub _segment_ref {
+    my ( $self, $index ) = @_;
+    return $index ? sprintf( '%s+%06d', $self->_ref, $index ) : $self->_ref;
+}
+
+# The exact set of ref names this identity's log occupies, as one regex: the
+# base ref and its '+NNNNNN' segments, nothing else. Takes the base as an
+# argument because _ref reaches into libgit2's config for the mail address
+# every time, which is nothing per command and a lot per ref in a loop.
+sub _own_ref_re {
+    my ( $self, $base ) = @_;
+    $base //= $self->_ref;
+    return qr/\A\Q$base\E(?:\+([0-9]+))?\z/;
+}
+
+sub _segment_index {
+    my ( $self, $ref ) = @_;
+    return $ref =~ $self->_own_ref_re ? ( $1 // 0 ) + 0 : 0;
+}
+
+# Every segment of this identity that exists, oldest first -- which is also
+# chronological order, because a segment is only ever appended to while it is
+# the newest one. The glob is the base ref name, so it also catches any other
+# identity whose encoded email merely starts with this one's; the regex is
+# what makes the match exact.
+sub _segment_refs {
+    my ($self) = @_;
+    my $base = $self->_ref;
+    my $re   = $self->_own_ref_re($base);
+    my %index;
+    for my $ref ( $self->git->list_refs($base) ) {
+        $index{$ref} = ( $1 // 0 ) + 0 if $ref =~ $re;
+    }
+    return sort { $index{$a} <=> $index{$b} } keys %index;
+}
+
+# The segment an append goes to: the newest existing one, or segment 0 when
+# this identity has never logged. Read through read_ref_with_oid so the caller
+# gets the content together with the OID to guard the write against.
+sub _active_segment {
+    my ($self) = @_;
+    my @refs = $self->_segment_refs;
+    return ( $self->_ref, undef, '' ) unless @refs;
+    my ( $oid, $content ) = $self->git->read_ref_with_oid( $refs[-1] );
+    return ( $refs[-1], $oid, $content // '' );
+}
+
+=method owns_ref
+
+    next if $log->owns_ref($ref);
+
+True when C<$ref> is one of this identity's log refs under the current naming
+scheme -- segment 0 (C<refs/karr/log/>L</identity>) or any of its rotated
+segments. Refs left behind by the pre-#75 schemes are not claimed;
+L</_legacy_refs> is what reads those.
+
+C<karr context> uses this to leave the invoking identity's own entries out of
+the cross-agent activity it summarises: comparing against L</identity> alone
+would have counted every rotated segment as somebody else's log the moment one
+identity's history outgrew a single ref.
+
+=cut
+
+sub owns_ref {
+    my ( $self, $ref ) = @_;
+    return 0 unless defined $ref;
+    return $ref =~ $self->_own_ref_re ? 1 : 0;
+}
+
 # The lossy pre-#75 mapping, kept only to find refs written with it.
 sub _legacy_sanitize {
     my ( $self, $s ) = @_;
@@ -193,10 +332,11 @@ sub _legacy_refs {
         ts      => '2026-05-15T10:00:00Z',  # optional, auto-generated
     );
 
-Writes a JSON log line to the per-identity ref. The ref path is
-C<refs/karr/log/E<lt>roleE<gt>/E<lt>encoded_emailE<gt>>.
+Writes a JSON log line to this identity's newest log segment, opening the next
+one when that segment has reached L</segment_max_bytes> (see
+L</Segments>). The first segment is C<refs/karr/log/E<lt>roleE<gt>/E<lt>encoded_emailE<gt>>.
 
-Returns the result of L<Git/write_ref>, or C<0> after warning if the entry
+Returns the result of L<Git/write_ref_cas>, or C<0> after warning if the entry
 could not be written. It never dies: by the time a command logs, it has
 already written the task the entry describes, so a failure here must not take
 the command down with a half-applied mutation behind it (#75).
@@ -225,11 +365,33 @@ sub log_entry {
     # the race into a textbook CAS that backs off and re-reads on contention.
     # retry_contended treats an empty return as "lost the race, try again";
     # write_ref_cas returns 0 on contention, so we map that to () here.
+    #
+    # What the CAS is taken against is the *newest segment*, re-resolved on
+    # every attempt: rotation is as much a lost race as an append is, and a
+    # writer that cached the segment it saw before backing off would append to
+    # a segment another writer has already sealed.
     return try {
         $self->git->retry_contended( "log entry to $ref", sub {
-            my ( $current_oid, $current ) = $self->git->read_ref_with_oid($ref);
-            my $new = $current ? "$current\n$line" : $line;
-            return $self->git->write_ref_cas( $ref, $new, $current_oid ) ? 1 : ();
+            my ( $segment, $current_oid, $current ) = $self->_active_segment;
+
+            # Rotate before the append, never after, so no segment is ever
+            # written past the cap and no entry is written twice. A full
+            # segment is simply left where it is -- immutable from here on --
+            # and the entry opens the next one guarded with expected_old =>
+            # undef, i.e. "only if that ref does not exist yet". Two writers
+            # rotating at the same moment therefore cannot clobber each other:
+            # the loser gets 0, re-reads, and appends to the segment the winner
+            # opened. An entry bigger than the whole cap still lands, in a
+            # segment of its own, rather than looping forever.
+            if ( length($current)
+                && length($current) + 1 + length($line) > $self->segment_max_bytes )
+            {
+                $segment = $self->_segment_ref( $self->_segment_index($segment) + 1 );
+                ( $current_oid, $current ) = ( undef, '' );
+            }
+
+            my $new = length $current ? "$current\n$line" : $line;
+            return $self->git->write_ref_cas( $segment, $new, $current_oid ) ? 1 : ();
         } );
     } catch {
         warn "karr: activity log write to '$ref' failed: $_";
@@ -245,13 +407,16 @@ Returns the decoded log entries for this identity, oldest first. Refs written
 under the pre-#75 naming schemes are read first and merged in ahead of the
 current ref, which is also their chronological order: a board stops being
 written under an old scheme the moment it is touched by a karr that knows the
-new one.
+new one. The current scheme's segments (L</Segments>) follow in segment order,
+which is chronological for the same reason: only the newest segment is ever
+appended to.
 
 =cut
 
 sub entries {
     my ($self) = @_;
-    return map { $self->_entries_from($_) } ( $self->_legacy_refs, $self->_ref );
+    return map { $self->_entries_from($_) }
+        ( $self->_legacy_refs, $self->_segment_refs );
 }
 
 sub _entries_from {
@@ -273,12 +438,20 @@ sub _entries_from {
 
 The most recent decoded log entry for this identity, or C<undef> if none.
 
+Reads the refs newest-first and stops at the first one that yields an entry, so
+on a segmented log this is one small ref read rather than the whole history --
+the point of L</Segments> being lost if the cheap write path were paid for with
+an expensive read of the last line.
+
 =cut
 
 sub last_entry {
     my ($self) = @_;
-    my @entries = $self->entries;
-    return @entries ? $entries[-1] : undef;
+    for my $ref ( reverse( $self->_legacy_refs, $self->_segment_refs ) ) {
+        my @entries = $self->_entries_from($ref);
+        return $entries[-1] if @entries;
+    }
+    return undef;
 }
 
 1;

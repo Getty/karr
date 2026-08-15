@@ -300,17 +300,23 @@ sub _task_item {
 # truncating a merged view blindly. An agent about to pick up work already
 # knows what it itself just did -- `karr show --me` is the tool for that --
 # so what changes its decision is what *other* identities have been doing.
-# Only the current-scheme ref is excluded; entries left on a pre-#75 legacy
+# Only the current-scheme refs are excluded; entries left on a pre-#75 legacy
 # ref (see App::karr::ActivityLog) are rare enough, and old enough, that
 # counting them as "someone else" costs nothing in practice.
+#
+# "The current-scheme refs" is plural and asked of the log itself (owns_ref),
+# not compared against one ref name: since #171 an identity's log rotates into
+# refs/karr/log/<role>/<email>+NNNNNN segments, and an equality test would have
+# started reporting this agent's own older entries as another agent's the
+# moment its log outgrew one segment.
 sub _recent_activity {
   my ($self) = @_;
   my $git = $self->git;
-  my $self_ref = 'refs/karr/log/' . $self->activity_log->identity;
+  my $log = $self->activity_log;
 
   my @entries;
   for my $ref ($git->list_refs('refs/karr/log/')) {
-    next if $ref eq $self_ref;
+    next if $log->owns_ref($ref);
     my $content = $git->read_ref($ref);
     next unless defined $content && length $content;
     for my $line (split /\n/, $content) {

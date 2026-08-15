@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - The activity log no longer rewrites itself on every entry
+      (#171). A log ref holds a blob, and log_entry appended by
+      reading that blob and writing it back with one line added, so
+      each entry cost a copy of the whole history: 10,000 mutating
+      commands wrote about 4.6 GB of objects for a log of 1 MB, and
+      because karr's ref commits are parentless, nearly all of those
+      copies became unreachable garbage immediately. One identity's
+      log is now a chain of segments — `refs/karr/log/<role>/<email>`
+      plus `<...>+000001`, `+000002` — of which only the newest is
+      appended to and only up to 8 KiB, so the bytes written grow
+      linearly instead of with the square of the log, and `last_entry`
+      reads one small ref instead of the entire history. Nothing has
+      to be migrated or marked: the layout is the ref names, a board
+      written before this reads (and keeps being appended to) exactly
+      as a board that has not rotated yet, and pre-#75 legacy refs are
+      still merged in ahead of it. `karr log` and `karr context` pick
+      the segments up through the same `refs/karr/log/*` walk they
+      already did; `karr context` now asks the log which refs are its
+      own instead of comparing one name, so a rotated segment of the
+      invoking identity is not reported as another agent's activity.
+
     - A remote that accepts the connection and then goes quiet no
       longer hangs karr forever (#170). `fetch` and `push` try the
       native libgit2 transport first, and KARR_TRANSPORT_TIMEOUT
