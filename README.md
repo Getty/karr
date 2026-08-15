@@ -197,7 +197,7 @@ Important refs:
 | `karr handoff` | move into review and append a note |
 | `karr context` | generate agent-facing board summary |
 | `karr log` | inspect per-agent or per-task activity |
-| `karr agentname` | generate short claim names |
+| `karr agentname` | generate short claim names (a new one every call - capture it once, see below) |
 
 ### Skills and helper refs
 

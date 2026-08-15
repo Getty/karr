@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - The documented `$(karr agentname)` idiom no longer teaches an
+      agent to lose its own claim (#176). Every `karr agentname` call
+      mints a new name and stores it nowhere, so the example in
+      App::karr::Cmd::AgentName -- correct for the single `karr pick`
+      it showed -- became wrong the moment it was copied to the
+      handoff at the end of the work: the card was claimed under one
+      name and handed off under another. While the first claim is
+      live that mismatch is at least refused; once it has expired the
+      mutation goes through and re-stamps the card with a name no
+      agent holds, and `list --claimed-by` / `log --agent` answer
+      "nothing" rather than "wrong name". The generator stays random
+      and stateless on purpose -- any handle stable enough to survive
+      across separate karr processes (board, Git identity, host) is
+      shared by every concurrent agent on that board, so deriving a
+      name from one would trade a refused mismatch for an unrefusable
+      collision -- and the POD, the shipped skill doc and the release
+      design scenario now show only the capture-once form
+      (`NAME=$(karr agentname)`), warn that the name is not
+      remembered, and point at `karr show ID` / `karr pick`'s own
+      output as the way to read a lost claim name back off the board.
+
     - The activity log no longer rewrites itself on every entry
       (#171). A log ref holds a blob, and log_entry appended by
       reading that blob and writing it back with one line added, so

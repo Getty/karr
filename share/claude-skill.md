@@ -335,9 +335,19 @@ hour is finer than the data underneath it.
 ### Agent name
 
 ```bash
-karr agent-name                               # generate random two-word name
-karr pick --claim $(karr agent-name) --move in-progress
+NAME=$(karr agent-name)                       # mint once, reuse everywhere
+karr pick --claim "$NAME" --move in-progress
+karr handoff ID --claim "$NAME" --note "Implementation complete"
 ```
+
+Every `karr agent-name` call mints a **new** name and remembers it nowhere, so
+`--claim "$(karr agent-name)"` written a second time claims under one name and
+hands off under another â while the first claim is live the handoff is refused,
+and once it has expired it silently re-stamps the card with a name nobody holds.
+Capture the name once into a shell variable and pass that same variable to every
+later `--claim`, `--claimed-by` and `log --agent`. If it was never captured, read
+it back off the board (`karr show ID` â `Claimed:`, or `karr pick`'s own
+`(claimed by NAME)`) rather than minting a fresh one.
 
 ## Stored task format
 

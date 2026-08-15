@@ -16,7 +16,12 @@ with 'App::karr::Role::ExitCodes';
 =head1 SYNOPSIS
 
     karr agentname
-    karr pick --claim "$(karr agentname)" --move in-progress
+
+    # Capture the name once, then pass the same variable to every call that
+    # has to agree about the claim:
+    NAME=$(karr agentname)
+    karr pick --claim "$NAME" --move in-progress
+    karr handoff 7 --claim "$NAME" --note "Implementation complete"
 
 =head1 DESCRIPTION
 
@@ -24,10 +29,47 @@ Generates a random two-word, lowercase agent name joined by a hyphen. The
 command prefers the system dictionary when available and falls back to the
 built-in word list otherwise.
 
+Every call mints a new name. Nothing is remembered between calls -- not per
+board, not per process, not per agent -- so C<$(karr agentname)> written twice
+produces two unrelated names.
+
+That matters because claims are compared by name. C<--claim> on
+L<App::karr::Cmd::Pick> and L<App::karr::Cmd::Move> records the name;
+L<App::karr::Cmd::Move>, L<App::karr::Cmd::Edit> and
+L<App::karr::Cmd::Handoff> check the name they are handed against the one on
+the card (L<App::karr::Role::ClaimTimeout/check_claim>); and C<karr list
+--claimed-by> and C<karr log --agent> select on it. So this pair
+
+    karr pick --claim "$(karr agentname)" --move in-progress    # DON'T
+    karr handoff 7 --claim "$(karr agentname)"                  # DON'T
+
+claims under one name and hands off under another. Substituting the command
+inline is only ever correct where the name is used once and never referred to
+again -- which is almost never, since the handoff at the end of the work is a
+second reference. Capture it into a shell variable instead, as the SYNOPSIS
+does (ticket #176).
+
+A name that was not captured is still recoverable from the board rather than
+lost: C<karr pick> prints C<(claimed by NAME)>, C<karr show ID> prints
+C<Claimed:>, and the refusal C<check_claim> raises names the current claimant.
+Minting a fresh one instead is the mistake. While the original claim is live
+the mismatch is at least refused; once it has expired the mutation goes
+through and re-stamps the card with a name no agent is holding.
+
+The generated name is deliberately not made stable per agent. Any handle that
+would survive across separate C<karr> processes -- the board, the Git
+identity, the host -- is equally shared by every other agent working that same
+board, so deriving a name from one would hand two concurrent agents an
+identical claim. That is strictly worse than the mismatch it would fix: a
+mismatch is refused by C<check_claim>, a collision is indistinguishable from
+the rightful owner and is not. Callers that need a stable identity should
+supply their own name and not go through this command, which exists to suggest
+a name, not to remember one.
+
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::Pick>, L<App::karr::Cmd::Handoff>,
-L<App::karr::Cmd::Log>
+L<App::karr::Cmd::Log>, L<App::karr::Role::ClaimTimeout>
 
 =cut
 

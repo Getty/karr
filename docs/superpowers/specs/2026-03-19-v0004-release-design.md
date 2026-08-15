@@ -477,16 +477,20 @@ docker run --rm -v $(pwd):/work raudssus/karr init --name "my-project"
 docker run --rm -v $(pwd):/work raudssus/karr skill install
 
 # Agent session starts, skill is loaded automatically
+# Agent mints its claim name once -- every `karr agentname` call returns a
+# different one, so the later --claim arguments have to reuse this variable:
+NAME=$(karr agentname)
+
 # Agent checks what's available:
-karr pick --claim $(karr agentname) --status todo --move in-progress --json
+karr pick --claim "$NAME" --status todo --move in-progress --json
 
 # Agent works on the task...
 
 # Agent hands off:
-karr handoff 5 --claim swift-fox --note "Implemented auth module, tests pass" -t
+karr handoff 5 --claim "$NAME" --note "Implemented auth module, tests pass" -t
 
 # Agent marks done:
-karr move 5 done --claim swift-fox
+karr move 5 done --claim "$NAME"
 ```
 
 **Integration hint:** Add a Claude Code hook that runs `karr context --write-to AGENTS.md` on session start, so the agent always sees the current board state.
