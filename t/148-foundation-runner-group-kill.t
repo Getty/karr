@@ -81,7 +81,19 @@ subtest 'backgrounded sleep is killed by the timeout, not reparented to init' =>
     # execs a foreground sleep. The backgrounded sleep is the regression
     # we want to see killed -- under the old code it was reparented to
     # init and lived for 30s after the runner returned.
-    my $cmd = 'sleep 30 & exec sleep 30';
+    #
+    # The duration carries a marker unique to this test process ($$) so
+    # the post-mortem scan below can identify *our* sleep by exact argv
+    # instead of pattern-matching every process on the box. A bare
+    # "sleep 30" substring match also catches unrelated survivors like
+    # "sleep 300" from a concurrent session (#179), and would cross-match
+    # between two copies of this very test running at once on a shared
+    # machine -- the marker rules both out. The fractional suffix is a
+    # no-op for `sleep` (it just sleeps 30-point-something seconds
+    # instead of exactly 30), so the timeout/kill behaviour under test is
+    # unaffected.
+    my $marker = "30.$$";
+    my $cmd = "sleep $marker & exec sleep $marker";
 
     # We need the agent's PID to look at its /proc/<pid>/stat before
     # exec. Reading /proc/<pid>/stat AFTER exec still gives us the same
@@ -145,18 +157,22 @@ subtest 'backgrounded sleep is killed by the timeout, not reparented to init' =>
         next if $entry == $$;                  # the test itself
         my $cmdline = safe_slurp("/proc/$entry/cmdline") // next;
         $cmdline =~ s/\0/ /g;
+        $cmdline =~ s/\s+$//;                  # trailing NUL -> trailing space
         # The watcher has exited; filter its defunct shell (a `sh -c`
         # looping select) by parent. /proc/<pid>/status has PPid.
         my $status = safe_slurp("/proc/$entry/status") // next;
         my ($ppid) = $status =~ /^PPid:\s*(\d+)/m;
         next if defined $ppid && $ppid == $test_pid;
-        if ( $cmdline =~ /sleep 30/ ) {
+        # Exact argv match on our own marked duration, not a substring:
+        # "sleep 30" would also catch an unrelated "sleep 300" elsewhere
+        # on the box, or the sibling sleep of another copy of this test.
+        if ( $cmdline eq "sleep $marker" ) {
             push @still_running, [ $entry, $cmdline, $ppid ];
         }
     }
     closedir $d;
 
-    ok !@still_running, 'no orphan sleep 30 left on the box'
+    ok !@still_running, "no orphan sleep $marker left on the box"
         or diag "survivors: @{[ map { join('/',@$_) } @still_running ]}";
 };
 
