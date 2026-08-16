@@ -25,6 +25,17 @@ flags it fetches the remote ref state and then pushes the local ref state back,
 pruning deleted refs so destructive restore operations can be mirrored
 correctly.
 
+Both halves run through L<App::karr::Role::SyncLifecycle>, so this command
+retries exactly as every writing command does: up to three attempts each, the
+first silent and the retries announced from the second, errors always on
+STDERR, and C<--quiet> silencing the progress lines and the retry
+announcements but never an error. A push the remote refused ref by ref is
+I<not> retried -- the far side gave its answer -- unless the refusal was only
+contention, two pushes racing for the same ref, which the next attempt wins
+(L<App::karr::Git/push_contention>). This is the command karr points every
+failed sync at, and until #183 it was the only one that pushed once and gave
+up.
+
 =head1 OPTIONS
 
 =over 4
@@ -100,22 +111,37 @@ sub execute {
     my $push_only = $self->push && !$self->pull;
     my $pull_only = $self->pull && !$self->push;
 
+    # Both halves go through App::karr::Role::SyncLifecycle, which this command
+    # has composed all along (via App::karr::Role::BoardAccess) without using.
+    # It called $git->pull and $git->push exactly once each and died on a false
+    # return -- so the command every failed sync is pointed at ("Run 'karr sync'
+    # to retry") was the one command with no retry and no idea what contention
+    # is, while #181 had already taught the role and the insurance push to spend
+    # their three attempts on a push another push had merely beaten to a ref
+    # (#183). Nothing is duplicated here: the retry-only output, the "errors
+    # always on STDERR, --quiet silences only the banners" contract, and the
+    # refusal-versus-contention verdict all live in the role.
     unless ($push_only) {
         print STDERR "Pulling refs/karr/ from remote...\n" unless $self->quiet;
         # --prune is the one place that may reconcile the board down to
         # nothing, and --accept-foreign-board the one place that may adopt a
         # remote whose board identity is not this board's; everywhere else
-        # App::karr::Git refuses and says so (#82, #95).
-        $git->pull( undef,
+        # App::karr::Git refuses and says so (#82, #95). The role forwards both
+        # to App::karr::Git::pull unchanged, on every attempt -- neither is ever
+        # implied, and a retry does not quietly widen what was allowed.
+        my @accept = (
             accept_wipe    => $self->prune,
-            accept_foreign => $self->accept_foreign_board )
-            or die "Pull failed: " . ( $git->last_error // 'unknown error' ) . "\n";
+            accept_foreign => $self->accept_foreign_board,
+        );
+        # sync_before is sync_pull plus a SyncGuard, and a guard left armed is
+        # a push at process teardown -- exactly what --pull says not to do. So
+        # the pull-only form takes the pull without the insurance.
+        $pull_only ? $self->sync_pull(@accept) : $self->sync_before(@accept);
     }
 
     unless ($pull_only) {
         print STDERR "Pushing refs/karr/ to remote...\n" unless $self->quiet;
-        $git->push
-            or die "Push failed: " . ( $git->last_error // 'unknown error' ) . "\n";
+        $self->sync_after;
     }
 
     say "Done.";

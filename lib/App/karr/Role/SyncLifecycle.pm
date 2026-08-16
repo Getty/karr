@@ -48,24 +48,36 @@ by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
 
 =head1 METHODS
 
-=method sync_before
+=method sync_pull
 
-    $self->sync_before;
+    $self->sync_pull;                          # the ordinary guarded pull
+    $self->sync_pull( accept_wipe => 1 );      # karr sync --prune
+    $self->sync_pull( accept_foreign => 1 );   # karr sync --accept-foreign-board
 
-Pulls refs from remote with up to 3 attempts. Output is retry-only: the first
-attempt is silent, retries are announced from attempt 2 ("Pull retry 2 of
-3..."), and errors always reach STDERR. C<--quiet> additionally suppresses the
-retry announcements but never the errors. Each distinct error is shown once:
-neither a repeat of the previous attempt's error nor the message that ends the
-command prints it again. Creates a L<App::karr::SyncGuard>,
-retains it on the object (so it outlives the call and covers the command body),
-and also returns it for callers that want to manage it explicitly. C<sync_after>
-clears it on a successful push.
+Pulls refs from remote with up to 3 attempts, and nothing else. Output is
+retry-only: the first attempt is silent, retries are announced from attempt 2
+("Pull retry 2 of 3..."), and errors always reach STDERR. C<--quiet>
+additionally suppresses the retry announcements but never the errors. Each
+distinct error is shown once: neither a repeat of the previous attempt's error
+nor the message that ends the command prints it again.
+
+Any named arguments are handed to L<App::karr::Git/pull> unchanged, on every
+attempt. That is how C<karr sync>'s two safety valves reach the pull -- and
+they are passed only when the caller passes them, so a command that calls this
+(or L</sync_before>) bare still gets the wholesale-wipe and board-identity
+refusals (#82, #95). Those refusals C<die> out of L<App::karr::Git/pull>
+rather than returning false, so they end the pull on the first attempt instead
+of being retried: they are the remote's state, not a transport failure.
+
+This is L</sync_before> without the L<App::karr::SyncGuard>, for the one
+caller that pulls and is not going to push -- C<karr sync --pull>, where an
+armed guard would be a push at process teardown that the flag exists to
+prevent. Everything that pulls in order to write calls C<sync_before>.
 
 =cut
 
-sub sync_before {
-    my ($self) = @_;
+sub sync_pull {
+    my ( $self, %opt ) = @_;
     my $git = $self->can('git') ? $self->git : $self->store->git;
 
     my $ok    = 0;
@@ -75,7 +87,7 @@ sub sync_before {
         # Retry-only: attempt 1 is silent; only announce the actual retries.
         print STDERR "Pull retry $attempt of 3...\n"
           if $attempt > 1 && !$self->quiet;
-        $ok = $git->pull;
+        $ok = $git->pull( undef, %opt );
         if ($ok) {
             print STDERR "Pull succeeded.\n" if $attempt > 1 && !$self->quiet;
             last;
@@ -100,8 +112,29 @@ sub sync_before {
         "Pull failed after 3 attempts. Nothing was changed.\n"
       . "Run 'karr sync' to retry." ) unless $ok;
 
+    return 1;
+}
+
+=method sync_before
+
+    $self->sync_before;
+    $self->sync_before( accept_wipe => 1 );   # options reach Git::pull
+
+L</sync_pull> plus the insurance: it runs the same retrying pull, forwarding
+any named arguments to L<App::karr::Git/pull>, and then creates a
+L<App::karr::SyncGuard>, retains it on the object (so it outlives the call and
+covers the command body), and also returns it for callers that want to manage
+it explicitly. C<sync_after> clears it on a successful push.
+
+=cut
+
+sub sync_before {
+    my ( $self, %opt ) = @_;
+    $self->sync_pull(%opt);
+
     # Stash the guard on the object so it outlives sync_before's return and
     # covers the whole command body; sync_after neutralises it on success.
+    my $git = $self->can('git') ? $self->git : $self->store->git;
     my $guard = App::karr::SyncGuard->new( git => $git, quiet => $self->quiet );
     $self->_sync_guard($guard);
     return $guard;

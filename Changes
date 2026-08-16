@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - `karr sync` retries a push that lost a race, as every other
+      command already did (#183). #181 taught the write path -- the
+      sync lifecycle and the insurance push -- to spend its three
+      attempts on a push the far side rejected only because another
+      push had reached the same ref first. `karr sync` never went
+      through that path: it called pull and push exactly once each
+      and died on a false return, so the one command karr points
+      every failed sync at ("Run 'karr sync' to retry") was the one
+      command with no retry at all, and the spurious rejection taken
+      out everywhere else -- 4 to 5 of 8 parallel writers against a
+      real `git daemon`, measured in #181 -- was still waiting
+      there. Both halves now run through the shared lifecycle
+      instead of a second copy of it: three attempts each, retries
+      announced from the second, errors always on STDERR, `--quiet`
+      silencing the banners and never an error. A refusal that is
+      not contention still ends the push on the first attempt, and
+      `--prune` and `--accept-foreign-board` reach the pull
+      unchanged on every attempt -- a retry does not widen what was
+      allowed. `karr sync --pull` still pushes nothing, not even at
+      process teardown.
+
     - `karr init` in a fresh clone no longer starts a rival board
       (#182). `git clone` does not carry refs/karr/*, so a checkout
       whose board lives on origin holds nothing under refs/karr/ --
