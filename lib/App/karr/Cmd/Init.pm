@@ -5,7 +5,8 @@ our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr init [--name TEXT] [--statuses LIST] [--claude-skill]',
+  usage_string => 'USAGE: karr init [--name TEXT] [--statuses LIST] [--claude-skill] '
+    . '[--new-board]',
 );
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Config;
@@ -21,12 +22,22 @@ with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SkillFile';
     karr init --name "My Project"
     karr init --statuses backlog,todo,in-progress,review,done
     karr init --name "Client Work" --claude-skill
+    karr init --new-board          # in a clone whose remote already has one
 
 =head1 DESCRIPTION
 
 Creates a new board inside C<refs/karr/*> in the current Git repository. The
 command writes the initial config and metadata refs and can optionally install
 the bundled Claude Code skill into the repository.
+
+Before it writes anything it asks the remote whether this repository already
+has a board there, because C<git clone> does not fetch C<refs/karr/*> and a
+fresh clone is therefore indistinguishable from a repository that never had
+one. A remote that advertises C<refs/karr/*> means the board exists and is one
+C<karr sync> away, so C<init> refuses and says so rather than starting a second
+board beside it (#182). Every other answer -- no remote, an unreachable one,
+no answer inside the probe's budget -- lets C<init> through: it has to work
+offline.
 
 =head1 OPTIONS
 
@@ -39,6 +50,15 @@ Sets the board name stored in C<board.name>.
 =item * C<--statuses>
 
 Replaces the default status list with the comma-separated statuses you supply.
+
+=item * C<--new-board>
+
+Starts a board here even though the remote already has one, skipping the
+question C<init> otherwise asks it. For the rare case where a clone
+deliberately keeps its own, independent board -- and, because it takes no round
+trip at all, for initializing without touching the network. The two boards do
+not sync with each other: the board-identity guard refuses that, which is what
+it is for (#95).
 
 =item * C<--claude-skill>
 
@@ -69,6 +89,11 @@ option statuses => (
   doc => 'Comma-separated status list',
 );
 
+option new_board => (
+  is => 'ro',
+  doc => 'Start a board here even though the remote already has one',
+);
+
 option claude_skill => (
   is => 'ro',
   doc => 'Install Claude Code skill for karr',
@@ -82,6 +107,11 @@ sub execute {
   my $root  = $self->git_root;
   my $store = $self->store;
   die "Board already exists in refs/karr/\n" if $store->board_exists;
+
+  # Before the first ref write, and before $born_here below: whether this
+  # repository already has a board is a question the remote answers too, not
+  # the local refs alone (#182).
+  $self->_refuse_if_remote_has_board unless $self->new_board;
 
   # Asked before the first ref write below, which would make any repository
   # look like it already held something. This is what tells a board born here
@@ -164,6 +194,67 @@ sub execute {
   if ($self->claude_skill) {
     $self->_install_claude_skill($root);
   }
+}
+
+# `git clone` does not carry refs/karr/*, so a fresh clone of a repository
+# whose board lives on origin holds nothing under refs/karr/ -- exactly what a
+# repository that never had a board looks like. init used to answer that by
+# writing a second board with its own refs/karr/meta/board-id, and the next
+# sync then hit the board-identity guard (#95) with "the remote is a different
+# board": true, unhelpful, and too late, since the user is by then holding two
+# boards and has to work out which one is theirs (#182).
+#
+# So ask the remote first, through the same bounded ls-remote probe the read
+# path takes before it refuses (App::karr::Git/remote_has_board, reached from
+# App::karr::Role::BoardDiscovery/_autofetch_board). Ask, and only ask: the
+# read path fetches at this point because a read has nothing to lose and no
+# other way to answer the question it was given, while init writes, and a
+# writing command that pulls a whole board in unasked is a bigger surprise
+# than the one it prevents. Refusing and naming `karr sync` leaves that fetch
+# where the user can see it.
+#
+# Only a remote that actually advertises refs/karr/* refuses. Every other
+# answer -- no remote configured, an unreachable one, no git CLI, no answer
+# inside the probe's budget -- lets init through, because init has to work
+# offline and a question that could not be put is not evidence of a board.
+# KARR_NO_AUTO_FETCH is deliberately not consulted: it switches off an
+# implicit fetch on the read path, this fetches nothing, and someone who set
+# it so that reads stay local has not thereby asked for a second board.
+# --new-board is the opt-out here, and it skips the round trip as well.
+#
+# Board refs already here do not change the answer, half-board (#62) included.
+# A half-board plus a board on the remote is not a half-board to complete:
+# completing it stamps refs/karr/meta/board-id, this repository's board -- the
+# one on origin -- already carries one, and the next sync is back in #95.
+# `karr sync` brings in the config those stray refs are missing and merges the
+# id counter forward (#172), which completes the same board without minting a
+# rival identity for it.
+sub _refuse_if_remote_has_board {
+  my ($self) = @_;
+
+  my $git        = $self->store->git;
+  my $advertised = $git->remote_has_board;
+
+  if ( !defined $advertised ) {
+    # The probe could not ask, and init is about to create a board that may
+    # turn out to be the second one. The user waited for this round trip, so
+    # say in one line what it could not establish -- on STDERR, in front of
+    # init's own output on STDOUT.
+    my $why = $git->last_error // 'unknown error';
+    $why =~ s/\s*\n.*//s;
+    print STDERR "karr: could not ask the remote whether it already has a board: $why\n";
+    return;
+  }
+  return unless $advertised;
+
+  user_error(
+      "This repository already has a board on origin: 'git clone' does not fetch\n"
+    . "refs/karr/*, so a fresh clone looks like it has none until the board is\n"
+    . "brought in. Run 'karr sync' to fetch it.\n"
+    . "Initializing here would start a second board beside it, and the next sync\n"
+    . "would refuse the two as different boards. Run 'karr init --new-board' if an\n"
+    . "independent board in this clone is really what you want."
+  );
 }
 
 sub _install_claude_skill {

@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `karr init` in a fresh clone no longer starts a rival board
+      (#182). `git clone` does not carry refs/karr/*, so a checkout
+      whose board lives on origin holds nothing under refs/karr/ --
+      from the inside, indistinguishable from a repository that
+      never had one. init answered that by writing a second board
+      with an identity of its own, and the next sync then refused
+      the two as different boards (#95): correct, and too late to
+      help, since the user was by then holding two boards and had to
+      work out which one was theirs. It now asks the remote before
+      it writes anything, through the same bounded `ls-remote` probe
+      the read path uses since #173, and refuses by naming the one
+      command that brings the board in. Only a remote that actually
+      advertises refs/karr/* refuses; no remote, an unreachable one,
+      or no answer inside the probe's budget lets init through with
+      one line on STDERR about what could not be established,
+      because init has to work offline. `karr init --new-board`
+      skips the question for a clone that deliberately keeps a board
+      of its own -- and, taking no round trip at all, for
+      initializing without touching the network.
+
     - Parallel writes no longer fail on a push that raced (#181).
       Eight `karr create` at once in one clone kept every card, but
       exited non-zero on some of them: the far side had rejected the
