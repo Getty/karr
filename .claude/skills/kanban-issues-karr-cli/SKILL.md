@@ -14,11 +14,21 @@ temporary task/config view only while they run.
 ### Initialize
 
 ```bash
-karr init [--name NAME] [--statuses s1,s2,s3] [--claude-skill]
+karr init [--name NAME] [--statuses s1,s2,s3] [--claude-skill] [--new-board]
 ```
 
 Creates the board refs inside the current Git repository. With
 `--claude-skill`, installs this skill to `.claude/skills/karr/SKILL.md`.
+
+Before it writes anything, init asks the remote whether this repository already
+has a board there: `git clone` does not fetch `refs/karr/*`, so a fresh clone
+looks exactly like a repository that never had one. A remote that advertises
+`refs/karr/*` means the board exists and is one `karr sync` away, so init
+refuses and says so rather than starting a second board beside it. Every other
+answer -- no remote, an unreachable one, no answer inside the probe budget --
+lets init through, because it has to work offline. Use `--new-board` only when
+a clone is really meant to keep its own, independent board: the two will not
+sync with each other, and the board-identity guard is what stops them.
 
 ### Create task
 
@@ -232,8 +242,11 @@ but where there is nothing under `refs/karr/` at all and the remote has a
 board, they fetch it once and answer, with one line on STDERR (never STDOUT)
 saying where it came from. Where there is no remote, or the remote has no
 board, they still refuse with exit 1 rather than rendering an empty board:
-that is the only place `karr init` is the answer, and running it in a clone
-whose board is on the remote would start a second, empty board beside it.
+that is the only place `karr init` is the answer. In a clone whose board is on
+the remote, `karr init` refuses as well and points at `karr sync`, so it can no
+longer start a second, empty board beside the real one; `karr init --new-board`
+is the documented way through when an independent board there really is what
+you want.
 `KARR_NO_AUTO_FETCH=1` switches the fetch off where karr must not touch the
 network.
 
