@@ -1,0 +1,45 @@
+---
+claimed_at: 2026-08-15T09:10:03Z
+claimed_by: self-east
+class: standard
+completed: 2026-08-17T01:43:18Z
+created: 2026-08-15T08:10:20Z
+id: 170
+priority: high
+started: 2026-08-15T08:12:56Z
+status: done
+tags:
+- transport
+- hang
+- git
+title: native libgit2 transport has no network timeout — a silent remote hangs karr
+  forever
+updated: 2026-08-17T01:43:18Z
+---
+
+Measured: a TCP peer that accepts the connection and then never answers makes any karr command hang indefinitely. Test ran 300s and was only ended by an external timeout wrapper; the process sits in state S at ~1.8% CPU, 47MB RSS — it never returns on its own.
+
+Root cause: fetch/push try the native libgit2 path FIRST (Git.pm:1152 fetch, Git.pm:1269 push). KARR_TRANSPORT_TIMEOUT (default 120s, Git.pm:2023) only ever applies to _cli_transport, i.e. AFTER the native call has returned. If it never returns, the timeout is unreachable.
+
+libgit2 1.9 does support GIT_OPT_SET_SERVER_TIMEOUT (48) and GIT_OPT_SET_SERVER_CONNECT_TIMEOUT (47), both default 0 = no limit. They are NOT usable from here: Git::Libgit2::FFI.pm:101 declares git_libgit2_opts only as (int) => (int, string), while these options need (int, int). So this ticket spans two distributions:
+  1. ~/dev/p5-git-libgit2: add an (int,int) variadic attachment + the two constants.
+  2. karr: set both timeouts once at repo open, derived from KARR_TRANSPORT_TIMEOUT so one knob governs both transports.
+
+Impact: this is the "hang" that blocks unattended agents. Worst case per command today: sync_before 3 attempts + sync_after 3 + SyncGuard 3 = up to 9 x 120s = 18 minutes via CLI fallback, unbounded via native.
+2026-08-15 09:10 Fixed across two repos, both committed locally, nothing pushed.
+
+p5-git-libgit2 8611bfc "Bind git_libgit2_opts for its (int, int) shape, for the network timeouts": second attachment of the same variadic C function under the Perl name git_libgit2_opts_int, plus the constants GIT_OPT_SET_SERVER_CONNECT_TIMEOUT and GIT_OPT_SET_SERVER_TIMEOUT in @EXPORT_OK. Their values are 39 and 41, not the 47/48 this ticket named -- measured against libgit2 1.9.0 (positions in /usr/include/git2/common.h; 47 and 48 return -1, "invalid option"). New t/28-server-timeout.t proves the option works rather than only returning 0: git_remote_connect to a socket that listens and never accepts has to end on its own, run in a forked child with the parent enforcing the deadline. t/26-constants.t pins the two enum positions. GET_* counterparts stay unbound: a pointer in a variadic argument list segfaults FFI::Platypus 2.11.
+
+karr 5b2d24c "Bound the native transport too, not just the CLI fallback (#170)": App::karr::Git::_apply_native_transport_timeouts sets both options from KARR_TRANSPORT_TIMEOUT when _repo opens the repository (seconds -> ms, 0 still means no limit, sub-ms budgets floored at 1 ms so they cannot round into "no limit"). Package-level latch keyed on the value, because git_libgit2_opts mutates process-global libgit2 state. cpanfile now requires Git::Libgit2 0.007. New t/170-native-transport-timeout.t: silent listener + git:// origin + KARR_NO_CLI_FALLBACK=1, fetch in a forked child; it fails after ~3 s with KARR_TRANSPORT_TIMEOUT=3, and the second subtest is the counter-proof that with 0 it still hangs. Red step verified: with the one call removed the test fails (child killed after 25 s).
+
+MEASURED GAP -- ssh:// is NOT covered. libgit2 applies these timeouts to its own socket transports only: git:// and http:// time out as configured, ssh:// was still blocked after 75 s with both options set (libssh2 does its own reads). So this bounds the native path for git/http/https; for ssh the git CLI fallback stays the only bounded route. Filed as #174 with the repro and three options for fixing it. Second limit: needs libgit2 1.8+; bookworm 1.5.1 (karr CI) rejects the options -- deliberately no warning, since it would fire on every purely local command; the requirement is stated in the Git.pm POD.
+
+TEST RESULTS
+karr, full suite: prove -l -I~/dev/p5-git-libgit2/lib -I~/dev/p5-git-native/lib t/ -> Files=161, Tests=1097, one file red: t/67-bin-version.t (2 of 6), pre-existing and already tracked as #175 (bin/karr says 0.500, lib says 0.501). Note that plain "prove -l t/" cannot run here at all: Git::Native is not installed, it exists only as a dev checkout (~/bin/karr adds both -I paths). The baseline before my change had the same t/67 failure plus a flaky t/94-write-path-validation.t, which passed standalone and in the final run -- two agents were running the suite concurrently.
+p5-git-libgit2, full suite: prove -lr t/ -> Files=28, Tests=5256, all pass.
+
+REVIEW POINTS
+1. karr now calls Git::Libgit2::FFI::git_libgit2_opts_int directly, and that module documents itself as "internal use only". It follows this ticket and matches Git::Native, which calls git_libgit2_opts the same way; if you want the layering clean, the setter belongs on Git::Native as a class method next to set_config_search_path (a third distribution).
+2. I staged only my four files (Changes through the index, not the worktree): another agent had uncommitted work on ActivityLog.pm, Cmd/Context.pm and t/171 in the same checkout, and that is untouched.
+3. Confirmed #176 the hard way: $(karr agentname) minted a different name for the move than for this handoff, so the claim here is the literal name from the move.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
