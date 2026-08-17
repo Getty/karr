@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-08-16T17:29:58Z
+claimed_by: just-here
+class: standard
+completed: 2026-08-17T01:45:30Z
+created: 2026-08-15T15:57:37Z
+id: 182
+priority: medium
+started: 2026-08-16T16:49:37Z
+status: done
+tags:
+- ux
+- sync
+- init
+title: karr init in a fresh clone starts a rival board instead of noticing the remote
+  has one
+updated: 2026-08-17T01:45:30Z
+---
+
+Found while doing #173. `karr init` refuses only when refs/karr/config is already here (Cmd/Init.pm), and it never asks the remote. In a fresh clone -- where `git clone` has left refs/karr/* behind and the whole board is on origin -- init therefore writes a second board with a fresh refs/karr/meta/board-id. The next sync then hits the board-identity guard (#95) and refuses with "the remote is a different board", which is correct and unhelpful: the user now has to work out which of the two boards is theirs, and `--accept-foreign-board` is the only documented way out.
+
+Every read command already warns against this ("do not run karr init here"), and #173 made the same read fetch the board instead of printing that warning, so the warning is now seen less often -- the trap stays.
+
+#173 also left the piece this needs: App::karr::Git->remote_has_board, a bounded ls-remote probe that answers "does the remote have a board" without fetching. Init could ask it before writing anything: a remote that advertises refs/karr/* means this repository has a board and it is one pull away, so refuse with "run karr sync" (or pull it and complete a half-board), and leave todays behaviour for a remote with no board.
+
+Two things to decide: whether init should fetch or only refuse (refusing is the smaller change and init is not a read command), and what --force/opt-out looks like for someone who really does want a new board in a clone whose remote has one.
+Implemented in 376cb1a. init asks origin via the bounded remote_has_board probe before the first ref write; only an advertised refs/karr/* refuses, everything else (no remote, unreachable, budget exceeded) lets init through with one STDERR line, because init must work offline. --new-board is the opt-out. Half-board (#62) plus a remote board also refuses -- completing it would stamp a board-id the remote board already has and land back in #95. t/182-init-remote-board.t, 5 subtests, 4 fail without the fix. Full suite 169/1141 PASS. Doc follow-up filed and done as #184.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen). Integrations-Smoke gegen ein Wegwerf-Repo bestanden. Freigegeben -> done.
