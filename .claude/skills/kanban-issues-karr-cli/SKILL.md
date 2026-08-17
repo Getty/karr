@@ -36,6 +36,8 @@ sync with each other, and the board-identity guard is what stops them.
 karr create "Title" [--status STATUS] [--priority PRIORITY] [--tags t1,t2] [--body TEXT]
 karr create --title "Title" --assignee NAME --due 2026-03-15
 karr create "Ship it" --depends-on 2,3       # ids of tasks this one depends on; each must exist on this board
+karr create "Wait for the fix" --needs other-repo#7   # waits on a card in ANOTHER repository of the fleet
+karr create "Fix the thing" --escalated-from home#5   # the card raised in that other repository
 ```
 
 ### List tasks
@@ -78,6 +80,8 @@ karr edit ID --title "New title"
 karr edit ID --priority high --add-tag urgent
 karr edit ID --add-depends-on 2,3            # append dependency ids (no duplicates; ids must exist, no self-reference)
 karr edit ID --remove-depends-on 4           # absent ids are a no-op (cleanup after a deleted dependency)
+karr edit ID --add-needs other-repo#7        # append a cross-board dependency (see below)
+karr edit ID --remove-needs other-repo#7     # absent references are a no-op
 karr edit ID --body "New description"
 karr edit ID -a "Appended note"              # append to body
 karr edit ID --claim agent-1                 # claim
@@ -143,6 +147,41 @@ karr handoff ID --claim agent-1 --block "waiting for feedback" --release
 ```
 
 Moves the task to the board's review column, refreshes the claim, and optionally appends a timestamped note, blocks, or releases the claim. On a board that configures a `review` status that is the target; a board without one hands off to its last non-terminal column instead of failing.
+
+### Cross-board dependencies
+
+`--depends-on` is board-local. When work here cannot proceed until something is
+fixed in *another repository*, that link is a cross-board dependency:
+
+```bash
+# in the other repository -- raise the card and record where it came from
+karr create "Fix the API" --escalated-from home#5
+
+# here -- record what you are waiting for, block, release the claim, leave
+karr edit 5 --add-needs other-repo#7 --block "needs other-repo#7: API change first" --release
+
+# any time -- what is this board waiting on, and is it done yet?
+karr needs
+karr needs --board other-repo=/srv/other-repo     # where that board is on THIS machine
+karr needs --resolve                              # drop settled links, unblock what is free
+```
+
+A reference is `BOARD#ID`: the other board's **name** and a task id. Never a
+path -- the card is shared state and two clones of the same fleet have
+different directories. karr turns the name into a directory from
+`--board NAME=PATH` or from the fleet config
+(`~/.config/karr-foundation/config.yml`, `--fleet-config` to point elsewhere),
+matching the repository's directory basename.
+
+`--resolve` settles a link whose far card has reached one of the **far** board's
+own terminal statuses, and lifts the `blocked` flag when a card's last link
+settles, printing the reason it lifted. A far card that does not exist settles
+nothing. A board this machine cannot place is reported, not fatal.
+
+Like `depends_on`, a cross-board link blocks nothing by itself: `pick` hands the
+card over and says what it waits on. The `blocked` flag is what keeps the card
+out of `pick` and out of karr-foundation's selection -- the link is the fact,
+`blocked` is the decision.
 
 ### Config
 
@@ -390,9 +429,15 @@ created: 2026-03-12T10:00:00Z
 updated: 2026-03-12T10:00:00Z
 tags:
   - devops
+  - needs:other-repo#7
 
 Optional body with more detail.
 ```
+
+Cross-board dependencies ride in `tags` (`needs:BOARD#ID`,
+`escalated-from:BOARD#ID`) rather than in a frontmatter field of their own:
+kanban-md marshals a card from its own struct and would drop an unmodelled key
+the first time it writes, while `tags` is modelled on both sides.
 
 Tasks are stored under `refs/karr/tasks/*/data`. During command execution `karr`
 materializes the same Markdown shape into a temporary task directory, so this

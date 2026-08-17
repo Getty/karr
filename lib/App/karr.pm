@@ -215,6 +215,7 @@ my @COMMANDS = (
   [ unlock    => 'Show or break pick locks' ],
   [ archive   => 'Archive a task (soft-delete)' ],
   [ handoff   => 'Hand off a task for review' ],
+  [ needs     => 'Report or resolve cross-board dependencies' ],
   [ destroy   => 'Delete the entire refs/karr/* board' ],
   [ config    => 'View or modify board config' ],
   [ disable   => 'Disable automated agent runs on this board' ],

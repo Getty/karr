@@ -14,6 +14,7 @@ my @modules = qw(
   App::karr::Config
   App::karr::Error
   App::karr::BoardStore
+  App::karr::CrossBoard
   App::karr::Role::BoardAccess
   App::karr::Role::Output
   App::karr::Role::DependencyArgs
@@ -30,6 +31,7 @@ my @modules = qw(
   App::karr::Cmd::Unlock
   App::karr::Cmd::Archive
   App::karr::Cmd::Handoff
+  App::karr::Cmd::Needs
   App::karr::Cmd::Destroy
   App::karr::Cmd::AgentName
   App::karr::Cmd::Config

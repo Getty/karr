@@ -1,5 +1,50 @@
 {{$NEXT}}
 
+    - Cross-board dependencies (#192). `--depends-on` is board-local,
+      and in a fleet the most common real interruption is "this
+      cannot be done until X is fixed somewhere else", where X lives
+      in another repository. That link was a convention -- raise a
+      card over there tagged escalated-from:<repo>#<id>, block your
+      own, leave -- which nothing verified and nothing ever undid.
+      Now: `karr create --needs other-repo#7` (or `karr edit ID
+      --add-needs`) records the waiting end, `karr create
+      --escalated-from home#5` records the other one, `karr needs`
+      reports both ends with the far card's status, and `karr needs
+      --resolve` drops a link whose far card has reached one of the
+      FAR board's own terminal statuses -- lifting the blocked flag,
+      and printing the reason it lifted, once a card's last link
+      settles.
+
+      A reference is BOARD#ID: the other board's name and a task id,
+      never a path. Coordination is shared and travels with the card;
+      a directory is a property of one machine, so a path on a card
+      would be wrong on every machine but the one that wrote it and
+      is refused outright. This machine supplies the directory,
+      either from `--board NAME=PATH` or from the fleet config
+      karr-foundation already reads, matching the repository's
+      basename -- the name `karr-foundation --status` prints and the
+      name the escalation convention already used. A board this
+      machine cannot place is reported, not fatal.
+
+      The link rides in `tags` (needs:BOARD#ID) rather than in a new
+      frontmatter field: kanban-md marshals a card out of its own
+      struct, so a key it does not model is dropped the first time it
+      writes -- the link would vanish through exactly the interop
+      bridge the shared format exists for -- while `tags` is modelled
+      on both sides. `depends_on` could not carry it either: it is an
+      IntSlice over there.
+
+      Nothing new blocks. `depends_on` still warns and hands the card
+      over (#123) and App::karr::Foundation::Picker still does not
+      filter on it (#185); a cross-board link follows both, so
+      foundation does not become stricter than the board it
+      coordinates. What keeps the waiting card out of `pick` is the
+      blocked flag the escalating agent sets on purpose -- the link
+      is the fact, blocked is the decision -- and lifting it when the
+      last link settles is what was missing. A far card that does not
+      exist settles nothing: unblocking a card because the ticket it
+      waited for cannot be found is the silent wrong answer.
+
     - karr-foundation has a question mailbox (#191). `karr-foundation
       ask "Which registry?" --options cpan,darkpan --default cpan
       --policy use_default --wait 3600` writes the question into the

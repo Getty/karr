@@ -13,6 +13,7 @@ use App::karr::Role::TaskMutation;
 use App::karr::Role::DependencyArgs;
 use App::karr::Task;
 use App::karr::Config;
+use App::karr::CrossBoard;
 use Time::Piece;
 
 # Both halves of the dependency pair, and the only command that needs both:
@@ -29,6 +30,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
     karr edit 5 --title "Updated title"
     karr edit 5 --add-tag urgent --remove-tag stale
     karr edit 5 --add-depends-on 2,3 --remove-depends-on 4
+    karr edit 5 --add-needs other-repo#7 --block "needs other-repo#7: API change first"
     karr edit 5 -a "Waiting for review"
     karr edit 5 --claim agent-fox --block "waiting on API"
 
@@ -79,12 +81,23 @@ self-reference fails only the id it is wrong for and lets the rest of the
 batch proceed. Removing an id the board no longer has stays legal -- it is
 how a dependency on a deleted task is cleaned up.
 
+=item * Cross-board dependency management
+
+C<--add-needs> and C<--remove-needs> accept comma-separated
+C<< <board>#<id> >> references naming a card in another repository of the
+fleet, and follow the tag rule as well. Only the syntax is checked: whether
+that board is on this machine is local configuration, which is
+L<App::karr::Cmd::Needs>'s question, not this command's. A reference that is
+not C<< <board>#<id> >> -- a path in particular -- rejects the whole
+invocation.
+
 =back
 
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::Show>, L<App::karr::Cmd::Move>,
-L<App::karr::Cmd::Handoff>, L<App::karr::Cmd::List>
+L<App::karr::Cmd::Handoff>, L<App::karr::Cmd::List>,
+L<App::karr::Cmd::Needs>, L<App::karr::CrossBoard>
 
 =cut
 
@@ -134,6 +147,18 @@ option remove_depends_on => (
   is => 'ro',
   format => 's',
   doc => 'Remove dependency ids (comma-separated)',
+);
+
+option add_needs => (
+  is => 'ro',
+  format => 's',
+  doc => 'Add cross-board dependencies (comma-separated BOARD#ID)',
+);
+
+option remove_needs => (
+  is => 'ro',
+  format => 's',
+  doc => 'Remove cross-board dependencies (comma-separated BOARD#ID)',
 );
 
 option due => (
@@ -223,6 +248,19 @@ sub execute {
     $remove_depends = $self->parse_dependency_ids( '--remove-depends-on', $self->remove_depends_on );
   }
 
+  # The cross-board pair (ticket #192), under the same rule: a malformed
+  # BOARD#ID is wrong for every id in the batch at once, so it is checked here
+  # and condemns the invocation. Nothing checks whether the far card exists --
+  # that is local configuration's question and `karr needs` asks it.
+  my $add_needs;
+  if ( defined $self->add_needs && length $self->add_needs ) {
+    $add_needs = App::karr::CrossBoard->parse_refs( '--add-needs', $self->add_needs );
+  }
+  my $remove_needs;
+  if ( defined $self->remove_needs && length $self->remove_needs ) {
+    $remove_needs = App::karr::CrossBoard->parse_refs( '--remove-needs', $self->remove_needs );
+  }
+
   # Every id is attempted, whatever the ones before it did: a missing id used to
   # die from inside this loop and take the rest of the batch with it (ticket
   # #61). The option-value checks above stay outside it, because they condemn
@@ -301,6 +339,13 @@ sub execute {
         my %remove = map { $_ => 1 } @$remove_depends;
         $task->depends_on([grep { !$remove{$_} } @{$task->depends_on}]);
       }
+
+      # Same shape once more, one field over: a cross-board link is a tag, so
+      # append-unique and remove are literally the tag rules (see
+      # App::karr::CrossBoard for why the link lives there and not in a
+      # frontmatter field of its own).
+      App::karr::CrossBoard->add_needs( $task, $add_needs )       if $add_needs;
+      App::karr::CrossBoard->remove_needs( $task, $remove_needs ) if $remove_needs;
 
       if (defined $self->claim && length $self->claim) {
         $task->claimed_by($self->claim);

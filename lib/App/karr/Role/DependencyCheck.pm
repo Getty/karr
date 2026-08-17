@@ -3,6 +3,7 @@
 package App::karr::Role::DependencyCheck;
 our $VERSION = '0.501';
 use Moo::Role;
+use App::karr::CrossBoard;
 
 # What this role calls on its consumer, said out loud (ticket #128). It used to
 # declare nothing, and got away with it only because every consumer happened to
@@ -74,7 +75,8 @@ absent when there is nothing to report.
 
 L<karr>, L<App::karr>, L<App::karr::Role::DependencyArgs>,
 L<App::karr::Role::TaskMutation>, L<App::karr::Cmd::Pick>,
-L<App::karr::Cmd::Move>, L<App::karr::Cmd::Show>, L<App::karr::Config>
+L<App::karr::Cmd::Move>, L<App::karr::Cmd::Show>, L<App::karr::Config>,
+L<App::karr::CrossBoard>, L<App::karr::Cmd::Needs>
 
 =cut
 
@@ -100,8 +102,9 @@ sub check_dependencies {
     # (tickets #67, #98).
     return () if $self->store->is_terminal_status($new_status);
 
-    my @deps = @{ $task->depends_on };
-    return () unless @deps;
+    my @deps  = @{ $task->depends_on };
+    my @cross = App::karr::CrossBoard->needs_of($task);
+    return () unless @deps || @cross;
 
     my @warnings;
     for my $dep_id (@deps) {
@@ -127,6 +130,19 @@ sub check_dependencies {
         push @warnings, sprintf
           'Warning: task %s depends on task %s, which is still %s',
           $id, $dep_id, $dep->status;
+    }
+
+    # The cross-board half (ticket #192). Deliberately not resolved: the far
+    # board's state is behind a path this command does not have and must not
+    # invent, and a status change that reached into another repository to look
+    # one up would be doing transport nobody asked for. What is worth saying at
+    # the moment somebody takes the card up is that it is waiting on another
+    # board at all -- the same #123 point, one repository over -- and where to
+    # get the answer.
+    for my $ref (@cross) {
+        push @warnings, sprintf
+          'Warning: task %s waits on %s on another board (run "karr needs" for its state)',
+          $id, App::karr::CrossBoard->format_ref($ref);
     }
 
     $self->_dependency_warnings->{$id} = \@warnings if @warnings;

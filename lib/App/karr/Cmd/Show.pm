@@ -10,6 +10,7 @@ use MooX::Options (
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Task;
+use App::karr::CrossBoard;
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
 
@@ -37,7 +38,8 @@ over the selector options.
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::List>, L<App::karr::Cmd::Edit>,
-L<App::karr::Cmd::Move>, L<App::karr::Cmd::Archive>, L<App::karr::Cmd::Log>
+L<App::karr::Cmd::Move>, L<App::karr::Cmd::Archive>, L<App::karr::Cmd::Log>,
+L<App::karr::Cmd::Needs>
 
 =cut
 
@@ -78,6 +80,16 @@ sub _show_task {
   printf "Depends:  %s\n",
     join( ', ', map { $self->_dependency_label($_) } @{$task->depends_on} )
     if @{$task->depends_on};
+  # The other board's cards cannot be labelled with a status the way local
+  # dependencies are: reading one needs a path this command does not have and
+  # must not invent (App::karr::CrossBoard). The reference is printed and
+  # `karr needs` is where the state comes from.
+  my @needs = App::karr::CrossBoard->needs_of($task);
+  printf "Needs:    %s\n",
+    join( ', ', map { App::karr::CrossBoard->format_ref($_) } @needs ) if @needs;
+  my @from = App::karr::CrossBoard->escalated_from_of($task);
+  printf "From:     %s\n",
+    join( ', ', map { App::karr::CrossBoard->format_ref($_) } @from ) if @from;
   printf "Claimed:  %s\n", $task->claimed_by if $task->has_claimed_by;
   printf "Blocked:  %s\n", $task->has_block_reason ? $task->block_reason : 'yes'
     if $task->has_blocked;
