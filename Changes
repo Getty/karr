@@ -1,5 +1,51 @@
 {{$NEXT}}
 
+    - karr-foundation stores its chain and its run logs in git
+      refs (#189). The planned steps live under
+      refs/karr-foundation/chain/ -- one ref per step plus a
+      header -- and every run writes a log under
+      refs/karr-foundation/log/<date>-<id>. Both are coordination,
+      which is why they are shared: a chain that only one machine
+      could see would be a plan nobody else can join. A step
+      therefore names no agent, and a step that names one is
+      refused rather than ignored -- which agent command exists
+      here and whether it currently works stays local, where #188
+      put it. A step carries its id, its kind (ticket, shell,
+      question or plan), the repo and ticket it is about, the
+      steps it needs, a timeout, a precheck and its on_* policies.
+      The steps form a DAG: those with no needs edge between them
+      are ready at the same time, so the planner expresses
+      parallelism by leaving edges out instead of serialising by
+      hand, and a cycle is refused when the chain is written
+      rather than discovered later as a fleet that looks healthy
+      and does nothing. A step whose precheck no longer holds is
+      not executed but marked stale, so an out-of-date chain costs
+      a planning round instead of doing damage; a precheck nobody
+      can answer counts as not holding, for the same reason.
+      Updates to a step are compare-and-swap on the board's own
+      machinery, so two overlapping foundation ticks cannot both
+      claim one. Run logs are segmented at 8 KiB the way the
+      activity log has been since #171, because a ref blob is
+      rewritten whole on every append, and retention drops runs
+      older than two weeks and everything past the newest 500 --
+      by age for the operator, by count because that is what
+      actually bounds a namespace. It runs when a run log is
+      opened, since a retention policy nobody types bounds
+      nothing.
+
+    - `karr set-refs` can no longer write inside
+      refs/karr-foundation/chain/ or refs/karr-foundation/log/
+      (#189). Those are written by karr-foundation itself, with a
+      schema and with compare-and-swap, while set-refs writes
+      last-writer-wins and joins its arguments with a space: a
+      hand-written step would either overwrite one that a run had
+      just claimed or land as a payload that no longer parses as a
+      step, and the runner would then treat the wreck as the plan.
+      The rest of refs/karr-foundation stays writable -- the fleet
+      design document itself lives there -- and `karr get-refs`
+      still reads all of it, because reading a step is how a chain
+      is debugged and cannot damage anything.
+
     - karr-foundation learns named agents and per-agent
       availability (#188). The local config can define several
       agents -- `command`, `kind`, an optional `probe_every` and a

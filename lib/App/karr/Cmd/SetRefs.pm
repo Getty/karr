@@ -75,7 +75,11 @@ sub execute {
   my $git = App::karr::Git->new(dir => $repo_dir);
   die "Not a git repository.\n" unless $git->is_repo;
 
-  my $ref = $git->validate_helper_ref($ref_input);
+  # for_write: a helper ref may be read from every namespace it may not be
+  # written to. refs/karr-foundation/chain/ and .../log/ are karr-foundation's
+  # own structured state, and this command writes last-writer-wins with its
+  # arguments joined by a space, which is not how a chain step is updated.
+  my $ref = $git->validate_helper_ref( $ref_input, for_write => 1 );
   my $content = join ' ', @content_parts;
 
   $git->write_ref($ref, $content) or die "Failed to write $ref\n";

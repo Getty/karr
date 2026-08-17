@@ -618,8 +618,29 @@ L</validate_board_ref> for that.
 
 =cut
 
+# Namespaces a helper ref may be read from but not written to.
+#
+# refs/karr-foundation/ as a whole stays reachable on purpose: this fleet
+# design's own document lives at refs/karr-foundation/spec/fleet-execution.md
+# and was put there with `karr set-refs`, so blocking the namespace outright
+# would break the very artifact it was chosen for. The two subtrees
+# karr-foundation writes itself are different. App::karr::Foundation::ChainStore
+# keeps a schema, a DAG invariant and compare-and-swap updates there, while
+# `karr set-refs` writes last-writer-wins and joins its arguments with a single
+# space -- so a hand-written step would either clobber one another tick had just
+# claimed, or land as a payload that no longer parses as a step, and the runner
+# would then treat the wreck as the plan. The stale-precheck guard protects
+# against an out-of-date chain, not against a malformed one.
+#
+# Reading stays open, because reading cannot corrupt anything and looking at a
+# step or a run log with `karr get-refs` is exactly how you debug a chain.
+use constant HELPER_READ_ONLY => (
+    'refs/karr-foundation/chain/',
+    'refs/karr-foundation/log/',
+);
+
 sub validate_helper_ref {
-    my ( $self, $ref ) = @_;
+    my ( $self, $ref, %opt ) = @_;
     my $full_ref = $self->normalize_ref_name($ref);
 
     my @blocked = (
@@ -644,6 +665,14 @@ sub validate_helper_ref {
     die "Ref '$full_ref' is in a protected namespace\n"
         if $full_ref eq 'refs/stash' || index( $full_ref, 'refs/stash/' ) == 0;
 
+    if ( $opt{for_write} ) {
+        for my $prefix (HELPER_READ_ONLY) {
+            die "Ref '$full_ref' is written by karr-foundation itself and "
+                . "cannot be set by hand (get-refs can still read it)\n"
+                if index( $full_ref, $prefix ) == 0;
+        }
+    }
+
     # Native validity check via Git::Native.
     die "Ref '$full_ref' is not a valid git ref name\n"
         unless Git::Native->reference_name_is_valid($full_ref);
@@ -654,6 +683,7 @@ sub validate_helper_ref {
 =method validate_helper_ref
 
     my $full_ref = $git->validate_helper_ref($ref);
+    my $full_ref = $git->validate_helper_ref( $ref, for_write => 1 );
 
 Normalizes C<$ref> (L</normalize_ref_name>) and dies unless it is both a
 syntactically valid git ref name and outside every namespace karr itself owns
@@ -664,6 +694,16 @@ out of reach of any refspec -- #93, #178). Returns the normalized ref on
 success. This is the gate
 C<karr set-refs>/C<get-refs> go through via L</push_ref>/L</pull_ref>, so a
 caller cannot point a helper ref at the board or at a branch.
+
+C<for_write> adds the namespaces that may be read through a helper ref but not
+written through one: C<refs/karr-foundation/chain/> and
+C<refs/karr-foundation/log/>, which L<App::karr::Foundation::ChainStore> writes
+with a schema and with compare-and-swap. The rest of
+C<refs/karr-foundation/> stays writable -- the fleet design document itself
+lives there and was written with C<karr set-refs> -- and reading is never
+restricted, because C<karr get-refs refs/karr-foundation/chain/step/3> is how
+one looks at a step and cannot damage it. C<karr set-refs> passes the flag;
+C<karr get-refs> does not.
 
 =cut
 

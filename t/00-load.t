@@ -2,6 +2,9 @@ use strict;
 use warnings;
 use Test::More;
 
+# App::karr::Foundation pulls its own submodules in, so they compile with it.
+# App::karr::Foundation::ChainStore is listed separately because nothing loads
+# it yet -- the runner that will is #186 -- and this is what compiles it.
 my @modules = qw(
   App::karr
   App::karr::Task
@@ -35,6 +38,7 @@ my @modules = qw(
   App::karr::Cmd::SetRefs
   App::karr::Cmd::GetRefs
   App::karr::Foundation
+  App::karr::Foundation::ChainStore
 );
 
 for my $mod (@modules) {
