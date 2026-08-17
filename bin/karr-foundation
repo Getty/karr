@@ -6,6 +6,7 @@ use warnings;
 our $VERSION = '0.501';
 use App::karr::Foundation;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
+use App::karr::Error qw( is_usage_error );
 
 # Same character/octet boundary as F<karr> (ticket #53). The agent output this
 # tees to the terminal is raw bytes and is decoded incrementally in
@@ -17,8 +18,38 @@ decode_argv();
 # (`ask`, `answer`) -- see App::karr::Foundation::run. MooX::Options is
 # configured with protect_argv => 0 in that class, which is what makes the
 # leftovers visible here.
-my $foundation = App::karr::Foundation->new_with_options;
-exit $foundation->run(@ARGV);
+my $exit;
+my $ran = eval {
+    my $foundation = App::karr::Foundation->new_with_options;
+    $exit = $foundation->run(@ARGV);
+    1;
+};
+if ( !$ran ) {
+    my $err = $@;
+
+    # Exit-code contract (ADR 0002): 0 success / 1 runtime failure / 2 usage
+    # error. The same central handler F<karr> has, for the same reason: without
+    # it an uncaught die leaves perl to pick the status -- 255, or whatever
+    # errno happens to hold -- so every user_error this binary raises reached
+    # its caller as an accident. A broken config file, an unknown mode and
+    # (since #191) `karr-foundation answer 7 x` on a question that already has
+    # an answer were all that accident; this binary is typed at and scripted
+    # like the CLI is, so it belongs to the same contract (ticket #201).
+    #
+    # The usage-versus-runtime split is decided by
+    # App::karr::Error::is_usage_error, on the same stable leading markers
+    # F<karr> documents -- "Unknown command:", "unexpected extra argument",
+    # "Usage:", "Usage error:". A new usage-error die here must start with one
+    # of them; everything else -- a config that will not parse, a question that
+    # is already answered, a Git failure -- is a runtime failure (1).
+    #
+    # Option-parse errors never reach here: MooX::Options exits 2 directly via
+    # App::karr::Role::ExitCodes, which App::karr::Foundation composes for it,
+    # and that exit bypasses this eval.
+    print STDERR $err if defined $err && length $err;
+    exit( is_usage_error($err) ? 2 : 1 );
+}
+exit $exit;
 
 =synopsis
 
@@ -43,5 +74,28 @@ active repo. It is designed to be called repeatedly — by cron, a systemd timer
 or a tight while-loop.
 
 See L<App::karr::Foundation> for full documentation.
+
+=head1 EXIT CODES
+
+Cron only ever asked whether the tick failed, but the mailbox commands are
+typed by a person and scripted by agents, so F<karr-foundation> keeps the same
+exit-code contract as F<karr> (see F<docs/adr/0002-exit-code-contract.md>):
+
+=over 4
+
+=item * B<0> — the tick finished: boards were drained, an overview was
+printed, or a question was asked or answered.
+
+=item * B<1> — runtime failure: no repository could be discovered, the config
+file does not parse or is not a mapping, a mailbox command found no hub, or the
+question being answered already had an answer.
+
+=item * B<2> — usage error: an unknown command, an unknown option, an invalid
+option value, or a missing or surplus positional argument.
+
+=back
+
+A run killed by C<SIGTERM>, C<SIGINT> or C<SIGHUP> exits C<128 + signal> after
+taking its agents down with it, the usual shell convention for signal death.
 
 =cut

@@ -1,5 +1,17 @@
 {{$NEXT}}
 
+    - karr-foundation joins the exit-code contract (#201). It had no
+      central handler, so an uncaught die left perl to pick the exit
+      status: a config that is not a YAML mapping exited 255, an
+      unknown mailbox command exited whatever errno happened to hold,
+      and an unknown option exited 1 -- the same code a drain that
+      genuinely failed returns. The 0/1/2 contract karr documents (ADR
+      0002) now covers this binary too: 0 success, 1 runtime failure
+      (a config that will not parse, no hub for the mailbox, a
+      question that already has an answer), 2 usage error (an unknown
+      command, an unknown option, an option value that does not parse,
+      a missing or surplus positional argument).
+
     - `karr pick` and karr-foundation's ticket mode now select
       through one definition (#198). Which cards qualify, and the
       class/priority/id order they come in, were written out in both

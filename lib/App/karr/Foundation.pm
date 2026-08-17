@@ -12,6 +12,7 @@ use MooX::Options (
   protect_argv => 0,
 );
 use App::karr::Error qw( user_error clean_error );
+use App::karr::Role::ExitCodes;
 use Path::Tiny;
 use IO::Handle;
 use POSIX qw( SIGTERM SIGINT SIGHUP WNOHANG );
@@ -30,6 +31,12 @@ use App::karr::Foundation::Agents;
 use App::karr::Foundation::ChainStore;
 use App::karr::Foundation::Questions;
 use App::karr::Foundation::Limits;
+
+# An unknown option or an option value that does not parse exits 2, not 1
+# (ADR 0002 exit-code contract). MooX::Options otherwise hands that failure a
+# 1, which is the code a genuine runtime failure of a drain carries, and the
+# central handler in F<bin/karr-foundation> never sees those exits at all.
+with 'App::karr::Role::ExitCodes';
 
 # Instruction handed to a synthesized agent command via the $PROMPT variable
 # when neither the .karr file nor the config overrides it.
@@ -830,7 +837,9 @@ sub run {
     my $command = shift @argv;
     return $self->_run_ask(@argv)    if $command eq 'ask';
     return $self->_run_answer(@argv) if $command eq 'answer';
-    user_error("Unknown command '$command' (expected: answer, ask)");
+    # "Unknown command:" is the marker App::karr::Error::is_usage_error keys on,
+    # so a typo here exits 2 (you called this wrong) and not 1 (ADR 0002).
+    user_error("Unknown command: '$command' (expected: answer, ask)");
   }
 
   my @repos = $self->_discover_repos;
