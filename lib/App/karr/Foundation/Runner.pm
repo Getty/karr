@@ -4,7 +4,7 @@ package App::karr::Foundation::Runner;
 our $VERSION = '0.501';
 use Moo;
 use App::karr::Error qw( clean_error user_error );
-use App::karr::Encoding qw( from_octets json_decode to_octets_for_env );
+use App::karr::Encoding qw( from_octets json_decode to_octets to_octets_for_env );
 use Encode ();
 use IO::Select;
 use IO::Handle ();
@@ -44,6 +44,14 @@ backticks therefore stay text, and C<< awk '{print $2}' >> reaches awk intact.
 C<KARR_TASK> holds the id of the task a C<< mode: ticket >> run was given and is
 empty in every other mode; the same id is spelled out in the prompt.
 
+Where the agent came from a definition with an invocation contract that asks
+for structured live output (C<kind: claude-code>, #188), the tee renders it: the
+assistant's own text goes to the terminal and to F<.karr.log> as it arrives,
+while the raw stream stays in the classification buffer. That is what lets the
+contract ask for a machine-readable format without losing the live output an
+interactive run is watched for. A board that names no agent is on the older
+path -- the octets the command printed, verbatim, to both sinks.
+
 A C<.karr.log> it cannot open ends the run for that board B<before> the command
 is started, never after: the agent is refused rather than launched unwatched.
 Once the fork has happened the parent owes it a C<waitpid>, so nothing between
@@ -62,10 +70,16 @@ has foundation => (
 # ---------------------------------------------------------------------------
 
 sub _run_command {
-  my ( $self, $repo, $karr, $cmd, $ticket ) = @_;
+  my ( $self, $repo, $karr, $cmd, $ticket, $agent ) = @_;
   my $command      = $cmd // $karr->{command};
   my $max_runtime  = $karr->{max_runtime} // 1800;
   my $stream_terms = $self->foundation->_stream_to_terminal;
+
+  # How this run's output is to be read for a human, decided by the agent
+  # definition that supplied the command and by nothing else (#188). Undef --
+  # every board that names no agent -- is the historical path: the octets the
+  # command printed, verbatim, to the log and the terminal.
+  my $render = ref $agent eq 'HASH' ? $agent->{render} : undef;
 
   # Environment for the child (and all karr calls it spawns). The child inherits
   # it across the fork/exec below, so a command template — including the
@@ -110,7 +124,9 @@ sub _run_command {
   # .karr vs synthesized claude), not a second copy of the prompt. It also no
   # longer copies whatever an env var held — a wrapper's API key included — into
   # a plaintext .karr.log.
-  $self->foundation->_append_log( $repo, "START command=$command" );
+  $self->foundation->_append_log( $repo,
+    ( ref $agent eq 'HASH' && defined $agent->{name} ? "START agent=$agent->{name} " : 'START ' )
+    . "command=$command" );
   $self->foundation->_say_verbose("exec in $repo: $command");
 
   if ( $self->foundation->dry_run ) {
@@ -222,6 +238,11 @@ sub _run_command {
   # error-scanning buffer keep the raw octets.
   my $pending = '';
 
+  # Line assembly for a rendered stream (see _render_stream_line). Only used
+  # when $render is on; the raw path below never touches them.
+  my $line_buf = '';
+  my $shown    = '';
+
   while (1) {
     last if $timed_out;
     if ( !$sel ) {
@@ -243,12 +264,45 @@ sub _run_command {
     my $n = sysread( $reader, $chunk, 65536 );
     last if !defined $n;   # read error (or SIGALRM closing the fd)
     last if $n == 0;       # EOF — the command closed its output
-    print {$log_fh} $chunk;
-    if ($stream_terms) {
+    if ($render) {
       $pending .= $chunk;
-      print Encode::decode( 'UTF-8', $pending, Encode::FB_QUIET );
+      $line_buf .= Encode::decode( 'UTF-8', $pending, Encode::FB_QUIET );
+      while ( $line_buf =~ s/\A([^\n]*)\n// ) {
+        my $text = $self->_render_stream_line( $render, $1 );
+        next unless length $text;
+        print {$log_fh} to_octets($text);
+        print $text if $stream_terms;
+        $shown = substr $text, -1;
+      }
     }
+    else {
+      print {$log_fh} $chunk;
+      if ($stream_terms) {
+        $pending .= $chunk;
+        print Encode::decode( 'UTF-8', $pending, Encode::FB_QUIET );
+      }
+    }
+    # The classification buffer keeps the raw octets whatever the terminal and
+    # the log were given: _run_result reads the result object out of the tail
+    # of the stream, and rendering has just dropped it on the floor.
     $output .= $chunk;
+  }
+
+  # A last line the command left without a newline (it was killed, or it simply
+  # does not end its output with one) still has something to say.
+  if ( $render && length $line_buf ) {
+    my $text = $self->_render_stream_line( $render, $line_buf );
+    if ( length $text ) {
+      print {$log_fh} to_octets($text);
+      print $text if $stream_terms;
+      $shown = substr $text, -1;
+    }
+  }
+  # Rendered text arrives as deltas and the last one rarely ends a line, so
+  # without this the shell prompt (and the next log line) lands mid-sentence.
+  if ( $render && length $shown && $shown ne "\n" ) {
+    print {$log_fh} "\n";
+    print "\n" if $stream_terms;
   }
 
   # Disarm the alarm before reap: a waitpid that takes longer than max_runtime
@@ -361,6 +415,49 @@ sub _classify_exit {
   my $sig = $status & 127;
   return 128 + $sig if $sig;
   return ( $status >> 8 ) & 255;
+}
+
+# ---------------------------------------------------------------------------
+# Live output for a structured stream
+# ---------------------------------------------------------------------------
+
+# One line of a rendered stream, as text for the terminal and the log, or the
+# empty string for a line that carries nothing a human wants to read.
+#
+# This exists because of a trap in the `kind: claude-code` contract. A run has
+# to be asked for structured output before it will report on itself, and plain
+# `--output-format json` buys that by printing NOTHING until the run ends --
+# which silently cancels the live output App::karr::Foundation promises for a
+# TTY, on exactly the runs that take half an hour. `stream-json` ends with the
+# same result object and streams on the way there, so the contract asks for
+# that instead and the rendering happens here.
+#
+# What is rendered is the assistant's own text, which is the same choice
+# App::karr::Foundation's documented jq pipeline makes
+# (`select(.type == "stream_event") | .event.delta.text`). Everything else in
+# the stream -- the init banner, the per-message envelopes, the tool plumbing,
+# the final result object -- is machinery, and the machinery is what an
+# operator watching a board does not want to read. The result object is not
+# lost by suppressing it: the drain classifies from it (it stays in the raw
+# buffer) and logs a RESULT line of its own.
+#
+# A line that is not JSON at all passes through verbatim. The pipe is shared
+# with the command's stderr, so a wrapper's banner, a `set -x` trace or a
+# warning can land between two stream events, and swallowing those would be
+# the same mistake one level down.
+sub _render_stream_line {
+  my ( $self, $render, $line ) = @_;
+  return '' unless $render eq 'stream-json';
+  return '' unless defined $line && $line =~ /\S/;
+  # Same cheap pre-filter as _run_result: prose never reaches the parser.
+  return "$line\n" unless $line =~ /\A\s*\{.*\}\s*\z/s;
+  my $ev = eval { json_decode($line) };
+  return "$line\n" unless ref $ev eq 'HASH';
+  return '' unless ( $ev->{type} // '' ) eq 'stream_event';
+  my $delta = ( $ev->{event} // {} )->{delta};
+  return '' unless ref $delta eq 'HASH';
+  my $text = $delta->{text};
+  return defined $text && !ref $text ? $text : '';
 }
 
 # ---------------------------------------------------------------------------

@@ -3,6 +3,8 @@
 package App::karr::Foundation::Overview;
 our $VERSION = '0.501';
 use Moo;
+use Time::Piece;
+use Try::Tiny;
 
 =head1 DESCRIPTION
 
@@ -16,6 +18,14 @@ suppressed, because no agent runs there. A board in cooldown carries the
 remaining wait and the error that caused it (C<cooldown 240s (rate limit)>),
 since a parked board is a board doing nothing. A weak back-reference to the
 owning foundation supplies the board data and state helpers.
+
+Where the local config defines named agents (L<App::karr::Foundation::Agents>)
+the boards are followed by one C<Agents> block: per agent C<ok>, or C<failing
+since X, next attempt at Y> with the error that caused it. That block is the
+whole visible half of availability probing -- an outage nobody can see is an
+outage nobody fixes. With C<--verbose> each agent also prints its kind and its
+prose description, which is otherwise carried purely for the coordination agent
+that routes work.
 
 =cut
 
@@ -62,8 +72,29 @@ sub _print_overview {
       push @flags, 'cooldown ' . ( $until - time ) . 's'
                  . ( defined $why ? " ($why)" : '' );
     }
-    push @flags, 'agent'
-      if !$disabled && defined $self->foundation->_agent_command( $repo, $karr );
+    # Which agent, not just that there is one: a fleet with several agent
+    # definitions is the case this exists for, and "agent" alone answers the
+    # least interesting question about a board. A named agent that is not
+    # currently available says so here too, because from the outside that board
+    # and a board in cooldown are doing the same nothing.
+    my $agent_error;
+    unless ( $disabled ) {
+      my ( $cmd, $agent );
+      try { ( $cmd, $agent ) = $self->foundation->_resolve_agent( $repo, $karr ) }
+      catch { $agent_error = "$_"; chomp $agent_error };
+      if ( defined $agent_error ) {
+        push @flags, 'agent-error';
+      }
+      elsif ( defined $cmd ) {
+        my $flag = 'agent';
+        if ( $agent ) {
+          $flag .= ':' . $agent->{name};
+          $flag .= ' failing'
+            unless $self->foundation->_agents->available( $agent->{name} );
+        }
+        push @flags, $flag;
+      }
+    }
 
     my $total = keys %states;
     printf "%s\n", $repo->basename;
@@ -75,11 +106,81 @@ sub _print_overview {
     }
     printf "  disabled:    %s\n", $disabled->{reason} // 'no reason given'
       if $disabled;
+    printf "  agent-error: %s\n", $agent_error if defined $agent_error;
     printf "  in-progress: %s\n", join( ', ', map { "#$_" } @in_progress ) if @in_progress;
     printf "  blocked:     %s\n", join( ', ', map { "#$_" } @blocked )     if @blocked;
     print "\n";
   }
+  $self->_print_agents;
   return;
+}
+
+# ---------------------------------------------------------------------------
+# Agent availability (local config, per machine)
+# ---------------------------------------------------------------------------
+
+sub _print_agents {
+  my ( $self ) = @_;
+  my $agents = $self->foundation->_agents;
+  my @names  = try { $agents->names } catch {
+    warn "karr-foundation: $_";
+    ();
+  };
+  return unless @names;
+
+  my $width = 0;
+  for my $n ( @names ) { $width = length $n if length $n > $width }
+
+  print "Agents\n";
+  for my $name ( @names ) {
+    my $def = $agents->definitions->{$name};
+    printf "  %-*s  %s\n", $width, $name, _availability_line( $agents, $name );
+    next unless $self->foundation->verbose;
+    printf "  %-*s  kind: %s\n", $width, '', $def->{kind};
+    # The description is prose and is printed as written -- it is the selection
+    # criterion a language model reads, not a field, so nothing here reformats
+    # or truncates it.
+    if ( defined $def->{description} && length $def->{description} ) {
+      my $text = $def->{description};
+      $text =~ s/\s+\z//;
+      printf "  %-*s  %s\n", $width, '', $_ for split /\n/, $text;
+    }
+  }
+  print "\n";
+  return;
+}
+
+# ok / failing since X / next attempt at Y -- the three states karr keeps, said
+# in the order somebody reads them in.
+sub _availability_line {
+  my ( $agents, $name ) = @_;
+  my $av = $agents->availability( $name );
+  if ( ( $av->{state} // 'ok' ) eq 'failing' ) {
+    my $line = 'failing since ' . _stamp( $av->{failing_since} )
+             . ', next attempt at ' . _stamp( $av->{next_attempt} );
+    $line .= " ($av->{last_error})" if defined $av->{last_error};
+    return $line;
+  }
+  # An agent that came back carries the last outage with it: that record is
+  # what the fixed-interval probe exists to leave behind, and a rhythm nobody
+  # ever sees is a rhythm nobody reads.
+  my $last = ( $av->{recovered} // [] )->[-1];
+  return 'ok' unless $last && defined $last->{seconds};
+  return 'ok (last outage ' . _duration( $last->{seconds} )
+       . ', back at ' . _stamp( $last->{recovered_at} ) . ')';
+}
+
+sub _stamp {
+  my ( $epoch ) = @_;
+  return '?' unless defined $epoch && $epoch =~ /\A[0-9]+\z/;
+  return localtime( $epoch )->strftime('%Y-%m-%dT%H:%M:%S');
+}
+
+sub _duration {
+  my ( $s ) = @_;
+  return "${s}s" if $s < 90;
+  return int( $s / 60 ) . 'm' if $s < 5400;
+  return sprintf '%.1fh', $s / 3600;
 }
 
 1;

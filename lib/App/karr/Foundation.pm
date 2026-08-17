@@ -20,6 +20,7 @@ use App::karr::Foundation::Runner;
 use App::karr::Foundation::State;
 use App::karr::Foundation::Overview;
 use App::karr::Foundation::Picker;
+use App::karr::Foundation::Agents;
 
 # Instruction handed to a synthesized agent command via the $PROMPT variable
 # when neither the .karr file nor the config overrides it.
@@ -83,6 +84,22 @@ has _stream_to_terminal => (
   builder => sub { -t STDOUT || $_[0]->verbose },
 );
 
+# The config file this run reads, whether or not it exists. Its own attribute
+# because it is more than the source of _config_data: the per-machine agent
+# availability lives beside it (App::karr::Foundation::Agents), so --config
+# relocates that too.
+has _config_path => (
+  is      => 'lazy',
+  builder => '_build_config_path',
+);
+
+sub _build_config_path {
+  my ( $self ) = @_;
+  return defined $self->config
+    ? path( $self->config )
+    : path( $ENV{HOME} )->child( '.config', 'karr-foundation', 'config.yml' );
+}
+
 has _config_data => (
   is      => 'lazy',
   builder => '_build_config_data',
@@ -90,9 +107,7 @@ has _config_data => (
 
 sub _build_config_data {
   my ( $self ) = @_;
-  my $cfg_path = defined $self->config
-    ? path( $self->config )
-    : path( $ENV{HOME} )->child( '.config', 'karr-foundation', 'config.yml' );
+  my $cfg_path = $self->_config_path;
 
   unless ( $cfg_path->exists ) {
     warn "karr-foundation: config not found at $cfg_path \x{2014} nothing to do\n";
@@ -145,6 +160,15 @@ has _state => (
 sub _build__state {
   my ( $self ) = @_;
   return App::karr::Foundation::State->new( foundation => $self );
+}
+
+has _agents => (
+  is => 'lazy',
+);
+
+sub _build__agents {
+  my ( $self ) = @_;
+  return App::karr::Foundation::Agents->new( foundation => $self );
 }
 
 has _overview => (
@@ -241,9 +265,100 @@ B<Per-repo .karr file:>
   error_patterns:           # extra case-insensitive substrings → common-error
     - my custom api error   # (added to the defaults; matched as written)
 
+  agent: minimax            # a named agent from the config's 'agents:' section
+
 C<claude>, C<claude_bin>, C<claude_max_turns>, C<claude_permission_mode>,
 C<command>, C<mode> and C<prompt>/C<default_prompt> may also be set globally in
 the config file; the per-repo F<.karr> value wins.
+
+B<Named agents.> A board has one C<command>. A fleet has several agent commands
+with different strengths and different failure modes, so the config can name
+them and a board can pick one:
+
+  agents:
+    minimax:
+      command: claude_with_minimax
+      kind: claude-code       # the invocation contract; default: shell
+      probe_every: 15m        # optional -- see "Agent availability" below
+      permission_mode: bypassPermissions    # kind: claude-code only
+      max_turns: 30                         #   "     "        "
+      allowed_tools: [ Bash, Edit ]         #   "     "        "
+      description: >-
+        Prose. What this agent is good at, where it is weak, what it costs.
+
+  default_agent: minimax    # for boards whose .karr names none
+  probe_every: 10m          # fleet-wide default for agents that name none
+
+C<description> is never read by karr. It is carried for the agent that routes
+work across the fleet: the thing choosing is a language model, and it reads
+prose better than it matches taxonomies, so there are no classes and no enums
+here. C<karr-foundation --status --verbose> prints it.
+
+Agent definitions are B<local and only local>. They are not board state and
+never sync: an agent command that exists on one machine does not exist on the
+next, and an account limit is a property of a person, not of a project.
+
+C<agent:> resolves below the literal command strings and above C<< claude:
+true >> -- the full order is C<--command>, C<default_command>, the F<.karr>
+C<command>, the F<.karr> C<agent>, C<default_agent>, C<< claude: true >>. A
+board that names an agent the config does not define is an error that skips
+B<that board>, not one that silently stops running.
+
+B<Invocation contracts.> C<kind> says what karr may append to a definition's
+C<command>:
+
+=over 4
+
+=item * C<shell> (the default) - the command is a complete shell template and
+karr appends B<nothing>. This is what a F<.karr> C<command> has always been:
+karr cannot know what the thing at the other end understands.
+
+=item * C<claude-code> - karr appends C<-p "$PROMPT">, an output format, and
+C<--permission-mode>, C<--max-turns> and C<--allowed-tools> from the
+definition. Permission escalation is therefore a property of the agent
+definition rather than something baked into a wrapper script.
+
+=back
+
+The output format is C<stream-json --verbose --include-partial-messages>, not
+plain C<json>, and that is the one deliberate choice in this contract. karr
+needs the run's own report (see "The run's own report" below), which only a
+structured format emits -- but plain C<json> prints B<nothing at all> until the
+run ends, which would silently cancel the live output promised under "Live
+output" below on exactly the runs that take half an hour. C<stream-json> ends
+with the same result object and streams on the way, so
+L<App::karr::Foundation::Runner> renders the assistant's text out of it for the
+terminal and F<.karr.log> while the raw stream is what the run is classified
+from. The ticket of a C<< mode: ticket >> run is B<not> appended: claude-code
+has no flag for it, so the id keeps travelling as a closing sentence in
+C<$PROMPT> and as C<$KARR_TASK>.
+
+B<Agent availability.> karr keeps the least it can per named agent: C<ok>, or
+C<failing> since a moment with a next attempt due at another. No cost, no
+tokens, no quotas -- a rate limit and an exhausted budget look identical from
+the outside (the command stops working), so B<one> mechanism covers both, and
+every other reason a command can stop working comes along for free.
+
+A drain that ends in a C<common-error> marks its agent failing; any other
+outcome says it works. While an agent is failing, B<every> board that uses it
+is skipped -- the fact is about the command and the machine, not about a
+repository, so two boards on one agent share the outage instead of each burning
+a window rediscovering it. That is a level above the per-board cooldown, which
+keeps working exactly as before underneath it. Like the cooldown, C<--force>
+does not override it; the wait is bounded by C<probe_every> and ends by itself.
+
+When the next attempt comes round the agent is simply run again on the work
+that was waiting: the probe B<is> the run. Where the reset rhythm is known it
+is configured as C<probe_every>; where it is not, the retry is at a fixed
+interval and every recovery is B<recorded> -- from when it broke to when it
+worked again, with what it looked like. Reading a pattern out of those records
+is the coordination agent's job, never a learning algorithm inside karr.
+
+The record lives beside the config file that defines the agents
+(F<agents.state> next to F<config.yml>, so C<--config> relocates it), because
+it belongs to neither of the two obvious places: F<.karr.state> is per
+repository and this is not, and the board's own config syncs, which would push
+one person's spent limit at everybody else's fleet.
 
 B<Run mode.> C<mode> says what one pass over a repo is:
 
@@ -308,11 +423,12 @@ that a globally configured C<default_command> would otherwise drain. C<--status>
 shows such a board with a C<disabled> flag and its reason.
 
 B<Coordinator and overview.> Agent execution is opt-in — a board runs an agent
-only via C<command> or C<< claude: true >>. When B<no> board has an agent
-configured, the default action is a read-only B<overview> of every board
-(status counts, in-progress/blocked tasks, lock and cooldown state); a human
-can use foundation purely to coordinate their own work. C<--status> forces the
-overview regardless of configuration.
+only via C<command>, a named C<agent> or C<< claude: true >>. When B<no> board
+has an agent configured, the default action is a read-only B<overview> of every
+board (status counts, in-progress/blocked tasks, lock and cooldown state, which
+agent a board uses and whether it currently works); a human can use foundation
+purely to coordinate their own work. C<--status> forces the overview regardless
+of configuration.
 
 B<Live output.> When run interactively (TTY) or with C<--verbose>, the agent's
 output is streamed to the terminal in real time as foundation reads it; it is
@@ -414,8 +530,10 @@ nothing" — and F<.karr.log> names which one it was
 (C<STALL task#N — the agent ran out of turns>). With no report it says exactly
 that rather than guessing.
 
-All state files are gitignored: C<.karr.state> (board hash, per-task attempts,
-cooldown, last error, last report), C<.karr.lock>, C<.karr.log>. C<last_error>
+All per-board state files are gitignored: C<.karr.state> (board hash, per-task
+attempts, cooldown, last error, last report), C<.karr.lock>, C<.karr.log>.
+Agent availability is not among them: it is not per board and does not live in
+the repository at all (see "Agent availability" above). C<last_error>
 describes the B<last> run and is removed again by the next run that is not a
 common error, so it never outlives the cooldown it caused. C<last_result> is
 the same for the report — how the last run ended, its turns, duration and cost
@@ -446,14 +564,21 @@ sub run {
   # can use foundation purely to see what is happening across boards. A board
   # disabled in its own karr state never counts as an agent board here either,
   # so a config of nothing but disabled boards falls back to the overview.
+  # A board naming an agent that is not defined raises out of _agent_command.
+  # That is a per-board configuration error and _process_repo is where it gets
+  # reported (run() catches it there and skips one board); here it must not
+  # decide the whole run's shape, so it counts as "an agent was meant to run".
   my $any_agent = grep {
-    !$self->_board_disabled( $_ )
-      && defined $self->_agent_command( $_, $self->_load_karr($_) )
+    my $repo = $_;
+    !$self->_board_disabled( $repo )
+      && try { defined $self->_agent_command( $repo, $self->_load_karr($repo) ) }
+         catch { 1 };
   } @repos;
   unless ( $any_agent ) {
     print "No agent will run on any board. Showing overview "
-        . "(set 'claude: true' or 'command:' in a .karr file to enable agents; "
-        . "a board disabled with 'karr disable' never runs one).\n\n";
+        . "(set 'command:', 'agent:' or 'claude: true' in a .karr file to "
+        . "enable agents; a board disabled with 'karr disable' never runs "
+        . "one).\n\n";
     $self->_print_overview( \@repos );
     return 0;
   }
@@ -671,10 +796,10 @@ sub _process_repo {
 
   my $karr = $self->_load_karr( $repo );
 
-  # Resolve the agent command (CLI > default_command > .karr command >
-  # claude: true synthesis). Agent execution is opt-in: a board with no agent
-  # is shown in the overview, not run.
-  my $cmd = $self->_agent_command( $repo, $karr );
+  # Resolve the agent command (CLI > default_command > .karr command > a named
+  # agent definition > claude: true synthesis). Agent execution is opt-in: a
+  # board with no agent is shown in the overview, not run.
+  my ( $cmd, $agent ) = $self->_resolve_agent( $repo, $karr );
   unless ( defined $cmd ) {
     $self->_say_verbose("skip $repo \x{2014} no agent configured (see --status)");
     return;
@@ -690,6 +815,22 @@ sub _process_repo {
   if ( $self->_cooldown_active( $repo ) ) {
     my $until = $self->_state_get( $repo, 'cooldown_until' ) // 0;
     $self->_say_verbose( "skip $repo \x{2014} in cooldown for " . ( $until - time ) . "s" );
+    return;
+  }
+
+  # And the agent's own availability, which is the same idea one level up. The
+  # cooldown above parks THIS BOARD after a bad run; this parks EVERY board
+  # that uses the agent that had it, because "the command stopped working" is a
+  # fact about the command and the machine, not about the repository. Two repos
+  # driven by the same agent share the outage instead of each burning a window
+  # discovering it. Like the cooldown, --force does not override it: the wait
+  # is bounded by probe_every and ends by itself.
+  if ( $agent && !$self->_agents->available( $agent->{name} ) ) {
+    my $av   = $self->_agents->availability( $agent->{name} );
+    my $wait = ( $av->{next_attempt} // 0 ) - time;
+    $self->_say_verbose( "skip $repo \x{2014} agent '$agent->{name}' failing"
+      . ( defined $av->{last_error} ? " ($av->{last_error})" : '' )
+      . ", next attempt in ${wait}s" );
     return;
   }
 
@@ -743,7 +884,7 @@ sub _process_repo {
     return;
   }
   my $result = try {
-    $self->_drain_repo( $repo, $karr, $cmd );
+    $self->_drain_repo( $repo, $karr, $cmd, $agent );
   } catch {
     warn "karr-foundation: drain error in $repo: $_\n";
     { outcome => 'error', exit => 1 };
@@ -754,11 +895,24 @@ sub _process_repo {
   # A run that was not a common error also drops last_error — it describes the
   # last run, and one left standing outlives the cooldown it caused and reads
   # as a contradiction against the last_exit written just below (#160).
+  #
+  # The same verdict updates the named agent's availability, for boards that
+  # use one. Nothing finer is asked of it: a rate limit, a spent budget, a
+  # revoked key and a wrapper that is not installed here all arrive as
+  # common-error, and the same bounded retry answers all of them. A run that
+  # was NOT a common error says the command works, which is what ends an
+  # outage and gets the moment it ended written down. A false positive costs
+  # one probe interval of caution; a false negative costs every board on that
+  # agent its next window.
   if ( ( $result->{outcome} // '' ) eq 'common-error' ) {
     $self->_set_cooldown( $repo, $karr );
+    $self->_agents->record_failure( $agent->{name}, $result->{error} ) if $agent;
   } else {
     $self->_clear_cooldown( $repo );
     $self->_state_del( $repo, 'last_error' );
+    if ( $agent && $self->_agents->record_success( $agent->{name} ) ) {
+      $self->_say_verbose("agent '$agent->{name}' works again");
+    }
   }
 
   # Update state
@@ -974,10 +1128,12 @@ sub _stuck_tasks {
 
 # Run the agent repeatedly until the board has no actionable tasks left,
 # auto-blocking tasks the agent keeps failing on. Returns
-# { outcome => progress|stall|idle|common-error|error, exit => N, ticket => ID }
-# (ticket is undef outside mode: ticket).
+# { outcome => progress|stall|idle|common-error|error, exit => N, ticket => ID,
+#   report => {...}, error => STR } (ticket is undef outside mode: ticket;
+# error is set only on a common-error outcome).
+# $agent is the named agent definition behind $cmd, or undef.
 sub _drain_repo {
-  my ( $self, $repo, $karr, $cmd ) = @_;
+  my ( $self, $repo, $karr, $cmd, $agent ) = @_;
   my $max_runtime  = $karr->{max_runtime}    // 1800;
   my $max_attempts = $karr->{max_attempts}   // 2;
   my $max_iter     = $karr->{max_iterations} // 50;
@@ -1015,6 +1171,12 @@ sub _drain_repo {
   # its final iteration reported.
   my $last_report;
 
+  # The common error that ended the drain, where one did. It leaves the loop
+  # because the caller needs it for two things now: .karr.state's last_error,
+  # which the drain writes itself, and the named agent's availability record,
+  # which is the caller's to write.
+  my $error;
+
   # What this run's agent engages, accumulated across the whole drain: the
   # iteration that claims a task is the one that moves the board, so the stall
   # only becomes visible one or more iterations later.
@@ -1037,7 +1199,7 @@ sub _drain_repo {
     last if $iter >= $max_iter;
 
     my $hash_before = $self->_ref_hash( $repo ) // '';
-    my ( $exit, $output ) = $self->_run_command( $repo, $karr, $cmd, $ticket );
+    my ( $exit, $output ) = $self->_run_command( $repo, $karr, $cmd, $ticket, $agent );
     $last_exit = $exit;
     $first     = 0;
     $iter++;
@@ -1117,6 +1279,7 @@ sub _drain_repo {
       $self->_append_log( $repo, "COMMON-ERROR $err$why" );
       $self->_state_set( $repo, last_error => $err );
       $outcome = 'common-error';
+      $error   = $err;
       last;
     }
 
@@ -1189,6 +1352,7 @@ sub _drain_repo {
     exit    => $last_exit,
     ticket  => $ticket,
     report  => $last_report,
+    error   => $error,
   };
 }
 
@@ -1333,21 +1497,51 @@ sub _load_karr {
 # Agent command resolution
 # ---------------------------------------------------------------------------
 
-# The resolved agent command string, or undef when no agent is configured.
+# What this repo runs, as ( $command, $invocation ). $command is the shell
+# string, or undef when no agent is configured at all. $invocation is set only
+# where the command came from a B<named> agent definition (see
+# L<App::karr::Foundation::Agents>) and carries its name, kind and live-output
+# rendering; it is undef for every other source, which is what keeps a board
+# that knows nothing about agent definitions behaving exactly as before -- no
+# availability is recorded against it, and nothing is appended to its command.
+#
 # Priority: CLI --command > config default_command > .karr command >
-# 'claude: true' shorthand (per-repo, then global).
-sub _agent_command {
+# .karr agent > config default_agent > 'claude: true' shorthand.
+#
+# A named agent sits below the literal command strings and above the claude
+# shorthand: `command:` is the most specific thing a board can say (it is a
+# whole invocation, written out), while `claude: true` is the oldest and least
+# specific. A .karr `agent:` beats the config's `default_agent` for the same
+# reason every other key here does -- the board is the more specific statement.
+sub _resolve_agent {
   my ( $self, $repo, $karr ) = @_;
   my $cfg = $self->_config_data;
 
   for my $candidate ( $self->command, $cfg->{default_command}, $karr->{command} ) {
-    return $candidate if defined $candidate && length $candidate;
+    return ( $candidate, undef ) if defined $candidate && length $candidate;
+  }
+
+  my $named = $karr->{agent} // $cfg->{default_agent};
+  if ( defined $named && length $named ) {
+    # An unknown name raises: a typo here is not a small mistake. Silently
+    # falling back to no agent would park the board for good and say nothing,
+    # which is what `mode:` refuses to do for the same reason. _process_repo
+    # runs inside run()'s per-repo try, so this warns and skips one board.
+    my $inv = $self->_agents->invocation( $named );
+    return ( $inv->{command}, $inv );
   }
 
   my $claude = exists $karr->{claude} ? $karr->{claude} : $cfg->{claude};
-  return $self->_claude_command($karr) if $claude;
+  return ( $self->_claude_command($karr), undef ) if $claude;
 
-  return undef;
+  return ( undef, undef );
+}
+
+# The resolved agent command string, or undef when no agent is configured.
+sub _agent_command {
+  my ( $self, $repo, $karr ) = @_;
+  my ( $cmd ) = $self->_resolve_agent( $repo, $karr );
+  return $cmd;
 }
 
 # Synthesize the canonical claude invocation behind 'claude: true'. The $PROMPT

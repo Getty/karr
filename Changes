@@ -1,5 +1,38 @@
 {{$NEXT}}
 
+    - karr-foundation learns named agents and per-agent
+      availability (#188). The local config can define several
+      agents -- `command`, `kind`, an optional `probe_every` and a
+      prose `description` -- and a board picks one with `agent:` in
+      its .karr file. The description is never read by karr; it is
+      the selection criterion for the agent that routes work, which
+      reads prose better than it matches taxonomies. Definitions
+      stay local and never sync: an agent command that exists on
+      one machine does not exist on the next, and an account limit
+      belongs to a person rather than to a project. `kind:
+      claude-code` is the invocation contract -- karr appends `-p`,
+      an output format, `--permission-mode`, `--max-turns` and
+      `--allowed-tools`, and reads the run's own report back out of
+      the result object (#187). That format is stream-json rather
+      than json, because plain json prints nothing until the run
+      ends and would have quietly cancelled the live output an
+      interactive run is watched for; the runner now renders the
+      assistant's text out of the stream for the terminal and
+      .karr.log while the raw stream is what the run is classified
+      from. Availability is the least karr can track: ok, or
+      failing since X with a next attempt at Y. No cost, no tokens,
+      no quotas -- a rate limit and a spent budget look identical
+      from the outside, so one mechanism covers both. A common
+      error marks the agent failing and every board that uses it
+      waits, because that is a fact about the command and the
+      machine and not about one repository; when the next attempt
+      comes round the agent is simply run again on the work that
+      was waiting, and the recovery is recorded so a rhythm can be
+      read out of the trail later. That record is machine-local and
+      sits beside the config file, not in .karr.state and not in
+      the board. A board that names no agent behaves exactly as
+      before.
+
     - karr-foundation classifies a run from its own report rather
       than from its transcript (#187). An agent invoked with
       `--output-format json` ends its output with a JSON object
