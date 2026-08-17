@@ -1,0 +1,38 @@
+---
+claimed_at: 2026-08-15T09:39:03Z
+claimed_by: hear-step
+class: standard
+completed: 2026-08-17T01:43:43Z
+created: 2026-08-15T08:10:50Z
+id: 172
+priority: high
+started: 2026-08-15T09:11:46Z
+status: done
+tags:
+- concurrency
+- correctness
+title: concurrent create hands out the same task ID twice
+updated: 2026-08-17T01:43:43Z
+---
+
+Reproduced: 8 parallel `karr create` in one clone produced task ID 8 TWICE (titles "Par1" and "Par3"), alongside push rejections and conflict refs parked under refs/karr-conflict/.
+
+Two distinct writers ended up believing they owned the same id, so one card can overwrite the other. This is a correctness/data-loss issue, independent of the transport hangs.
+
+Repro (isolated, no real remote):
+  git init --bare remote.git; git init work; cd work; git remote add origin ../remote.git
+  karr init
+  for i in $(seq 1 8); do karr create "Par$i" & done; wait
+  karr list --compact   # observe duplicate IDs
+
+Look at allocate_next_id_ref and its retry_contended usage (Git.pm): the CAS on refs/karr/meta/next-id must be the sole authority for id allocation, and losing that race has to force a re-read rather than reusing the id already computed.
+2026-08-15 09:39 Fixed and committed locally as b968df7 (no push). Root cause was NOT the CAS in allocate_next_id_ref -- that is provably exclusive (verified: 8 forked allocators in one repo, 5 rounds, no duplicate). The pull walked the counter backwards: _reconcile_with_mirror is last-writer-wins per ref and force-wrote a remote refs/karr/meta/next-id that was behind the local one. Traced with temporary instrumentation: "ADOPT next-id local=7 -> remote=4", immediately followed by "ALLOC 4" and "ALLOC 5" -- ids that already had cards. Two ways the remote gets behind: every push force-writes the whole namespace, so a push that started earlier can land later; and reconciliation decides from a snapshot of the local refs and applies it later, so a create that allocated in between is undone.
+
+Fix (lib/App/karr/Git.pm): the counter is merged, not adopted. _adopt_remote_ref routes refs/karr/meta/next-id to the new _adopt_next_id_ref, which takes the remote value only when it is ahead and compare-and-swaps it against the exact revision the comparison was made on (new _cas_ref_oid, factored out of write_ref_cas), so an allocation slipping in between makes the attempt read again instead of clobbering it. A local counter already further along is kept, published by the next push, and left out of the conflict report (its "the remote version is now in place" wording would be untrue for it). Also factored _content_at_oid out of read_ref_with_oid and moved the NEXT_ID_REF constant up to the namespace constants. Transport code (#170) untouched.
+
+Verification: t/172-next-id-monotonic-sync.t (new) is RED against the unfixed Git.pm -- counter 4 instead of 7, "Created task 4: After" overwriting card A4 -- and green with the fix; its second subtest pins that a remote counter genuinely ahead is still adopted, so the fix cannot degenerate into "never take the remote value". Stress: the reproducer went from 5 duplicate-id runs in 12 to 0 in 25.
+
+Full suite: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/ -> Files=163, Tests=1102, only t/67-bin-version.t red (bin/karr says 0.500, lib says 0.501 = #175, pre-existing).
+
+Second defect found while stressing, filed as #178: with the counter fixed, 2 of 20 runs still LOST a card entirely (8 creates reported, 7 task refs). Concurrent forced+pruning pushes prune each other, the mirror follows, and the next pull deletes the card locally through the silent "the remote deleted it" branch. Same runs produce per-ref push rejections ("a reference with that name already exists"). Not a regression from this fix.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
