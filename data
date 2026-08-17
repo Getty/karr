@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-08-17T19:28:25Z
+claimed_by: jury-salt
+class: standard
+completed: 2026-08-17T19:28:25Z
+created: 2026-08-17T01:04:18Z
+id: 195
+priority: low
+started: 2026-08-17T18:30:42Z
+status: done
+tags:
+- refs
+- ux
+- docs
+title: karr set-refs joins content arguments with spaces, so multi-line payloads need
+  exactly one argument
+updated: 2026-08-17T19:28:25Z
+---
+
+`SetRefs::execute` does `my \$content = join ' ', @content_parts;`. Passing a multi-line document the obvious way — unquoted, or split across arguments — silently collapses every newline into a space, and the payload is stored corrupted. Nothing warns.
+
+It works if the whole document is a single argument: `karr set-refs REF \"\$(cat file)\"`. Found while storing a design document; the corrupted result is only visible on `get-refs`.
+
+Options: read from stdin when no content arguments are given, join with newlines instead of spaces, or at minimum say so in the skill doc and `--help`. The skill's example (`karr set-refs superpowers/spec/1234.md draft ready`) actively teaches the shape that breaks.
+Entscheidung: Option 1 (stdin lesen, wenn kein CONTENT-Argument da ist), plus die Doku-Haelfte. Begruendung ueber 'was bricht am wenigsten': mit Newlines zu joinen aendert die Payload jedes bestehenden Mehrwort-Aufrufs, und genau diese Form lehren README, share/claude-skill.md, die Skill im Repo, der SYNOPSIS des Kommandos und die Root-Hilfe ('karr set-refs superpowers/spec/1234.md draft ready'); der Test t/21 haengt ebenfalls an 'hello world'. Nur zu dokumentieren laesst die stille Korruption stehen. Die argumentlose Form dagegen war bisher ein harter Usage-Fehler -- es gibt also keinen funktionierenden Aufruf, dessen Bedeutung sich aendert. Rein additiv.
+
+Umsetzung in App::karr::Cmd::SetRefs: Argumente joinen weiter mit einem Space; sind keine da, liest _payload_from_stdin. Zwei Faelle bewusst gesetzt: am Terminal (-t STDIN) bleibt es der Usage-Fehler von vorher (exit 2) statt ein Kommando, das wortlos wartet, und leerer stdin wird abgelehnt ('No payload on stdin...', exit 1 -- Laufzeitfehler wie bei Restore's leerem stdin, ADR 0002) statt als leere Payload gespeichert; die absichtliche leere Payload bleibt 'karr set-refs REF ""'. Encoding sauber: binmode STDIN ':raw' + from_octets, wie App::karr::Cmd::Restore -- STDIN ist die eine Kante ohne PerlIO-Layer.
+
+Regressionstest in t/21-helper-refs.t: _run_karr bekommt eine stdin-faehige Variante, neuer Subtest schickt ein mehrzeiliges Dokument mit Umlauten durch set-refs < / get-refs > und vergleicht byteweise (faengt Newline-Kollaps und Doppelencoding), prueft die Argumentform unveraendert und den leeren stdin. Gegenprobe: gegen das alte SetRefs.pm faellt der Subtest.
+
+Doku nachgezogen: SYNOPSIS/DESCRIPTION von SetRefs, README 'Helper refs', share/claude-skill.md und .claude/skills/kanban-issues-karr-cli/SKILL.md (per cat >, Inode erhalten, t/62-skill-doc-sync gruen). Test: prove -l t/21-helper-refs.t PASS, prove -l t/ PASS. Changes-Eintrag unter {{$NEXT}}.
+set-refs liest stdin, wenn kein CONTENT-Argument da ist; Argumente joinen unveraendert mit Space. Terminal bleibt Usage-Fehler, leerer stdin wird abgelehnt. Test in t/21-helper-refs.t, Doku in SetRefs-POD, README und beiden Skill-Kopien. prove -l t/ gruen.
