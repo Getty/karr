@@ -1,0 +1,50 @@
+---
+claimed_at: 2026-08-17T19:28:32Z
+claimed_by: jury-salt
+class: standard
+completed: 2026-08-17T19:28:32Z
+created: 2026-08-17T01:46:37Z
+id: 197
+priority: low
+started: 2026-08-17T18:30:49Z
+status: done
+tags:
+- sync
+- refs
+- concurrency
+title: Tombstones werden in einem Repo ohne Remote nie geraeumt
+updated: 2026-08-17T19:28:32Z
+---
+
+Gefunden beim Review von #178 (2026-08-17), gemessen, kein Codelesen.
+
+App::karr::Git::push kehrt vor allem anderen zurueck, wenn kein Remote konfiguriert ist:
+
+    return 1 unless $repo->has_remote($remote);
+
+_clear_pending_deletes laeuft erst nach einem erfolgreichen Push, also in so einem Repo nie. Jede Loeschung eines Board-Refs legt aber weiterhin einen Tombstone an (_note_pending_delete haengt an delete_ref und delete_ref_cas, unabhaengig vom Remote).
+
+Reproduziert (git init, karr init, zwei Tasks, zwei deletes):
+
+    refs/karr-local/deleted/tasks/2/data
+    refs/karr-local/deleted/tasks/3/data
+
+und die bleiben. Drei Folgen, alle klein, deshalb low:
+
+1. Ein Ref pro je geloeschtem Board-Ref, dauerhaft. Beschraenkt durch die Zahl der Loeschungen, nicht durch die Zeit -- kein Leck im Minutentakt.
+2. Der Tombstone zeigt auf den Commit des geloeschten Refs, haelt die Karte also erreichbar. Das ist genau die Wiederherstellbarkeit, die der Kommentar an TOMBSTONE_ROOT als Nebeneffekt beschreibt -- ohne Remote aber unbegrenzt statt bis zum naechsten Push.
+3. Der unangenehme Fall: wird spaeter ein Remote hinzugefuegt, publiziert der erste Push alle je gesammelten Loeschungen. Zeigt dieses Remote auf ein Board, auf dem ein anderer Klon inzwischen Karten unter denselben Pfaden hat, nimmt der Push sie weg. Schmal, weil der Board-Identity-Guard (#95) den umgekehrten Weg schon abfaengt -- aber nicht unmoeglich, weil der Push selbst keine Board-Identitaet prueft.
+
+Wer das aufgreift, sollte entscheiden, ob push den Tombstone auch im no-remote-Fall raeumen soll (dann ist er reine Push-Buchhaltung), oder ob er als lokaler Wiederherstellungspfad gewollt ist und stattdessen eine Altersgrenze braucht. has_pending_deletes -- der Autofetch-Guard aus #173 -- liest in beiden Faellen weiter richtig, weil ohne Remote ohnehin nichts gefetcht wird.
+Entscheidung: der Tombstone ist reine Push-Buchhaltung, also raeumt push ihn auch im no-remote-Fall. Keine Altersgrenze.
+
+Begruendung: der Kommentar an TOMBSTONE_ROOT nennt die Wiederherstellbarkeit selbst einen Nebeneffekt davon, dass der Tombstone auf den geloeschten Commit zeigt -- niemand liest einen Tombstone je zurueck, es gibt kein Kommando dafuer. Eine Altersgrenze braeuchte ausserdem einen Loeschzeitpunkt, den der Ref gar nicht traegt (das Commit-Datum ist, wann die Karte zuletzt geschrieben wurde), plus eine zu konfigurierende Policy -- viel Maschinerie fuer eine Eigenschaft, die niemand bestellt hat. Den Ausschlag gibt Folge 3 aus dem Ticket: wird spaeter ein Remote hinzugefuegt, publiziert der erste Push sonst jede je gemachte Loeschung, und der Push prueft keine Board-Identitaet (#95 sitzt am Pull) -- ein Board mit Karten unter denselben Pfaden verliert sie. Geraeumt ist der Rueckstand weg, bevor es ein Remote gibt.
+
+Umsetzung in App::karr::Git: push setzt den refspec-Default jetzt vor der has_remote-Pruefung und ruft im no-remote-Zweig _settle_local_deletes(BOARD_ROOT), push_foundation dasselbe mit FOUNDATION_ROOT (gleiche Luecke eine Namespace weiter, und dort loescht die Retention routinemaessig Refs). _settle_local_deletes wendet exakt die Regeln von _clear_pending_deletes an: wirklich weg -> Tombstone faellt, Ref wieder da (stale) -> faellt auch, ein in einem anderen Prozess laufendes delete -> bleibt dessen Push. Es liest zuerst die Tombstones und nur bei Treffer die Namespace-OIDs, damit der haeufige Fall (nichts zu raeumen) auf dem Schreibpfad eines Repos ohne Remote einen billigen Scan kostet statt zwei.
+
+has_pending_deletes (#173) liest weiter richtig: der Autofetch-Guard fragt has_remote vor has_pending_deletes, ohne Remote wird ohnehin nichts geholt. Geprueft: 'karr destroy --yes' ohne Remote hinterlaesst jetzt einen komplett leeren karr-Refnamespace statt N Tombstones, und die Meldung 'Run karr init' bleibt richtig. Repos MIT Remote sind unberuehrt -- auch das aus t/178, wo das origin-Verzeichnis wegbenannt wird: der Remote bleibt konfiguriert.
+
+Regressionstest: neuer Subtest in t/178-push-does-not-prune-unseen-cards.t. Er prueft im remotelosen Repo, dass nach zwei Loeschungen nichts unter refs/karr-local/deleted/ steht und has_pending_deletes falsch ist -- und dann den eigentlichen Schaden: Remote nachtraeglich auf ein fremdes Board gesetzt, 'karr sync --push', dessen Karte muss stehen bleiben. Gegenprobe: ohne den Fix fallen alle drei Assertions, inklusive der geloeschten Fremdkarte.
+
+Test: prove -l t/178-push-does-not-prune-unseen-cards.t PASS, prove -l t/ PASS (180 Dateien, 1254 Tests). POD von push und push_foundation nachgezogen, Changes-Eintrag unter {{$NEXT}}.
+Entscheidung: Tombstone ist Push-Buchhaltung -- push raeumt ihn auch ohne Remote (push_foundation ebenso), keine Altersgrenze. Test in t/178, prueft auch die nachtraeglich hinzugefuegte Remote. has_pending_deletes unveraendert korrekt. prove -l t/ gruen.
