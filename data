@@ -1,0 +1,42 @@
+---
+claimed_at: 2026-08-15T15:44:21Z
+claimed_by: pond-wash
+class: standard
+completed: 2026-08-17T01:44:31Z
+created: 2026-08-15T09:31:18Z
+id: 177
+priority: low
+started: 2026-08-15T14:51:05Z
+status: done
+tags:
+- claims
+- ux
+- agents
+title: Taking over an expired claim is silent — no trace of who held it before
+updated: 2026-08-17T01:44:31Z
+---
+
+Split out of #176 (docs fix for the ephemeral agentname), which is the docs half of the same symptom. This is the behavioural half and was deliberately left out of that ticket.
+
+App::karr::Role::ClaimTimeout::check_claim allows a mutation once the existing claim is older than claim_timeout — by design (an expired claim must not block anybody, and karr pick reaps them). But the takeover is completely silent, and handoff/move then overwrite claimed_by with the new name, so the previous holder leaves no trace on the card at all.
+
+Reproduced in a temp repo (claim_timeout: 1s):
+
+    A=$(karr agentname); karr move 1 in-progress --claim "$A"
+    # ... claim expires ...
+    B=$(karr agentname)
+    karr handoff 1 --claim "$B" --note x
+    -> "Handed off task 1 -> review"   exit 0
+    karr show 1 -> Claimed:  <B>
+
+Nothing on stdout or stderr says a claim changed hands. While the claim is still live the same mismatch is refused loudly and the error names the holder ("Task 1 is claimed by <A>"), which is the recovery route #176 now documents; after expiry that signal disappears entirely, exactly when it would be most useful — an agent that lost its own name gets a success instead of a hint.
+
+It matters beyond the confused agent: karr-foundation attributes stalls per claim name, and a silent re-stamp moves that attribution to a name nobody is holding, with no record that the card was ever held by someone else.
+
+Suggested shape (small, one place): when check_claim proceeds only because the claim expired AND the incoming claimant differs from the holder, emit one line to STDERR, e.g.
+    karr: task 1: taking over expired claim held by <A>
+Return value and exit code unchanged, so nothing that currently succeeds starts failing. The activity log already records the acting claim name; the point is making the handover visible at the moment it happens.
+
+Care needed: check_claim is shared by move/edit/delete/archive/handoff, and delete/archive pass undef as claimant (they refuse any live claim rather than comparing names), so "differs from the holder" has to be defined for the undef case too — probably "warn whenever an expired claim was stepped over", regardless of claimant. Decide that deliberately; it changes stderr for five commands and a few tests assert clean stderr.
+2026-08-15 15:44 Fixed and committed locally as 527575b (on 944ddb2). check_claim now records the expired claim it steps over; expired_claim_report emits it on DependencyCheck's channels: STDERR 'Warning: task N: overriding the expired claim held by X (claimed TS)', an expired_claim {held_by,claimed_at} pair under --json, silenced by --quiet. Wired into move/edit/delete/archive/handoff after the write lands (recorded not printed, because check_claim runs inside the CAS callback). Decided against a task field (frontmatter/kanban-md compat) and against log-only (invisible at the moment it happens). Nothing new refused, no exit code changed; delete/archive keep passing undef and still refuse any live claim; the holder continuing under its own expired claim is not reported. requires on ClaimTimeout widened to store/json/quiet (every consumer already had both); t/72 + t/147 updated. Regression test t/177-expired-claim-takeover.t verified RED against 944ddb2 without the lib changes. Full suite: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/ -> 165 files, 1107 tests, All tests successful, exit 0.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
