@@ -1,0 +1,40 @@
+---
+claimed_at: 2026-08-15T09:04:50Z
+claimed_by: from-kept
+class: standard
+completed: 2026-08-17T01:43:31Z
+created: 2026-08-15T08:10:43Z
+id: 171
+priority: high
+started: 2026-08-15T08:13:16Z
+status: done
+tags:
+- activity-log
+- scaling
+- git
+title: activity log is a read-modify-write of one blob — quadratic growth of the object
+  store
+updated: 2026-08-17T01:43:31Z
+---
+
+ActivityLog.pm:229 reads the ENTIRE log ref and writes it back with one line appended, on every mutating command. Every CAS retry re-reads the whole blob as well.
+
+Measured on a fresh board: 93 bytes per log entry. The sum of all log blobs ever written after N commands is therefore ~93*N^2/2 raw — at N=10,000 that is about 4.6 GB of blobs (before zlib) for a log that is only ~1 MB.
+
+Compounding it: _commit_for_content (Git.pm:706) writes PARENTLESS commits, so every ref update turns its predecessor into garbage immediately. Measured after 105 commands: 726 loose objects, 666 of them unreachable (92%), i.e. ~6.3 unreachable objects per mutating command.
+
+Consequence measured: past ~6,700 loose objects (roughly 1,060 mutating commands) git gc --auto fires on every commit/fetch/push but cannot remove the unreachable objects (gc.pruneExpire 2 weeks) and writes no gc.log to suppress further runs. Verified: the state persists indefinitely. Each run is cheap (ms) — this is a disk/slowdown problem, not a CPU one.
+
+Options worth weighing: append-only per-entry refs or a segmented/rotating log, so a write is O(1) instead of O(n).
+2026-08-15 09:04 Chose the segmented log (option b), not one ref per entry (a). Per-entry refs make the write O(1) but the ref namespace unbounded: every list_refs walk (karr log, karr context, sync's ref_oids, push/fetch enumeration) becomes O(entries), reading the log turns 1 blob read into 3 object reads per entry, and the loose-object cost per entry is unchanged. Segments bound the write by a cap instead of by the history while keeping the ref count at ~1 per 80 entries.
+
+Layout: refs/karr/log/<role>/<email> is segment 0, refs/karr/log/<role>/<email>+000001 the next. '+' is legal in a ref name and _encode_component never emits one (it becomes %2B), so no collision with another identity; segments are siblings of segment 0, not children, because git cannot hold a ref and a directory of the same name -- .../<email>/000001 would be unwritable on every board that already has a log. Only the newest segment is appended to, up to segment_max_bytes (8 KiB), guarded by write_ref_cas inside retry_contended; rotation uses expected_old => undef, so two writers rotating at once cannot clobber each other.
+
+No marker ref, no repair pass: unlike refs/karr/meta/encoding, which recorded a fact the content could not tell you, this layout IS the ref names. A pre-#171 board has segment 0 and nothing else -- exactly what an unrotated log looks like -- so it is read and appended to unchanged; pre-#75 legacy refs still merge in ahead of it. last_entry now walks refs newest-first and stops at the first with an entry (one ref read, not the whole log). karr log / karr context see segments through the refs/karr/log/* walk they already do; context's self-exclusion moved from '$ref eq $self_ref' to ActivityLog->owns_ref, or an agent's own rotated history would have read as another agent's.
+
+Measured (fresh board, ~100-byte entries): before, bytes of objects per entry grew 5.4K/10.5K/20.8K at 100/200/400 entries; after, flat at ~4.2K -- 1000 entries went from ~51 MB projected to 4.26 MB, and wall clock from 6.2s to 1.65s. Test t/171 measures 305 vs 297 bytes/entry at 60 vs 120 entries (quadratic would double it).
+
+Commit 69a7c01 (local only, not pushed): lib/App/karr/ActivityLog.pm, lib/App/karr/Cmd/Context.pm, t/171-activity-log-segments.t, Changes.
+
+Tests: prove -l t/171-activity-log-segments.t -> PASS (6 subtests); 5 of its 6 subtests fail against the pre-fix code, verified by stashing the lib changes. Full suite in a clean clone of commit 69a7c01: prove -l t/ -> Files=161, Tests=1097, one failing file, t/67-bin-version.t (2 subtests). That failure is pre-existing and unrelated -- bin/karr and bin/karr-foundation are still 0.500 while lib/App/karr.pm is 0.501 since commit 053b61e; verified red at 053b61e itself and filed as #175. A first suite run in the shared working tree also showed t/127-depends-on-cli.t exiting 255; it passes on rerun and the tree was being edited concurrently for #170 (Git.pm), which is the likely cause -- the isolated run has it green.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
