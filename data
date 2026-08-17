@@ -1,0 +1,206 @@
+# karr-foundation: coordinated execution across boards
+
+Status: design agreed 2026-08-17. Instance-specific parts live outside karr.
+
+## What this is for
+
+Today `karr-foundation` drains one board at a time: it runs an agent command in
+a repo until the board stops moving, then goes to the next repo. That is enough
+for independent repositories. It is not enough for a fleet whose repositories
+depend on each other, where the order of work matters, where several different
+agent commands are available with different strengths and different failure
+modes, and where a human wants to be asked rather than surprised.
+
+This is the generic half of that. Everything domain-specific — what "done" means
+for a distribution, how a release is verified, which project depends on which —
+stays out of karr and reaches it through a hook.
+
+## The shape
+
+Three layers. karr owns the first two.
+
+**Coordination (shared).** Tickets, dependencies, escalations, the chain of
+planned steps, open questions, the run log. All of it lives in git refs and
+syncs with the remote, so every machine and every person sees the same picture.
+
+**Execution (local).** Which agent commands exist on this machine, whether they
+currently work, when to try them again, how many may run at once. Never in the
+repository — an agent command that exists on one machine may not exist on
+another, and an account limit is a property of a person, not of a project.
+
+**Judgement (an agent).** Planning, routing, reacting to the unexpected. This is
+a coordination agent, invoked like any other agent, and only when a written plan
+is missing or has broken.
+
+## The chain
+
+An AI plans, written steps execute, the AI is called again only on deviation.
+The AI is the compiler, the chain is the program, karr-foundation is the VM.
+Between deviations no AI runs at all, which is what makes the whole thing
+affordable.
+
+A step names no agent. Naming one would tie the chain to a machine, and the
+chain is shared state.
+
+    id: 42
+    kind: ticket            # ticket | shell | question | plan
+    repo: /path/to/repo
+    ticket: 41
+    needs: [40, 41]         # step ids
+    timeout: 1800
+    precheck: ticket_status == todo
+    on_stall: plan
+    on_rate_limit: requeue
+
+The chain is a DAG. Steps without a `needs` edge between them may run
+concurrently; the planner does not serialise by hand, it simply leaves edges
+out.
+
+A step whose `precheck` no longer holds is not executed. It is marked stale and
+calls the planner. This is what keeps a chain that has gone out of date from
+doing damage — it costs time, not correctness. For the same reason chains stay
+short: a long chain goes stale faster than it is worked through.
+
+Chains are stored under `refs/karr-foundation/chain/*`, questions under
+`refs/karr-foundation/questions/*`, run logs under
+`refs/karr-foundation/log/<date>-<id>`. These are outside the protected
+`refs/karr/*` namespace, so the existing helper-ref machinery applies — but
+`karr sync` currently synchronises `refs/karr/*` only, and this namespace needs
+the same treatment.
+
+## One ticket per agent run
+
+An agent invocation is exactly one ticket, never "drain this repo".
+
+The point is control, not granularity. A single-ticket run ends by itself, so
+nothing has to stop it, and the coordinator gets a decision point after every
+ticket — which is where reordering, agent switching and gating happen. An agent
+that dies mid-work loses one attempt: its claim expires, `karr unlock` clears
+the pick lock, the ticket is free again.
+
+## Agents and availability
+
+karr knows the least it can about an agent. No cost, no tokens, no quotas — a
+rate limit and an exhausted budget look identical from the outside (the command
+stops working), so one mechanism covers both.
+
+    minimax:
+      command: claude_with_minimax
+      kind: claude-code     # the contract: how arguments are appended, how the result is read
+      probe_every: 15m      # optional; otherwise found by trying
+      description: >-
+        Prose. What this agent is good at, where it is weak, what it costs.
+        This is the selection criterion. Not a class, not an enum — the
+        thing choosing is a language model, and it reads better than it
+        matches taxonomies.
+
+Per-agent state: `ok` / `failing since X` / `next attempt at Y`. Where the reset
+rhythm is known it is configured; where it is not, karr-foundation retries at a
+fixed interval and **records when it worked again**. Reading a pattern out of
+those records is the coordination agent's job, not a learning algorithm inside
+karr.
+
+`kind: claude-code` tells the coordination agent that it may append `-p`,
+`--output-format json`, `--permission-mode`, `--allowed-tools`, and how to read
+the result. Permission escalation therefore becomes a per-invocation decision
+rather than a property baked into a wrapper script.
+
+A run is classified from its result JSON, not by matching patterns against its
+transcript. The current text scan exists because there was nothing better to
+read; with a structured result there is.
+
+## Routing without a taxonomy
+
+The operator writes prose describing how they want their agents used — which
+ones are cheap, which are trusted with delicate work, what to do when one is
+unavailable, roughly how many of each may run at once. Those numbers are
+estimates of where a session limit sits, not limits themselves; they are allowed
+to be wrong, because being wrong marks the agent `failing` and the fallback
+takes over.
+
+The coordination agent reads that prose together with the agent list and the
+current availability, and writes an assignment with fallback chains — repo path
+to ordered agent list, with an explicit `WAIT` entry for "rather wait than use
+something unsuitable here".
+
+**No AI runs in the hot path.** karr-foundation looks the assignment up, takes
+the first agent in the chain that currently works, and waits if none does. The
+coordination agent is called only when the assignment has to be made again.
+
+## Concurrency
+
+Three levels, tightest wins: a hard machine ceiling (local, protects CPU and
+memory), the operator's per-agent estimates from the prose, and the limits a
+particular run declares in its chain header.
+
+    limits:
+      concurrent: 4
+      per_agent:
+        minimax: 2
+
+One hard rule stays: **one agent per repository.** `.karr.lock` is per repo and
+should remain so — two agents in one working tree collide. Concurrency is
+therefore concurrency across repositories, never inside one. Changing that would
+need a git worktree per agent, which is deliberately out of scope.
+
+This means the runner has to become concurrent. It currently executes one
+command after another, and without that change every concurrency setting is
+decoration.
+
+## Questions are objects
+
+A question is a file with an answer field, not a dialogue. That removes the
+special case for "a human happens to be present".
+
+`questions/0007.yaml` carries the question, its context, the options, a default,
+and a policy for what happens when nobody answers (`block`, `use_default`,
+`escalate_to_ai`). The chain continues with everything that does not depend on
+it. Who fills in the answer — a person at a terminal, a chat message, or the
+coordination agent — is not something the chain needs to know.
+
+## Escalation across repositories
+
+The most common real-world interruption is "this cannot be done until X is fixed
+somewhere else". An agent must neither give up nor reach into the neighbouring
+repository. It reports:
+
+1. `karr create` in the other repo, tagged `escalated-from:<repo>#<id>`
+2. `karr edit <id> --block "needs <repo>#<id>: <reason>"` in its own
+3. release the claim, exit
+
+The coordinator sees both sides on the next cycle. Order is therefore not
+planned, it is discovered — which is why work rotates across repositories rather
+than finishing one before starting the next: a newly discovered prerequisite
+simply moves forward in the rotation instead of breaking a plan.
+
+`--depends-on` is board-local today. A tag convention plus a hub board carries
+the link to begin with; cross-board dependencies make it explicit.
+
+## The hub
+
+One repository of a fleet carries the fleet-wide namespace. That is a role, not
+a separate project: any repository can take it, and a fleet without a dedicated
+coordination repository designates one of its own. Local configuration names it.
+
+## The domain hook
+
+When a board drains, `on_drained` runs a configured command. karr does not know
+what it does. In the fleet this design came from it starts a release gate that
+builds, installs, verifies against dependents and raises version requirements —
+none of which karr should ever learn about.
+
+## Work items
+
+1. Ticket mode — run exactly one ticket and return
+2. Concurrent runner with the three concurrency levels
+3. Classify a run from its result JSON
+4. Agent definitions and availability probing
+5. Chain and log storage under `refs/karr-foundation/*`, with log retention
+6. Sync that namespace, as `refs/karr/*` already is
+7. Question mailbox: `ask` / `answer`
+8. Cross-board dependencies
+9. `on_drained` hook
+
+Already present, no work needed: process-group kill (#148) — `Foundation/Runner.pm`
+calls `setpgid(0,0)` in the child and `Foundation.pm` signals the group with
+TERM and then KILL.
