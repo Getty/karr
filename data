@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-08-16T17:30:10Z
+claimed_by: lane-wage
+class: standard
+completed: 2026-08-17T01:45:55Z
+created: 2026-08-16T17:12:25Z
+id: 184
+priority: low
+started: 2026-08-16T17:16:46Z
+status: done
+tags:
+- docs
+- init
+- sync
+title: Packaged skill doc still says init in a clone would start a second board
+updated: 2026-08-17T01:45:55Z
+---
+
+Follow-up from #182. init now asks origin before it writes anything and refuses a clone whose board is on the remote, with `karr init --new-board` as the opt-out (lib/App/karr/Cmd/Init.pm). Two places in share/claude-skill.md (and its byte-identical twin .claude/skills/kanban-issues-karr-cli/SKILL.md, kept in sync by t/62-skill-doc-sync.t) still describe the old world:
+
+* the Sync section ends "running it in a clone whose board is on the remote would start a second, empty board beside it" -- it no longer would; it refuses and names `karr sync`.
+* nothing documents --new-board, so an agent that really wants an independent board in a clone has no documented way through and will read the refusal as a dead end.
+
+Left out of #182 deliberately: a second worker was editing packaged docs in the same working tree at the time, and both files are rewritten whole. Edit them in place (cat > / truncating write) so the .claude hardlink chain survives.
+Done in 192e695. Both skill-doc copies edited in place (truncating write, hardlink chain intact): --new-board documented in the Initialize section, and the Sync section no longer claims init would start a second board in a clone. t/62-skill-doc-sync.t plus the seven other skill tests PASS.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen). Integrations-Smoke gegen ein Wegwerf-Repo bestanden. Freigegeben -> done.
