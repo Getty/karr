@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - `karr set-refs` can no longer write the sync machinery's own
+      refs (#199). refs/karr/ and refs/karr-local/ were blocked;
+      refs/karr-remote/ -- the mirror that holds, per ref, the OID
+      the remote had at the last sync -- was not, and neither was
+      refs/karr-conflict/. A hand-written mirror entry does not
+      corrupt a payload, it makes the next pull reach the wrong one
+      of its four conclusions: a card comes out as "the remote
+      deleted this" and is removed locally, or as "unpushed local
+      work" and is forced over the remote's newer version. Nothing
+      legitimate writes either namespace -- App::karr::Git owns both
+      end to end -- so this is the third door of the hole #93 closed
+      for pick locks and set-refs closed one command over.
+
     - karr-foundation: `on_drained`, the domain hook (#193). When a
       board has drained, a configured command runs in it, and karr
       does not know and must not know what it does. That is the seam

@@ -106,6 +106,14 @@ subtest 'git helper API normalizes refs and blocks protected namespaces' => sub 
         'refs/replace/abc123',
         'refs/karr/tasks/1/data',
         'refs/karr/config',
+        'refs/karr-local/tasks/1/lock',
+        'refs/karr-local/deleted/tasks/1/data',
+        # Ticket #199: the mirror every pull reconciles against, and the
+        # parking lot for the local side of a conflict. A hand-written mirror
+        # entry does not corrupt a payload -- it makes the next pull decide
+        # the wrong one of its four cases and delete or force-push a card.
+        'refs/karr-remote/origin/tasks/1/data',
+        'refs/karr-conflict/tasks/1/data',
         'refs/stash',
         'refs/stash/mine',
       )
@@ -164,6 +172,23 @@ subtest 'protected namespaces are rejected from the CLI' => sub {
     isnt( $rv->{exit}, 0, 'set-refs fails for protected namespaces' );
     is( $rv->{stdout}, '', 'error path keeps stdout empty' );
     like( $rv->{stderr}, qr/protected|blocked/i, 'stderr explains why the ref is rejected' );
+
+    # Ticket #199: the sync machinery's own namespaces went through. Asserted
+    # end to end rather than only on validate_helper_ref, because the damage is
+    # done by the ref existing afterwards -- the next pull reads it as "the OID
+    # the remote had at the last sync" and reconciles against a lie.
+    for my $ref (
+        'refs/karr-remote/origin/tasks/1/data',
+        'refs/karr-conflict/tasks/1/data',
+      )
+    {
+        my $sync = _run_karr( $repo, 'set-refs', $ref, 'junk' );
+        isnt( $sync->{exit}, 0, "set-refs fails for $ref" );
+        like( $sync->{stderr}, qr/protected|blocked/i,
+            "stderr explains why $ref is rejected" );
+        my $exists = `git -C '$repo' rev-parse --verify --quiet $ref`;
+        is( $exists, '', "$ref was not created" );
+    }
 };
 
 done_testing;

@@ -679,6 +679,24 @@ sub validate_helper_ref {
         # ref and pushes it, so leaving it able to reach that namespace would
         # put the same hole back one command over.
         'refs/karr-local/',
+        # The remote-tracking mirror (MIRROR_ROOT) and the parking lot for the
+        # local side of a conflict (CONFLICT_ROOT) -- spelled out rather than
+        # named, because both constants are declared further down the file and
+        # `use constant` is only visible from its textual point on.
+        #
+        # The mirror is the third door of the same hole (#199): every pull
+        # decides what a ref means by comparing it against the mirror, so a
+        # hand-written entry there does not corrupt a payload, it makes the
+        # reconciliation reach the wrong one of its four conclusions -- a card
+        # comes out as "the remote deleted this" and is removed locally, or as
+        # "unpushed local work" and is forced over the remote's newer version
+        # (#154). Nothing legitimate writes it: App::karr::Git owns it end to
+        # end. The conflict parking lot is only read back by a person, but it
+        # is no one else's to write either, and a fabricated entry there is a
+        # card that looks like it was displaced by a conflict that never
+        # happened.
+        'refs/karr-remote/',
+        'refs/karr-conflict/',
     );
 
     for my $prefix (@blocked) {
@@ -711,10 +729,12 @@ sub validate_helper_ref {
 Normalizes C<$ref> (L</normalize_ref_name>) and dies unless it is both a
 syntactically valid git ref name and outside every namespace karr itself owns
 or protects: C<refs/heads/>, C<refs/tags/>, C<refs/remotes/>, C<refs/bisect/>,
-C<refs/replace/>, C<refs/stash>, C<refs/karr/> (the board) and
+C<refs/replace/>, C<refs/stash>, C<refs/karr/> (the board),
 C<refs/karr-local/> (pick locks and deletion tombstones, deliberately kept
-out of reach of any refspec -- #93, #178). Returns the normalized ref on
-success. This is the gate
+out of reach of any refspec -- #93, #178), C<refs/karr-remote/> (the
+remote-tracking mirror every pull reconciles against) and
+C<refs/karr-conflict/> (where a displaced local version is parked). Returns
+the normalized ref on success. This is the gate
 C<karr set-refs>/C<get-refs> go through via L</push_ref>/L</pull_ref>, so a
 caller cannot point a helper ref at the board or at a branch.
 
