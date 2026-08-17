@@ -1,0 +1,59 @@
+---
+class: standard
+completed: 2026-08-17T10:10:18Z
+created: 2026-08-17T01:03:16Z
+depends_on:
+- 185
+id: 193
+priority: medium
+started: 2026-08-17T09:35:59Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: on_drained hook'
+updated: 2026-08-17T10:10:18Z
+---
+
+When a board drains, run a configured command. karr does not know and must not know what it does.
+
+This is the seam that keeps karr generic. In the fleet this design came from, `on_drained` starts a release gate that builds a distribution, installs it, tests every dependent against it and raises version requirements — none of which belongs in a kanban tool.
+
+An empty board is also not the same as finished work: the gate may fail and file new tickets, at which point the board is no longer drained. The hook has to tolerate being the reason more work appears.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+Implemented. Commit ec3099b (local, not pushed).
+
+DECISIONS
+
+1. Trigger is NOT outcome eq 'idle'. The briefing said idle is the drained case; it is not. A drain that empties a board ends on 'progress' (the last iteration made progress, then the loop exits on an empty actionable set) -- checked against _drain_repo before writing anything. 'idle' is "the agent did nothing and grabbed nothing", i.e. a board that was already quiet. Keying the hook on idle would have meant it never fires on the case it exists for. The trigger is the observable fact instead: after the drain, _has_actionable_tasks is false. That is also the only formulation that survives mode: ticket, which does one card and returns.
+
+2. A drain that ended in common-error/error does not count as drained: a rate-limited agent leaves a board that looks exactly like one it worked through, and foundation is about to cool that board down because it does not believe the run.
+
+3. Reuses Runner::_run_command, with two new options (role, max_runtime). Reason: the hook must not survive a SIGTERM, and _run_command is where setpgid, the TERM-then-KILL of the group and the _live_agent registration the shutdown handler reads all live. A second door would have been a second place to get #148/#163 right. What it does NOT share is the identity -- role => 'hook' sets KARR_ROLE=hook, so the hook's own karr writes land in a different activity log and can never be read as the agent's engagement evidence for an auto-block, and PROMPT is left empty because the prompt is the agent's instruction. No ticket, no agent definition, so no render, no result-JSON classification, no error-pattern scan, no agent-availability marking. Own budget via on_drained_max_runtime, because how long an agent may run says nothing about how long a release gate may.
+
+4. Runs under the board's .karr.lock (between _drain_repo and _release_lock), in its own try: a gate that builds and installs out of the working tree must not have another tick's agent walk into it, and a hook that dies must not carry _release_lock with it.
+
+5. THE LOOP QUESTION. An empty board is not finished work; the hook may file tickets and so be the reason the board is no longer drained. The cycle hook-files / agent-works / board-drains / hook-runs-again is the point, so it is bounded, not forbidden. Two guards in .karr.state, both overridden by --force:
+  (a) the same board state is never asked twice (on_drained_hash = the fingerprint that triggered the run). Without it a repository nobody touches starts a release gate on every cron tick for ever, because a drained board stays drained. (a) alone does NOT stop the loop -- every hook-filed ticket changes the hash -- which is why there is a (b).
+  (b) on_drained_rounds counts consecutive runs in which the hook itself put work back on the board, measured by the board fingerprint before/after and never by asking the hook. A run that leaves the board alone -- the gate that finally passed -- clears it. At on_drained_max_rounds (default 3, 0 disables) the hook is suppressed with a line in .karr.log naming the reason.
+  --force overrides both because they are statements about board state, which is what --force is documented to override; and unlike the cooldown and agent availability the cap is not time-bounded and does not end by itself, so it needs a way out and the operator is it.
+
+6. Config: on_drained / on_drained_max_runtime / on_drained_max_rounds, .karr first then config file, like every other key. on_drained: "" turns a fleet-wide hook off for one board.
+
+RED PROOF
+t/193-foundation-on-drained.t against unimplemented stubs (_on_drained_command returning undef, _run_on_drained a no-op, wired into _process_repo):
+  Failed 10/13 subtests -- failed tests: 1-2, 4, 6-11, 13. Result: FAIL.
+The three that passed assert the hook does NOT run, which a no-op satisfies vacuously. Samples: "and then the hook ran, exactly once" got 0 expected 1; "tick 2: the hook is asked again" got 0 expected 2; "loudly, in the board log, with the reason" did not match ON-DRAINED suppressed; "with a warning naming the hook" empty. Before the stubs it was a hard exit 255 on the missing method.
+After implementation: t/193 PASS, 13/13.
+
+FULL SUITE
+prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/
+Files=178, Tests=1241, Result: PASS. Baseline was 177/1228, so +1 file and +13 tests.
+
+NOTES
+- The briefing's "idle is the drained case" is wrong (see 1) and is worth correcting wherever else it is written down.
+- Two bugs my own tests caught, fixed in the commit: comparing on_drained_hash against a '' default silenced the hook for ever on a repo whose refs/karr/* cannot be fingerprinted (it now tests definedness); and, unrelated to karr, a Path::Tiny tempdir wrapped in path() loses its cleanup guard.
+- Not built, because #186 already did it: the hook needs no concurrency work of its own. It sits inside _process_repo, which is what the forked child runs, so one hook per board per tick and one agent-or-hook per repo follow from the existing lock and fork boundary.
+- Nothing pushed, no dzil release.
+Review 2026-08-17 (Orchestrator): freigegeben, auf main. Volle Suite selbst nachgefahren: 178 Dateien, 1241 Tests, PASS. ZUERST die Korrektur, die der Worker an MEINER Vorgabe angebracht hat, und die stimmt: ich hatte ihm geschrieben, outcome 'idle' sei der leergelaufene Fall. Ist es nicht -- 'idle' wird nur gesetzt, wenn !$progressed && !@stuck, also wenn der Agent nichts getan hat; ein Board, das wirklich leergearbeitet wird, endet auf 'progress' und verlaesst die Schleife ueber die leere actionable-Menge. Am Code nachgelesen und bestaetigt. Ein Hook an 'idle' haette also nie in dem Fall gefeuert, fuer den er existiert. Der Worker hat das empirisch geprueft, bevor er gebaut hat, statt meine Vorgabe zu uebernehmen -- richtig so. Ausloeser ist stattdessen die beobachtbare Tatsache (nach dem Drain keine actionable Karten), was auch mode: ticket ueberlebt. End-to-End gemessen: (a) Hook feuert beim Leerlaufen, loggt START role=hook und ON-DRAINED exit=0, also mit eigener Identitaet statt als Agent; (b) zweiter Tick bei unveraendertem Boardzustand feuert NICHT nochmal; (c) die Endlosschleifen-Frage: mit einem Hook, der jedes Mal ein Ticket anlegt, laeuft er in Tick 1-3 jeweils mit 'the board moved, so it is no longer drained' und wird in Tick 4 unterdrueckt mit '3 consecutive run(s) put work back on the board without settling (on_drained_max_rounds: 3); --force runs it again' -- begrenzt statt verboten, mit sichtbarem Grund und Ausweg; (d) die Regression, vor der ich gewarnt hatte, tritt nicht ein: ein langlaufender Hook ueberlebt SIGTERM an foundation NICHT (1 laufend vorher, 0 danach, kein zurueckgelassenes .karr.lock), er erbt also die Prozessgruppen-Behandlung aus #148 ueber Runners Maschinerie.
