@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-08-17T19:28:45Z
+claimed_by: quit-fell
+class: standard
+completed: 2026-08-17T19:28:45Z
+created: 2026-08-17T08:21:08Z
+id: 201
+priority: low
+started: 2026-08-17T18:30:56Z
+status: done
+tags:
+- foundation
+- ux
+title: karr-foundation exits 255 on a user error, karr exits 1 or 2
+updated: 2026-08-17T19:28:45Z
+---
+
+bin/karr has a central handler that turns an uncaught die into a deterministic exit code -- 1 for a runtime failure, 2 for a usage error (ADR 0002). bin/karr-foundation has none, so every user_error it raises leaves perl to pick the status and the caller sees 255: a broken config file, an unknown mode, and since #191 also `karr-foundation answer 7 x` on a question that is already answered.
+
+It mattered less while foundation was a cron job whose only reader was a monitoring rule checking for non-zero. It matters more now that two of its commands are typed by a person or scripted by an agent, and the distribution documents an exit-code contract that this binary is not part of.
+
+The change is small (the eval/handler shape bin/karr already has) but it is a contract change for the existing errors as well, so it wants its own test rather than a hitchhike: t/120-error-message-sweep.t currently only asserts non-zero for the config errors.
+bin/karr-foundation now carries the same eval/handler as bin/karr: is_usage_error($@) decides 2 vs 1, the message goes to STDERR verbatim, and run()'s returned code still reaches exit(). Two things the handler alone would not have fixed: 'Unknown command' now carries the stable 'Unknown command:' marker (a typo'd mailbox command was being classified as runtime), and App::karr::Foundation composes Role::ExitCodes so an unknown option or unparseable option value exits 2 instead of 1 -- 1 was indistinguishable from a drain that genuinely failed. Probed pre-fix: config-not-a-mapping 255, unknown command 25 (ENOTTY leaking out of $!), already-answered answer 255, unknown option 1. New t/201-foundation-exit-codes.t pins the exact codes (RED on 5 of 6 subtests against HEAD, green after); bin/karr-foundation gained an EXIT CODES POD section. prove -l t/ green: 179 files, 1249 tests.
+Handler in bin/karr-foundation (1 runtime / 2 usage), ExitCodes composed in Foundation, 'Unknown command:' marker fixed, t/201-foundation-exit-codes.t added, Changes entry under {{$NEXT}}. Full suite green. Not committed.
