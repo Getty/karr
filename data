@@ -1,0 +1,53 @@
+---
+class: standard
+completed: 2026-08-17T05:43:13Z
+created: 2026-08-17T01:02:33Z
+id: 189
+priority: high
+started: 2026-08-17T04:53:39Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: chain and log storage under refs/karr-foundation/*'
+updated: 2026-08-17T05:43:13Z
+---
+
+The coordination agent plans; written steps execute; the agent is called again only on deviation. Between deviations no AI runs at all, which is what makes this affordable.
+
+Store the chain under `refs/karr-foundation/chain/*` and run logs under `refs/karr-foundation/log/<date>-<id>`, plus retention (`log clean`) so the namespace does not grow without bound.
+
+A step names no agent — that would tie shared state to one machine. It carries id, kind (ticket | shell | question | plan), repo, timeout, `needs` (step ids), a `precheck`, and `on_*` policies.
+
+The chain is a DAG: steps without a `needs` edge may run concurrently, so the planner leaves edges out rather than serialising by hand.
+
+A step whose `precheck` no longer holds is not executed — it is marked stale and calls the planner. That is what stops an out-of-date chain from doing damage; it costs time, not correctness.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+Implemented as App::karr::Foundation::ChainStore (new module) plus a write-side guard in Git::validate_helper_ref. Commit f2f7d27, local only, not pushed.
+
+LAYOUT: refs/karr-foundation/chain/meta (header: id, created, limits passed through untouched) + refs/karr-foundation/chain/step/<id> (one ref per step, YAML) + refs/karr-foundation/log/<date>-<id> (JSON lines, segmented +000001 at 8 KiB like ActivityLog since #171). One ref per step is what makes a per-step CAS possible; the header is written LAST and is the commit point, because ready_steps only considers steps whose chain id matches it, so a half-finished replacement is a window in which nothing is ready rather than one in which the wrong thing runs.
+
+STEP SCHEMA: id, kind (ticket|shell|question|plan), repo, ticket, needs, timeout, precheck, on_* policies, plus command/note/state bookkeeping. 'agent' (and 'agents') is REFUSED, not ignored -- that is the epic's dividing line enforced at the cheapest place. on_* values are free-form: the vocabulary belongs to the runner (#186). Unknown keys warn like Agents.pm does.
+
+DAG: ready_steps = pending steps whose needs are all done; no needs edge means concurrent. Cycles, unknown needs, self-edges and unreadable prechecks are refused at write_chain, and nothing is written when they are. Replacing a chain that still has a running step needs force.
+
+PRECHECK: grammar lives here (parse_precheck: <fact> ==|!= <value>), facts are supplied by the caller because measuring one means reading a board = execution. A missing/unknown fact makes the precheck NOT hold, for both operators -- uncertainty always falls to the stale side. mark_stale records state/reason/stale_at; calling the planner is #186's move.
+
+CONCURRENCY: update_step uses read_ref_with_oid + write_ref_cas inside retry_contended -- the board's machinery, no second one. Test forks 12 processes racing one claim: exactly 1 wins, 11 decline, none die.
+
+RETENTION: prune_logs drops runs older than keep_days (14) and everything past the newest keep_runs (500); count is the knob that actually bounds the namespace. It runs automatically when a run log is OPENED (auto_prune), once per run.
+
+NAMESPACE DECISION (asked for explicitly): refs/karr-foundation stays reachable through set-refs/get-refs as a whole -- this epic's own spec lives at refs/karr-foundation/spec/fleet-execution.md and was written with set-refs -- but chain/ and log/ are now WRITE-blocked while reads stay open. validate_helper_ref gained an optional for_write => 1 which only Cmd::SetRefs passes; get-refs does not. Reason: set-refs writes last-writer-wins and joins argv with a space, so hand-writing a step either clobbers one a run just claimed or lands as a payload that no longer parses, and the stale-precheck guard protects against an out-of-date chain, not a malformed one.
+
+DELIBERATELY NOT BUILT: no CLI at all. No 'karr chain' command, no 'karr-foundation --log-clean' -- an explicit log clean would need a hub-resolving config key that belongs to karr-foundation/#190, and retention that only runs when someone types it bounds nothing, which is why it hangs off opening a run log instead. No chain execution (#186), no sync of this namespace (#190; prune deletes leave no tombstone because Git::delete_ref only writes those for refs/karr/*, so remote deletion is #190's), no question mailbox (#191). Nothing loads ChainStore yet, which is why it is listed in t/00-load.t.
+
+RED PROOF (mandatory, two stages):
+1) Module removed, Git.pm/SetRefs.pm at HEAD: 'Can't locate App/karr/Foundation/ChainStore.pm in @INC ... at t/189-foundation-chain-store.t line 17' -> Result: FAIL, 0 tests.
+2) Module restored, Git.pm/SetRefs.pm still at HEAD (the guard half): subtests 6 and 7 fail. The load one because a helper of mine used sort in scalar context; the guard one with 'Failed test: the CLI refuses it as a runtime failure / got 0 expected 1' and stderr 'Stored refs/karr-foundation/chain/step/1' -- HEAD's set-refs cheerfully overwrote a chain step with the word 'wrecked', after which $store->step(1) returned undef ('Can't use an undefined value as a HASH reference'). That is exactly the damage the write guard prevents.
+
+TEST: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/189-foundation-chain-store.t -> PASS (7 subtests, 104 assertions, no warnings).
+FULL SUITE: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/ -> Files=173, Tests=1183, Result: PASS (baseline was 172/1175; +1 file, +8 tests).
+
+FOR #186: the API is write_chain / header / steps / step / update_step / mark_stale / ready_steps / clear_chain / parse_precheck / precheck_holds / new_run_id / log_run / run_ids / run_entries / prune_logs. Everything else is private.
+Review 2026-08-17 (Orchestrator): freigegeben. Volle Suite selbst nachgefahren: 173 Dateien, 1183 Tests, PASS. Den Helper-Ref-Schreibschutz in einem Wegwerf-Repo an allen vier Faellen gemessen: refs/karr-foundation/spec/ bleibt schreibbar (dort liegt die Spec dieses Epics selbst, deshalb war das die Bedingung), chain/ und log/ werden mit klarer Meldung abgelehnt, und get-refs liest weiter. ChainStore funktional gegen ein echtes Repo geprueft statt nur ueber die Tests: Zyklus 1<->2 wird abgelehnt und benennt die beteiligten Schritte, Selbstkante, Kante auf einen Schritt ausserhalb der Chain und doppelte Id ebenfalls; ein Schritt, der einen Agenten nennt, wird mit der richtigen Begruendung zurueckgewiesen (geteilter Zustand vs. Maschineneigenschaft), unbekanntes kind ebenfalls. DAG-Semantik gemessen: bei 3 needs [1,2] sind anfangs 1 und 2 gleichzeitig ready, nach 1=done nur 2, nach 2=done wird 3 frei -- Nebenlaeufigkeit entsteht durch weggelassene Kanten, wie die Spec es verlangt. precheck-Semantik gemessen, inklusive der entscheidenden Asymmetrie: ein fehlender Fakt laesst den precheck bei == UND bei != nicht gelten, jede Unsicherheit faellt also auf die Seite, die eine Planungsrunde kostet statt Schaden. Layout wie beschrieben: chain/meta plus chain/step/<id>.
