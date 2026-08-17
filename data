@@ -1,0 +1,64 @@
+---
+claimed_at: 2026-08-15T16:24:11Z
+claimed_by: real-tale
+class: standard
+completed: 2026-08-17T01:45:08Z
+created: 2026-08-15T15:17:14Z
+id: 181
+priority: medium
+started: 2026-08-15T15:59:47Z
+status: done
+tags:
+- concurrency
+- sync
+- transport
+title: concurrent pushes get spurious per-ref rejections ("a reference with that name
+  already exists")
+updated: 2026-08-17T01:45:08Z
+---
+
+Split out of #178, which fixed the data loss in the same stress run. With that fix in place, 10 runs of "8 parallel karr create in one clone" kept all 8 cards, locally and on the remote, every time -- but 6 of those 10 runs still had at least one create exit non-zero:
+
+    git push failed: the remote "origin" rejected 1 of 7 refs:
+        refs/karr/tasks/2/data: failed to write reference "refs/karr/tasks/2/data": a reference with that name already exists.
+    Push rejected by the remote. Local refs are intact.
+
+The wording is libgit2s message for git_reference_create called WITHOUT force on a ref that is already there. karr never asks for that: the board refspec is forced (+refs/karr/*:refs/karr/*). It comes from the receiving side of the push -- two pushes creating the same brand-new task ref at the same time, one of them looking it up, finding nothing, and creating it after the other one has landed. It only ever names refs that are being created, never ones being updated, which fits.
+
+Two things worth deciding:
+
+  * A rejection is treated as the servers final answer -- App::karr::Role::SyncLifecycle and App::karr::SyncGuard both stop retrying once push_rejections is non-empty (#84). That is right for a pre-receive hook or a protected ref and wrong for this one: it is transient contention, and the very next push of the same refspec succeeds. Recognising this reason as contention (the way _is_contended_ref_error already does for local ref locks) and letting the existing retry loop have it would turn a failed create into a slower successful one.
+  * Check first whether this is specific to libgit2s local transport (a bare repo reached by path, which is what the tests and the repro use). A real ssh/https remote runs git-receive-pack on the far side, which updates refs under a lock, so the same race may not exist there -- in which case the fix belongs in the classification, not in a retry.
+
+Reproducer (no real remote), same shape as #172/#178:
+
+  git init --bare remote.git; git init work; cd work
+  git config user.email t@e.st; git config user.name T
+  git remote add origin ../remote.git
+  echo x > README.md; git add -A; git commit -qm init
+  karr init
+  for i in $(seq 1 8); do karr create "Par$i" & done; wait
+  # every card is there, but some creates exited non-zero
+
+The cards are fine either way: the card is written before the push, and the parallel pushes carry each others refs, so it reaches the remote too. What is wrong is the exit code and the message an unattended agent reads.
+2026-08-15 16:24 Fixed and committed locally as b6fa056 (no push).
+
+ANSWER TO QUESTION 2 FIRST, because it decided where the fix goes: this is NOT specific to libgit2s local transport. Measured, 8 parallel karr create in one clone:
+  bare repo by path, native      3 of 10 runs had a failed create
+  same repo via file://, native  4 of 10 -- file:// is not the discriminator the ticket hoped for: libgit2 serves file:// from the same local transport and never spawns receive-pack
+  git daemon, native smart       4 to 5 of 8 creates failed in EVERY run
+  git CLI push to a path         10 of 10 runs, every ref rejected
+The last two run a real git-receive-pack, i.e. what an ssh/https remote runs. It is worse there, not absent: receive-pack updates all refs in one transaction, so one contended ref takes the whole push down. A create sends old=zero and fails the transaction if another push created the ref in between; receive-pack reports "failed to update ref" and keeps "cannot lock ref X: reference already exists" for the sideband.
+
+So the fix is CLASSIFICATION (question 1s answer: yes), not new retry mechanics. App::karr::Git::push_contention says whether the last pushs rejections were all "someone got here first"; App::karr::Role::SyncLifecycle::sync_after and App::karr::SyncGuard::_insurance_push spend their existing three attempts on that instead of stopping.
+
+HOW #84 IS KEPT APART: (a) an allowlist of wordings, not a denylist -- "pre-receive hook declined", "protected ref", "non-fast-forward" are unchanged and still end the push on attempt 1; (b) every rejected ref must be contention, so one protected ref among ten contended ones makes the whole push final, because pushing again cannot change that refs answer; (c) contention that survives all three attempts is reported as the ordinary "Push failed after 3 attempts ... run karr sync", never as "would only be refused again".
+
+VERIFIED AFTER THE FIX: 0 of 10 runs with a failed create against a path remote, 0 of 5 against a git daemon, 0 of 4 with 16 parallel creates against a git daemon (16 cards, 16 remote refs every run).
+
+TEST: t/181-push-contention-retry.t, 11 subtests. Red at todays HEAD; with only the classifier added and the two loops untouched, 4 of the 11 fail, so it pins the behaviour and not just the new method.
+  prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/181-push-contention-retry.t   -> PASS
+  prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/                              -> PASS, 167 files, 1124 tests
+
+OUT OF SCOPE, FILED AS #183: karr sync itself still pushes once and dies -- Cmd::Sync has no retry loop at all, so the command karr points people at after a failed sync is the one place contention is still fatal.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
