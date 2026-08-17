@@ -1,0 +1,63 @@
+---
+class: standard
+completed: 2026-08-17T09:31:10Z
+created: 2026-08-17T01:03:09Z
+id: 192
+priority: medium
+started: 2026-08-17T08:50:03Z
+status: done
+tags:
+- fleet-coordination
+- board
+title: 'karr: cross-board dependencies'
+updated: 2026-08-17T09:31:10Z
+---
+
+`--depends-on` is board-local. In a fleet the most common real interruption is 'this cannot be done until X is fixed somewhere else', and that X lives in another repository.
+
+The escalation protocol an agent follows today needs only a convention:
+1. `karr create` in the other repo, tagged `escalated-from:<repo>#<id>`
+2. `karr edit <id> --block \"needs <repo>#<id>: <reason>\"` in its own
+3. release the claim, exit
+
+That works, but nothing verifies it and nothing unblocks the waiting card when the other one closes. Make the link explicit so both ends can be resolved.
+
+Order is discovered, not planned — which is why work rotates across repositories instead of finishing one before starting the next. A newly discovered prerequisite moves forward in the rotation rather than breaking a plan.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+Done, commit bd3fe3e on main (local, not pushed).
+
+WHAT LANDED
+- lib/App/karr/CrossBoard.pm -- the link: parse_ref/parse_refs/format_ref, needs_tag/escalated_from_tag, needs_of/escalated_from_of, add_needs/remove_needs, plus the resolution half (overrides, config_file, resolve, link_state).
+- lib/App/karr/Cmd/Needs.pm -- `karr needs [ID] [--resolve] [--board NAME=PATH] [--fleet-config FILE] [--json]`.
+- create --needs / --escalated-from, edit --add-needs / --remove-needs, show prints Needs:/From:, DependencyCheck warns at take-up time, root command table, README, Changes, share/claude-skill.md + the repo SKILL.md, t/00-load.t, t/192-cross-board-dependencies.t.
+
+DECISION 1 -- WHAT THE CARD CARRIES: a board NAME and an id, `BOARD#ID`, and nothing else. Anything path-shaped is refused by parse_ref, not accepted-and-warned: the card is shared state, two clones of the same fleet have the same card and different directories, so a path is wrong on every machine but the one that wrote it. The name is the repository's directory basename -- the name karr-foundation --status already prints and the name the spec's escalated-from:<repo>#<id> convention already used, so no new naming authority was invented.
+
+DECISION 2 -- WHAT THE LOCAL CONFIG CONTRIBUTES: only the directory. `--board NAME=PATH` first, then ~/.config/karr-foundation/config.yml (dirs: outright, scan: children), matched on basename; --fleet-config relocates it (not --config: BoardDiscovery already owns that accessor). Why that file and not a new one: it is what the spec means by local configuration, it already carries this machine's view of the fleet, and a second local file describing the same fleet is a second thing to keep in step -- the argument #189 used for resolving the hub exactly once. Unknown and ambiguous names are ANSWERS, not failures: exit stays 0 and the sentence says how to place the board, because a machine holding four repositories of a six-repository fleet still has an honest report about the four.
+
+DECISION 3 -- NO NEW FRONTMATTER FIELD. The link is a tag (needs:BOARD#ID / escalated-from:BOARD#ID). kanban-md unmarshals into a Go struct and marshals back out of it, so a key it does not model is DROPPED the first time it writes the card: a frontmatter field would lose the link through exactly the interop bridge the shared format exists for, while tags is modelled on both sides. depends_on cannot carry it at all (IntSlice over there -- a string makes the card unreadable, not merely lossy). Cost stated in the POD rather than hidden: --add-tag bypasses the validation and --remove-tag can break a link; the typed doors are the documented ones, and explicitness comes from karr parsing/verifying/resolving it, not from the slot.
+
+DECISION 4 -- depends_on STILL BLOCKS NOTHING, and neither does a cross-board link. Role::DependencyCheck and Foundation::Picker are untouched in that respect: pick hands the card over and warns (#123), Picker still does not filter (#185), so foundation does not become stricter than the board it coordinates. What holds the waiting card is the `blocked` flag the escalating agent sets on purpose -- the link is the FACT, blocked is the DECISION -- and lifting it when the card's last link settles is the half that was missing. DependencyCheck gained one warning line for cross-board links (path-free on purpose: it says what the card waits on and points at `karr needs`, it does not reach into another repository during a status change).
+
+DECISION 5 -- WHAT SETTLES A LINK: one of the FAR board's own terminal statuses (#67), never a hardcoded done. A far card that does NOT EXIST settles nothing -- kanban-md treats a missing local dependency as satisfied, karr already declines that for depends_on (#123) and declines it harder here: unblocking because the ticket somebody waited for cannot be found is the silent wrong answer. --resolve prints the block reason it lifted, and the write goes through update_task_guarded, so it is CAS'd and lands in the activity log like every other mutation.
+
+VERIFICATION (the "nothing verifies it" half): link_state takes the near card as origin and reports verified only when the far card carries the matching escalated-from back-reference; a back-reference naming a DIFFERENT card is printed rather than swallowed. Nothing is fetched -- the far board is read as it stands in that working copy, because pulling somebody else's repository from inside a command here would be transport nobody asked for, and a fleet run syncs each repo as it reaches it.
+
+WHY NOT THE HUB (#191's hint considered): the two ends of a cross-board link live in two different repositories, so the asker and the resolver never write the same ref BY CONSTRUCTION -- the conflict rule that forced #191's answer into its own ref cannot bite here. Putting the link in refs/karr-foundation/* would have added a hub dependency to both ends without removing the path problem (the hub is a path too), so the card carries it and only the directory is local.
+
+RED PROOF (three stages, all measured):
+1) Module absent: "Can't locate App/karr/CrossBoard.pm in @INC ... at t/192-cross-board-dependencies.t line 17" -> Result: FAIL, 0 tests.
+2) Far-board terminal status replaced by the class-level default (done/archived) in link_state: subtest 6 fails 5 assertions -- 'the settled link is dropped, the open one is kept' ($expected->[0] = 'needs:other#9'), 'the last link is gone', 'and the card is unblocked', 'the block reason it lifted is printed', 'the activity log records the resolve'. The far board in that subtest ends in `shipped`, which is exactly the #67 trap.
+3) `$task->unblock` commented out in _resolve_cards AND the cross-board warning commented out in DependencyCheck: subtests 6 and 9 fail -- 'and the card is unblocked', 'and says out loud what it is waiting on', 'and resolving the link is what gives the card back to the fleet'. Both restored, byte-identical to the state the suite ran against.
+
+TESTS
+prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/192-cross-board-dependencies.t -> PASS, 9 subtests.
+FULL SUITE: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/ -> Files=177, Tests=1228, Result: PASS (baseline 176/1216; +1 file, +12).
+Also smoke-tested end to end over two throwaway repos: escalate, block, report without a location (unknown board, exit 0), report with --board (open, back-reference verified), resolve while open (no change), close the far card, resolve (link dropped, block lifted with its reason printed), and the take-up warning on a fresh card.
+
+OUT OF SCOPE / NOTES
+- #193 (on_drained) untouched, as instructed.
+- Nothing in Foundation reads any of this yet: no cycle step resolves links, and `karr needs --resolve` is not run automatically anywhere. If the fleet should settle links on its own, that is a foundation-side call (a step kind or a per-cycle sweep) and belongs with #186/#193, not here.
+- `karr show` prints both `Tags: needs:other#1` and `Needs: other#1`. Deliberate: the card really does carry that tag and `karr list --tag needs:other#1` finds it, so hiding it would make show disagree with --json and with the store.
+Review 2026-08-17 (Orchestrator): freigegeben, auf main. Volle Suite selbst nachgefahren: 177 Dateien, 1228 Tests, PASS. Blockier-Semantik gegengeprueft, weil das die Stelle war, an der das Ticket haette abrutschen koennen: Foundation/Picker.pm ist unangetastet und DependencyCheck fuegt nur eine Warnzeile hinzu, refuesiert nichts -- #123 und #185 bleiben also gueltig, foundation wird nicht strenger als das Board. End-to-End ueber zwei Wegwerf-Boards gemessen: Karte traegt 'Needs: lib#1' aus dem Tag; karr needs ohne Ortskenntnis ANTWORTET statt zu scheitern und nennt --board NAME=PATH als Weg; mit --board liest es den echten Fernzustand ('backlog (open), back-reference verified'); --resolve bei offener Fernkarte tut nichts; nach dem Schliessen der Fernkarte meldet es 'resolved lib#1 -- done (settled)' und 'unblocked (was: needs lib#1: API kaputt)', und karr show zeigt die Karte ohne Needs und ohne Blocked. Damit ist genau die Luecke zu, die das Ticket benannte. Verifikationshaelfte ebenfalls gemessen: ein Rueckverweis auf die falsche Karte wird benannt ('back-reference names app#99' statt 'verified') und eine nicht existierende Fernkarte als solche gemeldet statt als erfuellt behandelt. NICHT verifizieren konnte ich die kanban-md-Begruendung fuer Tag-statt-Frontmatter-Feld: der Referenz-Checkout, den CLAUDE.md unter ../kanban-md nennt, existiert auf dieser Maschine nicht. Die Argumentation (Go unmarshalt in ein Struct und verliert beim Zurueckschreiben, was es nicht modelliert) ist plausibel und deckt sich mit dem Verhalten von Go-YAML, ist hier aber ungeprueft.
