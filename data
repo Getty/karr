@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-08-15T15:58:14Z
+claimed_by: zero-neck
+class: standard
+completed: 2026-08-17T01:43:55Z
+created: 2026-08-15T08:11:08Z
+id: 173
+priority: medium
+started: 2026-08-15T15:33:38Z
+status: done
+tags:
+- ux
+- sync
+title: 'fresh clone: karr should fetch the board itself instead of telling the user
+  to run sync'
+updated: 2026-08-17T01:43:55Z
+---
+
+A fresh `git clone` does not carry refs/karr/*, so every karr command in a new checkout answers with "No karr board in this repository: nothing is stored under refs/karr/. ... Run karr sync to fetch the board, or karr init to start one here."
+
+The message is accurate and its advice is right — but karr already has everything it needs to just do it. The remote is configured, and `git ls-remote origin refs/karr/*` answers in well under a second. Making a human (or an agent) run a second command to recover state karr can see from where it stands is a papercut that hits every new checkout, and it hits agents hardest: they read it as "there is no board" and move on.
+
+Proposal: when refs/karr/ is empty locally AND a remote exists AND that remote advertises refs/karr/*, fetch it and continue instead of erroring. Keep the current message for the genuinely empty case (no remote, or remote has no board) — that is when `karr init` really is the answer.
+
+Care needed: this must not turn into an implicit sync on a board that legitimately has zero refs locally after a destroy, and it should stay quiet about what it did (one line to STDERR at most). Also decide whether it is opt-out (KARR_NO_AUTO_FETCH) rather than opt-in.
+2026-08-15 15:58 Fresh clone now fetches instead of refusing. require_local_board asks the remote before the refusal (_autofetch_board in Role/BoardDiscovery.pm) and pulls when it advertises refs/karr/*, one line on STDERR, nothing on STDOUT. New App::karr::Git->remote_has_board is a CLI ls-remote probe bounded at min(KARR_TRANSPORT_TIMEOUT,10s) incl. 0, never prompting -- native was rejected because #174 shows libssh2 ignores libgit2's timeout and this runs unasked. Guards: no remote, remote without a board, KARR_NO_AUTO_FETCH=1 (opt-out by choice), and unpublished deletions via new has_pending_deletes (a destroy whose push failed looks exactly like a fresh clone; the karr-remote mirror catches it too, measured, tombstones make it free). Commit ddb20a6, local only, no push. Tests: t/173-fresh-clone-auto-fetch.t (new, 6 subtests incl. the bounded probe against a silent peer and a counter-proof that the destroy guards are load-bearing); verified RED against HEAD in a worktree (4/6 subtests fail). t/130 fresh-clone subtest rewritten: #135's message contract now reached via KARR_NO_AUTO_FETCH, new default asserted beside it. prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/ => 166 files, 1113 tests, all pass. Follow-up filed as #182: karr init in a fresh clone still starts a rival board.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
