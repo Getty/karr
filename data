@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-08-17T19:46:11Z
+claimed_by: dark-boss
+class: standard
+completed: 2026-08-17T19:46:11Z
+created: 2026-08-17T01:46:14Z
+id: 196
+priority: low
+started: 2026-08-17T19:29:15Z
+status: done
+tags:
+- docs
+- sync
+title: 'Doku beschreibt noch den pruning push, den #178 abgeschafft hat'
+updated: 2026-08-17T19:46:11Z
+---
+
+Gefunden beim Review von #178 (2026-08-17). Seit 944ddb2 pusht karr nicht mehr mit prune: eine Loeschung reist als eigene Delete-Refspec, gespeist aus den Tombstones unter refs/karr-local/deleted/. Drei Stellen behaupten weiterhin den alten Mechanismus:
+
+* lib/App/karr/Cmd/Sync.pm:25 (POD) -- "pushes the local ref state back, pruning deleted refs so destructive restore operations can be mirrored correctly". Der Push prunet nicht mehr; ohne Tombstone wuerde hier gar nichts geloescht.
+* lib/App/karr/Cmd/Destroy.pm:27 (POD) -- "pushes the empty namespace so the remote board state is pruned to match". Es ist nicht der leere Namespace, der raeumt, sondern eine Delete-Refspec pro geloeschtem Ref.
+* lib/App/karr/Cmd/Destroy.pm:64 (Kommentar) -- "the pruning push".
+
+Die Wirkung stimmt in allen drei Faellen weiterhin, nur der Weg dorthin nicht: gemessen am Wegwerf-Repo raeumt destroy lokal und remote vollstaendig (0 refs/karr/* auf beiden Seiten), und ein karr delete nimmt das Task-Ref auch auf dem Remote weg. Deshalb low: kein Nutzer wird falsch beraten, aber wer Destroy.pm liest, glaubt an einen Mechanismus, der nicht mehr existiert -- und koennte den Tombstone-Pfad fuer redundant halten.
+
+README.md:406 und share/claude-skill.md:303 sprechen von der Wirkung ("prune the remote board state to match") und bleiben korrekt; die beiden sind bewusst nicht Teil dieses Tickets.
+Alle drei Stellen umformuliert auf den heutigen Mechanismus (Tombstone unter refs/karr-local/deleted/ -> eine Delete-Refspec pro geloeschtem Ref, kein Prune), Wirkungsaussage jeweils erhalten. Sync.pm: 'plus one delete refspec for every ref this clone deleted and has not published yet ... so destructive restore operations are mirrored correctly', dazu der Satz warum nicht geprunt wird (#178). Destroy.pm POD: nicht der leere Namespace raeumt, sondern die aufgezeichneten Deletions; plus der Fall ohne Remote aus #197 (Tombstones werden lokal settled statt behalten, ein zerstoertes Board laesst also so oder so nichts liegen). Destroy.pm Kommentar: 'the pruning push' -> 'the push that publishes those deletions'. Mechanismus vorher im Wegwerf-Repo nachgemessen: mit Remote raeumt destroy beide Seiten vollstaendig und ein delete nimmt das Task-Ref auch remote weg; ohne Remote bleibt nach delete/destroy kein Tombstone stehen. Kein Verhalten angefasst, README.md:406 und share/claude-skill.md:303 bewusst nicht. Kein Changes-Eintrag: #178 steht selbst noch unter {{$NEXT}} (Changes:522) und beschreibt Tombstones plus Delete-Refspec bereits ausfuehrlich -- diese POD-Korrektur erscheint im selben Release und waere eine zweite Ankuendigung derselben Aenderung; waere #178 released, sieht das anders aus. prove -l t/: 180 Dateien, 1254 Tests, PASS.
+Drei Doku-Stellen auf Tombstone+Delete-Refspec umgeschrieben (Sync.pm POD, Destroy.pm POD und Kommentar); kein Verhalten, kein Changes-Eintrag (Begruendung in der Notiz oben). prove -l t/ gruen: 180 Dateien, 1254 Tests. Nicht committet.
