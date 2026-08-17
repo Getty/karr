@@ -1,5 +1,44 @@
 {{$NEXT}}
 
+    - karr-foundation: `on_drained`, the domain hook (#193). When a
+      board has drained, a configured command runs in it, and karr
+      does not know and must not know what it does. That is the seam
+      that keeps karr generic: in the fleet this design came from,
+      `on_drained` starts a release gate that builds a distribution,
+      installs it, tests every dependent against it and raises
+      version requirements -- none of which belongs in a kanban tool.
+      So the exit code is written down and interpreted by nobody. A
+      hook that fails does not park the board, does not mark the
+      board's agent failing, and is never the run's last_error; it is
+      not an agent run and is not classified as one.
+
+      It is told where it is and nothing else -- KARR_REPO, and
+      KARR_ROLE=hook so its own karr writes land in their own
+      activity log instead of counting as the agent's engagement with
+      a card. No prompt, no ticket. It goes through the same door the
+      agent does (`on_drained_max_runtime` for its own budget, the
+      board's own .karr.lock, the process-group kill of #148, the tee
+      to .karr.log), because a gate that backgrounds a build must not
+      outlive the run that started it.
+
+      Drained is a fact about the board -- no actionable task left --
+      not the name of an outcome, and a drain that ended in a
+      common-error does not count: a rate-limited agent leaves a
+      board that looks exactly like one it worked through.
+
+      An empty board is not the same as finished work. The hook may
+      fail and file tickets, at which point the board is no longer
+      drained, the next tick works them, the board drains again and
+      the hook runs again. That cycle is the point, so it is bounded
+      rather than forbidden: the same board state is never asked
+      twice (otherwise a repository nobody touches would run a
+      release gate on every cron tick for ever), and consecutive
+      rounds in which the hook itself put work back are counted and
+      capped at `on_drained_max_rounds`, the count clearing on the
+      run that finally leaves the board alone. --force overrides
+      both -- they are statements about board state, and unlike the
+      cooldown the cap does not end by itself.
+
     - Cross-board dependencies (#192). `--depends-on` is board-local,
       and in a fleet the most common real interruption is "this
       cannot be done until X is fixed somewhere else", where X lives

@@ -396,12 +396,16 @@ B<Per-repo .karr file:>
   cooldown_max: 64          # cooldown ceiling in minutes (default: 64)
   error_patterns:           # extra case-insensitive substrings → common-error
     - my custom api error   # (added to the defaults; matched as written)
+  on_drained: ./release-gate.sh   # run when the board has no work left
+  on_drained_max_runtime: 1800    # seconds for that command (0 = no limit)
+  on_drained_max_rounds: 3        # see "The domain hook" (0 = no cap)
 
   agent: minimax            # a named agent from the config's 'agents:' section
 
 C<claude>, C<claude_bin>, C<claude_max_turns>, C<claude_permission_mode>,
-C<command>, C<mode> and C<prompt>/C<default_prompt> may also be set globally in
-the config file; the per-repo F<.karr> value wins.
+C<command>, C<mode>, C<on_drained>, C<on_drained_max_runtime>,
+C<on_drained_max_rounds> and C<prompt>/C<default_prompt> may also be set
+globally in the config file; the per-repo F<.karr> value wins.
 
 B<Named agents.> A board has one C<command>. A fleet has several agent commands
 with different strengths and different failure modes, so the config can name
@@ -634,6 +638,64 @@ repository whose backlog is parked (an abandoned project kept for reference)
 that a globally configured C<default_command> would otherwise drain. C<--status>
 shows such a board with a C<disabled> flag and its reason.
 
+B<The domain hook.> When a board has drained, C<on_drained> runs a configured
+command in it. B<karr does not know what that command does, and must not.> In
+the fleet this design came from it starts a release gate that builds a
+distribution, installs it, tests every dependent against it and raises version
+requirements -- none of which belongs in a kanban tool, and all of which would
+otherwise arrive here as rules about what an exit code means. So the exit code
+is written to F<.karr.log> and F<.karr.state> and interpreted by nobody: a hook
+that fails does not park the board, does not mark the board's agent failing,
+and is never the run's C<last_error>. It is not an agent run and is not
+classified as one -- no report is read out of it, no error pattern is matched
+against it, no ticket is assigned to it.
+
+It is told where it is and nothing else: C<KARR_REPO>, and C<KARR_ROLE=hook> so
+that C<karr> writes of its own land in their own activity log rather than
+counting as the agent's engagement with a card. C<PROMPT> is empty (the prompt
+is the agent's instruction) and so is C<KARR_TASK>. It runs in the board's
+directory, under the board's own F<.karr.lock>, with the same process-group
+kill and the same tee to F<.karr.log> an agent gets -- a gate that backgrounds
+a build must not outlive the run that started it -- but with its own budget,
+C<on_drained_max_runtime>, because how long an agent may take says nothing
+about how long a release gate may.
+
+B<Drained> is a fact about the board, not a name for an outcome: no actionable
+task is left on it -- everything done, archived or blocked. That is deliberately
+the same question C<--force> and C<< on_idle: always-run >> are answers to, and
+it is the only one that stays meaningful across the run modes. A drain that
+ends in a C<common-error> does not count: a rate-limited agent leaves a board
+that looks exactly like one it worked through, and foundation does not believe
+that run itself.
+
+B<An empty board is not the same as finished work.> The hook may fail and file
+tickets, at which point the board is no longer drained; the next tick works
+them, the board drains again, and the hook is asked again. That cycle is the
+point -- a gate that reports what it found and is re-run once it is fixed is
+what the hook is for -- so the two guards below bound it rather than forbid it:
+
+=over 4
+
+=item * B<The same board is not asked twice.> The board fingerprint the hook
+last ran at is kept in F<.karr.state>; a board that has not moved since gets no
+second run. Without this, a repository nobody touches would start a release
+gate on every cron tick for ever, because a drained board stays drained.
+
+=item * B<A chain that never settles is capped.> Every hook run that puts work
+back on the board changes the fingerprint, so the first guard cannot see the
+loop of "hook files a ticket, agent works it, board drains, hook files
+another". Consecutive rounds in which the hook itself made work are counted;
+a run that leaves the board alone -- the gate that finally passed -- clears the
+count, and at C<on_drained_max_rounds> (default 3, C<0> disables) the hook is
+suppressed with a line in F<.karr.log> saying so.
+
+=back
+
+C<--force> overrides both. They are statements about board state, which is what
+C<--force> is documented to override, and unlike the cooldown and the agent
+availability the cap is not time-bounded and does not end by itself -- so it
+needs a way out, and the operator is it.
+
 B<Coordinator and overview.> Agent execution is opt-in — a board runs an agent
 only via C<command>, a named C<agent> or C<< claude: true >>. When B<no> board
 has an agent configured, the default action is a read-only B<overview> of every
@@ -743,7 +805,8 @@ nothing" — and F<.karr.log> names which one it was
 that rather than guessing.
 
 All per-board state files are gitignored: C<.karr.state> (board hash, per-task
-attempts, cooldown, last error, last report), C<.karr.lock>, C<.karr.log>.
+attempts, cooldown, last error, last report, and the hook's board fingerprint,
+round count and last exit), C<.karr.lock>, C<.karr.log>.
 Agent availability is not among them: it is not per board and does not live in
 the repository at all (see "Agent availability" above). C<last_error>
 describes the B<last> run and is removed again by the next run that is not a
@@ -1422,6 +1485,18 @@ sub _process_repo {
     warn "karr-foundation: drain error in $repo: $_\n";
     { outcome => 'error', exit => 1 };
   };
+  # The domain hook, still under the board's own lock (#193). A release gate
+  # that builds and installs out of this working tree must not have another
+  # tick's agent walk into it halfway through, and .karr.lock is the thing
+  # that already says "one process in this repository at a time". Isolated the
+  # same way the drain and the pull above are: a hook that throws warns and is
+  # skipped, because dying here would carry the _release_lock below with it
+  # and leave the board locked by a process that is no longer in it.
+  try {
+    $self->_run_on_drained( $repo, $karr, $result );
+  } catch {
+    warn "karr-foundation: on_drained error in $repo: $_\n";
+  };
   $self->_release_lock( $repo );
 
   # Exponential cooldown bookkeeping: grow on common-error, reset otherwise.
@@ -1468,6 +1543,137 @@ sub _process_repo {
   }
 
   $self->_state_set( $repo, %state );
+}
+
+# ---------------------------------------------------------------------------
+# The domain hook (#193)
+# ---------------------------------------------------------------------------
+
+# What to run when this board has drained, or undef when nothing is configured.
+# .karr first, then the config file, like every other key here: a fleet can
+# hang one gate on every board it drains, and a board can say something else --
+# including `on_drained: ""`, which is how one board opts out of a fleet-wide
+# one.
+sub _on_drained_command {
+  my ( $self, $karr ) = @_;
+  my $cmd = exists $karr->{on_drained}
+    ? $karr->{on_drained}
+    : $self->_config_data->{on_drained};
+  return undef unless defined $cmd && length $cmd;
+  return $cmd;
+}
+
+# One resolved number for one of the hook's two settings, .karr before config
+# before the built-in default.
+sub _on_drained_setting {
+  my ( $self, $karr, $key, $default ) = @_;
+  return $karr->{$key} // $self->_config_data->{$key} // $default;
+}
+
+# Run the hook, if the board drained and if it is allowed to run at all.
+#
+# "The board drained" is the observable fact and not an outcome name: no
+# actionable task is left on it. The outcome cannot answer this -- a drain that
+# empties a board ends on `progress`, because progress is what the last
+# iteration made, and `idle` is a run that did nothing on a board that was
+# already quiet. Asking the board is also the only question that stays true
+# across the run modes: `mode: ticket` does one card and returns, and whether
+# that leaves the board empty is not something the mode knows.
+#
+# karr does not look at what the hook is or what it did. In the fleet this
+# design came from it is a release gate that builds a distribution, installs
+# it, tests every dependent against it and raises version requirements -- none
+# of which belongs in a kanban tool, and all of which would arrive here as
+# rules about what the exit code means. So the exit code is written down and
+# interpreted by nobody: a hook that fails does not park the board, does not
+# mark the board's agent failing, and does not become the run's last_error. It
+# is not a run of the agent and is never classified as one.
+sub _run_on_drained {
+  my ( $self, $repo, $karr, $result ) = @_;
+  my $cmd = $self->_on_drained_command( $karr ) or return;
+
+  # A run that broke tells us nothing about the board. A rate-limited or
+  # unauthenticated agent leaves a board looking exactly like one it worked
+  # through, and the cooldown that is about to be set says foundation does not
+  # believe this run -- so neither does the hook.
+  my $outcome = $result->{outcome} // '';
+  return if $outcome eq 'common-error' || $outcome eq 'error';
+  return if $self->_has_actionable_tasks( $repo );
+
+  my $hash   = $self->_ref_hash( $repo ) // '';
+  my $rounds = $self->_state_get( $repo, 'on_drained_rounds' ) // 0;
+  my $max    = $self->_on_drained_setting( $karr, 'on_drained_max_rounds', 3 );
+
+  # Two guards, and between them the answer to "what stops this being a loop".
+  # An empty board is not the same as finished work: the hook may fail and file
+  # tickets, at which point the board is no longer drained, the next tick
+  # works them, the board drains again and the hook is asked again. That cycle
+  # is the point -- a gate that files what it found and is re-run once it is
+  # fixed is exactly what it is for -- so neither guard tries to forbid it.
+  # What they bound is the two ways it stops being that:
+  #
+  #   1. The same board twice. Without this, a repository nobody touches runs
+  #      a release gate on every cron tick for ever, because a drained board
+  #      stays drained. The hook has already had its say about this exact
+  #      state; it is asked again when the state changes.
+  #
+  #   2. A chain that never settles. The hook files a ticket, the agent works
+  #      it (or fails it into an auto-block), the board drains, the hook files
+  #      another. Every round changes the board, so guard 1 is no help; the
+  #      board moves for real each time, so nothing else notices either.
+  #      Counting the consecutive rounds in which the hook itself put work back
+  #      is the only thing foundation can observe about it, and it is enough:
+  #      a run that leaves the board alone -- the gate that finally passed --
+  #      clears the count, and a cap stops the ones that never do.
+  #
+  # --force overrides both. They are statements about board state, which is
+  # what --force is documented to override, and unlike the cooldown and the
+  # agent availability the cap is not time-bounded and does not end by itself,
+  # so it needs a way out and the operator is it.
+  unless ( $self->force ) {
+    # `defined`, not a `// ''` default: a repository whose refs/karr/* cannot
+    # be fingerprinted at all -- not a karr board, or not a git repository --
+    # has a hash of '', and defaulting the unset state key to '' would make
+    # its first drain look like a repeat and silence the hook there for good.
+    my $last = $self->_state_get( $repo, 'on_drained_hash' );
+    if ( defined $last && $hash eq $last ) {
+      $self->_say_verbose(
+        "skip on_drained in $repo \x{2014} the board has not moved since the last one" );
+      return;
+    }
+    if ( $max > 0 && $rounds >= $max ) {
+      $self->_append_log( $repo, "ON-DRAINED suppressed \x{2014} $rounds consecutive "
+        . "run(s) put work back on the board without settling "
+        . "(on_drained_max_rounds: $max); --force runs it again" );
+      return;
+    }
+  }
+
+  my ( $exit ) = $self->_run_command( $repo, $karr, $cmd, undef, undef,
+    role        => 'hook',
+    max_runtime => $self->_on_drained_setting( $karr, 'on_drained_max_runtime', 1800 ),
+  );
+
+  # Did it put work back? Asked of the board and not of the hook: the hook is
+  # not obliged to say, and karr is not entitled to know.
+  my $made_work = ( ( $self->_ref_hash( $repo ) // '' ) ne $hash ) ? 1 : 0;
+  $self->_append_log( $repo, "ON-DRAINED exit=$exit"
+    . ( $made_work ? " \x{2014} the board moved, so it is no longer drained" : '' ) );
+
+  # on_drained_hash is the state that *triggered* the run, not the one the run
+  # left behind: the invariant is "the hook is not asked twice about the same
+  # board", and a hook that files a ticket and has it reverted is being asked
+  # about a board it has already answered for.
+  $self->_state_set( $repo,
+    on_drained_hash   => $hash,
+    on_drained_rounds => ( $made_work ? $rounds + 1 : 0 ),
+    last_on_drained   => {
+      at        => localtime->datetime,
+      exit      => $exit,
+      made_work => $made_work,
+    },
+  );
+  return;
 }
 
 # ---------------------------------------------------------------------------

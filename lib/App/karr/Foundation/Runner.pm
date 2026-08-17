@@ -57,6 +57,20 @@ is started, never after: the agent is refused rather than launched unwatched.
 Once the fork has happened the parent owes it a C<waitpid>, so nothing between
 the two may throw.
 
+The agent is not the only thing that goes through this door. The C<on_drained>
+hook (L<App::karr::Foundation>) is a command in a repository that must not
+outlive the run that started it either, so it is started here rather than
+beside here -- one process-group kill, one timeout, one tee, one place where
+the live child is registered for the shutdown handler. What it does B<not>
+share is the identity: C<< role => 'hook' >> puts C<KARR_ROLE=hook> in its
+environment and leaves C<PROMPT> empty, so its own C<karr> writes land in a
+different activity log from the agent's and it is never handed the instruction
+to go and pick a card. C<< max_runtime => N >> gives it its own budget, because
+how long a board's agent may run says nothing about how long whatever the
+operator hung on C<on_drained> may take. Nothing else in this method asks who
+the caller is: the run is classified by the drain, which simply does not
+classify a hook.
+
 =cut
 
 has foundation => (
@@ -70,10 +84,18 @@ has foundation => (
 # ---------------------------------------------------------------------------
 
 sub _run_command {
-  my ( $self, $repo, $karr, $cmd, $ticket, $agent ) = @_;
+  my ( $self, $repo, $karr, $cmd, $ticket, $agent, %opt ) = @_;
   my $command      = $cmd // $karr->{command};
-  my $max_runtime  = $karr->{max_runtime} // 1800;
   my $stream_terms = $self->foundation->_stream_to_terminal;
+
+  # What this run is, and how long it may take. Both default to the agent, who
+  # was the only caller for as long as there was only one kind of run. The
+  # C<on_drained> hook (#193) is the second: it wants the whole apparatus below
+  # -- the process group, the timeout, the tee -- and none of the identity, so
+  # it passes its own role and its own budget and takes everything else as it
+  # stands. Anything the identity decides is keyed off $role and nothing else.
+  my $role         = $opt{role} // 'agent';
+  my $max_runtime  = $opt{max_runtime} // $karr->{max_runtime} // 1800;
 
   # How this run's output is to be read for a human, decided by the agent
   # definition that supplied the command and by nothing else (#188). Undef --
@@ -91,8 +113,16 @@ sub _run_command {
   # stderr and the bytes the child receives would depend on the IO layers in
   # scope at the call site.
   local $ENV{KARR_REPO} = to_octets_for_env("$repo");
-  local $ENV{KARR_ROLE} = to_octets_for_env('agent');
-  local $ENV{PROMPT}    = to_octets_for_env( $self->foundation->_prompt_for( $karr, $ticket ) );
+  local $ENV{KARR_ROLE} = to_octets_for_env($role);
+
+  # The prompt is the agent's instruction, so only the agent gets one. A hook
+  # handed a prompt telling it to pick the next actionable task would be told
+  # to do the one thing it is not there for, and every karr write it made
+  # would land in the agent's activity log -- which is the evidence the
+  # auto-block reads. KARR_ROLE keeps those apart, and this keeps the
+  # instruction with the identity it belongs to.
+  local $ENV{PROMPT}    = to_octets_for_env(
+    $role eq 'agent' ? $self->foundation->_prompt_for( $karr, $ticket ) : '' );
 
   # The id of the task this run is about, in ticket mode, and empty in every
   # other mode -- localised either way so a run never inherits the previous
@@ -124,8 +154,9 @@ sub _run_command {
   # .karr vs synthesized claude), not a second copy of the prompt. It also no
   # longer copies whatever an env var held — a wrapper's API key included — into
   # a plaintext .karr.log.
-  $self->foundation->_append_log( $repo,
-    ( ref $agent eq 'HASH' && defined $agent->{name} ? "START agent=$agent->{name} " : 'START ' )
+  $self->foundation->_append_log( $repo, 'START '
+    . ( $role ne 'agent' ? "role=$role " : '' )
+    . ( ref $agent eq 'HASH' && defined $agent->{name} ? "agent=$agent->{name} " : '' )
     . "command=$command" );
   $self->foundation->_say_verbose("exec in $repo: $command");
 
