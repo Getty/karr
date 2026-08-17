@@ -1,0 +1,47 @@
+---
+claimed_at: 2026-08-15T15:31:49Z
+claimed_by: ours-stop
+class: standard
+completed: 2026-08-17T01:44:43Z
+created: 2026-08-15T09:38:41Z
+id: 178
+priority: high
+started: 2026-08-15T14:34:42Z
+status: done
+tags:
+- concurrency
+- correctness
+- sync
+title: 'concurrent pushes prune each other''s cards: a task ref written locally can
+  be deleted by the next pull'
+updated: 2026-08-17T01:44:43Z
+---
+
+Found while fixing #172 (duplicate task ids). With the id counter fixed, a stress run of 8 parallel `karr create` in one clone still lost a whole card in 2 of 20 runs: 8 creates reported success, only 7 task refs survived, and the missing card was gone locally, not just on the remote.
+
+Mechanism (not yet traced end to end, but the two halves are visible in the code):
+
+  * every push uses the forced, pruning board refspec (+refs/karr/*:refs/karr/*, prune => 1), so a push resolves the local refs when it starts and then makes the remote identical to that snapshot. Two pushes overlapping in one clone means the one that STARTED earlier can LAND later and prune the newer card off the remote.
+  * push then calls _mirror_local_state, so the mirror claims the pusher~s snapshot, and the next pull reads the pruned card as "L == T, R gone -- the remote deleted it" and deletes it locally too (_reconcile_with_mirror, the #49 branch). That branch is silent by design: nothing is parked, nothing is warned about.
+
+Repro (same shape as #172, no real remote):
+  git init --bare remote.git; git init work; cd work
+  git config user.email t@e.st; git config user.name T
+  git remote add origin ../remote.git
+  echo x > README.md; git add -A; git commit -qm init
+  karr init
+  for i in $(seq 1 8); do karr create "Par$i" & done; wait
+  git for-each-ref refs/karr/tasks | wc -l   # sometimes 7, with 8 "Created task" lines
+
+Same run also produces per-ref push rejections from the bare remote ("failed to write reference refs/karr/tasks/N/data: a reference with that name already exists"), which fail the create AFTER the card was written locally -- the card is fine, the command exits non-zero. Worth understanding alongside this: both come from several pushes of the whole namespace being in flight at once.
+
+Not a regression from #172; that fix only changed how refs/karr/meta/next-id is adopted.
+Fixed in 944ddb2. Cause: the board push used a pruning refspec, which declares the pusher's local refs to be the whole namespace -- so a card another clone (or another process) had just created was deleted off the remote, _mirror_local_state made refs/karr-remote/ agree, and the owning clone's next pull read it as 'L == T, R gone' and deleted it locally too. No concurrency needed to see it: 'karr sync --push' from a clone that had not pulled destroyed the other clone's card deterministically (subtest 1 of t/178, red on HEAD).
+
+Fix: a board push publishes only what the clone did -- its own refs plus one delete refspec per board ref it deleted itself, recorded as a tombstone under refs/karr-local/deleted/ when the ref goes, so a deletion whose push failed is still published by the next push (what prune achieved by accident). The mirror now follows the pre-push snapshot the refspec was built from plus the published deletions, never a post-push read of the board: lagging the remote is the direction reconciliation converges on, running ahead of it is the direction that loses cards.
+
+Verification: t/178-push-does-not-prune-unseen-cards.t (3 subtests) -- red on HEAD, green with the fix. 12 stress runs of 8 parallel creates: 8 local and 8 remote task refs every time (was 2/20 losses). Full suite PASS: Files=164, Tests=1105.
+
+Out of scope, filed as #181: the per-ref push rejections those stress runs also produce ('a reference with that name already exists'), which make a create exit non-zero although card and remote are fine.
+2026-08-15 15:31 Commit 944ddb2 on main (local only, not pushed). Test: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/178-push-does-not-prune-unseen-cards.t -> PASS (red on HEAD: subtests 1 and 3 fail). Full suite: same command with t/ -> Files=164, Tests=1105, Result: PASS, no failures. Stress: 12x 8 parallel creates, 8 local + 8 remote refs every run. Follow-up #181 for the spurious push rejections.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
