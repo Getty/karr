@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-08-16T17:30:04Z
+claimed_by: lift-toll
+class: standard
+completed: 2026-08-17T01:45:42Z
+created: 2026-08-15T16:23:47Z
+id: 183
+priority: low
+started: 2026-08-16T16:49:44Z
+status: done
+tags:
+- concurrency
+- sync
+- transport
+title: karr sync pushes once and dies on contention -- no retry at all
+updated: 2026-08-17T01:45:42Z
+---
+
+Split out of #181, which taught App::karr::Role::SyncLifecycle and App::karr::SyncGuard to spend their existing three attempts on a push the far side rejected for contention ("a reference with that name already exists" on libgit2 local transport, "failed to update ref" from git-receive-pack) instead of treating it as the servers final answer.
+
+App::karr::Cmd::Sync does not go through that role. It calls $git->pull and $git->push once each and dies on a false return:
+
+    $git->push
+        or die "Push failed: " . ( $git->last_error // unknown error ) . "\n";
+
+So the command karr points every failed sync at -- "Local refs are intact. Run karr sync to retry." -- is itself the one command with no retry and no classification. Two agents running karr sync at the same moment, or one running it while another writes, gets the spurious per-ref rejection #181 removed everywhere else. Measured in #181: against a real git daemon (a receive-pack whose ref transaction is atomic) contention hit 4 to 5 of 8 parallel writers in every run, so this is not a rare shape.
+
+Not fixed in #181 because it is not a classification change: Cmd::Sync has no retry loop to hand the answer to, and how many attempts an explicit, user-invoked sync should make -- and what it prints between them -- is a separate decision from what a write command does behind the users back. The pieces are already there: App::karr::Git::push_contention says whether retrying can work, and sync_after is the shape to copy (retry-only output, errors always on STDERR, --quiet silencing only the banners).
+
+Worth deciding at the same time: the same question for the pull half, and whether karr sync should just compose App::karr::Role::SyncLifecycle rather than grow a second copy of its loop.
+Implemented in 45557f7. Cmd::Sync now goes through SyncLifecycle for both halves instead of a second retry loop. The role grew sync_pull (the retrying pull without the SyncGuard, for --pull, since an armed guard is a push at teardown) and named-argument forwarding to Git::pull on every attempt, so --prune/--accept-foreign-board finally reach it; existing callers call sync_before bare, so their behaviour is byte-identical and a test pins that. Wipe/identity refusals still die out on attempt 1. t/183-sync-retries-contention.t, 12 subtests, 9 fail without the fix. Full suite 169/1141 PASS.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen). Integrations-Smoke gegen ein Wegwerf-Repo bestanden. Freigegeben -> done.
