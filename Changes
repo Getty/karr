@@ -1,5 +1,36 @@
 {{$NEXT}}
 
+    - `karr sync` now carries refs/karr-foundation/* as well as
+      the board (#190). The chain, the run logs and the fleet's
+      design document are coordination state, so they have to
+      reach every machine, and fetching them one ref at a time
+      with `karr get-refs` was never going to work for a namespace
+      whose ref names are minted as it runs. One command rather
+      than two: a second one would be a second thing to forget,
+      and forgetting it is silent -- a chain that plans against a
+      board it has not seen, a run log no other machine can read.
+      The argument that coordination state has a different
+      lifetime from board state is spent where it belongs instead:
+      the implicit sync every writing command makes stays
+      board-only, so nothing outside an explicitly typed `karr
+      sync` pays for the fleet namespace, and a clone with nothing
+      under refs/karr-foundation/ pushes nothing at all. Deletions
+      travel the way the board's have since #178 -- a tombstone
+      under refs/karr-local/foundation-deleted/ and an explicit
+      delete refspec, never a pruning push. Both alternatives lose
+      data here: a pruning push takes another machine's run log,
+      just written and never seen by the pusher, off the remote,
+      and publishing no deletions at all makes retention pointless
+      because every pruned run comes back on the next pull. The
+      fleet half runs second and never alone, because the board's
+      identity check (#95) and wholesale-wipe refusal (#82) run
+      first, in the same command and against the same remote: a
+      re-created origin or an edited remote URL is refused there.
+      It carries neither guard of its own -- an emptied chain
+      whose logs have aged out is a normal end state, and a
+      refusal that has to be waved through routinely would teach
+      everyone to type the --prune that also arms the board's.
+
     - karr-foundation stores its chain and its run logs in git
       refs (#189). The planned steps live under
       refs/karr-foundation/chain/ -- one ref per step plus a

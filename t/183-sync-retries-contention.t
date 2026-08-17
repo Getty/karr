@@ -52,12 +52,14 @@ sub task {
     sub new {
         my ( $class, %arg ) = @_;
         return bless {
-            pulls      => 0,
-            pushes     => 0,
-            pull_until => $arg{pull_until} // 1,
-            push_until => $arg{push_until} // 1,
-            refuse     => $arg{refuse} // 0,
-            pull_opts  => [],
+            pulls        => 0,
+            pushes       => 0,
+            fleet_pulls  => 0,
+            fleet_pushes => 0,
+            pull_until   => $arg{pull_until} // 1,
+            push_until   => $arg{push_until} // 1,
+            refuse       => $arg{refuse} // 0,
+            pull_opts    => [],
         }, $class;
     }
     sub is_repo         { 1 }
@@ -73,6 +75,13 @@ sub task {
         my ($self) = @_;
         return ++$self->{pushes} >= $self->{push_until} ? 1 : 0;
     }
+
+    # The fleet-coordination half (#190). Counted apart from the board's so
+    # the direction flags below can be checked on both namespaces: `karr sync`
+    # carries refs/karr-foundation/* through the same role, and --pull that
+    # pushed the chain would be the same bug on the other namespace.
+    sub pull_foundation { return ++$_[0]{fleet_pulls} && 1 }
+    sub push_foundation { return ++$_[0]{fleet_pushes} && 1 }
 
     # Borrowed from the real classification rather than answering the question
     # itself, so the reason strings are pinned here too.
@@ -92,9 +101,11 @@ sub task {
     sub push_contention { App::karr::Git::push_contention(@_) }
     sub last_error      { 'SIMULATED-TRANSPORT-ERROR' }
 
-    sub pulls     { $_[0]{pulls} }
-    sub pushes    { $_[0]{pushes} }
-    sub pull_opts { $_[0]{pull_opts} }
+    sub pulls        { $_[0]{pulls} }
+    sub pushes       { $_[0]{pushes} }
+    sub fleet_pulls  { $_[0]{fleet_pulls} }
+    sub fleet_pushes { $_[0]{fleet_pushes} }
+    sub pull_opts    { $_[0]{pull_opts} }
 }
 
 # Runs one `karr sync` in process with both handles captured. The command
@@ -244,6 +255,8 @@ subtest '--pull pulls and does not push, not even at teardown' => sub {
     # SyncGuard would have pushed by now. --pull says do not push.
     is $git->pushes, 0, 'and nothing pushed, including no insurance push';
     unlike $r->{stderr}, qr{Pushing refs/karr/}, 'no push announced either';
+    is $git->fleet_pulls,  1, 'the fleet namespace was pulled too (#190)';
+    is $git->fleet_pushes, 0, 'and not pushed, same as the board';
 };
 
 subtest '--push pushes and does not pull' => sub {
@@ -253,6 +266,8 @@ subtest '--push pushes and does not pull' => sub {
     is $r->{error}, undef, 'a contended push-only sync recovers too';
     is $git->pulls,  0, 'it did not pull';
     is $git->pushes, 2, 'and the push got its retry';
+    is $git->fleet_pulls,  0, 'the fleet namespace was not pulled either';
+    is $git->fleet_pushes, 1, 'and it was pushed, same as the board (#190)';
 };
 
 subtest '--quiet silences the banners and the retries, never the errors' => sub {

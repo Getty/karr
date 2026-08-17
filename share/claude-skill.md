@@ -234,6 +234,16 @@ Use this when you want explicit control over board ref exchange with the remote
 instead of relying only on the implicit pull/push behavior of mutating
 commands.
 
+`karr sync` also carries `refs/karr-foundation/*` — karr-foundation's shared
+chain, run logs and design documents — in the same run, after the board and
+never on its own. One command on purpose: a separate one would be a second
+thing to remember, and a coordination namespace nobody synced fails quietly.
+Mutating commands still sync the board only, so this costs nothing outside an
+explicitly typed `karr sync`, and a repository holding nothing under
+`refs/karr-foundation/` pushes nothing there. Deletions in that namespace
+(log retention, a cleared chain) travel like board deletions do, so a pruned
+run log does not come back on the next pull.
+
 **A fresh clone fetches the board by itself.** `git clone` does not carry
 `refs/karr/*`, so a new checkout holds no board while the whole board sits on
 its remote. The read commands (`board`, `list`, `show`, `log`, `context`, and

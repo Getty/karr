@@ -25,6 +25,18 @@ flags it fetches the remote ref state and then pushes the local ref state back,
 pruning deleted refs so destructive restore operations can be mirrored
 correctly.
 
+It then does the same for C<refs/karr-foundation/*>, karr-foundation's shared
+chain, run logs and question mailbox (L<App::karr::Foundation::ChainStore>) --
+one command for both, because a second one would be a second thing to forget
+and forgetting it is silent. The board half runs first and this half never runs
+alone: the board's identity and wholesale-wipe refusals are what protects the
+fleet namespace against a swapped remote, since it carries neither of its own
+(L<App::karr::Git/pull_foundation>). C<--pull>, C<--push> and C<--quiet> apply
+to both halves; C<--prune> and C<--accept-foreign-board> are board-only,
+because they answer refusals only the board makes. A clone with nothing under
+C<refs/karr-foundation/> and no unpublished deletion there pushes nothing, so
+this costs an ordinary board repository one fetch and no push.
+
 Both halves run through L<App::karr::Role::SyncLifecycle>, so this command
 retries exactly as every writing command does: up to three attempts each, the
 first silent and the retries announced from the second, errors always on
@@ -142,6 +154,41 @@ sub execute {
     unless ($pull_only) {
         print STDERR "Pushing refs/karr/ to remote...\n" unless $self->quiet;
         $self->sync_after;
+    }
+
+    # The fleet namespace, second and in the same command (#190).
+    #
+    # In `karr sync` rather than in a command of its own: this is the command
+    # every failed sync, every runbook and every skill doc already points at,
+    # and a second one would be a second thing to remember whose failure mode
+    # is silent -- a chain that quietly plans against a board it has not seen,
+    # a run log no other machine can read. The ticket's counter-argument, that
+    # coordination state has a different lifetime from board state, is real and
+    # is spent elsewhere: the implicit sync every writing command makes
+    # (sync_before/sync_after) stays board-only, so nothing outside this
+    # explicitly-typed command pays for the fleet namespace.
+    #
+    # Second rather than first, and never on its own: the fleet namespace has
+    # no board-identity check and no wholesale-wipe refusal of its own
+    # (App::karr::Git/pull_foundation says why). It does not need them here,
+    # because the board's run first, in this same command, against this same
+    # remote -- a re-created origin, an edited remote URL or a swapped clone is
+    # refused up there and this half never runs. Putting it first, or offering
+    # a flag that runs it alone, would quietly remove that protection.
+    unless ($push_only) {
+        print STDERR "Pulling refs/karr-foundation/ from remote...\n"
+          unless $self->quiet;
+        $self->sync_pull_foundation;
+    }
+
+    unless ($pull_only) {
+        # Silent and free where there is nothing to publish: push_foundation
+        # returns without a round trip when this clone holds no fleet refs and
+        # has no unpublished deletion, which is every repository that is not
+        # the hub.
+        print STDERR "Pushing refs/karr-foundation/ to remote...\n"
+          unless $self->quiet;
+        $self->sync_push_foundation;
     }
 
     say "Done.";

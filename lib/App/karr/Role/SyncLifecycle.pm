@@ -44,6 +44,11 @@ L<App::karr::SyncGuard/flush_armed> from an C<END> block.
 Commands that compose this role must also have a C<store> attribute (provided
 by L<App::karr::Role::BoardDiscovery>) with a C<git> accessor.
 
+L</sync_pull_foundation> and L</sync_push_foundation> are the same two halves
+for C<refs/karr-foundation/*> (#190). They share the retry loop rather than
+copying it -- there is exactly one in this file, and every attempt count, retry
+banner and C<--quiet> rule is decided in it.
+
 =cut
 
 =head1 METHODS
@@ -78,31 +83,11 @@ prevent. Everything that pulls in order to write calls C<sync_before>.
 
 sub sync_pull {
     my ( $self, %opt ) = @_;
-    my $git = $self->can('git') ? $self->git : $self->store->git;
+    my $git = $self->_sync_git;
 
-    my $ok    = 0;
-    my $err   = '';
-    my $shown = '';
-    for my $attempt ( 1 .. 3 ) {
-        # Retry-only: attempt 1 is silent; only announce the actual retries.
-        print STDERR "Pull retry $attempt of 3...\n"
-          if $attempt > 1 && !$self->quiet;
-        $ok = $git->pull( undef, %opt );
-        if ($ok) {
-            print STDERR "Pull succeeded.\n" if $attempt > 1 && !$self->quiet;
-            last;
-        }
-        # Errors always reach STDERR, even under --quiet (#27). But the same
-        # error once per attempt is not three pieces of information, and
-        # last_error is multi-line now that a rejection lists a reason per ref
-        # (#84) -- three copies of that buries the one thing worth reading. A
-        # repeat of what was just printed is dropped; a *different* error still
-        # gets its own line.
-        $err = "git pull failed: " . ( $git->last_error // 'unknown error' );
-        print STDERR "  $err\n" if $err ne $shown;
-        $shown = $err;
-        sleep 1 if $attempt < 3;
-    }
+    my ($ok) = $self->_sync_attempts( 'Pull', $git,
+        sub { $git->pull( undef, %opt ) } );
+
     # The git error is not repeated here. It was printed above the moment it
     # happened, and embedding a copy in the terminal message meant one failed
     # sync showed the same multi-line git output twice -- under --quiet too,
@@ -113,6 +98,75 @@ sub sync_pull {
       . "Run 'karr sync' to retry." ) unless $ok;
 
     return 1;
+}
+
+# The git handle every method here works through. The duck-typed doubles the
+# sync tests drive this role with expose it directly; the commands get it from
+# App::karr::Role::BoardDiscovery.
+sub _sync_git {
+    my ($self) = @_;
+    return $self->can('git') ? $self->git : $self->store->git;
+}
+
+# The retry loop -- the only one. Three attempts, the first silent, the retries
+# announced from the second, errors always on STDERR and --quiet silencing the
+# announcements but never an error.
+#
+# $label is 'Pull' or 'Push' and appears in both the banner and the git error
+# line, so the wording every existing test pins is produced here and nowhere
+# else. Returns ( $ok, $rejected ); $rejected is only ever true when
+# check_rejection was asked for.
+sub _sync_attempts {
+    my ( $self, $label, $git, $attempt, %opt ) = @_;
+
+    my $ok       = 0;
+    my $err      = '';
+    my $shown    = '';
+    my $rejected = 0;
+    for my $try ( 1 .. 3 ) {
+        # Retry-only: attempt 1 is silent; only announce the actual retries.
+        print STDERR "$label retry $try of 3...\n"
+          if $try > 1 && !$self->quiet;
+        $ok = $attempt->();
+        if ($ok) {
+            print STDERR "$label succeeded.\n" if $try > 1 && !$self->quiet;
+            last;
+        }
+        # Errors always reach STDERR, even under --quiet (#27). But the same
+        # error once per attempt is not three pieces of information, and
+        # last_error is multi-line now that a rejection lists a reason per ref
+        # (#84) -- three copies of that buries the one thing worth reading. A
+        # repeat of what was just printed is dropped; a *different* error still
+        # gets its own line.
+        $err = 'git ' . lc($label) . ' failed: '
+             . ( $git->last_error // 'unknown error' );
+        print STDERR "  $err\n" if $err ne $shown;
+        $shown = $err;
+
+        if ( $opt{check_rejection} ) {
+            # A per-ref rejection is final (#84): the remote was reached and
+            # said no, so two more attempts would only collect the same
+            # refusal twice more, at a second each, on every writing command.
+            # The `can` is for the duck-typed git objects the sync tests drive
+            # this role with.
+            #
+            # Except when the answer was "another push got to this ref first",
+            # which is contention and not a refusal: the same refspec lands on
+            # the next attempt. That is what the retry loop is for, and
+            # skipping it turned a `karr create` that had already written its
+            # card into a failed command on every parallel run (#181). Only a
+            # push whose rejections are *all* contention is retried, so one
+            # protected ref still ends it the way #84 requires.
+            $rejected = $git->can('push_rejections')
+                     && @{ $git->push_rejections } ? 1 : 0;
+            $rejected = 0
+              if $rejected && $git->can('push_contention') && $git->push_contention;
+            last if $rejected;
+        }
+
+        sleep 1 if $try < 3;
+    }
+    return ( $ok, $rejected );
 }
 
 =method sync_before
@@ -134,7 +188,7 @@ sub sync_before {
 
     # Stash the guard on the object so it outlives sync_before's return and
     # covers the whole command body; sync_after neutralises it on success.
-    my $git = $self->can('git') ? $self->git : $self->store->git;
+    my $git = $self->_sync_git;
     my $guard = App::karr::SyncGuard->new( git => $git, quiet => $self->quiet );
     $self->_sync_guard($guard);
     return $guard;
@@ -163,46 +217,11 @@ failure, because the same refspec lands on the next attempt.
 
 sub sync_after {
     my ($self) = @_;
-    my $git = $self->can('git') ? $self->git : $self->store->git;
+    my $git = $self->_sync_git;
 
-    my $ok       = 0;
-    my $err      = '';
-    my $shown    = '';
-    my $rejected = 0;
-    for my $attempt ( 1 .. 3 ) {
-        # Retry-only: attempt 1 is silent; only announce the actual retries.
-        print STDERR "Push retry $attempt of 3...\n"
-          if $attempt > 1 && !$self->quiet;
-        $ok = $git->push;
-        if ($ok) {
-            print STDERR "Push succeeded.\n" if $attempt > 1 && !$self->quiet;
-            last;
-        }
-        # Always shown, never three times over -- see sync_before.
-        $err = "git push failed: " . ( $git->last_error // 'unknown error' );
-        print STDERR "  $err\n" if $err ne $shown;
-        $shown = $err;
+    my ( $ok, $rejected ) = $self->_sync_attempts( 'Push', $git,
+        sub { $git->push }, check_rejection => 1 );
 
-        # A per-ref rejection is final (#84): the remote was reached and said
-        # no, so two more attempts would only collect the same refusal twice
-        # more, at a second each, on every writing command. The `can` is for
-        # the duck-typed git objects the sync tests drive this role with.
-        #
-        # Except when the answer was "another push got to this ref first",
-        # which is contention and not a refusal: the same refspec lands on the
-        # next attempt. That is what the retry loop is for, and skipping it
-        # turned a `karr create` that had already written its card into a
-        # failed command on every parallel run (#181). Only a push whose
-        # rejections are *all* contention is retried, so one protected ref
-        # still ends it the way #84 requires.
-        $rejected = $git->can('push_rejections')
-                 && @{ $git->push_rejections } ? 1 : 0;
-        $rejected = 0
-          if $rejected && $git->can('push_contention') && $git->push_contention;
-        last if $rejected;
-
-        sleep 1 if $attempt < 3;
-    }
     # Neutralise the insurance guard on both outcomes.
     #
     # On success: so its DESTROY does not fire a second, redundant push once
@@ -225,6 +244,75 @@ sub sync_after {
 
     App::karr::Error::user_error(
         "Push failed after 3 attempts. Local refs are intact.\n"
+      . "Run 'karr sync' to retry." );
+}
+
+=method sync_pull_foundation
+
+    $self->sync_pull_foundation;
+
+L</sync_pull> for C<refs/karr-foundation/*> -- karr-foundation's shared chain,
+run logs and question mailbox (L<App::karr::Foundation::ChainStore>). Same three
+attempts, same retry-only output, same C<--quiet> contract, because it is the
+same loop; only what it calls differs (L<App::karr::Git/pull_foundation>).
+
+The terminal message is its own, and that is the point: this half runs behind
+the board's, so "Nothing was changed" would be a lie about a board that has
+just been synced. There are no C<accept_wipe>/C<accept_foreign> options to
+forward, because the fleet namespace has neither guard -- see
+L<App::karr::Git/pull_foundation>.
+
+C<karr sync> is the only caller. The implicit sync every writing command makes
+(L</sync_before>, L</sync_after>) stays board-only: a stale chain costs a
+planning round, a stale board costs correctness, and nothing outside the fleet
+should pay for a namespace it does not have.
+
+=cut
+
+sub sync_pull_foundation {
+    my ($self) = @_;
+    my $git = $self->_sync_git;
+
+    my ($ok) = $self->_sync_attempts( 'Pull', $git,
+        sub { $git->pull_foundation } );
+
+    App::karr::Error::user_error(
+        "Pull of refs/karr-foundation/ failed after 3 attempts.\n"
+      . "The board is synced; the fleet namespace is not.\n"
+      . "Run 'karr sync' to retry." ) unless $ok;
+
+    return 1;
+}
+
+=method sync_push_foundation
+
+    $self->sync_push_foundation;
+
+L</sync_after> for C<refs/karr-foundation/*>, minus the
+L<App::karr::SyncGuard>: the guard insures a command body that wrote board refs
+and died, and nothing in a command body writes this namespace. The rejection
+verdict is the same one L</sync_after> uses, contention included, since it is
+the same remote answering.
+
+=cut
+
+sub sync_push_foundation {
+    my ($self) = @_;
+    my $git = $self->_sync_git;
+
+    my ( $ok, $rejected ) = $self->_sync_attempts( 'Push', $git,
+        sub { $git->push_foundation }, check_rejection => 1 );
+    return if $ok;
+
+    App::karr::Error::user_error(
+        "Push of refs/karr-foundation/ was rejected by the remote. Local refs "
+      . "are intact.\n"
+      . "The refs above were refused, not lost in transit, so pushing again "
+      . "would only be refused again." ) if $rejected;
+
+    App::karr::Error::user_error(
+        "Push of refs/karr-foundation/ failed after 3 attempts. Local refs "
+      . "are intact.\n"
       . "Run 'karr sync' to retry." );
 }
 

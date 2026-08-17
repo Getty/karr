@@ -109,6 +109,16 @@ Not every rejection is a refusal, though: two pushes racing for the same ref
 are refused by the receiving side and go through on the very next attempt, so
 L</push_contention> tells that case apart from a hook or a protected ref.
 
+C<refs/karr-foundation/*> -- karr-foundation's shared chain, run logs and
+question mailbox (L<App::karr::Foundation::ChainStore>) -- syncs the same way
+through L</pull_foundation> and L</push_foundation>: its own mirror, the same
+four cases, the same tombstoned deletions, and no prune. It is coordination
+state rather than board state, so it drops the board's wholesale-wipe refusal,
+its board-identity check and its conflict parking, and each omission is argued
+where the namespace constants are declared. C<karr sync> is the one command
+that carries it; the implicit per-command sync
+(L<App::karr::Role::SyncLifecycle>) stays board-only.
+
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::BoardStore>, L<App::karr::Task>,
@@ -1259,6 +1269,63 @@ use constant CONFLICT_ROOT => 'refs/karr-conflict';
 # A ref that was deliberately deleted here is the only thing that writes one.
 use constant TOMBSTONE_ROOT => 'refs/karr-local/deleted';
 
+# ----- The fleet-coordination namespace (#190) -----
+#
+# karr-foundation's shared half: the chain of planned steps, the run logs, the
+# question mailbox to come, and the fleet's own design document
+# (App::karr::Foundation::ChainStore, #189). It is coordination state -- every
+# machine and every person has to see the same picture -- so it syncs, and it
+# syncs through the same mirror the board does, for the same reason: without
+# one, "the remote does not have this ref" cannot be told apart from "this
+# clone has not pushed it yet", and a namespace whose ref names are minted as
+# it runs meets both cases constantly.
+#
+# What it deliberately does NOT take from the board:
+#
+#   * No wholesale-wipe guard (#82). An empty chain whose logs have aged out is
+#     the normal end state of a fleet run, not a catastrophe, so a guard here
+#     would fire on the ordinary case -- and the only way past it is a --prune
+#     that arms the board's wipe as well. A guard that has to be typed routinely
+#     is a guard that stops being read.
+#   * No identity of its own (#95). The namespace lives in the hub repository,
+#     whose board is stamped and checked on the same `karr sync`, in front of
+#     this half, against the same remote. A swapped or re-created origin is
+#     refused there before anything here runs. A second stamp would be a second
+#     thing to migrate and would answer no question the first one leaves open.
+#   * No conflict parking (refs/karr-conflict/). The remote still wins where
+#     both sides moved a ref, and the warning still says so, but the displaced
+#     version is not kept: a parked card is something a person reads back, a
+#     parked chain step is a plan nobody re-runs -- the planner writes a new one.
+#
+# What it does take, unchanged, is the deletion path (#178): tombstones plus
+# explicit delete refspecs, never a pruning push. Retention really deletes refs
+# (App::karr::Foundation::ChainStore/prune_logs), so a namespace with no way to
+# publish a deletion would re-adopt every pruned run on the next pull, forever;
+# and a pruning push would take another machine's run log -- just written, never
+# seen here -- off the remote, which is #178 one namespace over and with more
+# writers.
+use constant FOUNDATION_ROOT => 'refs/karr-foundation/';
+
+use constant FOUNDATION_REFSPEC =>
+    '+refs/karr-foundation/*:refs/karr-foundation/*';
+
+# Both under refs/karr-local/, the namespace nothing pushes or fetches and the
+# one namespace `karr set-refs` cannot reach (validate_helper_ref). The board's
+# equivalents sit under refs/karr-remote/ for historical reasons; a mirror and a
+# tombstone are local bookkeeping, so the new ones are put where that is true by
+# construction.
+use constant FOUNDATION_MIRROR_ROOT => 'refs/karr-local/foundation-remote';
+
+use constant FOUNDATION_TOMBSTONE_ROOT => 'refs/karr-local/foundation-deleted';
+
+# Ref root => tombstone root, for every namespace whose deletions are published
+# to the remote rather than pruned onto it. Pick locks and the tombstones
+# themselves are not in here on purpose: they never leave this clone.
+my @TOMBSTONED = (
+    [ BOARD_ROOT,      TOMBSTONE_ROOT ],
+    [ FOUNDATION_ROOT, FOUNDATION_TOMBSTONE_ROOT ],
+);
+
 # What _adopt_next_id_ref answers when the local counter was already the
 # further one: applied, in the sense that the two sides have converged on it,
 # but not by taking the remote's version -- which is the difference the
@@ -1266,8 +1333,8 @@ use constant TOMBSTONE_ROOT => 'refs/karr-local/deleted';
 use constant KEPT_LOCAL => 'kept-local';
 
 sub _mirror_prefix {
-    my ( $self, $remote ) = @_;
-    return MIRROR_ROOT . "/$remote/";
+    my ( $self, $remote, $root ) = @_;
+    return ( $root // MIRROR_ROOT ) . "/$remote/";
 }
 
 # Fetch never writes into the live board any more: the remote state lands in
@@ -1414,24 +1481,13 @@ sub fetch {
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
-    return try {
-        my $r = $repo->remote($remote);
-        # The Result's ->updated names the refs this fetch actually moved.
-        # karr deliberately does not use it: reconciliation has to consider
-        # the refs the fetch did *not* move as well (unpushed local work is
-        # exactly that), so it reads the ref OIDs itself -- and the CLI
-        # transport has no such list to hand back, so consuming it would make
-        # the two transports differ again, which is what #41 was. ->rejected
-        # is always empty on fetch.
-        $r->fetch(
-            refspecs    => [],   # use configured refspecs
-            credentials => _default_credentials_cb(),
-        );
-        1;
-    } catch {
-        $self->{_last_error} = "$_";
-        $self->_cli_transport( 'fetch', $remote, [] );
-    };
+    # The Result's ->updated names the refs a fetch actually moved. karr
+    # deliberately does not use it: reconciliation has to consider the refs the
+    # fetch did *not* move as well (unpushed local work is exactly that), so it
+    # reads the ref OIDs itself -- and the CLI transport has no such list to
+    # hand back, so consuming it would make the two transports differ again,
+    # which is what #41 was. ->rejected is always empty on fetch.
+    return $self->_fetch_refspecs( $remote, [] );   # configured refspecs
 }
 
 =method fetch
@@ -1611,13 +1667,58 @@ sub _push_rejection_error {
     } @$rejected;
 }
 
+# Send @$refspecs and report the outcome the way every caller here needs it:
+# native transport first, CLI fallback on a transport failure, and a per-ref
+# rejection turned into a false return with last_error and push_rejections set.
+# The three public pushes -- the board's, a single helper ref's and the fleet
+# namespace's -- differ in what they send and in what they do afterwards, never
+# in this, so it is written once.
+sub _push_refspecs {
+    my ( $self, $remote, $refspecs ) = @_;
+    my $repo = $self->_repo or return 0;
+    $self->{_push_rejections} = [];
+
+    my $result;
+    my $ok = try {
+        my $r = $repo->remote($remote);
+        $result = $r->push(
+            refspecs    => $refspecs,
+            credentials => _default_credentials_cb(),
+        );
+        1;
+    } catch {
+        $self->{_last_error} = "$_";
+        $self->_cli_transport( 'push', $remote, $refspecs );
+    };
+    return 0 unless $ok;
+    return $self->_accept_push_result( $remote, $result ) ? 1 : 0;
+}
+
+# The fetch half of the same: native first, CLI fallback, no reconciliation.
+# An empty @$refspecs means the remote's configured ones.
+sub _fetch_refspecs {
+    my ( $self, $remote, $refspecs, %opt ) = @_;
+    my $repo = $self->_repo or return 0;
+    return try {
+        my $r = $repo->remote($remote);
+        $r->fetch(
+            refspecs    => $refspecs,
+            credentials => _default_credentials_cb(),
+            ( $opt{prune} ? ( prune => 1 ) : () ),
+        );
+        1;
+    } catch {
+        $self->{_last_error} = "$_";
+        $self->_cli_transport( 'fetch', $remote, $refspecs, %opt );
+    };
+}
+
 sub push {
     my ( $self, $remote, $refspec ) = @_;
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
     $refspec //= BOARD_REFSPEC;
-    $self->{_push_rejections} = [];
 
     # A board push publishes exactly two things: the local refs as they stand
     # here, and the deletions this clone recorded. It used to publish a third
@@ -1649,20 +1750,7 @@ sub push {
     }
     my @refspecs = ( $refspec, map { ":$_" } @deletes );
 
-    my $result;
-    my $ok = try {
-        my $r = $repo->remote($remote);
-        $result = $r->push(
-            refspecs    => \@refspecs,
-            credentials => _default_credentials_cb(),
-        );
-        1;
-    } catch {
-        $self->{_last_error} = "$_";
-        $self->_cli_transport( 'push', $remote, \@refspecs );
-    };
-    return 0 unless $ok;
-    return 0 unless $self->_accept_push_result( $remote, $result );
+    return 0 unless $self->_push_refspecs( $remote, \@refspecs );
 
     # A push that went through put the local refs on the remote and took the
     # published deletions off it, so the mirror follows both. Without this
@@ -1717,19 +1805,7 @@ sub pull {
     # tell the four cases apart, so snapshot it first.
     my $tracked = $self->ref_oids( $self->_mirror_prefix($remote) ) || {};
 
-    my $ok = try {
-        my $r = $repo->remote($remote);
-        $r->fetch(
-            refspecs    => [$refspec],
-            credentials => _default_credentials_cb(),
-            prune       => 1,
-        );
-        1;
-    } catch {
-        $self->{_last_error} = "$_";
-        $self->_cli_transport( 'fetch', $remote, [$refspec], prune => 1 );
-    };
-    return 0 unless $ok;
+    return 0 unless $self->_fetch_refspecs( $remote, [$refspec], prune => 1 );
 
     $self->_check_board_identity( $remote, $tracked, $opt{accept_foreign} );
     $self->_reconcile_with_mirror( $remote, $tracked, $opt{accept_wipe} );
@@ -1882,49 +1958,10 @@ sub _reconcile_with_mirror {
     my ( $self, $remote, $tracked, $accept_wipe ) = @_;
     return unless $self->_repo;
 
-    my $prefix     = $self->_mirror_prefix($remote);
-    my $remote_now = $self->ref_oids($prefix)    || {};
-    my $local      = $self->ref_oids(BOARD_ROOT) || {};
-
-    my %names = map { $_ => 1 } keys %$local;
-    for my $mirror ( keys %$remote_now, keys %$tracked ) {
-        $names{ BOARD_ROOT . substr( $mirror, length $prefix ) } = 1;
-    }
-
-    # [ ref, remote oid (undef = delete), local oid to park, is a conflict ]
-    my @plan;
-    my ( $survivors, $deletes ) = ( 0, 0 );
-    for my $ref ( sort keys %names ) {
-        my $mirror = $prefix . substr( $ref, length BOARD_ROOT );
-        my ( $l, $r, $t ) =
-            ( $local->{$ref}, $remote_now->{$mirror}, $tracked->{$mirror} );
-
-        if ( _same_oid( $l, $r ) ) {        # already converged
-            $survivors++ if defined $l;
-            next;
-        }
-
-        if ( _same_oid( $l, $t ) ) {
-            CORE::push @plan, [ $ref, $r, undef, 0 ];
-            # What the wipe guard counts, and why only here: this branch is
-            # the deletion the clone cannot see coming and cannot undo -- it
-            # holds nothing of its own for this ref, so nothing is parked and
-            # nothing is warned about. Those are the ones that add up to a
-            # board disappearing without a word (#82). The case-4 branch below
-            # also deletes, but it parks the local version and says so, so it
-            # is not a silent loss and does not count. A ref the remote never
-            # had (both undef) is not a loss either.
-            if    ( defined $r ) { $survivors++ }
-            elsif ( defined $l ) { $deletes++ }
-        }
-        elsif ( _same_oid( $r, $t ) ) {     # unpushed local work: keep it
-            $survivors++ if defined $l;
-        }
-        else {
-            CORE::push @plan, [ $ref, $r, $l, 1 ];
-            $survivors++ if defined $r;
-        }
-    }
+    my $prefix = $self->_mirror_prefix($remote);
+    my ( $plan, $survivors, $deletes ) =
+        $self->_mirror_plan( BOARD_ROOT, $prefix, $tracked );
+    my @plan = @$plan;
 
     $self->_refuse_wholesale_wipe( $remote, $tracked, $deletes )
         if $deletes && !$survivors && !$accept_wipe;
@@ -1967,6 +2004,66 @@ sub _reconcile_with_mirror {
     return;
 }
 
+# The four cases above, decided for every ref of one namespace and for none of
+# them applied. $root is the live namespace (refs/karr/ or refs/karr-foundation/),
+# $prefix its mirror for this remote, %$tracked the mirror as it stood before
+# the fetch.
+#
+# Returns ( \@plan, $survivors, $deletes ), where a plan entry is
+# [ ref, remote oid (undef = delete), local oid displaced (undef = none),
+# is a conflict ]. The two counts are the wipe guard's evidence (#82); a caller
+# with no wipe guard -- the fleet namespace, see FOUNDATION_ROOT -- ignores them.
+#
+# Shared rather than written once per namespace: the four cases are the whole
+# reasoning of this file, and two copies of them would diverge on the first
+# ticket that touches one.
+sub _mirror_plan {
+    my ( $self, $root, $prefix, $tracked ) = @_;
+
+    my $remote_now = $self->ref_oids($prefix) || {};
+    my $local      = $self->ref_oids($root)   || {};
+
+    my %names = map { $_ => 1 } keys %$local;
+    for my $mirror ( keys %$remote_now, keys %$tracked ) {
+        $names{ $root . substr( $mirror, length $prefix ) } = 1;
+    }
+
+    my @plan;
+    my ( $survivors, $deletes ) = ( 0, 0 );
+    for my $ref ( sort keys %names ) {
+        my $mirror = $prefix . substr( $ref, length $root );
+        my ( $l, $r, $t ) =
+            ( $local->{$ref}, $remote_now->{$mirror}, $tracked->{$mirror} );
+
+        if ( _same_oid( $l, $r ) ) {        # already converged
+            $survivors++ if defined $l;
+            next;
+        }
+
+        if ( _same_oid( $l, $t ) ) {
+            CORE::push @plan, [ $ref, $r, undef, 0 ];
+            # What the wipe guard counts, and why only here: this branch is
+            # the deletion the clone cannot see coming and cannot undo -- it
+            # holds nothing of its own for this ref, so nothing is parked and
+            # nothing is warned about. Those are the ones that add up to a
+            # board disappearing without a word (#82). The case-4 branch below
+            # also deletes, but it parks the local version and says so, so it
+            # is not a silent loss and does not count. A ref the remote never
+            # had (both undef) is not a loss either.
+            if    ( defined $r ) { $survivors++ }
+            elsif ( defined $l ) { $deletes++ }
+        }
+        elsif ( _same_oid( $r, $t ) ) {     # unpushed local work: keep it
+            $survivors++ if defined $l;
+        }
+        else {
+            CORE::push @plan, [ $ref, $r, $l, 1 ];
+            $survivors++ if defined $r;
+        }
+    }
+    return ( \@plan, $survivors, $deletes );
+}
+
 # The invariant the whole reconciliation rests on: the mirror may only claim
 # what is actually in place here.
 #
@@ -1978,8 +2075,8 @@ sub _reconcile_with_mirror {
 # 0 (#154). Rolled back, the same pull sees the case it saw this time and
 # applies it. Returns the mirror ref name when even the rollback did not land.
 sub _rollback_mirror_ref {
-    my ( $self, $prefix, $tracked, $ref ) = @_;
-    my $name = $prefix . substr( $ref, length BOARD_ROOT );
+    my ( $self, $prefix, $tracked, $ref, $root ) = @_;
+    my $name = $prefix . substr( $ref, length( $root // BOARD_ROOT ) );
     my $ok   = exists $tracked->{$name}
         ? $self->_write_ref_untracked( $name, $tracked->{$name} )
         : $self->_delete_ref_untracked($name);
@@ -2271,56 +2368,69 @@ sub _warn_conflicts {
 # The failure mode #154 is about is the opposite one -- a mirror claiming an
 # OID that is not in place locally.
 sub _mirror_local_state {
-    my ( $self, $remote, $local, $deleted ) = @_;
+    my ( $self, $remote, $local, $deleted, $root, $mirror_root ) = @_;
     return unless $self->_repo;
 
-    my $prefix = $self->_mirror_prefix($remote);
+    $root //= BOARD_ROOT;
+    my $prefix = $self->_mirror_prefix( $remote, $mirror_root );
     my $mirror = $self->ref_oids($prefix) || {};
 
     for my $ref ( keys %{ $local || {} } ) {
-        my $name = $prefix . substr( $ref, length BOARD_ROOT );
+        my $name = $prefix . substr( $ref, length $root );
         next if _same_oid( $mirror->{$name}, $local->{$ref} );
         $self->_write_ref_untracked( $name, $local->{$ref} );
     }
     for my $ref ( @{ $deleted || [] } ) {
-        my $name = $prefix . substr( $ref, length BOARD_ROOT );
+        my $name = $prefix . substr( $ref, length $root );
         $self->_delete_ref_untracked($name) if exists $mirror->{$name};
     }
     return;
 }
 
-# The tombstone for a board ref: same path, under TOMBSTONE_ROOT.
+# The tombstone for a ref whose deletions are published: same path, under the
+# tombstone root of its namespace. Returns nothing for a ref in a namespace
+# that has none -- pick locks, the tombstones themselves, the mirrors.
 sub _tombstone_name {
     my ( $self, $ref ) = @_;
-    return TOMBSTONE_ROOT . '/' . substr( $ref, length BOARD_ROOT );
+    for my $ns (@TOMBSTONED) {
+        my ( $root, $tomb ) = @$ns;
+        return $tomb . '/' . substr( $ref, length $root )
+            if index( $ref, $root ) == 0;
+    }
+    return;
 }
 
 # Record that this clone deleted $ref, so the next push tells the remote.
 # $oid is the OID the ref points at; read here when the caller does not
 # already hold it.
 #
-# Only board refs leave a tombstone: pick locks under refs/karr-local/ are
-# never on the remote to begin with. A tombstone that cannot be written is not
-# an error the delete has to fail on -- it degrades to a deletion the remote
-# is not told about, which is the same place a killed process leaves it, and
-# raising here would fail a delete whose ref is about to go regardless.
+# Only the published namespaces leave a tombstone: pick locks under
+# refs/karr-local/ are never on the remote to begin with. A tombstone that
+# cannot be written is not an error the delete has to fail on -- it degrades to
+# a deletion the remote is not told about, which is the same place a killed
+# process leaves it, and raising here would fail a delete whose ref is about to
+# go regardless.
 sub _note_pending_delete {
     my ( $self, $ref, $oid ) = @_;
-    return unless index( $ref, BOARD_ROOT ) == 0;
+    my $tombstone = $self->_tombstone_name($ref) or return;
     $oid = ( $self->read_ref_with_oid($ref) )[0] unless defined $oid;
     return unless defined $oid;
-    $self->_write_ref_untracked( $self->_tombstone_name($ref), $oid );
+    $self->_write_ref_untracked( $tombstone, $oid );
     return;
 }
 
-# The board refs this clone has deleted and not yet published, as
-# { board ref => tombstone ref }.
+# The refs of one namespace this clone has deleted and not yet published, as
+# { ref => tombstone ref }. $root defaults to the board's.
 sub _pending_deletes {
-    my ($self) = @_;
-    my $prefix = TOMBSTONE_ROOT . '/';
+    my ( $self, $root ) = @_;
+    $root //= BOARD_ROOT;
+    my ($ns) = grep { $_->[0] eq $root } @TOMBSTONED;
+    return {} unless $ns;
+
+    my $prefix = $ns->[1] . '/';
     my %pending;
     for my $name ( $self->list_refs($prefix) ) {
-        $pending{ BOARD_ROOT . substr( $name, length $prefix ) } = $name;
+        $pending{ $root . substr( $name, length $prefix ) } = $name;
     }
     return \%pending;
 }
@@ -2372,22 +2482,7 @@ sub push_ref {
     $ref = $self->validate_helper_ref($ref);
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
-    $self->{_push_rejections} = [];
-
-    my $result;
-    my $ok = try {
-        my $r = $repo->remote($remote);
-        $result = $r->push(
-            refspecs    => ["+$ref:$ref"],
-            credentials => _default_credentials_cb(),
-        );
-        1;
-    } catch {
-        $self->{_last_error} = "$_";
-        $self->_cli_transport( 'push', $remote, ["+$ref:$ref"] );
-    };
-    return 0 unless $ok;
-    return $self->_accept_push_result( $remote, $result );
+    return $self->_push_refspecs( $remote, ["+$ref:$ref"] );
 }
 
 =method push_ref
@@ -2413,17 +2508,7 @@ sub pull_ref {
     # written by write_ref too, so a helper ref that changed on the remote is
     # never a fast-forward and a non-forced fetch would leave `karr get-refs`
     # quietly serving the stale local copy.
-    return try {
-        my $r = $repo->remote($remote);
-        $r->fetch(
-            refspecs    => ["+$ref:$ref"],
-            credentials => _default_credentials_cb(),
-        );
-        1;
-    } catch {
-        $self->{_last_error} = "$_";
-        $self->_cli_transport( 'fetch', $remote, ["+$ref:$ref"] );
-    };
+    return $self->_fetch_refspecs( $remote, ["+$ref:$ref"] );
 }
 
 =method pull_ref
@@ -2436,6 +2521,156 @@ C<$remote> isn't configured), C<0> on failure. This is what C<karr get-refs>
 uses to pull a helper ref someone else published.
 
 =cut
+
+# ----- The fleet-coordination namespace: refs/karr-foundation/* (#190) -----
+
+sub pull_foundation {
+    my ( $self, $remote ) = @_;
+    $remote //= 'origin';
+    my $repo = $self->_repo or return 0;
+    return 1 unless $repo->has_remote($remote);
+
+    my $prefix = $self->_mirror_prefix( $remote, FOUNDATION_MIRROR_ROOT );
+
+    # The mirror as it stands now is the remote state at the last sync; the
+    # fetch is about to overwrite it with the current one. Both are needed to
+    # tell the four cases apart, so snapshot it first -- exactly as L</pull>
+    # does, and for exactly the same reason.
+    my $tracked = $self->ref_oids($prefix) || {};
+
+    my $refspec = '+' . FOUNDATION_ROOT . '*:' . $prefix . '*';
+    return 0 unless $self->_fetch_refspecs( $remote, [$refspec], prune => 1 );
+
+    $self->_reconcile_foundation( $remote, $prefix, $tracked );
+    return 1;
+}
+
+=method pull_foundation
+
+    my $ok = $git->pull_foundation($remote);   # default 'origin'
+
+Fetches C<refs/karr-foundation/*> into the C<refs/karr-local/foundation-remote/E<lt>remoteE<gt>/>
+mirror and reconciles the local namespace against it, on the same four cases
+L</pull> resolves for the board: a ref the remote added is adopted, one the
+remote deleted since the last sync is deleted here too, one that exists only
+locally is unpushed work and is kept, and where both sides moved the same ref
+the remote's version takes the slot and a warning names it.
+
+Three things the board's pull does that this does not, each deliberate and
+argued at C<FOUNDATION_ROOT> in the source: there is no wholesale-wipe refusal
+(an emptied chain is a normal end state, and a guard that has to be waved
+through routinely stops being read), no board-identity check of its own (the
+board's runs first, in the same C<karr sync>, against the same remote), and no
+conflict parking (a displaced chain step is re-planned, not read back).
+
+Returns C<1> when C<$remote> isn't configured (a no-op) or reconciliation
+completes, C<0> on a transport failure. Like L</pull> it C<die>s -- rather than
+returning C<0> -- when it decided on a ref it could not then write locally,
+because the caller's next step is the push and pushing after a partial pull
+would force the older version over the newer one (#154).
+
+=cut
+
+sub push_foundation {
+    my ( $self, $remote ) = @_;
+    $remote //= 'origin';
+    my $repo = $self->_repo or return 0;
+    return 1 unless $repo->has_remote($remote);
+
+    # Read before the push, never after -- see L</push>: a ref written in
+    # between is published without being in the snapshot, which leaves the
+    # mirror lagging the remote, the direction that converges harmlessly.
+    my $local      = $self->ref_oids(FOUNDATION_ROOT) || {};
+    my $tombstones = $self->_pending_deletes(FOUNDATION_ROOT);
+    # A tombstone whose ref is back in the namespace is stale, not a deletion.
+    my @deletes = grep { !exists $local->{$_} } sort keys %$tombstones;
+
+    # Nothing here and nothing deleted is nothing to say, and saying it would
+    # be an error: a wildcard refspec matching no local ref, sent on its own,
+    # makes git exit non-zero ("No refs in common and none specified"), so
+    # every repository that is not the hub would end `karr sync` complaining
+    # about a namespace it does not have. This is also what keeps the second
+    # round trip off the boards that never carry fleet state.
+    return 1 unless %$local || @deletes;
+
+    my @refspecs = ( FOUNDATION_REFSPEC, map { ":$_" } @deletes );
+    return 0 unless $self->_push_refspecs( $remote, \@refspecs );
+
+    $self->_mirror_local_state( $remote, $local, \@deletes,
+        FOUNDATION_ROOT, FOUNDATION_MIRROR_ROOT );
+    $self->_clear_pending_deletes( $tombstones, \@deletes );
+    return 1;
+}
+
+=method push_foundation
+
+    my $ok = $git->push_foundation($remote);   # default 'origin'
+
+Publishes C<refs/karr-foundation/*> under a forced, B<non-pruning> refspec,
+plus one delete refspec for every ref of that namespace this clone deleted and
+has not published yet, and then updates the mirror. Same return contract as
+L</push>.
+
+The deletions are the point. C<refs/karr-foundation/*> is written from more
+machines than a board is, and its retention really removes refs
+(L<App::karr::Foundation::ChainStore/prune_logs>), so both obvious shortcuts
+lose data: a pruning push takes another machine's just-written run log off the
+remote (#178, one namespace over), and publishing no deletions at all makes
+every pruned run come straight back on the next pull, forever. So deletions
+travel the way the board's have since #178 -- as tombstones under
+C<refs/karr-local/foundation-deleted/>, written by L</delete_ref> before the ref
+goes and cleared by the push that published them.
+
+A clone with nothing under C<refs/karr-foundation/> and no such tombstone
+pushes nothing at all, which is both correct and what keeps this off the wire
+in every repository that does not carry fleet state.
+
+=cut
+
+sub _reconcile_foundation {
+    my ( $self, $remote, $prefix, $tracked ) = @_;
+    return unless $self->_repo;
+
+    my ($plan) = $self->_mirror_plan( FOUNDATION_ROOT, $prefix, $tracked );
+
+    my ( @conflicts, @unapplied, @stale );
+    for my $step (@$plan) {
+        my ( $ref, $oid, undef, $conflict ) = @$step;
+        my $applied = defined $oid
+            ? $self->_write_ref_untracked( $ref, $oid )
+            : $self->_delete_ref_untracked($ref);
+        if ($applied) {
+            CORE::push @conflicts, $ref if $conflict;
+            next;
+        }
+        # Same rule as the board's: the mirror goes back to what this ref had
+        # before the fetch, and the pull stops (#154).
+        CORE::push @unapplied, $ref;
+        CORE::push @stale, $self->_rollback_mirror_ref(
+            $prefix, $tracked, $ref, FOUNDATION_ROOT );
+    }
+
+    $self->_warn_foundation_conflicts( $remote, \@conflicts ) if @conflicts;
+    die $self->_unapplied_refs_error( $remote, \@unapplied, \@stale )
+        if @unapplied;
+    return;
+}
+
+# Said, but not parked. The board keeps the losing side under
+# refs/karr-conflict/ because a displaced card is something a person reads back
+# and re-applies; a displaced chain step is a plan, and the answer to a plan
+# that lost a race is another planning round, not an archaeology dig. What is
+# worth saying is that it happened at all: two planners writing one chain is
+# the condition, and the operator is the only one who can end it.
+sub _warn_foundation_conflicts {
+    my ( $self, $remote, $refs ) = @_;
+    my $names = join ', ', map { substr $_, length FOUNDATION_ROOT } @$refs;
+    warn "karr: this clone and the remote '$remote' both changed $names "
+       . "under " . FOUNDATION_ROOT . " since the last sync.\n"
+       . "The remote version is now in place and the local one is not kept. "
+       . "Re-plan rather than re-edit.\n";
+    return;
+}
 
 # Fallback transport via the system `git` CLI so that ssh-config directives
 # libgit2 ignores (ProxyCommand, Host aliases, IdentityFile, insteadOf) are
