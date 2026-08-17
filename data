@@ -1,0 +1,59 @@
+---
+class: standard
+completed: 2026-08-17T08:44:52Z
+created: 2026-08-17T01:03:04Z
+depends_on:
+- 189
+id: 191
+priority: medium
+started: 2026-08-17T07:53:23Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+- ux
+title: 'karr-foundation: question mailbox (ask / answer)'
+updated: 2026-08-17T08:44:52Z
+---
+
+A question is a file with an answer field, not a dialogue. That removes the special case for 'a human happens to be present'.
+
+`questions/<id>.yaml` carries the question, its context, the options, a default, and a policy for what happens when nobody answers: `block`, `use_default`, or `escalate_to_ai`. The chain continues with everything that does not depend on it; only dependent steps wait.
+
+Who fills in the answer — a person at a terminal, a chat message, or the coordination agent — is not something the chain needs to know. That is the whole point: one mailbox, many writers.
+
+Commands: `karr-foundation ask` to raise one, `karr-foundation answer <id>` to settle it.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+Nothing to do for sync here: #190 syncs the whole refs/karr-foundation/* namespace, so refs/karr-foundation/questions/* travels with it the moment you write it -- pull, push, tombstoned deletions and all. Two things that follow from how that sync works. (1) Where two clones change the same question ref between syncs the remote's version wins and the local one is NOT kept (the board parks a conflicting card, this namespace deliberately does not), so an answer written on one machine while another rewrote the question is lost with a warning; if that matters, the answer wants to be its own ref rather than a field in the question. (2) Deleting a settled question publishes a deletion the same way a pruned run log does, so a mailbox that grows without bound is a retention decision, not a sync problem.
+Done, commit 7624f3d on main (local, not pushed).
+
+WHAT LANDED
+- lib/App/karr/Foundation/Questions.pm -- the mailbox: ask / question / questions / open_questions / answer / settle / resolve / delete_question / prune_questions, refs under refs/karr-foundation/questions/<id>/ask and .../answer.
+- lib/App/karr/Foundation.pm -- `karr-foundation ask QUESTION` and `answer ID ANSWER` (positional; MooX::Options gets protect_argv => 0 and bin/karr-foundation hands the leftovers to run()), options --context/--options/--default/--policy/--wait/--step/--note, --force reused for "replace an answer". Hub resolution split out into _hub_git, shared by the chain store and the mailbox.
+- lib/App/karr/Foundation/Overview.pm -- --status lists the open mailbox with each id and what happens if nobody answers.
+- lib/App/karr/Git.pm -- refs/karr-foundation/questions/ joins chain/ and log/ in HELPER_READ_ONLY (set-refs cannot write it, get-refs still reads it).
+- t/191-foundation-questions.t, t/00-load.t, Changes, README.md, share/claude-skill.md + the repo skill copy (namespace enumeration).
+
+THE TWO DECISIONS #190 ASKED FOR
+1. The answer is its OWN REF, not a field in the question. #190 resolves a ref both sides changed by taking the remote and not parking the local one: right for a plan (re-plan), wrong for an answer (somebody typed it once; re-planning does not reconstruct it). Split refs mean asker and answerer never write the same ref, so the case cannot arise from ordinary use. Two people answering at once is create-only -> one answer, one refusal. The ask ref is written once and never rewritten, which is what makes that invariant real; the test pins it by comparing the ask ref OID before and after an answer.
+   Consequence handled: ids are per-clone integers, so two clones can mint the same id and an answer could end up beside somebody else s question. The answer therefore records the question TEXT it answers; resolve() refuses to pair them on a mismatch, warns, and reports the question as open again (and re-answering then needs no --force). That same guard is why an id may come round again after a prune, instead of a counter ref in a namespace whose conflict rule is "remote wins".
+2. Retention: answered questions age out after 30 days (keep_answered_days, 0 = forever), open ones NEVER do -- an open question is work nobody has done yet. ask() prunes before it writes, like ChainStore does when a run log is opened.
+3. set-refs access: BLOCKED for questions/ too, but on the second half of #189 s argument, not the first. A human answering by hand is an intended writer -- through `karr-foundation answer`, which validates against the offered options and is create-only. set-refs joins argv with a single space (#195), so a hand-written YAML mapping could only ever land as a ref the mailbox skips with a warning while the writer believes the question is answered. get-refs still reads everything.
+Also: ask/answer pull the fleet namespace before and push after (a mailbox that does not travel is a notepad); a transport failure is a warning, the ref is local until the next karr sync.
+
+RED PROOF
+`prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/191-foundation-questions.t` before the module existed:
+  Can t locate App/karr/Foundation/Questions.pm in @INC ... at t/191-foundation-questions.t line 14.
+  t/191-foundation-questions.t .. Dubious, test returned 2 -- No subtests run -- Result: FAIL
+Second red, after the store was written: subtest "asking prunes, so a mailbox nobody empties still has a bound" failed 2 of 3 (the id-monotonicity assumption) -- that is what forced the id-reuse decision above to be made explicitly and re-pinned in the test rather than left implicit.
+
+TESTS
+t/191-foundation-questions.t: 13 subtests, PASS.
+Full suite `prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/`: Files=176, Tests=1216, Result: PASS (was 175/1202).
+
+OUT OF SCOPE, FILED
+#200 run kind: question steps against the mailbox (nothing in the runner reads resolve() yet; ask --step records the link and nothing walks it).
+#201 karr-foundation exits 255 on a user error while karr exits 1 or 2 (no central handler in bin/karr-foundation).
+Unrelated: an untracked pid2.txt appeared in the working tree at 07:38 (before this ticket started, after the last commit); not mine, left alone, no test in t/ writes it.
+Review 2026-08-17 (Orchestrator): freigegeben, auf main. Volle Suite selbst nachgefahren: 176 Dateien, 1216 Tests, PASS. Die Entscheidung 'Antwort als eigenes Ref' end-to-end nachgemessen, weil sie die inhaltlich wichtigste des Tickets ist: der ask-Ref traegt vor und nach dem Antworten dieselbe OID (ee7a0c8b...), Frager und Antworter schreiben also tatsaechlich nie dasselbe Ref -- das ist es, was die verlustbehaftete Konfliktregel des Namespace (Remote gewinnt, nichts wird geparkt) fuer Antworten unerreichbar macht. Create-only gemessen: eine zweite Antwort wird abgelehnt und nennt die erste samt Zeitstempel und force als Ausweg; eine Antwort ausserhalb der angebotenen Optionen wird abgelehnt und nennt die Optionen. Ueber zwei Klone eines bare-Remotes gemessen: A stellt Frage 1 und beantwortet sie, ein frisch geklontes B sieht nach karr sync Frage UND Antwort, stellt selbst Frage 2, A sieht sie im --status als offen und beantwortet sie, und B liest danach beide als state=answered mit den Antworten der jeweils anderen Maschine. Das Postfach traegt also wirklich viele Schreiber ueber Maschinen hinweg. Anmerkung: die vom Worker gemeldete fremde Datei pid2.txt im Arbeitsbaum war meine -- aus dem Nebenlaeufigkeitstest zu #186, ein relativer Pfad bei zurueckgesetztem cwd; entfernt, Arbeitsbaum sauber.
