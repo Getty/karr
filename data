@@ -1,0 +1,38 @@
+---
+claimed_at: 2026-08-15T15:10:09Z
+claimed_by: hire-tend
+class: standard
+completed: 2026-08-17T01:44:55Z
+created: 2026-08-15T14:48:31Z
+id: 179
+priority: medium
+started: 2026-08-15T14:50:42Z
+status: done
+tags:
+- test
+- foundation
+title: t/148 orphan scan matches any process on the box containing 'sleep 30', e.g.
+  a concurrent 'sleep 300'
+updated: 2026-08-17T01:44:55Z
+---
+
+t/148-foundation-runner-group-kill.t subtest 1 ("backgrounded sleep is killed by the timeout, not reparented to init") fails on a shared machine for reasons that have nothing to do with karr.
+
+The orphan scan walks all of /proc and flags survivors with an unanchored substring match:
+
+        if ( $cmdline =~ /sleep 30/ ) {
+            push @still_running, [ $entry, $cmdline, $ppid ];
+        }
+
+That matches any process anywhere on the box whose command line merely contains the text "sleep 30" -- including `sleep 300`, `sleep 3000`, and any shell whose -c string mentions one. Observed here: another agent session was running `sleep 300` in an unrelated repo, and both it and its parent bash were reported as survivors of a group kill they were never part of:
+
+    not ok 3 - no orphan sleep 30 left on the box
+    # survivors: 317936//bin/bash -c ... eval sleep 300; cd /home/getty/dev/dbio-dev/... /1558 317940/sleep 300 /317936
+
+Note the test name says "sleep 30" while the survivor is "sleep 300" -- the diag is self-refuting if read closely.
+
+Reproducible while such a process exists (3/3 runs red), and green otherwise, which is why the #171 baseline run saw only t/67 fail. Confirmed independent of #175: fails identically with that change stashed. The other subtest ("runner puts the agent in a process group whose pgid is its own pid") passes throughout, so the product behaviour under test looks fine -- this is the detector, not the detected.
+
+The scan needs to identify the test own child specifically rather than pattern-match the box: anchor on the exact argv (`sleep` + `30` as separate argv entries, cmdline is NUL-separated before the s/\0/ /g), and/or restrict to descendants of the test process / the spawned runner, and/or use a sentinel argument unique to this run instead of a bare duration. Marking it a foundation-runner regression when it fires is a false alarm.
+2026-08-15 15:10 Fixed: cmdline =~ /sleep 30/ was an unanchored substring, matching unrelated survivors (e.g. "sleep 300" from a concurrent session) and would also cross-match between two simultaneous copies of this test. Approach: embedded a per-run marker into the sleep duration itself (30.$$, unique to this test process's pid) and switched the final scan from substring to exact argv match (cmdline eq "sleep $marker"). Rejected restricting the scan to descendants of the test process/group: the point of this subtest is to catch a sleep that escaped the group and got reparented to init, so scoping to descendants would blind it to the exact regression it exists to detect. Commit a9a9f52 (only t/148-foundation-runner-group-kill.t touched; left lib/App/karr/Git.pm to #178 and Task.pm to #177). Verification: (1) full suite green in the live tree, 164/164 files, 1105/1105 tests, t/67 included and passing (already fixed by #175); (2) t/148 alone green 3/3 fresh runs while a concurrent "sleep 300" process ran on the box, reproducing the false-alarm condition from the bug report; (3) red-proof: temporarily reduced the runner's group-kill (kill TERM/KILL -pid -> pid) in Foundation/Runner.pm, reran t/148, orphaned marked sleep (reparented to init, ppid=1) was correctly caught as a failure, then restored Runner.pm exactly (md5sum + git diff --stat confirmed no residual change) before committing. No push, no dzil release.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
