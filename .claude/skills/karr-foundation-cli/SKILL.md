@@ -1,6 +1,6 @@
 ---
 name: karr-foundation-cli
-description: Use when managing karr-foundation — periodic agent execution across multiple karr boards, drain loops, and auto-block logic.
+description: Use when managing karr-foundation — periodic agent execution across multiple karr boards, drain loops, ticket mode, and auto-block logic.
 ---
 
 # karr-foundation — Periodic Agent Executor for karr Boards
@@ -58,7 +58,8 @@ prompt: >-                # agent instruction, exposed to the command as $PROMPT
   Use the karr-coordinator skill: pick the next actionable task and move it.
 # command: claude -p "$PROMPT"   # explicit command; wins over claude: true
 on_idle: skip             # 'skip' (default) | 'always-run'
-drain: true               # loop until drained (default) | false for single run
+mode: drain               # drain (default) | single | ticket
+drain: true               # older spelling of mode: true=drain, false=single
 max_runtime: 1800         # seconds: per-command SIGKILL (0 = no timeout)
 max_attempts: 2           # stalls on one task before auto-block (default: 2)
 max_iterations: 50        # hard cap on drain iterations / drain budget (default: 50)
@@ -68,9 +69,47 @@ error_patterns:           # extra case-insensitive substrings → common-error
   - my custom api error
 ```
 
-`claude`, `claude_bin`, the `claude_*` knobs, `command` and `prompt` may also be
+`claude`, `claude_bin`, the `claude_*` knobs, `command`, `mode` and `prompt` may also be
 set globally in `config.yml` (`default_command` / `default_prompt`); the per-repo
 `.karr` value wins.
+
+## Run mode
+
+`mode` says what one pass over a repo is:
+
+- **`drain`** (default) — run the agent again and again until the board stops
+  moving. See "Drain loop semantics".
+- **`single`** — exactly one agent run; the agent still chooses its own work.
+- **`ticket`** — exactly one agent run, about **one card foundation names**.
+
+`drain: true|false` is the older spelling of the first two (`true` = `drain`,
+`false` = `single`) and still works. They are one key with an alias, not two
+switches: `mode` is asked first, `drain` answers only when `mode` is absent, and
+a per-repo `drain` still beats a config-wide `mode`. An unrecognised `mode` is an
+error that skips that repo, never a silent fall back to draining it.
+
+### Ticket mode
+
+Before the agent starts, foundation picks the card the run is about — `karr
+pick`'s eligibility (not terminal, not blocked, not held by a live claim; an
+expired claim no longer holds one) and `karr pick`'s ranking (class, then
+priority, then id). The agent is told twice: the id is spliced into `$PROMPT` as
+a closing sentence, and exported as `$KARR_TASK` for a command template that
+wants the bare number. Nothing is appended to the command itself.
+
+Foundation names the card; it does **not** claim it. The claim is the agent's
+work session (`karr agentname`, then the same name for `move` and `handoff`),
+and `.karr.lock` plus one-agent-per-repository already keep anybody else off the
+card for the length of the run. An agent that dies leaves at most its own claim
+— cleared by `claim_timeout`, or by `karr unlock` for a pick lock — and one
+attempt.
+
+The run is judged by that card, not by the board hash: **progress** when it
+moved, **stall** when it did not, whatever else on the board moved meanwhile. A
+stall bumps that card's attempt counter and auto-blocks it at `max_attempts`,
+under the same ownership guard as a drain. With no assignable card, **no agent
+is started at all** (`TICKET none assignable` in `.karr.log`, outcome `idle`);
+`--force` and `on_idle: always-run` force the check, not a run without a card.
 
 ## Board-level disable
 
@@ -205,7 +244,10 @@ During agent execution foundation sets:
 - `KARR_ROLE=agent` — so nested `karr` calls log under the `agent` identity
   (`refs/karr/log/agent/<email>`); a human defaults to `user`
 - `PROMPT` — the resolved agent instruction (`prompt` / `default_prompt` /
-  built-in default), referenced as `$PROMPT` in the command template
+  built-in default), referenced as `$PROMPT` in the command template; in ticket
+  mode it ends with the sentence naming the assigned task
+- `KARR_TASK` — the id of the task a `mode: ticket` run was given, empty in
+  every other mode
 
 ## Cron example
 
