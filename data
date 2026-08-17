@@ -1,0 +1,25 @@
+---
+claimed_at: 2026-08-17T19:28:39Z
+claimed_by: yard-knit
+class: standard
+completed: 2026-08-17T19:28:39Z
+created: 2026-08-17T02:10:53Z
+id: 198
+priority: medium
+started: 2026-08-17T18:33:16Z
+status: done
+tags:
+- foundation
+- refactor
+title: karr pick's ranking lives in two places
+updated: 2026-08-17T19:28:39Z
+---
+
+karr-foundation ticket mode (#185) selects the card an agent run is about, and it has to select the same card `karr pick` would hand out - a coordinator that names a different one is arguing with its own board.
+
+The eligibility test and the class/priority/id ranking are therefore written twice: once in `App::karr::Cmd::Pick` (_is_pickable plus the sort in execute) and once in `App::karr::Foundation::Picker`. They agree today because they were copied; nothing keeps them agreeing.
+
+The rules belong in one definition both call - the pick semantics owner (karr-board-worker) should say where. Pick would keep its lock and compare-and-swap on top; foundation keeps its no-claim, no-lock read.
+Done. The one definition now lives in lib/App/karr/Role/PickRules.pm, composed by both App::karr::Cmd::Pick and App::karr::Foundation::Picker: pickable() (eligibility), pick_rank() (class, then priority, then id, from the board's own priorities/classes lists) and pick_candidates() (grep + rank). A role rather than a function on Task or a method on BoardStore, because the rule needs three things at once - the task, the board (terminal statuses plus the two config lists via $self->store) and the RFC3339 claim-expiry parser in Role::ClaimTimeout, which PickRules composes so a consumer gets the whole rule by asking for one name. Task would have had to be handed all three; BoardStore would have put command-selection policy into the storage layer, which is another owner's contract (and #198 is not a persistence change). Pick keeps everything the role deliberately does not do: --claim, the lock, the re-read and the compare-and-swap. Foundation keeps its claim-less, lock-less read. --status/--tags stay Pick's own: it splits them in _pick_filter and passes them in as a narrowing of the same test, so an option can never become a second rule. Differences found between the two copies: (1) filters existed only in Pick and foundation had no way to express one, so any future narrowing of pick semantics would have passed foundation by silently; (2) terminal-status exclusion was conditional in Pick (skipped under --status) and unconditional in foundation; (3) the checks ran in a different order (Pick: claim then blocked; foundation: blocked then claim) - same boolean today, observable the moment any check gains a side effect, which is exactly what #177 gave the sibling claim path; (4) Pick spelled the claim timeout out inline as _parse_timeout(ec->{claim_timeout} // '1h') while foundation used claim_timeout_secs, identical only while that method still spells the same fallback; (5) foundation's POD promised to mirror Pick/_is_pickable, a coupling nothing enforced. No board picks differently today - every pre-existing test passes unchanged.
+Regression test: t/198-pick-rules-shared.t (5 subtests, 60 assertions). It does not only compare the two callers to each other - that alone could never fail when the ranking changes, since a shared definition changes for both at once. Instead it (a) pins the ranking card by card on a board with its own priorities/classes, including the id tie-break, the unknown-class fallback and the unknown-priority fallback, and pins eligibility reason by reason (blocked, both terminal statuses, live claim, expired claim taken over); (b) runs karr pick and Foundation::Picker->next_ticket in lockstep on the same board against those same pinned expectations; (c) asserts both packages resolve pickable/pick_rank/pick_candidates to literally the role's coderefs; and (d) reads both source files with POD and comments stripped and refuses a local <=>, a local priorities/classes read, or a local is_terminal_status/has_blocked/has_claimed_by/_claim_expired test - the re-fork guard, since composing a role does not stop anyone adding a second copy beside it. Mutation-checked all three ways: flipping the priority direction in the role fails (b); dropping the blocked test in the role fails the eligibility subtests; giving Picker its own hand-written candidate sort again fails (d) and the lockstep rounds. prove -l t/ green: 180 files, 1254 tests, all pass (run alongside two other agents' in-flight work in the tree). Changed: lib/App/karr/Role/PickRules.pm (new), lib/App/karr/Cmd/Pick.pm, lib/App/karr/Foundation/Picker.pm, t/198-pick-rules-shared.t (new), t/125-dependency-warnings.t (stale _is_pickable reference in a comment), Changes.
+One definition in App::karr::Role::PickRules (pickable/pick_rank/pick_candidates), composed by Cmd::Pick and Foundation::Picker; pick keeps lock+CAS and its --status/--tags narrowing, foundation keeps its lock-less read. Test: prove -l t/198-pick-rules-shared.t (pins the ranking and eligibility, runs both callers in lockstep, guards against a re-fork). Full prove -l t/ green (180 files, 1254 tests). Not committed - working tree only.
