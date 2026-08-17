@@ -1,0 +1,50 @@
+---
+class: standard
+completed: 2026-08-17T06:37:19Z
+created: 2026-08-17T01:02:58Z
+depends_on:
+- 189
+id: 190
+priority: high
+started: 2026-08-17T05:44:36Z
+status: done
+tags:
+- fleet-coordination
+- sync
+title: 'karr sync: synchronise refs/karr-foundation/* the way refs/karr/* already
+  is'
+updated: 2026-08-17T06:37:19Z
+---
+
+`karr sync` handles `refs/karr/*` only. Helper refs are fetched one at a time by `get-refs`, which is fine for an occasional planning blob and useless for a namespace that carries the chain, the open questions and the run log.
+
+Once coordination state lives under `refs/karr-foundation/*`, that namespace needs the same pull/push treatment the board gets, including the contention retry from #181 and #183.
+
+Open question for the implementer: whether it belongs in `karr sync` itself or in a separate command. Board state and coordination state have different lifetimes — a stale chain matters less than a stale board — but two commands is two things to forget.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+Implemented on branch ticket-190-foundation-sync, commit efd9cc3 (local only, not pushed).
+
+DECISION 1 -- karr sync, not a separate command. karr sync is what every failed sync, every runbook and the skill doc already point at; a second command is a second thing to remember and forgetting it fails silently (a chain planning against a board it has not seen, a run log no other machine can read). The ticket's counter-argument about lifetimes is spent where it costs nothing: the implicit sync_before/sync_after every writing command makes stays board-only, so only an explicitly typed karr sync pays for the namespace, and push_foundation returns without a round trip when the clone holds no fleet refs and no unpublished deletion -- which is every repo that is not the hub. Board half runs first, fleet half second, never alone.
+
+DECISION 2 -- deletions travel as tombstones plus explicit delete refspecs (the #178 mechanism), never as a pruning push. The two alternatives both lose data and prune_logs makes it concrete: publishing nothing means every pruned run comes back on the next pull forever; pruning on push takes another machine's run log, written a second ago and never seen by the pusher, off the remote. Git::delete_ref now keys off a table of namespaces whose deletions are published (\@TOMBSTONED) instead of a hardcoded refs/karr/ test. Fleet tombstones live at refs/karr-local/foundation-deleted/ and the mirror at refs/karr-local/foundation-remote/<remote>/ -- both inside refs/karr-local/, the one namespace karr set-refs cannot reach, unlike the board's refs/karr-remote/ (see the ticket I filed, #199).
+
+DECISION 3 -- which board guards carry over. Mirror + the four cases: yes, the namespace meets all four constantly. Wholesale-wipe guard (#82): no -- an emptied chain whose logs aged out is the normal end state, so the guard would fire on the ordinary case, and the only way past it is a --prune that also arms the board's wipe. Board identity (#95): no separate stamp -- the board's runs first, in the same command, against the same remote, which is exactly why the fleet half must never run first or alone. Conflict parking: no -- a displaced card is read back by a person, a displaced chain step is re-planned; the warning stays, the parked ref does not.
+
+No third retry loop: Role::SyncLifecycle now has exactly one (_sync_attempts), shared by sync_pull, sync_after, sync_pull_foundation and sync_push_foundation, so the attempt count, banners, --quiet contract and the #181 contention-versus-refusal verdict live in one place. The four reconciliation cases likewise moved into one _mirror_plan read by both namespaces.
+
+RED PROOF (on parent commit f2f7d27, before the fix):
+  prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/190-foundation-namespace-sync.t
+  t/190-foundation-namespace-sync.t (Wstat: 768 (exited 3) Tests: 6 Failed: 3)
+    Failed tests: 1-3
+  Result: FAIL
+  -- 'the push published the whole fleet namespace' got [], 'clone b sees the chain header' got undef, 'the deletions reached the remote' got [], "b's run log is still on the remote" failed. Subtests 4-6 passed on the parent as vacuous guard rails and are there to stay honest afterwards.
+
+GREEN, full suite, final state:
+  prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/
+  Files=174, Tests=1190, Result: PASS  (baseline was 173/1183; +1 file, +7 subtests)
+
+Also: t/183's SyncGit double gained pull_foundation/push_foundation counted separately, and its --pull/--push subtests now assert the flags mean the same thing for both namespaces.
+
+Out of scope, left as notes: #186 (the runner still pulls the board only -- Foundation::_sync_pull calls $git->pull and nothing else; the primitives it needs now exist), #191 (questions sync for free, but a lost answer is not parked -- noted on the ticket), and new #199 (karr set-refs can write into the board's own tracking mirror refs/karr-remote/, pre-existing, same class as #93).
+Review 2026-08-17 (Orchestrator): freigegeben, Branch ticket-190-foundation-sync per Fast-Forward nach main geholt und geloescht. Volle Suite selbst nachgefahren: 174 Dateien, 1190 Tests, PASS. Die Aenderung an t/183 geprueft, weil das Anfassen eines bestehenden Regressionstests die Stelle ist, an der ein Refactor eine Zusicherung still verliert: sie ist rein additiv -- das Fake-Git-Objekt bekommt fleet_pulls/fleet_pushes und zwei bestehende Subtests haengen den Flotten-Half an dieselben Richtungsflaggen; keine alte Zusicherung wurde geloeschte oder gelockert. End-to-End ueber zwei Klone eines bare-Remotes gemessen: A schreibt Chain (2 Schritte, DAG) plus Run-Log, karr sync traegt den ganzen Namespace aufs Remote; ein frisch geklontes B mit 0 Flotten-Refs liest nach einem sync Header und ready-Menge korrekt (ready: 1, weil Schritt 2 an 1 haengt). Loeschweg gemessen: delete_ref auf ein Flotten-Ref legt einen Tombstone unter refs/karr-local/foundation-deleted/ an, der Push publiziert ihn, das Remote-Ref verschwindet, der Tombstone wird geraeumt und der Mirror zieht nach; B verliert das Ref beim naechsten sync ebenfalls. Die #178-Regression im neuen Namespace gegengeprueft -- das war die wichtigste Messung: B schreibt ein eigenes Run-Log, danach pusht A, ohne es je gesehen zu haben, und B's Log UEBERLEBT auf dem Remote. Der nicht-prunende Push plus Tombstones traegt also auch hier. Mirror liegt bewusst unter refs/karr-local/foundation-remote/ statt neben refs/karr-remote/, weil set-refs dort nicht hinschreiben kann -- die Luecke, die derselbe Worker als #199 gefiltert hat.
