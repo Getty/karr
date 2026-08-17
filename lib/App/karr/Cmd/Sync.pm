@@ -22,8 +22,12 @@ with 'App::karr::Role::BoardAccess';
 
 Synchronises the C<refs/karr/*> namespace with the configured remote. Without
 flags it fetches the remote ref state and then pushes the local ref state back,
-pruning deleted refs so destructive restore operations can be mirrored
-correctly.
+plus one delete refspec for every ref this clone deleted and has not published
+yet -- read off the tombstones under C<refs/karr-local/deleted/> -- so
+destructive restore operations are mirrored correctly. The push itself does not
+prune: a remote ref this clone has never seen is another agent's card, not a
+leftover, and pruning it is how a card was lost outright
+(L<App::karr::Git/push>).
 
 It then does the same for C<refs/karr-foundation/*>, karr-foundation's shared
 chain, run logs and question mailbox (L<App::karr::Foundation::ChainStore>) --

@@ -23,8 +23,14 @@ Deletes the complete C<refs/karr/*> namespace for the current repository. This
 is the destructive inverse of C<karr init> and removes board config, tasks,
 logs, metadata, and any other refs kept under the board namespace.
 
-If the repository has a configured remote, the command also pushes the empty
-namespace so the remote board state is pruned to match.
+If the repository has a configured remote, the command also pushes, carrying
+one delete refspec for every ref it removed -- read off the tombstones each
+delete leaves under C<refs/karr-local/deleted/> -- so the remote board state is
+emptied to match. It is those recorded deletions that clear the remote, not a
+pruning push: a push publishes what this clone deleted and never claims that
+nothing else exists (L<App::karr::Git/push>). Without a remote the tombstones
+are settled locally instead of kept, so a destroyed board leaves nothing behind
+either way.
 
 =head1 OPTIONS
 
@@ -61,7 +67,8 @@ sub execute {
 
   # Destroy deletes refs/karr/*: run the full sync lifecycle so the pull (which
   # may bring a remote-only board into view before we decide it is missing) and
-  # the pruning push both retry, and the guard insures the push on a crash.
+  # the push that publishes those deletions both retry, and the guard insures
+  # the push on a crash.
   $self->sync_before;
 
   die "No karr board found. Run 'karr init' to create one.\n"
