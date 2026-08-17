@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-08-17T19:28:19Z
+claimed_by: jury-salt
+class: standard
+completed: 2026-08-17T19:28:19Z
+created: 2026-08-17T06:13:47Z
+id: 199
+priority: medium
+started: 2026-08-17T18:30:35Z
+status: done
+tags:
+- sync
+- safety
+title: karr set-refs can write into the board's tracking mirror, refs/karr-remote/
+updated: 2026-08-17T19:28:19Z
+---
+
+App::karr::Git::validate_helper_ref blocks refs/karr/ and refs/karr-local/ but not refs/karr-remote/<remote>/ or refs/karr-conflict/, so `karr set-refs refs/karr-remote/origin/tasks/1/data "junk"` writes a ref the next pull reads as "this is the OID the remote had at the last sync".
+
+That is the mirror the whole reconciliation rests on. A hand-written entry there makes the pull decide one of the four cases wrongly -- a card can come out as "the remote deleted it" (deleted locally, silently) or as "unpushed local work" (force-pushed over the remote's newer version, which is what #154 was about). Nothing legitimate writes that namespace: App::karr::Git owns it end to end.
+
+Same class of hole as #93, which moved pick locks out of refs/karr/ so no refspec could publish them, and then had to close set-refs against refs/karr-local/ so the same hole did not reappear one command over. This is the third door.
+
+Pre-existing, found while implementing #190 -- that ticket put its own mirror and tombstones under refs/karr-local/, which set-refs already cannot reach, so the new namespace is not affected. The fix is to add refs/karr-remote/ (and refs/karr-conflict/, harmless but equally not anyone's to write) to the blocked list in validate_helper_ref, plus a regression test.
+Fix: refs/karr-remote/ und refs/karr-conflict/ stehen jetzt in der Blockliste von App::karr::Git::validate_helper_ref, neben refs/karr/ und refs/karr-local/ -- als Praefix, also fuer Lesen wie Schreiben. Lesen mitzusperren ist Absicht: get-refs macht vorher pull_ref, holt also vom Remote in genau die Namespaces, die App::karr::Git allein gehoeren; zum Nachschauen reicht git for-each-ref. MIRROR_ROOT/CONFLICT_ROOT stehen weiter unten in der Datei und use constant gilt erst ab seiner Textstelle, deshalb ausgeschrieben wie refs/karr-local/, mit Kommentar dazu.
+
+Vorher reproduziert in einem Wegwerf-Repo: 'karr set-refs refs/karr-remote/origin/tasks/1/data junk' und dasselbe unter refs/karr-conflict/ liefen beide auf exit 0 und legten den Ref an.
+
+Regressionstest in t/21-helper-refs.t zweifach: die Blocklisten-Schleife bekommt beide Namespaces (plus zwei refs/karr-local/-Faelle, die dort noch fehlten), und der CLI-Subtest prueft end to end, dass set-refs scheitert UND der Ref danach nicht existiert -- der Schaden entsteht durch die Existenz des Refs, nicht durch die Meldung. Gegenprobe gemacht: ohne den Fix fallen beide Subtests.
+
+Test: prove -l t/21-helper-refs.t PASS, prove -l t/ PASS (180 Dateien, 1254 Tests). POD von validate_helper_ref nachgezogen, Changes-Eintrag unter {{$NEXT}}.
+refs/karr-remote/ und refs/karr-conflict/ in der Blockliste von validate_helper_ref, Regressionstest in t/21-helper-refs.t (Blocklisten-Schleife + CLI-Ende-zu-Ende). prove -l t/ gruen.
