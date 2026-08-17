@@ -19,6 +19,7 @@ use App::karr::ActivityLog;
 use App::karr::Foundation::Runner;
 use App::karr::Foundation::State;
 use App::karr::Foundation::Overview;
+use App::karr::Foundation::Picker;
 
 # Instruction handed to a synthesized agent command via the $PROMPT variable
 # when neither the .karr file nor the config overrides it.
@@ -26,6 +27,24 @@ our $DEFAULT_PROMPT =
     'Use the karr-coordinator skill: pick the next actionable task on this '
   . 'board, complete it, and move it forward. If you cannot proceed, block '
   . 'the task with a reason.';
+
+# The same, for a ticket-mode run. It cannot be $DEFAULT_PROMPT: that one opens
+# by telling the agent to pick its own work, which is the one thing a run that
+# has already been given a card must not do.
+our $DEFAULT_TICKET_PROMPT =
+    'Use the karr-coordinator skill: work on the one task named below, '
+  . 'complete it, and move it forward. If you cannot proceed, block the task '
+  . 'with a reason.';
+
+# Appended to whatever prompt was resolved, ticket id spliced in by foundation
+# itself. It has to be foundation that splices: the prompt reaches the agent as
+# $PROMPT and /bin/sh does not rescan an expanded value, so a prompt writing
+# $KARR_TASK would hand the agent those ten characters (#159). Last, not first,
+# because it has to win over an operator prompt that says "pick the next task".
+our $TICKET_ASSIGNMENT =
+    'The task for this run is #%s: work on that one task and no other. Claim '
+  . 'it before you start, and stop when it is done, handed off or blocked. Do '
+  . 'not pick up another task.';
 
 option config => (
   is     => 'ro',
@@ -210,7 +229,8 @@ B<Per-repo .karr file:>
   command: claude -p "$PROMPT"   # explicit command; wins over claude: true
   on_idle: skip             # 'skip' (default) | 'always-run'
   max_runtime: 1800         # seconds: per-command SIGKILL (0 = no limit)
-  drain: true               # loop until drained (default) | false for single run
+  mode: drain               # drain (default) | single | ticket
+  drain: true               # older spelling of mode: true=drain, false=single
   max_attempts: 2           # stalls on one task before auto-block (default: 2)
   max_iterations: 50        # hard cap on drain iterations (default: 50)
   cooldown_base: 1          # cooldown minutes at level 0 (default: 1)
@@ -219,8 +239,57 @@ B<Per-repo .karr file:>
     - my custom api error   # (added to the defaults; matched as written)
 
 C<claude>, C<claude_bin>, C<claude_max_turns>, C<claude_permission_mode>,
-C<command> and C<prompt>/C<default_prompt> may also be set globally in the
-config file; the per-repo F<.karr> value wins.
+C<command>, C<mode> and C<prompt>/C<default_prompt> may also be set globally in
+the config file; the per-repo F<.karr> value wins.
+
+B<Run mode.> C<mode> says what one pass over a repo is:
+
+=over 4
+
+=item * C<drain> (the default) - run the agent again and again until the board
+stops moving. This is what F<karr-foundation> has always done and what
+"Drain semantics" below describes.
+
+=item * C<single> - exactly one agent run; the agent still chooses its own work.
+
+=item * C<ticket> - exactly one agent run, about B<one card foundation names>.
+
+=back
+
+C<< drain: true|false >> is the older spelling of the first two and stays
+honoured: C<true> means C<drain>, C<false> means C<single>. Two keys that both
+meant "one run" would be a trap, so they are one key with an alias rather than
+two switches -- C<mode> is asked first, C<drain> answers only when C<mode> is
+absent, and a per-repo C<drain> still beats a config-wide C<mode>. An
+unrecognised C<mode> is an error that skips the repo, never a silent fallback
+to draining it.
+
+B<Ticket mode.> Before the agent starts, foundation picks the card the run is
+about -- L<App::karr::Foundation::Picker>, applying C<karr pick>'s eligibility
+and ranking (not terminal, not blocked, not held by a live claim; class, then
+priority, then id). It is told to the agent twice: spliced into C<$PROMPT> as a
+closing sentence naming the id, and exported as C<$KARR_TASK> for a command
+template that wants the bare number. Nothing is appended to the command itself
+-- how arguments are appended belongs to the per-agent contract (C<kind:>),
+which is a separate piece of work, and an environment variable works with every
+template that exists today.
+
+Foundation names the card; it does B<not> claim it. The claim is the agent's
+work session, minted with C<karr agentname> and reused across its own C<move>
+and C<handoff> (#176), and the board's per-repo lock plus the one-agent-per-
+repository rule already keep anybody else off the card for the length of the
+run. So an agent that dies mid-work leaves at most its own claim -- released by
+C<claim_timeout>, or by C<karr unlock> for a pick lock -- and costs one attempt
+on foundation's counter.
+
+The run is then judged by that card and not by the board hash: C<progress> when
+it moved (status, claim or C<updated> changed, or it left the actionable set),
+C<stall> when it did not, whatever else on the board did move. A stall bumps
+the card's attempt counter and auto-blocks it at C<max_attempts>, under the same
+ownership guard as a drain -- a card somebody else took during the run is never
+blocked on foundation's say-so. With no assignable card at all, ticket mode runs
+B<no agent>, logs C<TICKET none assignable>, and returns C<idle>; C<--force> and
+C<< on_idle: always-run >> force the check, not a run without a card.
 
 B<Board-level disable.> A board can opt out of automated agent runs in its own
 karr state — C<foundation.enabled> in C<refs/karr/config>, set with
@@ -851,17 +920,35 @@ sub _stuck_tasks {
 
 # Run the agent repeatedly until the board has no actionable tasks left,
 # auto-blocking tasks the agent keeps failing on. Returns
-# { outcome => progress|idle|common-error|error, exit => N }.
+# { outcome => progress|stall|idle|common-error|error, exit => N, ticket => ID }
+# (ticket is undef outside mode: ticket).
 sub _drain_repo {
   my ( $self, $repo, $karr, $cmd ) = @_;
   my $max_runtime  = $karr->{max_runtime}    // 1800;
   my $max_attempts = $karr->{max_attempts}   // 2;
   my $max_iter     = $karr->{max_iterations} // 50;
-  my $drain        = exists $karr->{drain} ? $karr->{drain} : 1;
+  my $mode         = $self->_run_mode( $karr );
+  my $drain        = $mode eq 'drain' ? 1 : 0;
   my $patterns     = $self->_error_patterns( $karr );
 
   # Use the resolved command, not $karr->{command}
   $cmd //= $karr->{command};
+
+  # Ticket mode names the card before the agent starts, and the run is about
+  # that card and nothing else. No card, no run: "run exactly one ticket" has
+  # nothing to say when the board has no ticket to give, and an agent started
+  # anyway would go looking for work of its own, which is the mode this one
+  # exists to replace. --force and on_idle: always-run force the *check*, not a
+  # run without a card.
+  my $ticket;
+  if ( $mode eq 'ticket' ) {
+    $ticket = $self->_select_ticket( $repo );
+    unless ( defined $ticket ) {
+      $self->_append_log( $repo, "TICKET none assignable \x{2014} no agent run" );
+      return { outcome => 'idle', exit => 0, ticket => undef };
+    }
+    $self->_append_log( $repo, "TICKET task#$ticket" );
+  }
 
   my $loop_start = time;
   my $last_exit  = 0;
@@ -891,7 +978,7 @@ sub _drain_repo {
     last if $iter >= $max_iter;
 
     my $hash_before = $self->_ref_hash( $repo ) // '';
-    my ( $exit, $output ) = $self->_run_command( $repo, $karr, $cmd );
+    my ( $exit, $output ) = $self->_run_command( $repo, $karr, $cmd, $ticket );
     $last_exit = $exit;
     $first     = 0;
     $iter++;
@@ -939,11 +1026,34 @@ sub _drain_repo {
       last;
     }
 
-    $outcome = 'progress' if $progressed;
-
     my %after = $self->_task_states( $repo );
     $self->_note_engagement( $repo, $eng );
-    my @stuck = $self->_stuck_tasks( \%before, \%after, $eng );
+
+    my @stuck;
+    if ( defined $ticket ) {
+      # A ticket-mode run is judged by its own card, not by the board hash: an
+      # agent that ignored its assignment and moved something else did move the
+      # board, and calling that progress would tell the coordinator its ticket
+      # was worked when it was not.
+      if ( $self->_ticket_moved( \%before, \%after, $ticket ) ) {
+        $outcome = 'progress';
+      }
+      else {
+        $outcome = 'stall';
+        # foundation assigned this card, so it needs no activity-log evidence
+        # that the agent engaged it -- the assignment is the evidence, and the
+        # counter it bumps is foundation's own .karr.state. The auto-block a
+        # few lines below is the destructive half, and that one keeps #158's
+        # ownership guard: a card somebody else took during the run is never
+        # blocked on our say-so.
+        @stuck = ( $ticket )
+          if $self->_agent_holds( $after{$ticket}, $eng->{claims} );
+      }
+    }
+    else {
+      $outcome = 'progress' if $progressed;
+      @stuck = $self->_stuck_tasks( \%before, \%after, $eng );
+    }
 
     # Reset the attempt counter for any task that is no longer stuck
     # (advanced, blocked, or gone), then bump/auto-block the stuck ones.
@@ -961,15 +1071,76 @@ sub _drain_repo {
     }
 
     # Agent did nothing useful and grabbed nothing — stop, nothing to attribute.
-    if ( !$progressed && !@stuck ) {
+    # Not in ticket mode: there the run has already been judged against its own
+    # card, and a stall foundation may not penalize (somebody else holds the
+    # card now) is still a stall, not a run that found nothing to do.
+    if ( !defined $ticket && !$progressed && !@stuck ) {
       $outcome = 'idle';
       last;
     }
 
-    last unless $drain;   # drain disabled → single run
+    last unless $drain;   # single / ticket mode → one run and return
   }
 
-  return { outcome => $outcome, exit => $last_exit };
+  return { outcome => $outcome, exit => $last_exit, ticket => $ticket };
+}
+
+# Did the assigned card come out of the run different from how it went in?
+# Gone, no longer actionable (done, blocked), or its blob rewritten — status or
+# updated, the same two fields _stuck_tasks compares, so a claim, a status
+# change and an appended note all count. Everything else is a run that did not
+# touch its own ticket.
+sub _ticket_moved {
+  my ( $self, $before, $after, $id ) = @_;
+  my $a = $after->{$id} or return 1;
+  return 1 unless $self->_is_actionable( $a );
+  my $b = $before->{$id} or return 1;
+  return 1 if ( $b->{status}  // '' ) ne ( $a->{status}  // '' );
+  return 1 if ( $b->{updated} // '' ) ne ( $a->{updated} // '' );
+  return 0;
+}
+
+# ---------------------------------------------------------------------------
+# Run mode / ticket selection
+# ---------------------------------------------------------------------------
+
+# What a run of this repo is: 'drain' (loop until the board stops moving, the
+# historical default), 'single' (exactly one agent run, agent picks its own
+# work) or 'ticket' (exactly one agent run, about a card foundation names).
+#
+# 'drain: true|false' said two thirds of this before there was a third answer,
+# and it stays honoured rather than being deprecated into a warning: it is
+# written in .karr files this foundation does not own. Two keys that both mean
+# "one run" would be the trap, so they are one key with an alias, not two
+# switches: 'mode' is asked first and 'drain' only answers when 'mode' is
+# absent. Per-repo before global, as everywhere else here — a repo that says
+# 'drain: false' means it against a config-wide 'mode: ticket', because the
+# .karr file is the more specific statement.
+sub _run_mode {
+  my ( $self, $karr ) = @_;
+  my $mode = $karr->{mode};
+  unless ( defined $mode ) {
+    return $karr->{drain} ? 'drain' : 'single' if exists $karr->{drain};
+    $mode = $self->_config_data->{mode};
+  }
+  return 'drain' unless defined $mode;
+  # A typo here is not a small mistake: 'ticekt' silently draining a board is
+  # the opposite of what was asked for, on every tick, quietly. The caller
+  # (_process_repo) turns this into a warning and skips the repo.
+  user_error("Unknown mode '$mode' (expected: drain, single or ticket)")
+    unless $mode eq 'drain' || $mode eq 'single' || $mode eq 'ticket';
+  return $mode;
+}
+
+# The card a ticket-mode run is about, or undef when the board has none to
+# give. Selection is a read: nothing is claimed and nothing is locked here —
+# see App::karr::Foundation::Picker for why the claim stays the agent's.
+sub _select_ticket {
+  my ( $self, $repo ) = @_;
+  my $git = App::karr::Git->new( dir => "$repo" );
+  return undef unless $git->is_repo;
+  my $store = App::karr::BoardStore->new( git => $git );
+  return App::karr::Foundation::Picker->new( store => $store )->next_ticket;
 }
 
 # ---------------------------------------------------------------------------
@@ -1074,11 +1245,21 @@ sub _claude_command {
 
 # The agent instruction exposed as $PROMPT. .karr 'prompt' > config
 # 'default_prompt' > the built-in default.
+#
+# With a $ticket the built-in default changes (the ordinary one opens by
+# telling the agent to pick its own work) and the assignment sentence is
+# appended to whatever prompt was resolved. Appending rather than replacing
+# keeps a configured prompt doing its job — it is usually about which skill to
+# use and how to report — while the last sentence, which is the one that wins
+# with a language model, is the one naming the card. Without this the mode
+# would be `drain: false` with extra steps: the agent would never learn which
+# ticket it was given.
 sub _prompt_for {
-  my ( $self, $karr ) = @_;
-  return $karr->{prompt}
-      // $self->_config_data->{default_prompt}
-      // $DEFAULT_PROMPT;
+  my ( $self, $karr, $ticket ) = @_;
+  my $configured = $karr->{prompt} // $self->_config_data->{default_prompt};
+  return $configured // $DEFAULT_PROMPT unless defined $ticket;
+  return ( $configured // $DEFAULT_TICKET_PROMPT ) . "\n\n"
+       . sprintf( $TICKET_ASSIGNMENT, $ticket );
 }
 
 1;

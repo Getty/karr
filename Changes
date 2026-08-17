@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - karr-foundation can run exactly one ticket and return
+      (#185). `mode: ticket` in a .karr file (or in the config)
+      picks the card the run is about before the agent starts --
+      `karr pick`'s eligibility and `karr pick`'s ranking, minus
+      the claim -- names it in the prompt, exports it as
+      `$KARR_TASK`, runs the agent once, and comes back saying
+      what happened to that card: `progress` if it moved, `stall`
+      if it did not, whatever else on the board moved meanwhile. A
+      stall costs that card one attempt and auto-blocks it at
+      `max_attempts`, under the same guard that has always kept
+      somebody else's card out of it. With nothing assignable no
+      agent is started at all. The claim stays the agent's:
+      foundation already holds the repo's lock for the length of
+      the run, and one agent per repository is the rule, so an
+      agent that dies leaves at most its own claim -- which
+      `claim_timeout` and `karr unlock` already clear -- and one
+      attempt. `drain: true|false` is now the older spelling of
+      `mode: drain|single` and keeps working; two keys that both
+      meant "one run" would have been the trap.
+
     - `karr sync` retries a push that lost a race, as every other
       command already did (#183). #181 taught the write path -- the
       sync lifecycle and the insurance push -- to spend its three

@@ -27,9 +27,11 @@ weak back-reference to the owning foundation supplies shared options and helpers
 C<_say_verbose>).
 
 The command is a shell template, not a string karr rewrites: C<PROMPT>,
-C<KARR_REPO> and C<KARR_ROLE> are exported into the child's environment and
-C</bin/sh> expands them like any other parameter. A prompt's own backticks
-therefore stay text, and C<< awk '{print $2}' >> reaches awk intact.
+C<KARR_REPO>, C<KARR_ROLE> and C<KARR_TASK> are exported into the child's
+environment and C</bin/sh> expands them like any other parameter. A prompt's own
+backticks therefore stay text, and C<< awk '{print $2}' >> reaches awk intact.
+C<KARR_TASK> holds the id of the task a C<< mode: ticket >> run was given and is
+empty in every other mode; the same id is spelled out in the prompt.
 
 A C<.karr.log> it cannot open ends the run for that board B<before> the command
 is started, never after: the agent is refused rather than launched unwatched.
@@ -49,7 +51,7 @@ has foundation => (
 # ---------------------------------------------------------------------------
 
 sub _run_command {
-  my ( $self, $repo, $karr, $cmd ) = @_;
+  my ( $self, $repo, $karr, $cmd, $ticket ) = @_;
   my $command      = $cmd // $karr->{command};
   my $max_runtime  = $karr->{max_runtime} // 1800;
   my $stream_terms = $self->foundation->_stream_to_terminal;
@@ -65,7 +67,20 @@ sub _run_command {
   # scope at the call site.
   local $ENV{KARR_REPO} = to_octets_for_env("$repo");
   local $ENV{KARR_ROLE} = to_octets_for_env('agent');
-  local $ENV{PROMPT}    = to_octets_for_env( $self->foundation->_prompt_for($karr) );
+  local $ENV{PROMPT}    = to_octets_for_env( $self->foundation->_prompt_for( $karr, $ticket ) );
+
+  # The id of the task this run is about, in ticket mode, and empty in every
+  # other mode -- localised either way so a run never inherits the previous
+  # one's card, and so a template reading it in drain mode gets nothing rather
+  # than a stale number. This is the whole machine-readable half of the ticket
+  # contract: the prompt above carries the assignment in prose for the agent,
+  # $KARR_TASK carries it for a command template that wants the bare id
+  # (`myagent --task "$KARR_TASK"`). Deliberately not an argument appended to
+  # the command -- how arguments are appended is what `kind: claude-code`
+  # settles per agent definition (#188), and an env var is the one thing that
+  # works with every command template that exists today, including the
+  # synthesized `claude -p "$PROMPT"`.
+  local $ENV{KARR_TASK} = defined $ticket ? to_octets_for_env("$ticket") : '';
 
   # The expansion is the shell's, not ours (#159). Splicing %ENV into the command
   # string here instead meant the shell went on to parse the *values*: a prompt
