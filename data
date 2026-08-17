@@ -1,0 +1,96 @@
+---
+claimed_at: 2026-08-17T20:17:17Z
+claimed_by: joke-lion
+class: standard
+completed: 2026-08-17T20:17:17Z
+created: 2026-08-17T10:11:11Z
+id: 202
+priority: high
+started: 2026-08-17T19:29:08Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: die Chain ausfuehren -- der Schritt-Ausfuehrer fehlt'
+updated: 2026-08-17T20:17:17Z
+---
+
+Gefunden beim Review-Abschluss des Epics #194 (2026-08-17), nachdem alle neun Arbeitspakete fertig waren.
+
+Die Spec sagt: "Der Planer plant, geschriebene Schritte fuehren aus, der Planer wird nur bei Abweichung wieder gerufen. Die KI ist der Compiler, die Chain ist das Programm, karr-foundation ist die VM."
+
+Gebaut sind Compiler-Ausgabe und Programm. Die VM fehlt.
+
+Gemessen, nicht vermutet:
+
+    grep -rn "ready_steps|update_step|mark_stale|precheck_holds" lib/ bin/ | grep -v ChainStore.pm
+    -> keine Treffer
+
+App::karr::Foundation legt einen ChainStore ausschliesslich an, um die limits aus dem Chain-Header zu lesen (fuer die Nebenlaeufigkeitsstufen aus #186). Kein Codepfad waehlt einen ready-Schritt aus, prueft seinen precheck, fuehrt ihn aus, schreibt seinen Zustand zurueck oder markiert ihn stale.
+
+Das ist keine Nachlaessigkeit der Worker: JEDES der neun Tickets hat die Schrittausfuehrung ausdruecklich ausgeklammert und an "whichever ticket lands the step executor" verwiesen -- #186 woertlich ("this runner writes no step state; the push half belongs to whichever ticket lands the step executor"), #189 ("nothing executes a chain until #186"), #191 und #192 mit derselben Formulierung. Die Arbeitspaketliste der Spec (neun Punkte) enthaelt diesen Punkt schlicht nicht. Die Luecke sitzt im Zuschnitt des Epics, nicht in seiner Ausfuehrung.
+
+Was vorhanden ist und worauf ein Ausfuehrer aufsetzen kann:
+- ChainStore: ready_steps (DAG-Kanten aufgeloest), update_step (CAS), mark_stale, parse_precheck/precheck_holds (Fakten liefert der Aufrufer, weil das Messen eines Fakts Ausfuehrung ist), new_run_id/log_run.
+- Ticket-Modus (#185): genau ein Ticket pro Agentenlauf, Rueckgabe {outcome, exit, ticket, report}.
+- Nebenlaeufiger Runner (#186), der die Header-limits bereits liest und respektiert.
+- Sync des Namespace (#190), inklusive der Notiz aus #186, dass ein ausfuehrender Tick VOR dem Lesen der Chain pullen und NACH dem Schreiben von Schrittzustand und Run-Log pushen muss, sonst fuehren zwei Maschinen denselben Schritt aus.
+- Fragen-Postfach (#191) mit resolve(); #200 haelt fest, dass kind: question-Schritte noch nichts dagegen laufen lassen.
+- Boarduebergreifende Links (#192) mit karr needs --resolve, das ebenfalls nirgends automatisch laeuft.
+
+Wer das aufgreift, sollte zuerst entscheiden, ob der Ausfuehrer ein eigener Modus neben drain/single/ticket ist oder eine Schicht darueber, die pro Schritt in den Ticket-Modus hineingeht -- und wer die Fakten fuer precheck_holds misst.
+
+#200 (question-Schritte) und die offene Haelfte von #192 (nichts loest Links automatisch auf) sind Teilfaelle davon und sollten mit entschieden werden.
+Maintainer-Entscheidung 2026-08-17 zum Zuschnitt, vor Beginn der Arbeit:
+
+ZUSCHNITT: Der Ausfuehrer ist eine Schicht UEBER den Repo-Modi, kein vierter Modus
+neben drain/single/ticket. Begruendung: die Chain ist fleet-weit, der Modus ist pro
+Repo konfiguriert -- ein 'mode: chain' im Repo-Eintrag koennte gar nicht entscheiden,
+welcher Schritt des DAG als naechstes dran ist. Der Ausfuehrer ist der Aufrufer der
+bestehenden Modi, nicht ihr Geschwister:
+
+    pull refs/karr-foundation/*
+    ready_steps()
+      kind: ticket   -> in den bestehenden Ticket-Modus-Pfad im Zielrepo hinein
+      kind: shell    -> Kommando ausfuehren
+    update_step (CAS) + log_run
+    push refs/karr-foundation/*
+
+Damit erbt ein Chain-Schritt Lock, Claim, Ownership-Guard und Report vom Ticket-Modus,
+statt sie zu duplizieren, und der Ticket-Modus bleibt eine einzeln testbare Einheit.
+
+UMFANG: Kern zuerst. In diesem Ticket nur kind: ticket und kind: shell, dazu
+precheck/stale, Run-Log, CAS und der Pull-vor-Lesen/Push-nach-Schreiben-Zyklus aus
+#186/#190. Ausdruecklich NICHT hier: #200 (kind: question gegen das Postfach) und die
+offene Haelfte von #192 (nichts loest Cross-Board-Links automatisch auf). Beide setzen
+auf dem fertigen Ausfuehrer auf und bleiben eigene Tickets.
+Done (nicht committed, wie angewiesen). Neu: lib/App/karr/Foundation/Executor.pm + t/202-foundation-chain-executor.t; geaendert: Foundation.pm, ChainStore.pm, bin/karr-foundation, cpanfile, Changes, README.md.
+
+ENTSCHEIDUNG 1 -- WER DIE FAKTEN MISST: der Ausfuehrer, ueber Executor->facts_for($step), aus GENAU EINEM Board-Read. Vokabular: board_actionable (yes|no), ticket_status, ticket_blocked (yes|no), ticket_claimed (der Claim-Name oder Leerstring). Begruendung fuer den Zuschnitt: nur ein Fakt (ticket_status) haette den precheck fast wertlos gemacht (nur != gegen sich selbst), und jeder Fakt ist ein Versprechen -- also die vier, die ein Planer real vorprueft ("ist die Karte noch todo", "ist sie nicht blockiert", "hat sie keiner", "ist auf dem Board ueberhaupt noch was zu tun") und die alle aus derselben Lesung fallen. board_actionable benutzt _is_actionable/_task_states der Foundation, also KEINE zweite Definition von "actionable". Ein nicht messbarer Fakt (kein Board, Karte nicht da) fehlt im Hash statt defaulted zu werden -- damit greift genau die Regel, die precheck_holds schon dokumentiert: fehlend = haelt nicht = stale. ticket_claimed ist der Feldwert wie er auf der Karte steht, NICHT "Claim noch lebendig": ob ein Claim abgelaufen ist, beantwortet Role::PickRules, und eine zweite Meinung darueber waere ein Koordinator, der mit seinem eigenen Board streitet.
+
+ENTSCHEIDUNG 2 -- CLI: `karr-foundation chain [--dry-run] [--verbose]`, positionales Kommando neben ask/answer (die auch hub-only sind), NICHT im normalen Tick. Begruendung: `karr-foundation` ohne Argumente heisst seit jeher "drain meine Boards"; wuerde ein Tick die Chain nebenbei mitnehmen, aenderte sich am Tag, an dem jemand eine Chain schreibt, still das Verhalten JEDES Cron-Eintrags der Flotte -- die Ueberraschung kaeme auf einer Maschine an, nicht in einem Review. Opt-in ist hier die Hausregel (Agent-Ausfuehrung ist es auch), und die Chain ist das groessere Opt-in. Kein Hub konfiguriert -> user_error (exit 1), wortgleich argumentiert wie beim Postfach. Hub da, aber kein Chain-Ref -> Meldung "No chain in <hub>" und exit 0: eine noch nicht geplante Flotte ist ein normaler Zustand (eine geleerte Chain ist laut Git.pm ausdruecklich ein normales Endergebnis), kein Fehler. Ueberzaehliges Argument -> Usage-Fehler (exit 2). Ein fehlgeschlagener Schritt aendert den Exit-Code NICHT: das ist eine Aussage ueber den Plan, nicht ueber das Binary. Exit 1 gibt es nur, wenn der Tick sich weigert zu starten (Pull der Flotten-Refs fehlgeschlagen).
+
+ENTSCHEIDUNG 3 -- WAS EIN FEHLSCHLAG MIT DEM DAG MACHT: nichts, und das ist der Entwurf, nicht eine Luecke. ready_steps gibt einen Schritt erst frei, wenn ALLES was er needs done ist -- ein failed/stale Schritt beschneidet seinen Ast also VON SELBST, kein Kaskaden-Code noetig, jeder andere Ast laeuft weiter. Die Chain kann dann nicht mehr fertig werden, und genau diese Unerreichbarkeit ist das Signal, das on_stall: plan meint. An der Naht: der Ausfuehrer KANN nicht planen, also TUT ER NICHT SO -- er schreibt "Planer gewuenscht" in den Run-Log (event: planner, step, policy, reason) und sagt es am Ende des Ticks auf stdout ("the planner is wanted for step(s) 1 (on_stall: plan)"). Es wird nichts geschrieben, das ein spaeterer Planer wieder zuruecknehmen muesste. Drei Ausgaenge sind BEWUSST KEIN Fehlschlag, weil keiner etwas ueber den Plan sagt: (a) common-error (rate-limited/kaputtes Agent-Kommando) -> requeue auf pending, Cooldown und agents.state hat der Drain schon geschrieben; (b) uebersprungenes Board (disabled, gelockt, im Cooldown, Agent failing) -> requeue mit Grund; (c) ein Repo, das DIESE Maschine nicht hat -> voellig unangetastet, nicht mal geclaimt, kein Planer-Signal (die Chain ist geteilt, die Arbeitskopien sind es nicht -- das ist der Normalfall einer Flotte).
+
+ZUSCHNITT UMGESETZT WIE VORGEGEBEN: Schicht UEBER den Modi. Ein kind: ticket-Schritt geht durch _process_repo(repo, ticket => ID, timeout => T) in den bestehenden Ticket-Modus (#185) -- Lock, Cooldown, Agent-Verfuegbarkeit, Claim, Ownership-Guard (#158), Report (#187) und die on_drained-Naht (#193) sind damit geerbt, nicht kopiert. Der Chain-Ticket erzwingt mode: ticket unabhaengig vom `mode:` der .karr-Datei (der Plan ist die spezifischere Aussage) und der Schritt-timeout schlaegt max_runtime des Boards. Ein kind: shell-Schritt laeuft ueber denselben Runner wie der on_drained-Hook (Prozessgruppe, Timeout, Tee nach .karr.log), unter .karr.lock des Ziel-Repos, mit KARR_ROLE=chain -- damit landen seine karr-Schreibvorgaenge NICHT im Agent-Aktivitaetslog und koennen nie als Agent-Engagement fuer einen Auto-Block zaehlen.
+
+NEBENLAEUFIGKEIT (die Falle aus #186): Reihenfolge pro Tick ist pull -> ready_steps -> [pro Schritt: Board pullen, Fakten messen, precheck, CAS-Claim auf running, PUSH, ausfuehren, CAS-Ergebnis + log_run, push]. Der Push DES CLAIMS vor der Arbeit ist der eigentliche Schutz: das Fenster ist die Laenge des Schritts (eine halbe Stunde Agentenlauf), nicht die Laenge des Schreibvorgangs. Das CAS ist die zweite Linie -- zwei Klone, die nie Refs tauschen, gewinnen beide ihr eigenes lokales CAS. Ein fehlgeschlagener Pull bricht den Tick ab (exit 1) statt zu warnen wie sonst ueberall: der Rueckfall waere hier nicht "die eigene Sicht" sondern "einen Schritt fahren, den eine andere Maschine schon faehrt". Ein Claim, der nicht gepusht werden kann, wird lokal auf pending zurueckgerollt (niemand sonst hat ihn je gesehen). Der Ergebnis-Push ist best-effort -- die Arbeit ist passiert, das lokale Ref haelt sie, der naechste Tick publiziert sie. Innerhalb eines Ticks wird nach jeder Runde neu gepullt, damit die frisch freigewordenen Schritte fuer ALLE Maschinen frei sind; ein Schritt wird pro Tick hoechstens einmal betrachtet, was die Runden beschraenkt (kein willkuerliches Limit noetig) und einen requeue-Busy-Loop ausschliesst.
+
+NEBENBEI (klein, im selben Haus): ChainStore weist einen kind: shell-Schritt OHNE command jetzt beim Schreiben zurueck -- dasselbe Argument, mit dem der precheck schon beim Schreiben geparst wird: ein Planungsfehler, den der Planer noch hoert, ist besser als ein Schritt, mit dem der Ausfuehrer spaeter nichts anfangen kann.
+
+ROT-BEWEIS (fuenf, alle gemessen, jedes Mal danach byte-identisch zurueckgesetzt):
+1) Claim-Push vor der Arbeit entfernt -> Subtest 12 faellt mit 'the second machine found NOTHING READY...' und 'it did not get as far as taking the step...'. (Bemerkenswert: die Marker-Datei blieb einzeilig, weil .karr.lock die zweite Verteidigung ist -- deshalb prueft der Test, WAS MASCHINE B GESEHEN HAT, nicht nur das Ergebnis.)
+2) precheck_holds nie konsultiert (auf immer-wahr gezwungen) -> Subtest 4 faellt mit 7 Assertions, angefuehrt von 'THE COMMAND NEVER RAN'.
+3) CAS-Ablehnung im Claim entfernt -> Subtest 11 faellt: attempts=2 statt 1, state nicht mehr done (der Verlierer schreibt sein Urteil ueber das des Gewinners).
+4) Chain-Ticket ignoriert / Board-Modus gewinnt -> Subtests 3 und 4 fallen (falsche Karte, Drain statt einem Lauf).
+5) Fehlgeschlagener Schritt als done statt failed geschrieben -> Subtest 6 faellt mit 6 Assertions, inkl. 'its dependent never became ready'.
+
+TESTS: prove -l t/202-foundation-chain-executor.t -> PASS, 13 Subtests. VOLLE SUITE: prove -l t/ -> Files=181, Tests=1267, Result: PASS (Basis 180/1254). Kein echter Agent wurde je gestartet: alle Kommandos sind echo/exit/ein Perl-Skript in einem Wegwerf-Repo.
+
+OFFENE NAEHTE, ausdruecklich stehen gelassen:
+- #200 (kind: question gegen das Postfach): ein question-Schritt wird erkannt, bleibt PENDING, sagt es auf stdout und traegt sich als "Planer gewuenscht" in den Run-Log ein. Andockpunkt ist genau ein Zweig (die kind-Fallunterscheidung am Anfang eines Schritts) plus ein Eintrag in facts_for; Questions->resolve liefert answered/open/overdue+policy schon fertig.
+- offene Haelfte von #192 (nichts loest Cross-Board-Links automatisch auf): unberuehrt. Der natuerliche Ort ist ebenfalls facts_for (ein Fakt ueber den Fernstand) oder ein eigener Schritt-kind; CrossBoard->link_state/resolve existiert.
+- Der Planer selbst: nirgends aufgerufen, nur protokolliert. kind: plan verhaelt sich wie kind: question.
+- Chain-interne Nebenlaeufigkeit: ein Tick fuehrt Schritte nacheinander aus. Parallelitaet in der Chain ist heute Parallelitaet ZWISCHEN Maschinen (das kauft die pull/claim/push-Reihenfolge); die maschinenlokale Mehr-Board-Nebenlaeufigkeit bleibt wo sie ist (Limits + _run_concurrent).
+- on_rate_limit wird nicht gelesen: ein common-error requeued immer. Das IST das, was on_rate_limit: requeue verlangt; ein anderer Wert ist noch nicht implementiert.
+Chain-Ausfuehrer gebaut: karr-foundation chain, Schicht ueber den Repo-Modi. kind: ticket + kind: shell, precheck/stale, Run-Log, CAS, pull-vor-Lesen/push-vor-Arbeit. Fakten misst der Ausfuehrer (facts_for). Fehlschlag beschneidet seinen Ast von selbst, Planer wird nur protokolliert. Neu: Foundation/Executor.pm, t/202-*. prove -l t/ -> 181 Dateien, 1267 Tests, PASS. Fuenf Rot-Beweise im Ticket. NICHT committed. #200 und die offene Haelfte von #192 bleiben offen und haben je einen benannten Andockpunkt.
