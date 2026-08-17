@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - A repository with no remote no longer hoards deletion
+      tombstones (#197). refs/karr-local/deleted/ is the record of
+      deletions this clone owes the remote, cleared by the push that
+      publishes them -- and a push returns before it gets there when
+      no remote is configured, so every deletion left one ref behind
+      for good, each holding the deleted card's commit reachable.
+      They are settled rather than given a retention age, because a
+      tombstone is push bookkeeping: keeping the card recoverable is
+      a side effect of what it points at and not its job, nothing
+      reads one back, and an age limit would need a deletion time
+      the ref does not carry plus a policy to configure. The
+      unpleasant case decides it -- with the backlog kept, a remote
+      added later publishes every deletion ever made here in a
+      single push, and a push checks no board identity (#95 guards
+      the pull), so a board that happens to have cards at those
+      paths loses them. refs/karr-foundation/ tombstones are settled
+      the same way for the same reason. has_pending_deletes, the
+      auto-fetch guard (#173), is unaffected: it is only consulted
+      after has_remote.
+
     - `karr set-refs` reads its payload from standard input when no
       CONTENT argument is given (#195). The arguments are joined
       with a single space, which is a one-line payload, so a

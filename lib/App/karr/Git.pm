@@ -1753,8 +1753,32 @@ sub push {
     my ( $self, $remote, $refspec ) = @_;
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
-    return 1 unless $repo->has_remote($remote);
     $refspec //= BOARD_REFSPEC;
+    my $board = $refspec eq BOARD_REFSPEC;
+
+    # No remote is no debt. A tombstone is the record of a deletion this clone
+    # owes the remote (TOMBSTONE_ROOT), and _clear_pending_deletes only ever
+    # ran after a push that landed -- so a repository with no remote, where
+    # this returns before anything else happens, kept one ref per deleted card
+    # forever, each of them holding the deleted commit reachable (#197).
+    #
+    # Settled here rather than given a retention age, because a tombstone is
+    # push bookkeeping: keeping the card recoverable is a side effect of
+    # pointing it at the deleted commit, not its job, nothing reads one back,
+    # and an age limit would need a deletion time this ref does not carry (its
+    # commit's date is when the card was last written) plus a policy to
+    # configure. The unpleasant case decides it: with the record kept, adding
+    # a remote later makes the first push publish every deletion ever made
+    # here, and a push checks no board identity -- #95 guards the pull -- so a
+    # board that happens to have cards at those paths loses them.
+    #
+    # has_pending_deletes, the auto-fetch guard (#173), still reads correctly:
+    # it is only consulted after has_remote, and without a remote there is
+    # nothing to fetch back.
+    unless ( $repo->has_remote($remote) ) {
+        $self->_settle_local_deletes(BOARD_ROOT) if $board;
+        return 1;
+    }
 
     # A board push publishes exactly two things: the local refs as they stand
     # here, and the deletions this clone recorded. It used to publish a third
@@ -1773,7 +1797,6 @@ sub push {
     # remote, the direction that converges harmlessly (see
     # _mirror_local_state). Reading it afterwards is the direction that
     # loses cards: the mirror would claim refs the push never carried.
-    my $board = $refspec eq BOARD_REFSPEC;
     my ( $local, $tombstones, @deletes );
     if ($board) {
         $local      = $self->ref_oids(BOARD_ROOT) || {};
@@ -1806,7 +1829,7 @@ sub push {
 
 Pushes C<$refspec> (default: the forced board refspec covering all of
 C<refs/karr/*>) to C<$remote> (default C<origin>). Returns C<1> when
-C<$remote> isn't configured (a no-op) or the push lands, C<0> otherwise --
+C<$remote> isn't configured or the push lands, C<0> otherwise --
 including when the transport itself succeeded but the far side rejected some
 or all of the refs (see L</push_rejections>, and L</last_error> for the
 combined message). Tries the native transport first, falls back to the CLI on
@@ -1820,6 +1843,12 @@ C<refs/karr-remote/> mirror afterwards. It does I<not> prune -- a ref on the
 remote that this clone has never seen is another agent's card, not a
 leftover, and pruning it is how a card was lost outright (#178). A custom
 C<$refspec> (as L</push_ref> uses) does neither.
+
+Without a configured remote it is nearly a no-op: it still clears those
+deletion records, because they are what this clone owes a remote and there is
+no remote to owe (#197). Otherwise a repository that never pushes accumulates
+one tombstone per deleted card forever, and adding a remote later publishes
+every deletion it ever made in a single push.
 
 =cut
 
@@ -2491,6 +2520,28 @@ sub _clear_pending_deletes {
     return;
 }
 
+# The tombstones of $root settled without a push, for the clone that has no
+# remote to publish them to: the ones whose ref is really gone are dropped --
+# nobody is owed the news -- and so are the stale ones whose ref is back on the
+# board, while a delete still in flight in another process is left for the push
+# that will make it. Exactly the rules _clear_pending_deletes applies after a
+# push, which is why the genuinely deleted ones are handed to it as "published".
+#
+# The tombstones are read first and the namespace only when there are any: this
+# runs on every write in a repository without a remote, and there is almost
+# never anything to settle, so the one cheap scan answers for the common case
+# and the full one stays off the hot path.
+sub _settle_local_deletes {
+    my ( $self, $root ) = @_;
+    my $tombstones = $self->_pending_deletes($root);
+    return unless %$tombstones;
+
+    my $local = $self->ref_oids($root) || {};
+    my @gone = grep { !exists $local->{$_} } sort keys %$tombstones;
+    $self->_clear_pending_deletes( $tombstones, \@gone );
+    return;
+}
+
 sub has_pending_deletes {
     my ($self) = @_;
     my @tombstones = $self->list_refs( TOMBSTONE_ROOT . '/' );
@@ -2611,7 +2662,13 @@ sub push_foundation {
     my ( $self, $remote ) = @_;
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
-    return 1 unless $repo->has_remote($remote);
+
+    # Same as L</push>, one namespace over: with no remote the tombstones have
+    # no reader, and retention deletes fleet refs routinely (#197).
+    unless ( $repo->has_remote($remote) ) {
+        $self->_settle_local_deletes(FOUNDATION_ROOT);
+        return 1;
+    }
 
     # Read before the push, never after -- see L</push>: a ref written in
     # between is published without being in the snapshot, which leaves the
@@ -2659,7 +2716,9 @@ goes and cleared by the push that published them.
 
 A clone with nothing under C<refs/karr-foundation/> and no such tombstone
 pushes nothing at all, which is both correct and what keeps this off the wire
-in every repository that does not carry fleet state.
+in every repository that does not carry fleet state. With no remote configured
+it clears those tombstones instead of keeping them, for the reason spelled out
+at L</push>: they are what this clone owes a remote, and there is none (#197).
 
 =cut
 

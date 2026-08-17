@@ -166,4 +166,48 @@ subtest 'a deletion whose push failed is published by the next one' => sub {
     is_deeply( _task_ids($origin), [1], 'and it publishes the deletion' );
 };
 
+subtest 'a repository with no remote settles its tombstones instead of hoarding them' => sub {
+    # Ticket #197: push returns before anything else when no remote is
+    # configured, so _clear_pending_deletes never ran there and every deletion
+    # left a ref under refs/karr-local/deleted/ for good -- one per deleted
+    # card, each holding that card's commit reachable, and all of them queued
+    # for a push that had not happened yet.
+    my $solo = tempdir( CLEANUP => 1 );
+    system( 'git', 'init', '-q', $solo ) == 0 or die "cannot init $solo";
+    system( 'git', '-C', $solo, 'config', 'user.email', 'solo@karr.test' ) == 0
+        or die;
+    system( 'git', '-C', $solo, 'config', 'user.name', 'agent-solo' ) == 0
+        or die;
+
+    _karr_ok( $solo, 'init without a remote', 'init', '--name', 'Solo' );
+    _karr_ok( $solo, 'create task 1',         'create', 'S1' );
+    _karr_ok( $solo, 'create task 2',         'create', 'S2' );
+    _karr_ok( $solo, 'delete task 1', 'delete', 1, '--yes' );
+    _karr_ok( $solo, 'delete task 2', 'delete', 2, '--yes' );
+
+    my $git = App::karr::Git->new( dir => $solo );
+    is_deeply( [ $git->list_refs('refs/karr-local/deleted/') ],
+        [], 'no tombstone survives a push that had nothing to publish to' );
+    is_deeply( _task_ids($solo), [], 'and the cards really are deleted' );
+    ok( !$git->has_pending_deletes,
+        'so the auto-fetch guard (#173) reads "nothing unpublished" too' );
+
+    # Why it matters that they are settled rather than kept: a remote added
+    # later inherits the whole backlog, and a push checks no board identity
+    # (#95 guards the pull), so a board that happens to have cards at the same
+    # paths loses them to deletions made in a repository that never saw it.
+    my ( $work, $a ) = _clones();
+    my $origin = "$work/origin.git";
+    _karr_ok( $a, 'a board exists elsewhere', 'init', '--name', 'Shared' );
+    _karr_ok( $a, 'with a card at tasks/1',   'create', 'A1' );
+    is_deeply( _task_ids($origin), [1], 'and that card is on the remote' );
+
+    system( 'git', '-C', $solo, 'remote', 'add', 'origin', $origin ) == 0
+        or die "cannot add remote";
+    _karr_ok( $solo, 'the solo repository gets a remote and pushes',
+        'sync', '--push', '--quiet' );
+    is_deeply( _task_ids($origin), [1],
+        "the other board's card is still there" );
+};
+
 done_testing;
