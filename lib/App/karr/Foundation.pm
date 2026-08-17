@@ -6,9 +6,10 @@ use Moo;
 use MooX::Options (
   usage_string => 'USAGE: karr-foundation [options]',
 );
-use App::karr::Error qw( user_error );
+use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
-use POSIX qw( SIGTERM SIGINT SIGHUP );
+use IO::Handle;
+use POSIX qw( SIGTERM SIGINT SIGHUP WNOHANG );
 use YAML::XS ();
 use Time::Piece;
 use Digest::MD5 qw( md5_hex );
@@ -21,6 +22,8 @@ use App::karr::Foundation::State;
 use App::karr::Foundation::Overview;
 use App::karr::Foundation::Picker;
 use App::karr::Foundation::Agents;
+use App::karr::Foundation::ChainStore;
+use App::karr::Foundation::Limits;
 
 # Instruction handed to a synthesized agent command via the $PROMPT variable
 # when neither the .karr file nor the config overrides it.
@@ -181,6 +184,42 @@ sub _build__overview {
   return App::karr::Foundation::Overview->new( foundation => $self );
 }
 
+has _limits => (
+  is => 'lazy',
+);
+
+sub _build__limits {
+  my ( $self ) = @_;
+  return App::karr::Foundation::Limits->new( foundation => $self );
+}
+
+# The hub repository's chain store, or undef when no hub is configured. One
+# repository of a fleet carries refs/karr-foundation/* -- the chain of planned
+# steps, the run logs -- and which one that is is a property of this machine's
+# view of the fleet, so it is named locally rather than discovered. A hub that
+# is not there is a warning and not an error: everything foundation does
+# without a chain it still does.
+has _chain_store => (
+  is => 'lazy',
+);
+
+sub _build__chain_store {
+  my ( $self ) = @_;
+  my $hub = $self->_config_data->{hub};
+  return undef unless defined $hub && length $hub;
+  my $dir = path( $hub );
+  unless ( $dir->is_dir ) {
+    warn "karr-foundation: hub not found: $hub\n";
+    return undef;
+  }
+  my $git = App::karr::Git->new( dir => "$dir" );
+  unless ( $git->is_repo ) {
+    warn "karr-foundation: hub is not a git repository: $hub\n";
+    return undef;
+  }
+  return App::karr::Foundation::ChainStore->new( git => $git );
+}
+
 # Open file descriptors that hold flock(2) locks on .karr.lock files for the
 # boards currently being drained. The fd is what keeps the lock — closing it
 # would drop the flock immediately, so Foundation keeps it for the lifetime
@@ -197,6 +236,17 @@ has _lock_fhs => (
 has _live_agent => (
   is      => 'rw',
   default => sub { undef },
+);
+
+# The boards this run currently has a forked child on: pid => the plan entry
+# for that board. Only the concurrent runner writes it, and only in the parent
+# -- a child clears it the moment it is born, or its inherited SIGTERM handler
+# would kill its siblings' agents (see _spawn_repo). Empty in the serial
+# runner, which is what makes the handler's two halves exclusive rather than
+# additive.
+has _live_children => (
+  is      => 'ro',
+  default => sub { {} },
 );
 
 # fd stash accessors used by State.pm — kept private to the foundation/state
@@ -245,6 +295,9 @@ B<Config file:> C<~/.config/karr-foundation/config.yml> (or C<--config>).
   scan:
     - /path/to/parent-dir   # finds all direct subdirs that have a .karr file
 
+  concurrent: 4             # boards that may have an agent at once (default: 1)
+  hub: /path/to/hub-repo    # the repository carrying refs/karr-foundation/*
+
 B<Per-repo .karr file:>
 
   claude: true              # synthesize the canonical claude command (opt-in)
@@ -283,6 +336,7 @@ them and a board can pick one:
       permission_mode: bypassPermissions    # kind: claude-code only
       max_turns: 30                         #   "     "        "
       allowed_tools: [ Bash, Edit ]         #   "     "        "
+      concurrent: 2           # runs of THIS agent at once -- see "Concurrency"
       description: >-
         Prose. What this agent is good at, where it is weak, what it costs.
 
@@ -359,6 +413,63 @@ The record lives beside the config file that defines the agents
 it belongs to neither of the two obvious places: F<.karr.state> is per
 repository and this is not, and the board's own config syncs, which would push
 one person's spent limit at everybody else's fleet.
+
+B<Concurrency.> By default F<karr-foundation> works one board at a time, which
+is what it has always done. C<concurrent:> in the config raises that ceiling,
+and three levels bound what actually runs -- B<the tightest one wins>
+(L<App::karr::Foundation::Limits>):
+
+=over 4
+
+=item * C<concurrent:> in the config -- the B<machine ceiling>. It protects
+this box's CPU and memory and is not a quota; it says nothing about what any
+account may spend. Default C<1>.
+
+=item * C<concurrent:> on a named agent definition -- the B<operator's
+estimate> of where that agent's session limit sits. It is a guess and is
+allowed to be wrong: being wrong makes the agent start failing, which marks it
+so (see "Agent availability" above), skips every board on it for one probe
+interval, and lets the fallback take over.
+
+=item * C<limits:> in the chain header, for the fleet's current plan:
+
+    limits:
+      concurrent: 4
+      per_agent:
+        minimax: 2
+
+The names under C<per_agent> are agent definition names. One this machine does
+not define is dropped with a verbose note rather than refused -- agent
+definitions are local and only local, so a chain written where C<minimax>
+exists reaching a machine where it does not is the expected case.
+
+=back
+
+One hard rule stays: B<one agent per repository>. The unit of concurrency is
+one board, run by one forked child that owns that board's F<.karr.lock> for the
+length of its drain. Two agents in one working tree would collide over the
+index and the checkout, so concurrency is across repositories and never inside
+one; anything else would need a git worktree per agent and is deliberately out
+of scope. Several ticks knocking at the same board at the same time is the case
+F<.karr.lock> already answered (#162) and still answers: the C<flock(2)> admits
+exactly one.
+
+A signal to F<karr-foundation> takes every running agent with it. The parent
+sends C<SIGTERM> to its children and each child runs the same shutdown path a
+serial run does -- C<TERM> then C<KILL> to its agent's process group (#148),
+then release its lock -- rather than being killed outright, which would leave
+every agent reparented to init.
+
+C<--dry-run> stays serial whatever the ceiling says: it starts no agent, so
+concurrency would buy nothing and cost its output the order it is read in.
+
+B<The hub.> C<hub:> names the one repository of a fleet that carries
+C<refs/karr-foundation/*> -- the chain of planned steps and the run logs
+(L<App::karr::Foundation::ChainStore>). That namespace is pulled once at the
+start of a run, before anything reads it, so the limits a tick applies are the
+fleet's current ones and not whatever this machine last happened to fetch.
+Nothing is pushed back: this run reads the chain header and writes no step
+state.
 
 B<Run mode.> C<mode> says what one pass over a repo is:
 
@@ -564,17 +675,11 @@ sub run {
   # can use foundation purely to see what is happening across boards. A board
   # disabled in its own karr state never counts as an agent board here either,
   # so a config of nothing but disabled boards falls back to the overview.
-  # A board naming an agent that is not defined raises out of _agent_command.
-  # That is a per-board configuration error and _process_repo is where it gets
-  # reported (run() catches it there and skips one board); here it must not
-  # decide the whole run's shape, so it counts as "an agent was meant to run".
-  my $any_agent = grep {
-    my $repo = $_;
-    !$self->_board_disabled( $repo )
-      && try { defined $self->_agent_command( $repo, $self->_load_karr($repo) ) }
-         catch { 1 };
-  } @repos;
-  unless ( $any_agent ) {
+  # _plan_repos answers that per board, and the answer is kept: the concurrent
+  # runner needs the agent name out of the same resolution to bucket its
+  # per-agent limits, and resolving twice would be two chances to disagree.
+  my @plan = $self->_plan_repos( @repos );
+  unless ( grep { $_->{runs_agent} } @plan ) {
     print "No agent will run on any board. Showing overview "
         . "(set 'command:', 'agent:' or 'claude: true' in a .karr file to "
         . "enable agents; a board disabled with 'karr disable' never runs "
@@ -582,6 +687,13 @@ sub run {
     $self->_print_overview( \@repos );
     return 0;
   }
+
+  # The fleet namespace, before anything reads it (#190). The chain is shared
+  # state and this machine's copy of it is only as good as its last fetch, so a
+  # tick that decided how much to run from a stale header would be deciding
+  # from a plan somebody has already replaced. Nothing is pushed back here:
+  # this run reads the chain header and writes no step state.
+  $self->_sync_pull_foundation;
 
   # SIGTERM/SIGINT/SIGHUP mid-drain used to leave the agent reparented to init
   # and the .karr.lock naming a dead pid, and the next cron tick read the dead
@@ -593,6 +705,58 @@ sub run {
   # the way out so a stray post-run signal goes to the OS, not back into us.
   $self->_install_signal_handlers;
 
+  # One board after another unless the machine ceiling says otherwise, which is
+  # what it says by default (App::karr::Foundation::Limits). --dry-run stays
+  # serial whatever the ceiling: it starts no agent, so concurrency would buy
+  # nothing and cost the deterministic order its output is read in.
+  my $concurrent = $self->dry_run ? 1 : $self->_limits->concurrent;
+  if ( $concurrent > 1 ) {
+    $self->_run_concurrent( \@plan, $concurrent );
+  }
+  else {
+    $self->_run_serially( map { $_->{repo} } @plan );
+  }
+
+  $self->_restore_default_signal_handlers;
+  return 0;
+}
+
+# What each discovered repo is going to do this tick, decided once in the
+# parent: whether it is disabled, whether an agent is meant to run on it at
+# all, and -- where the command came from a named definition -- which agent,
+# because that is the bucket the per-agent concurrency limit counts in. It is
+# the same work run() has always done to choose between the overview and a run;
+# the concurrent scheduler needs the agent name out of the same resolution, so
+# it is computed once and handed on rather than resolved twice.
+sub _plan_repos {
+  my ( $self, @repos ) = @_;
+  my @plan;
+  for my $repo ( @repos ) {
+    my %p = ( repo => $repo );
+    push( @plan, \%p ), next if $self->_board_disabled( $repo );
+    try {
+      my ( $cmd, $inv ) = $self->_resolve_agent( $repo, $self->_load_karr( $repo ) );
+      if ( defined $cmd ) {
+        $p{runs_agent} = 1;
+        $p{fork}       = 1;
+        $p{agent}      = $inv->{name} if $inv;
+      }
+    }
+    catch {
+      # A board naming an agent this config does not define. _process_repo is
+      # where that gets reported (run()'s per-repo catch turns it into a
+      # warning and skips one board), so here it only says "an agent was meant
+      # to run" -- enough to keep it out of the overview fallback, not enough
+      # to spend a concurrency slot on a board that will start nothing.
+      $p{runs_agent} = 1;
+    };
+    push @plan, \%p;
+  }
+  return @plan;
+}
+
+sub _run_serially {
+  my ( $self, @repos ) = @_;
   for my $repo ( @repos ) {
     try {
       $self->_process_repo( $repo );
@@ -600,9 +764,128 @@ sub run {
       warn "karr-foundation: error in $repo: $_\n";
     };
   }
+  return;
+}
 
-  $self->_restore_default_signal_handlers;
-  return 0;
+# Several boards at once, one agent per board. The unit of concurrency is a
+# forked child that runs the whole of _process_repo for exactly one repo, which
+# is what keeps the one hard rule intact: .karr.lock stays per repository, and
+# a board is held by the single child that took it for the length of its drain.
+# Two agents in one working tree would collide over the index and the checkout,
+# so concurrency here is across repositories and never inside one -- anything
+# else needs a git worktree per agent and is deliberately out of scope.
+#
+# Forking the whole per-repo pass, rather than teaching the drain loop to
+# interleave several agents, is the cheap half of that rule: every piece of
+# per-board state -- the lock fd, .karr.state, the engagement record, the
+# attempt counters -- keeps exactly one writer without a line of it changing.
+# The state that is genuinely shared is agents.state, and that one is locked
+# (App::karr::Foundation::Agents).
+sub _run_concurrent {
+  my ( $self, $plan, $max ) = @_;
+  my $per = $self->_limits->per_agent;
+
+  # Everything that will not start an agent is done here, in order, before the
+  # first fork: a disabled board, a board with no agent, a board naming one
+  # this config does not define. Each costs a couple of ref reads and produces
+  # a skip line; forking for it would spend a slot on a no-op and scatter those
+  # lines through the agent output for nothing.
+  my @queue;
+  for my $item ( @$plan ) {
+    push( @queue, $item ), next if $item->{fork};
+    $self->_run_serially( $item->{repo} );
+  }
+
+  my $live = $self->_live_children;
+  my %busy;
+
+  while ( @queue || %$live ) {
+    my $started = 0;
+
+    if ( keys %$live < $max ) {
+      # Scanned rather than shifted: a board whose agent is at its own limit is
+      # passed over, not waited for. Head-of-line blocking here would let one
+      # busy agent idle the whole machine while boards on another agent wait.
+      for my $i ( 0 .. $#queue ) {
+        my $name = $queue[$i]{agent};
+        next if defined $name
+             && defined $per->{$name}
+             && ( $busy{$name} // 0 ) >= $per->{$name};
+        my ( $item ) = splice @queue, $i, 1;
+        $started = 1;
+        my $pid = $self->_spawn_repo( $item ) or last;
+        $live->{$pid} = $item;
+        $busy{$name}++ if defined $name;
+        last;
+      }
+    }
+
+    next if $started;
+
+    unless ( %$live ) {
+      # Nothing running, nothing startable: every queued board is held by a
+      # per-agent limit no running child will ever give back. A positive limit
+      # cannot produce this -- an empty bucket is always under one -- so this
+      # is the guard for a zero that got past validation, and it says so
+      # instead of spinning.
+      warn 'karr-foundation: ' . scalar(@queue)
+         . " board(s) left unrun \x{2014} no concurrency slot can free up\n";
+      last;
+    }
+
+    my $pid = waitpid -1, 0;
+    last if $pid <= 0;
+    my $done = delete $live->{$pid} or next;
+    my $name = $done->{agent};
+    $busy{$name}-- if defined $name && $busy{$name};
+  }
+  return;
+}
+
+# Fork one child for one board. Returns the child's pid in the parent and never
+# returns in the child.
+sub _spawn_repo {
+  my ( $self, $item ) = @_;
+  my $repo = $item->{repo};
+
+  # Anything still in a buffer would be written twice -- once by the parent
+  # when it flushes, once by the child that inherited the same buffer.
+  STDOUT->flush;
+  STDERR->flush;
+
+  my $pid = fork;
+  unless ( defined $pid ) {
+    warn "karr-foundation: fork failed for $repo: $!\n";
+    return undef;
+  }
+  return $pid if $pid;
+
+  # ----- child: it owns exactly this one board -----
+  #
+  # The parent's bookkeeping is the parent's. A child that kept the inherited
+  # sibling list would kill its siblings' agents out of the SIGTERM handler it
+  # also inherited, and a child that kept the inherited lock fds would release
+  # locks it never took.
+  %{ $self->_live_children } = ();
+  %{ $self->_lock_fhs }      = ();
+  $self->_live_agent( undef );
+
+  my $ok = try {
+    $self->_process_repo( $repo );
+    1;
+  } catch {
+    warn "karr-foundation: error in $repo: $_\n";
+    0;
+  };
+
+  # _exit, not exit: END blocks and global destruction belong to the process
+  # that set them up. Running them in a forked copy would flush the parent's
+  # buffers a second time and tear libgit2 down from a child that only borrowed
+  # it -- the re-entrancy App::karr::Git refuses outright at teardown (#34).
+  # _exit does not flush, so the flush is by hand.
+  STDOUT->flush;
+  STDERR->flush;
+  POSIX::_exit( $ok ? 0 : 1 );
 }
 
 # SIGTERM/INT/HUP handler: kill the live agent's process group, release the
@@ -662,6 +945,33 @@ sub _handle_shutdown_signal {
     # take a Path::Tiny object.
     $self->_force_release_lock( path( $agent->{repo} ) );
   }
+
+  # The concurrent runner's children (#186). Each inherited this same handler
+  # and has its own agent on its own board, so the parent does not reach past
+  # them: it TERMs the children and lets every one of them run the branch above
+  # for its own board -- kill its agent's process group, release its own lock.
+  # Killing the children outright instead would leave every agent reparented to
+  # init, which is #163's failure multiplied by the concurrency. SIGKILL is
+  # only for a child that did not manage even that.
+  my $kids = $self->_live_children;
+  if ( %$kids ) {
+    kill 'TERM', keys %$kids;
+    # Long enough for a child to finish its own two-second TERM-then-KILL on
+    # the agent and unlink its lock; short enough that an operator holding
+    # Ctrl-C does not conclude that nothing is happening.
+    my $end = time + 5;
+    while ( time < $end ) {
+      for my $pid ( keys %$kids ) {
+        delete $kids->{$pid} if waitpid( $pid, WNOHANG ) != 0;
+      }
+      last unless %$kids;
+      select undef, undef, undef, 0.05;
+    }
+    if ( %$kids ) {
+      kill 'KILL', keys %$kids;
+      waitpid $_, 0 for keys %$kids;
+    }
+  }
   # Restore defaults so the second delivery (e.g. impatient operator) kills us
   # for real instead of looping in the handler.
   $self->_restore_default_signal_handlers;
@@ -696,9 +1006,17 @@ C<_agent_command>, excluding boards disabled via C<karr disable>); if none
 do, it falls back to the same overview instead of doing nothing, since
 agent execution is opt-in and a config with no agents configured is a
 legitimate way to use foundation purely as a status board. Otherwise it calls
-C<_process_repo> for each repo in turn, which is what applies the disable
-flag, the lock, the cooldown, the change/actionability check, and finally the
-drain loop described under "Drain semantics" above.
+C<_process_repo> for each repo, which is what applies the disable flag, the
+lock, the cooldown, the change/actionability check, and finally the drain loop
+described under "Drain semantics" above.
+
+One repo at a time unless the effective machine ceiling says otherwise, which
+is what it says by default -- see "Concurrency" above for the three levels and
+L<App::karr::Foundation::Limits> for how they combine. Above C<1>, each board
+gets a forked child running the whole of C<_process_repo> for it, the parent
+schedules within the global and per-agent caps, and the shutdown handler TERMs
+the children rather than their agents so every board runs the cleanup it would
+have run serially.
 
 =cut
 
@@ -948,6 +1266,34 @@ sub _sync_pull {
   my $git = App::karr::Git->new( dir => "$repo" );
   return unless $git->is_repo;
   $git->pull;
+}
+
+# The fleet's own namespace, refs/karr-foundation/*, from the hub repository
+# (#190). It is a separate call from _sync_pull above because it is a separate
+# thing: _sync_pull brings one board up to date on its way into that board's
+# drain, this brings the shared plan up to date once, before anything reads it.
+#
+# It runs before the concurrency limits are resolved, which is the only reader
+# there is today: the chain header's `limits:` block. A tick that went on to
+# execute chain steps would have to push this namespace back afterwards, with
+# the step state and the run log in it, or two machines would run the same
+# step -- this one writes nothing there, so there is nothing to push.
+#
+# A failed pull is a warning and not a refusal. What is lost is the newest
+# chain header, and the fallback is this machine's own ceiling, which is the
+# safe direction: the local limit is the one that protects the local CPU.
+sub _sync_pull_foundation {
+  my ( $self ) = @_;
+  my $store = $self->_chain_store or return;
+  return if $self->dry_run;
+  $self->_say_verbose('sync --pull refs/karr-foundation/*');
+  try {
+    $store->git->pull_foundation;
+  } catch {
+    warn 'karr-foundation: pull of refs/karr-foundation/ failed: '
+       . clean_error($_) . "\n";
+  };
+  return;
 }
 
 # ---------------------------------------------------------------------------

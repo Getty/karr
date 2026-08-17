@@ -40,6 +40,9 @@ dirs:
 
 scan:
   - /path/to/parent-dir   # finds direct children with .karr file
+
+concurrent: 4             # boards that may have an agent at once (default: 1)
+hub: /path/to/hub-repo    # the repo carrying refs/karr-foundation/* (the chain)
 ```
 
 ## Per-repo .karr file
@@ -110,6 +113,49 @@ stall bumps that card's attempt counter and auto-blocks it at `max_attempts`,
 under the same ownership guard as a drain. With no assignable card, **no agent
 is started at all** (`TICKET none assignable` in `.karr.log`, outcome `idle`);
 `--force` and `on_idle: always-run` force the check, not a run without a card.
+
+## Concurrency
+
+Default: **one board at a time**, which is what this has always been.
+Concurrency is opt-in like agent execution itself. Three levels bound what runs
+and the **tightest one wins**:
+
+1. `concurrent:` in `config.yml` — the machine ceiling. Protects this box's CPU
+   and memory; it is not a quota. Default `1`.
+2. `concurrent:` on a named agent definition (the `agents:` section) — the
+   operator's estimate of where that agent's session limit sits. It is allowed
+   to be wrong: being wrong makes the agent start failing, which parks every
+   board on it for one probe interval and lets the fallback take over.
+3. `limits:` in the chain header, for the fleet's current plan:
+
+   ```yaml
+   limits:
+     concurrent: 4
+     per_agent:
+       minimax: 2
+   ```
+
+   The `per_agent` names are agent definition names. One this machine does not
+   define is dropped with a `--verbose` note, not refused: agent definitions
+   are local and only local.
+
+**One agent per repository, always.** The unit of concurrency is one board, run
+by one forked child that owns that board's `.karr.lock` for the length of its
+drain. Two agents in one working tree would collide over the index and the
+checkout, so concurrency is across repositories and never inside one; anything
+else would need a git worktree per agent and is out of scope.
+
+A signal to `karr-foundation` takes every running agent with it: the parent
+TERMs its children and each child kills its own agent's process group and
+releases its own lock, exactly as a serial run does.
+
+`--dry-run` stays serial whatever the ceiling says.
+
+`hub:` names the one repository of a fleet that carries
+`refs/karr-foundation/*`. That namespace is pulled once at the start of a run,
+before the chain header is read, so a tick applies the fleet's current limits
+and not whatever this machine last happened to fetch. Nothing is pushed back —
+this run reads the header and writes no step state.
 
 ## Board-level disable
 
@@ -232,7 +278,7 @@ Level resets on next clean (non-error) run, which also drops `last_error` from
 
 ```
 .karr.state    # board hash, per-task attempts, cooldown, last error
-.karr.lock    # PID lock (prevents concurrent runs)
+.karr.lock    # flock'd lock: one agent per repo, however many ticks knock
 .karr.log     # run log
 ```
 

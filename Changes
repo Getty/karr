@@ -1,5 +1,56 @@
 {{$NEXT}}
 
+    - karr-foundation can run several boards at once (#186).
+      Until now it executed one agent command after another, so
+      every concurrency setting the fleet design describes was
+      decoration. Three levels bound what runs, and the tightest
+      one wins: `concurrent:` in the local config is the machine
+      ceiling, which protects this box's CPU and memory and is
+      not a quota; `concurrent:` on a named agent definition is
+      the operator's estimate of where that agent's session limit
+      sits, a guess that is allowed to be wrong because being
+      wrong makes the agent start failing, which parks every
+      board on it for one probe interval and lets the fallback
+      take over; and `limits: {concurrent, per_agent}` in the
+      chain header is what one particular plan declares, which
+      can only ever tighten the other two. The names under
+      per_agent are agent definition names, so one this machine
+      does not define is dropped with a note rather than refused
+      -- agent definitions are local and only local, and a chain
+      written where minimax exists reaching a machine where it
+      does not is the expected case. The default is 1, which is
+      the serial runner this has always been: concurrency is
+      opt-in like agent execution itself, because a default that
+      quietly started four agents would arrive on somebody's
+      machine rather than in a review.
+
+      One agent per repository stays. The unit of concurrency is
+      one board, run by one forked child that holds that board's
+      .karr.lock for the length of its drain, so every piece of
+      per-board state keeps exactly one writer without changing a
+      line of it. Two agents in one working tree would collide
+      over the index and the checkout; anything else would need a
+      git worktree per agent and is deliberately out of scope. A
+      signal to karr-foundation still takes every running agent
+      with it: the parent TERMs its children and each child runs
+      the same shutdown a serial run does -- TERM then KILL to
+      its agent's process group (#148), then release its lock --
+      rather than being killed outright, which would leave one
+      agent per board reparented to init (#163).
+
+      Two things that were merely latent became real with it.
+      agents.state is shared by every board on the machine and
+      was read-modify-write in the open, so two overlapping
+      updates lost one of them; it is now serialised under a
+      lock, because the update that gets lost is as often "it
+      works again" as "it is failing", and losing that one parks
+      the whole fleet for another probe interval. And the chain
+      header is read after refs/karr-foundation/* has been
+      pulled from the configured `hub:` repository, not from
+      whatever copy this machine happened to have -- a tick that
+      decided how much to run from a stale plan is deciding from
+      a plan somebody has already replaced.
+
     - `karr sync` now carries refs/karr-foundation/* as well as
       the board (#190). The chain, the run logs and the fleet's
       design document are coordination state, so they have to

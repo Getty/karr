@@ -3,8 +3,9 @@ use warnings;
 use Test::More;
 
 # App::karr::Foundation pulls its own submodules in, so they compile with it.
-# App::karr::Foundation::ChainStore is listed separately because nothing loads
-# it yet -- the runner that will is #186 -- and this is what compiles it.
+# App::karr::Foundation::ChainStore stays listed separately: the runner loads it
+# now (#186), but it is the one submodule with a life outside the foundation
+# object -- a planner uses it on its own -- so it is compiled on its own here.
 my @modules = qw(
   App::karr
   App::karr::Task

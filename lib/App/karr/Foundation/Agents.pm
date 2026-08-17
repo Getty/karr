@@ -4,6 +4,7 @@ package App::karr::Foundation::Agents;
 our $VERSION = '0.501';
 use Moo;
 use Path::Tiny;
+use Fcntl qw( LOCK_EX );
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Encoding qw( json_encode json_decode );
 use Try::Tiny;
@@ -15,10 +16,12 @@ F<karr-foundation>'s B<local> config and the availability record kept for each
 of them.
 
 A definition says what to run (C<command>), under which invocation contract
-(C<kind>), how often to retry it once it has stopped working (C<probe_every>)
-and, in prose, what it is good at (C<description>). karr never reads the
-description; it is carried for the coordination agent that routes work, because
-the thing choosing is a language model and prose is what it reads best.
+(C<kind>), how often to retry it once it has stopped working (C<probe_every>),
+roughly how many of it may run side by side (C<concurrent>, the operator's
+estimate -- see L<App::karr::Foundation::Limits>) and, in prose, what it is
+good at (C<description>). karr never reads the description; it is carried for
+the coordination agent that routes work, because the thing choosing is a
+language model and prose is what it reads best.
 
 Availability is the least karr can know: C<ok>, or C<failing> since a moment
 with a next attempt due at another. No cost, no tokens, no quotas -- a rate
@@ -28,6 +31,13 @@ it is configured as C<probe_every>; where it is not, the agent is retried at a
 fixed interval and every recovery is recorded, so a pattern can be read out of
 the record later. Reading that pattern is the coordination agent's job, never a
 learning algorithm in here.
+
+That record is shared by every board on the machine and several of them run at
+once (#186), so a read-modify-write of it is serialised through an F<flock(2)>
+on a sibling F<agents.state.lock>. Losing one of two overlapping updates is
+cheap in one direction and not in the other: a lost "it is failing" costs one
+more attempt, a lost "it works again" parks every board on that agent for
+another probe interval.
 
 =cut
 
@@ -60,7 +70,7 @@ my %KIND = map { $_ => 1 } qw( shell claude-code );
 # something goes wrong. Unknown keys warn rather than die, so a config written
 # for a newer karr still starts.
 my %KNOWN_KEY = map { $_ => 1 } qw(
-  command kind probe_every description
+  command kind probe_every description concurrent
   permission_mode max_turns allowed_tools
 );
 
@@ -242,8 +252,10 @@ sub _build_state_file {
 # hundred bytes; what the read buys is that two foundation ticks that overlap
 # (#162 is the same story for .karr.lock) see each other's outages, and that an
 # operator who edits the file by hand is not talking to a copy taken minutes
-# ago. There is no lock here -- concurrency is #186 -- so a lost update is
-# possible and costs exactly one probe interval.
+# ago. A bare read takes no lock: the worst a torn read can produce is
+# undecodable JSON, which yields {} and one cautious probe. The read that is
+# part of a read-modify-write is a different matter and happens inside
+# _mutate's lock.
 sub _read_state {
   my ( $self ) = @_;
   my $file = $self->state_file;
@@ -254,19 +266,70 @@ sub _read_state {
 
 sub _mutate {
   my ( $self, $edit ) = @_;
+
+  # A dry run writes nothing, so there is nothing to serialise.
+  if ( $self->foundation->dry_run ) {
+    $edit->( $self->_read_state );
+    return;
+  }
+
+  my $file = $self->state_file;
+  my $dir_ok = try {
+    $file->parent->mkpath unless $file->parent->is_dir;
+    1;
+  } catch {
+    warn "karr-foundation: cannot create " . $file->parent . ': '
+       . clean_error($_) . "\n";
+    0;
+  };
+  return 0 unless $dir_ok;
+
+  # Read AND write inside one exclusive lock (#186). This is a read-modify-
+  # write over a file every board on the machine shares, and the concurrent
+  # runner has several drains going at once: two of them read "minimax: ok",
+  # one records a failure and the other a success, and last-writer-wins throws
+  # one of the two away. Losing "it works again" is the expensive direction --
+  # it parks every board on that agent for another probe interval -- so the
+  # whole sequence is serialised, not just the write.
+  #
+  # The lock is a sibling file rather than agents.state itself, because
+  # spew_utf8 writes a temporary file and renames it over the target: an flock
+  # on the state file would be a lock on an inode that is about to be replaced.
+  my $guard = $self->_lock_state;
   my $state = $self->_read_state;
   $edit->( $state );
-  return if $self->foundation->dry_run;
-  my $file = $self->state_file;
   my $ok = try {
-    $file->parent->mkpath unless $file->parent->is_dir;
     $file->spew_utf8( json_encode( $state ) );
     1;
   } catch {
     warn "karr-foundation: cannot write $file: " . clean_error($_) . "\n";
     0;
   };
+  close $guard if $guard;
   return $ok;
+}
+
+# The exclusive lock around one read-modify-write of agents.state, returned as
+# an open file handle the caller closes when it is done -- closing the handle
+# is what drops an flock. undef when the lock file cannot be opened at all (a
+# read-only config directory), in which case the update goes through
+# unserialised: that is what this did before, and the write itself reports the
+# real problem a moment later.
+#
+# The wait is blocking on purpose. The critical section is a few hundred bytes
+# of JSON, and the kernel drops an flock when its holder dies, so there is no
+# stuck holder to time out against -- a non-blocking attempt would only turn a
+# microsecond of waiting back into the lost update this exists to prevent.
+sub _lock_state {
+  my ( $self ) = @_;
+  my $file = $self->state_file;
+  my $lock = $file->sibling( $file->basename . '.lock' );
+  open( my $fh, '>>', "$lock" ) or return undef;
+  unless ( flock( $fh, LOCK_EX ) ) {
+    close $fh;
+    return undef;
+  }
+  return $fh;
 }
 
 # What is known about one agent right now, as the three states the spec names:

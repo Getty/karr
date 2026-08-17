@@ -267,7 +267,15 @@ dirs:
   - /path/to/repo1          # explicit board repos
 scan:
   - /path/to/parent-dir     # auto-discover direct subdirs that have a .karr
+concurrent: 4               # boards that may have an agent at once (default: 1)
+hub: /path/to/hub-repo      # the repo carrying refs/karr-foundation/* (the chain)
 ```
+
+`concurrent` is a machine ceiling, not a quota — one agent per repository stays
+the hard rule, so concurrency is across repositories and never inside one. Two
+tighter limits may cut it further: a per-agent estimate on a named agent
+definition, and the `limits:` block of the current chain header. Full detail:
+`perldoc App::karr::Foundation`.
 
 Each repo carries a `.karr` file describing how to run its agent:
 
