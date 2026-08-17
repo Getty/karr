@@ -13,7 +13,12 @@ use App::karr::Encoding qw( decode_argv enable_std_utf8 );
 enable_std_utf8();
 decode_argv();
 
-exit App::karr::Foundation->new_with_options->run;
+# What is left of @ARGV after option parsing is the mailbox command, if any
+# (`ask`, `answer`) -- see App::karr::Foundation::run. MooX::Options is
+# configured with protect_argv => 0 in that class, which is what makes the
+# leftovers visible here.
+my $foundation = App::karr::Foundation->new_with_options;
+exit $foundation->run(@ARGV);
 
 =synopsis
 
@@ -25,6 +30,10 @@ exit App::karr::Foundation->new_with_options->run;
 
     # Preview without executing
     karr-foundation --dry-run --verbose
+
+    # Ask the fleet a question, and answer it from anywhere
+    karr-foundation ask "Which registry?" --options cpan,darkpan --wait 3600
+    karr-foundation answer 7 darkpan
 
 =description
 

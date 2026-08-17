@@ -642,11 +642,24 @@ L</validate_board_ref> for that.
 # would then treat the wreck as the plan. The stale-precheck guard protects
 # against an out-of-date chain, not against a malformed one.
 #
+# The question mailbox (App::karr::Foundation::Questions) joins them, and the
+# argument for it is the second half of the same one rather than the first. A
+# person answering a question by hand is an *intended* writer here -- that is
+# the whole design -- but `karr set-refs` is not the hand they would use: the
+# payload it can produce is its arguments joined by a space, and a question or
+# an answer is a YAML mapping, so every hand-written one would land as a ref
+# the mailbox skips with a warning while the person who wrote it believes the
+# question is answered. `karr-foundation answer <id>` is the door built for
+# that, it validates the answer against the options it was offered, and it is
+# create-only so two answers cannot silently become one.
+#
 # Reading stays open, because reading cannot corrupt anything and looking at a
-# step or a run log with `karr get-refs` is exactly how you debug a chain.
+# step, a run log or a question with `karr get-refs` is exactly how you debug a
+# chain.
 use constant HELPER_READ_ONLY => (
     'refs/karr-foundation/chain/',
     'refs/karr-foundation/log/',
+    'refs/karr-foundation/questions/',
 );
 
 sub validate_helper_ref {
@@ -708,7 +721,10 @@ caller cannot point a helper ref at the board or at a branch.
 C<for_write> adds the namespaces that may be read through a helper ref but not
 written through one: C<refs/karr-foundation/chain/> and
 C<refs/karr-foundation/log/>, which L<App::karr::Foundation::ChainStore> writes
-with a schema and with compare-and-swap. The rest of
+with a schema and with compare-and-swap, and
+C<refs/karr-foundation/questions/>, which L<App::karr::Foundation::Questions>
+writes the same way -- answering by hand is C<karr-foundation answer>, a door
+built for it, rather than a payload this command could only mangle. The rest of
 C<refs/karr-foundation/> stays writable -- the fleet design document itself
 lives there and was written with C<karr set-refs> -- and reading is never
 restricted, because C<karr get-refs refs/karr-foundation/chain/step/3> is how

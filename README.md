@@ -258,7 +258,20 @@ foundation purely to coordinate their own work, with no AI involved.
 karr-foundation --force            # run regardless of board state
 karr-foundation --dry-run --verbose
 karr-foundation --status           # read-only overview of every board, no runs
+
+# ask the fleet something, and answer it from anywhere
+karr-foundation ask "Which registry do we publish to?" \
+    --options cpan,darkpan --default cpan --policy use_default --wait 3600
+karr-foundation answer 7 darkpan
 ```
+
+A question is a file with an answer field, not a dialogue: `ask` writes it into
+the hub and returns, the chain carries on with every step that does not depend
+on the answer, and whoever answers — a person at a terminal, a chat bridge, the
+coordination agent — needs to know nothing about the chain. `--policy` says what
+happens when nobody answers at all: `block` (the default: wait), `use_default`
+(the `--default` becomes the answer once `--wait` has passed) or
+`escalate_to_ai`. `--status` lists the open mailbox.
 
 It reads `~/.config/karr-foundation/config.yml` (or `--config`):
 

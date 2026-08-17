@@ -112,6 +112,7 @@ sub _print_overview {
     print "\n";
   }
   $self->_print_agents;
+  $self->_print_questions;
   return;
 }
 
@@ -145,6 +146,44 @@ sub _print_agents {
       $text =~ s/\s+\z//;
       printf "  %-*s  %s\n", $width, '', $_ for split /\n/, $text;
     }
+  }
+  print "\n";
+  return;
+}
+
+# ---------------------------------------------------------------------------
+# The question mailbox (fleet-wide, in the hub)
+# ---------------------------------------------------------------------------
+
+# An open question is a chain waiting for somebody, and the somebody is whoever
+# reads this. Printed for the same reason the agent block is: a question nobody
+# sees is a chain nobody unblocks, and the id printed here is the one argument
+# `karr-foundation answer` needs. Settled questions are not shown -- the mailbox
+# is what is outstanding, not an archive.
+sub _print_questions {
+  my ( $self ) = @_;
+  my $mailbox = $self->foundation->_questions or return;
+  my @open = try { $mailbox->open_questions } catch {
+    warn "karr-foundation: $_";
+    ();
+  };
+  return unless @open;
+
+  print "Open questions\n";
+  for my $q ( @open ) {
+    my $r = $mailbox->resolve($q) || {};
+    printf "  #%s  %s\n", $q->{id}, $q->{question};
+    my @facts;
+    push @facts, 'options: ' . join( ', ', @{ $q->{options} } ) if $q->{options};
+    # What happens if this stays unanswered, said in the same line, because
+    # that is the difference between a question somebody must answer and one
+    # that answers itself in an hour.
+    push @facts,
+      ( $r->{state} // '' ) eq 'overdue'
+        ? 'overdue: ' . $q->{policy}
+          . ( defined $r->{answer} ? " ($r->{answer})" : '' )
+        : $q->{policy} . ( defined $q->{deadline} ? " after $q->{deadline}" : '' );
+    printf "      %s\n", join( '  ', @facts );
   }
   print "\n";
   return;

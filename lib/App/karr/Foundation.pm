@@ -4,7 +4,12 @@ package App::karr::Foundation;
 our $VERSION = '0.501';
 use Moo;
 use MooX::Options (
-  usage_string => 'USAGE: karr-foundation [options]',
+  usage_string => 'USAGE: karr-foundation [ask QUESTION | answer ID ANSWER] [options]',
+  # The mailbox commands (#191) are positional, and MooX::Options hands the
+  # leftovers back in @ARGV only when it is allowed to consume the options out
+  # of it. Nothing else in this class reads @ARGV, and F<bin/karr-foundation>
+  # passes what is left to run().
+  protect_argv => 0,
 );
 use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
@@ -23,6 +28,7 @@ use App::karr::Foundation::Overview;
 use App::karr::Foundation::Picker;
 use App::karr::Foundation::Agents;
 use App::karr::Foundation::ChainStore;
+use App::karr::Foundation::Questions;
 use App::karr::Foundation::Limits;
 
 # Instruction handed to a synthesized agent command via the $PROMPT variable
@@ -64,7 +70,8 @@ option command => (
 
 option force => (
   is  => 'ro',
-  doc => 'Run agent even if no board change detected and no open tasks',
+  doc => 'Run agent even if no board change detected and no open tasks; '
+       . 'answer: replace an answer that is already there',
 );
 
 option dry_run => (
@@ -80,6 +87,53 @@ option verbose => (
 option status => (
   is  => 'ro',
   doc => 'Print a read-only overview of every board and exit (no agent runs)',
+);
+
+# The question mailbox (#191). These belong to the `ask` and `answer` commands
+# and are ignored by a drain, which is why their doc strings say which command
+# reads them: this CLI has no per-command option namespace and inventing one
+# for two commands would cost more than the prefix in the help text.
+option context => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'ask: prose context for the question',
+);
+
+option options => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'ask: comma-separated answers the question offers',
+);
+
+option default => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'ask: the answer to fall back on (needs --policy use_default)',
+);
+
+option policy => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'ask: what happens when nobody answers: block (default), '
+          . 'use_default, escalate_to_ai',
+);
+
+option wait => (
+  is     => 'ro',
+  format => 'i',
+  doc    => 'ask: seconds before the policy takes over',
+);
+
+option step => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'ask: the chain step waiting on the answer',
+);
+
+option note => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'answer: a note to record beside the answer',
 );
 
 has _stream_to_terminal => (
@@ -193,17 +247,19 @@ sub _build__limits {
   return App::karr::Foundation::Limits->new( foundation => $self );
 }
 
-# The hub repository's chain store, or undef when no hub is configured. One
-# repository of a fleet carries refs/karr-foundation/* -- the chain of planned
-# steps, the run logs -- and which one that is is a property of this machine's
-# view of the fleet, so it is named locally rather than discovered. A hub that
-# is not there is a warning and not an error: everything foundation does
-# without a chain it still does.
-has _chain_store => (
+# The hub repository, or undef when no hub is configured. One repository of a
+# fleet carries refs/karr-foundation/* -- the chain of planned steps, the run
+# logs, the question mailbox -- and which one that is is a property of this
+# machine's view of the fleet, so it is named locally rather than discovered. A
+# hub that is not there is a warning and not an error: everything foundation
+# does without a chain it still does. The two stores below share this one
+# resolution because they share the repository; a second copy of it would be a
+# second thing to keep in step with `hub:`.
+has _hub_git => (
   is => 'lazy',
 );
 
-sub _build__chain_store {
+sub _build__hub_git {
   my ( $self ) = @_;
   my $hub = $self->_config_data->{hub};
   return undef unless defined $hub && length $hub;
@@ -217,7 +273,30 @@ sub _build__chain_store {
     warn "karr-foundation: hub is not a git repository: $hub\n";
     return undef;
   }
+  return $git;
+}
+
+# The chain of planned steps and the run logs (#189).
+has _chain_store => (
+  is => 'lazy',
+);
+
+sub _build__chain_store {
+  my ( $self ) = @_;
+  my $git = $self->_hub_git or return undef;
   return App::karr::Foundation::ChainStore->new( git => $git );
+}
+
+# The question mailbox, in the same repository and for the same reason: a
+# question is coordination, so it lives where every machine can see it (#191).
+has _questions => (
+  is => 'lazy',
+);
+
+sub _build__questions {
+  my ( $self ) = @_;
+  my $git = $self->_hub_git or return undef;
+  return App::karr::Foundation::Questions->new( git => $git );
 }
 
 # Open file descriptors that hold flock(2) locks on .karr.lock files for the
@@ -471,6 +550,28 @@ fleet's current ones and not whatever this machine last happened to fetch.
 Nothing is pushed back: this run reads the chain header and writes no step
 state.
 
+B<The question mailbox.> A question is a file with an answer field, not a
+dialogue, which is what removes the special case for "a human happens to be
+present". C<karr-foundation ask> writes one into the hub and returns; the chain
+carries on with everything that does not depend on it, and only the steps that
+do wait. Whoever answers -- a person at a terminal, a chat bridge, the
+coordination agent -- types C<karr-foundation answer ID ANSWER> and needs to
+know nothing about the chain. One mailbox, many writers.
+
+  karr-foundation ask "Which registry do we publish to?" \
+      --context "the release gate is waiting" \
+      --options cpan,darkpan --default cpan --policy use_default --wait 3600
+
+  karr-foundation answer 7 darkpan --note "this release is a private one"
+
+C<--policy> is what happens when nobody answers: C<block> (the default: wait),
+C<use_default> (C<--default> becomes the answer once C<--wait> has passed) or
+C<escalate_to_ai> (the coordination agent decides). Both commands sync the fleet
+namespace around what they write, and C<--status> lists the open mailbox with
+the id each one is answered by. The storage, the retention and the argument for
+why an answer is its own ref rather than a field in the question are in
+L<App::karr::Foundation::Questions>.
+
 B<Run mode.> C<mode> says what one pass over a repo is:
 
 =over 4
@@ -657,7 +758,18 @@ the same for the report — how the last run ended, its turns, duration and cost
 # ---------------------------------------------------------------------------
 
 sub run {
-  my ( $self ) = @_;
+  my ( $self, @argv ) = @_;
+
+  # The mailbox commands come first and never discover a board: a question is
+  # fleet state in the hub, and `karr-foundation answer 7 yes` typed by a person
+  # has nothing to do with which repositories this machine drains (#191).
+  if ( @argv ) {
+    my $command = shift @argv;
+    return $self->_run_ask(@argv)    if $command eq 'ask';
+    return $self->_run_answer(@argv) if $command eq 'answer';
+    user_error("Unknown command '$command' (expected: answer, ask)");
+  }
+
   my @repos = $self->_discover_repos;
   unless ( @repos ) {
     warn "karr-foundation: no repos found \x{2014} check config\n";
@@ -718,6 +830,105 @@ sub run {
   }
 
   $self->_restore_default_signal_handlers;
+  return 0;
+}
+
+# ---------------------------------------------------------------------------
+# The question mailbox (#191)
+# ---------------------------------------------------------------------------
+
+# The mailbox lives in the hub, so a machine without one has nowhere to put a
+# question. That is an error and not a warning: the two commands do exactly one
+# thing, and doing it locally where nobody would ever read it is not a smaller
+# version of it.
+sub _mailbox {
+  my ( $self ) = @_;
+  return $self->_questions // user_error(
+      'No usable hub repository: the question mailbox lives in '
+    . 'refs/karr-foundation/questions/* in the fleet hub, so name one with '
+    . "'hub: /path/to/repo' in " . $self->_config_path );
+}
+
+# A mailbox that does not travel is a notepad. `ask` pulls before it mints an
+# id -- ids are minted from what this clone can see, so the pull is what keeps
+# two machines from picking the same one -- and both commands push what they
+# wrote. A transport failure is a warning: the ref is written locally either
+# way and the next `karr sync` in the hub publishes it, which is a better
+# answer than refusing to record a question because the network is down.
+sub _mailbox_sync {
+  my ( $self, $verb ) = @_;
+  my $git = $self->_hub_git or return;
+  my $method = "${verb}_foundation";
+  try {
+    $git->$method;
+  } catch {
+    warn "karr-foundation: $verb of refs/karr-foundation/ failed: "
+       . clean_error($_) . "\n";
+  };
+  return;
+}
+
+# --options a,b, the same comma-separated spelling `karr create --tags` uses,
+# with the whitespace around a comma allowed: `--options "cpan, darkpan"` is
+# what a person types and refusing it would teach nothing.
+sub _option_list {
+  my ( $self, $value ) = @_;
+  return () unless defined $value;
+  my @options = grep { length }
+    map { my $o = $_; $o =~ s/\A\s+|\s+\z//g; $o } split /,/, $value;
+  return @options ? ( options => \@options ) : ();
+}
+
+sub _run_ask {
+  my ( $self, @argv ) = @_;
+  user_error( 'Usage: karr-foundation ask QUESTION [--context PROSE] '
+    . '[--options a,b] [--default a] [--policy block|use_default|escalate_to_ai] '
+    . '[--wait SECONDS] [--step ID] -- quote a question that contains spaces' )
+    unless @argv == 1 && defined $argv[0] && length $argv[0];
+
+  my $mailbox = $self->_mailbox;
+  $self->_mailbox_sync('pull');
+
+  my $id = $mailbox->ask(
+    question => $argv[0],
+    $self->_option_list( $self->options ),
+    ( defined $self->context ? ( context => $self->context ) : () ),
+    ( defined $self->default ? ( default => $self->default ) : () ),
+    ( defined $self->policy  ? ( policy  => $self->policy )  : () ),
+    ( defined $self->wait    ? ( wait    => $self->wait )    : () ),
+    ( defined $self->step    ? ( step    => $self->step )    : () ),
+  );
+  $self->_mailbox_sync('push');
+
+  # The id and the command that settles it, because the next thing whoever
+  # reads this does is answer it -- from a terminal that has none of the
+  # context this one has.
+  my $q = $mailbox->question($id);
+  printf "Asked question #%s: %s\n", $id, $q->{question};
+  printf "  answer with: karr-foundation answer %s <%s>\n", $id,
+    ( $q->{options} ? join( '|', @{ $q->{options} } ) : 'answer' );
+  printf "  nobody answers: %s%s\n", $q->{policy},
+    ( defined $q->{deadline} ? " after $q->{deadline}" : '' );
+  return 0;
+}
+
+sub _run_answer {
+  my ( $self, @argv ) = @_;
+  user_error( 'Usage: karr-foundation answer ID ANSWER [--note TEXT] '
+    . '[--force] -- quote an answer that contains spaces' )
+    unless @argv == 2 && defined $argv[1] && length $argv[1];
+
+  my $mailbox = $self->_mailbox;
+  $self->_mailbox_sync('pull');
+
+  my $a = $mailbox->settle( $argv[0], $argv[1],
+    ( defined $self->note ? ( note => $self->note ) : () ),
+    force => ( $self->force ? 1 : 0 ),
+  );
+  $self->_mailbox_sync('push');
+
+  printf "Answered question #%s: %s\n", $a->{id}, $a->{answer};
+  printf "  %s\n", $a->{question};
   return 0;
 }
 
@@ -987,10 +1198,14 @@ sub _handle_shutdown_signal {
 
 =method run
 
-    exit App::karr::Foundation->new_with_options->run;
+    exit App::karr::Foundation->new_with_options->run(@ARGV);
 
-The single entry point, invoked by F<bin/karr-foundation>. One pass over
-every configured repo, then returns -- there is no internal loop; running
+The single entry point, invoked by F<bin/karr-foundation>. What is left of
+C<@ARGV> after option parsing is a mailbox command and is answered first:
+C<ask> and C<answer> (see "The question mailbox" above) work on the hub alone,
+discover no board and start no agent, and an argument that is neither is a user
+error rather than a silent drain. With no arguments -- how cron invokes it --
+it is one pass over every configured repo, then returns -- there is no internal loop; running
 periodically is left to cron/systemd-timer/an external C<while> loop, per
 L</DESCRIPTION>. Returns C<1> (a process exit code, not an exception) when
 C<_discover_repos> finds nothing at all -- an empty C<dirs>/C<scan> in the

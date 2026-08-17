@@ -3,9 +3,11 @@ use warnings;
 use Test::More;
 
 # App::karr::Foundation pulls its own submodules in, so they compile with it.
-# App::karr::Foundation::ChainStore stays listed separately: the runner loads it
-# now (#186), but it is the one submodule with a life outside the foundation
-# object -- a planner uses it on its own -- so it is compiled on its own here.
+# App::karr::Foundation::ChainStore and ::Questions stay listed separately: the
+# foundation loads both, but they are the two submodules with a life outside the
+# foundation object -- a planner uses the chain store on its own, and anything
+# that answers a question (a chat bridge, the coordination agent) uses the
+# mailbox on its own -- so they are compiled on their own here.
 my @modules = qw(
   App::karr
   App::karr::Task
@@ -40,6 +42,7 @@ my @modules = qw(
   App::karr::Cmd::GetRefs
   App::karr::Foundation
   App::karr::Foundation::ChainStore
+  App::karr::Foundation::Questions
 );
 
 for my $mod (@modules) {

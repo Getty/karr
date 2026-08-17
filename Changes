@@ -1,5 +1,52 @@
 {{$NEXT}}
 
+    - karr-foundation has a question mailbox (#191). `karr-foundation
+      ask "Which registry?" --options cpan,darkpan --default cpan
+      --policy use_default --wait 3600` writes the question into the
+      fleet hub and returns; `karr-foundation answer 7 darkpan`
+      settles it, from any machine, by anybody. A question is a file
+      with an answer field and not a dialogue, which is the whole
+      point: nothing has to happen while a human is present, the
+      chain carries on with every step that does not depend on the
+      answer, and only the steps that do wait. --policy says what
+      happens when nobody answers at all -- block (wait), use_default
+      (the default becomes the answer once --wait has passed) or
+      escalate_to_ai -- and the two that are not "wait" are refused
+      without a deadline and without a default to fall back on,
+      because a policy that fires the moment the question is asked is
+      a planner mistake nobody would see later.
+
+      The answer is its own ref beside the question rather than a
+      field inside it, and that is the one place this departs from
+      the design document. refs/karr-foundation/* resolves a ref both
+      sides changed by taking the remote's and not keeping the local
+      one (#190) -- right for a plan, which is re-planned, and wrong
+      for an answer, which is somebody's decision typed once and not
+      reconstructible. Two refs means the asker and the answerer
+      never write the same ref at all, so the case cannot arise from
+      ordinary use; what is left is two people answering at once,
+      which is create-only here and therefore one answer and one
+      refusal rather than whichever push landed second. Ids are small
+      integers minted from what a clone can see, so an answer records
+      the question text it answers and is ignored, loudly, beside a
+      question it does not match: that is what two clones minting the
+      same id between syncs would otherwise leave behind, silently.
+      Retention is the other half of #190's note -- answered
+      questions age out after 30 days, open ones never do, because an
+      open question is work nobody has done yet whatever its age.
+
+      `karr set-refs` may not write refs/karr-foundation/questions/*,
+      for the second half of the argument that closed chain/ and log/
+      to it (#189) rather than the first: a person answering by hand
+      is an intended writer here, but set-refs joins its arguments
+      with a single space and a question is a YAML mapping, so every
+      hand-written answer would land as a ref the mailbox skips while
+      the person who typed it believes the question is answered.
+      `karr get-refs` still reads all of it, and
+      `karr-foundation --status` lists the open mailbox with the id
+      each question is answered by -- a question nobody sees is a
+      chain nobody unblocks.
+
     - karr-foundation can run several boards at once (#186).
       Until now it executed one agent command after another, so
       every concurrency setting the fleet design describes was
