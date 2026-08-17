@@ -341,11 +341,12 @@ subtest 'a bare pick with a satisfied dependency stays silent' => sub {
 };
 
 subtest 'a bare pick of an already finished card says nothing' => sub {
-    # --status is the one way a terminal card reaches the claim at all:
-    # _is_pickable excludes terminal statuses only when --status is absent. So
-    # the status the card *stays in* has to be the one judged when there is no
-    # --move, or picking up a finished card would lecture about dependencies
-    # that stopped mattering when it was finished.
+    # --status is the one way a terminal card reaches the claim at all: the
+    # shared App::karr::Role::PickRules/pickable excludes terminal statuses
+    # only when --status is absent. So the status the card *stays in* has to
+    # be the one judged when there is no --move, or picking up a finished card
+    # would lecture about dependencies that stopped mattering when it was
+    # finished.
     my $repo = _board(
         { id => 1, status => 'backlog' },
         { id => 2, status => 'done', depends_on => [1] },

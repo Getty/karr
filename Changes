@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - `karr pick` and karr-foundation's ticket mode now select
+      through one definition (#198). Which cards qualify, and the
+      class/priority/id order they come in, were written out in both
+      places and agreed only because one had been copied from the
+      other -- while foundation naming a card the agent's own `karr
+      pick` would not have handed it is a coordinator arguing with
+      its own board. The rules are now App::karr::Role::PickRules,
+      composed by both: pick keeps its lock and compare-and-swap on
+      top, foundation keeps its claim-less, lock-less read, and
+      --status and --tags stay pick's own narrowing of the shared
+      test. No board picks differently today; what changed is that
+      the two cannot answer differently tomorrow.
+
     - A repository with no remote no longer hoards deletion
       tombstones (#197). refs/karr-local/deleted/ is the record of
       deletions this clone owes the remote, cleared by the push that
