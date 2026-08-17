@@ -1,0 +1,34 @@
+---
+class: standard
+completed: 2026-08-17T03:00:16Z
+created: 2026-08-17T01:01:40Z
+id: 185
+priority: high
+started: 2026-08-17T02:08:17Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: ticket mode — run exactly one ticket and return'
+updated: 2026-08-17T03:00:16Z
+---
+
+Today the runner drains: it keeps invoking the agent command until the board stops moving. For coordinated multi-repo work that is the wrong granularity — the coordinator never gets control back between tickets.
+
+Add `mode: ticket` next to the existing drain behaviour. In ticket mode foundation picks one task, runs the agent once, classifies the result and returns. The caller decides what happens next.
+
+The point is control, not size. A single-ticket run ends by itself, so nothing has to stop it, and reordering, agent switching and gating all become possible between runs. An agent that dies mid-work loses one attempt: its claim expires, `karr unlock` clears the pick lock, the ticket is free again.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+mode: ticket implemented, commit eaa27b8 (local, not pushed).
+
+Decisions: (1) the id reaches the agent as $KARR_TASK plus a closing sentence spliced into $PROMPT - nothing appended to the command, so #188's kind: contract stays free; (2) foundation names the card, the agent claims it (the repo lock plus one-agent-per-repository already excludes anybody else, and #176 means the claim name must be the agent's own) - a dead agent loses its own claim to claim_timeout/karr unlock plus one attempt; (3) mode: drain|single|ticket replaces drain: true|false, which stays honoured as the older spelling (mode asked first, per-repo drain still beats a config-wide mode, unknown value errors and skips the repo).
+
+New: App::karr::Foundation::Picker (pick eligibility + pick ranking, no claim, no lock; composes Role::ClaimTimeout so an expired claim is visible - otherwise a crashed agent's claim would silence a board for good). A ticket run is judged by its own card: progress if it moved, new outcome 'stall' if not, attempt bumped and auto-blocked at max_attempts under #158's unchanged ownership guard. Nothing assignable = no agent run at all.
+
+RED PROOF: t/185-foundation-ticket-mode.t against the unmodified lib - unit half dies 'Can't locate object method _run_mode', integration half fails on behaviour: outcome 'common-error' instead of 'progress', ticket undef instead of 2, the agent started on a board where ticket mode must not start one, .karr.log has no 'TICKET none assignable', and the prompt still said 'pick the next actionable task'.
+
+TESTS: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/185-foundation-ticket-mode.t = 8 subtests PASS; full suite same command on t/ = 170 files, 1149 tests, PASS (HEAD was 169/1141).
+
+Follow-up filed: #198 (pick's eligibility+ranking now written twice). Notes left on #187 (the new 'stall' outcome) and #188 (KARR_TASK vs argument appending).
+Review 2026-08-17 (Orchestrator): freigegeben. Diff gelesen (Foundation.pm, Picker.pm, Runner.pm), Ranking und Eligibility gegen Cmd/Pick.pm verglichen -- identisch, Duplikation ist als #198 erfasst. Volle Suite selbst nachgefahren: 170 Dateien, 1149 Tests, PASS. Zusaetzlich End-to-End gegen ein echtes Board mit Fake-Agent, nicht nur im Testharness: mode: ticket waehlt #2 (hohe Prioritaet) statt #1, genau ein Lauf, KARR_TASK=2 in der Umgebung, Prompt nennt die Karte in Prosa, .karr.log zeigt TICKET task#2. Raender gemessen: leeres Board -> 'TICKET none assignable -- no agent run' ohne Agentenstart; mode: ticekt -> Warnung, Repo uebersprungen, Board unveraendert; drain: false laeuft weiter als Einzellauf mit leerem KARR_TASK. _run_mode-Praezedenz geprueft: _load_karr merged nicht mit der globalen Config, per-repo drain schlaegt also tatsaechlich ein config-weites mode, wie dokumentiert.
