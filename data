@@ -1,0 +1,54 @@
+---
+class: standard
+completed: 2026-08-17T04:50:29Z
+created: 2026-08-17T01:02:27Z
+depends_on:
+- 187
+id: 188
+priority: high
+started: 2026-08-17T03:59:40Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: agent definitions and availability probing'
+updated: 2026-08-17T04:50:29Z
+---
+
+A board has one `command` today. A fleet has several agent commands with different strengths, different costs and different failure modes.
+
+Add named agent definitions in local config: `command`, `kind` (the invocation contract, e.g. claude-code), an optional `probe_every`, and a prose `description` saying what the agent is good at and where it is weak. The description is the selection criterion — the thing choosing is a language model, and it reads prose better than it matches taxonomies. No classes, no enums.
+
+karr tracks the least it can per agent: ok / failing since X / next attempt at Y. No cost, no tokens, no quotas — a rate limit and an exhausted budget look identical from the outside, so one mechanism covers both.
+
+Where the reset rhythm is known it is configured. Where it is not, retry at a fixed interval and record when it worked again. Reading a pattern out of those records is the coordination agent's job, not a learning algorithm in karr.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+#185 shipped ticket mode without touching the command string: the assigned id travels as $KARR_TASK in the child environment and as a closing sentence in $PROMPT. That was chosen so this ticket stays free to define argument appending (kind: claude-code) on top of it - an agent definition that appends --ticket N can do so, and KARR_TASK remains what a command template of unknown kind can read. App::karr::Foundation::Runner::_run_command now takes the id as a fourth argument.
+#187 landed the reader: karr-foundation classifies a run from a claude-code result object found at the tail of its output (Runner::_run_result / _result_error). It deliberately did NOT change the synthesized 'claude: true' command, because appending --output-format json is exactly what 'kind: claude-code' settles here - the spec names -p, --output-format json, --permission-mode and --allowed-tools as this ticket's contract. So until #188 the reader only fires for boards whose own 'command:' emits it. Note when you get here: plain --output-format json suppresses live streaming (nothing is printed until the final object), which the 'Live output' section of App::karr::Foundation promises for TTY runs; --output-format stream-json --include-partial-messages ends with the same result object AND streams, but the runner would have to render the stream for the terminal.
+Commit aa08425, local only, no push, no release.
+
+WAS: named agent definitions in the local config (agents: name => { command, kind, probe_every, description, plus permission_mode/max_turns/allowed_tools for claude-code }), board selection via 'agent:' in .karr or 'default_agent:' in the config, the kind: claude-code invocation contract, and per-agent availability. New file lib/App/karr/Foundation/Agents.pm; Foundation, Runner and Overview wired to it.
+
+DECISIONS, each argued in the code at the site:
+- Availability lives in agents.state BESIDE the config file, not in .karr.state and not in the board. .karr.state is per repository and this is not (two repos on one agent must share the outage); the board syncs and this must not (an agent command is machine-local, a spent limit is a person's). Beside the config also makes --config relocate it, which is what keeps tests off the real $HOME.
+- kind: claude-code appends --output-format stream-json --verbose --include-partial-messages, NOT plain json. Plain json prints nothing until the run ends and would have silently cancelled the live output the 'Live output' section promises for a TTY. So the Runner learned to render the stream (_render_stream_line): assistant text deltas reach the terminal AND .karr.log, non-JSON lines pass through verbatim, the envelopes and the result object are suppressed, and the raw octets stay in the classification buffer so #187's reader is untouched. .karr.log therefore stays greppable instead of filling with JSON.
+- The ticket id is still NOT appended as an argument: claude-code has no flag for it, so #185's $PROMPT sentence and $KARR_TASK remain the contract.
+- Availability is exactly ok / failing since X / next attempt at Y. Any common-error marks the agent failing; anything else says it works. The probe IS the next run on the work that was waiting, not a separate kind of run. Recoveries are recorded (failing_since, recovered_at, seconds, error), capped at 20.
+- --force does not override an unavailable agent, for the same reason it does not override the per-board cooldown.
+- Precedence: --command > default_command > .karr command > .karr agent > default_agent > claude: true. A board naming an undefined agent raises, which run() turns into a warn+skip for that board only.
+- State is read fresh on every access (no cached copy), so two overlapping ticks see each other's outages.
+
+ROT-BEWEIS (before the commit, lib/ stashed at HEAD):
+  prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/188-foundation-agents.t
+  -> Result: FAIL (Can't locate App/karr/Foundation/Agents.pm, 0 tests run)
+and behaviourally on HEAD: a .karr with 'agent: fake' resolved to <undef>, i.e. the board silently ran nothing; _resolve_agent, _agents and Runner::_render_stream_line did not exist.
+
+GRUEN: same command -> 16 subtests PASS. Full suite:
+  prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/
+  -> Files=172, Tests=1175, Result: PASS (HEAD was 171/1159).
+
+Also smoke-tested end to end through bin/karr-foundation with a throwaway repo and a fake 'claude' shell script: --status renders the Agents block (failing since / next attempt at / last outage), a run streams readable text and logs RESULT, a 429 report marks the agent failing and the next tick skips the board with 'agent failing (api 429), next attempt in 900s'. Every temp fleet removed, no processes left behind.
+
+NICHT gemacht (Abgrenzung): no routing, no assignment, no concurrency. Notes left on #186 (agents.state has no lock; per_agent limits should validate against Agents->definitions) and on #194 (the two files a router reads).
+Review 2026-08-17 (Orchestrator): freigegeben. Volle Suite selbst nachgefahren: 172 Dateien, 1175 Tests, PASS. Die Format-Entscheidung gegen echtes claude gegengeprueft statt gegen Testdoubles: 'claude -p --output-format stream-json --verbose --include-partial-messages' endet tatsaechlich mit type=result subtype=success, streamt also UND liefert das Objekt, das #187 liest -- die Wahl gegen plain json ist belegt und nicht geraten. Auch die Stream-Form selbst verifiziert: reale Events sind type:stream_event mit event.delta.text, Envelopes sind system/assistant/rate_limit_event/result -- genau die Form, die _render_stream_line erwartet, inklusive eines stream_event ohne text-Feld, das der Code korrekt verwirft. End-to-End mit einer Zwei-Repo-Flotte und einem Fake-Agenten: alpha laeuft in api 429, und beta -- ein anderes Repository, das noch nie lief -- wird sofort uebersprungen mit "agent 'minimax' failing (api 429), next attempt in 900s". Das ist der zentrale Anspruch des Tickets, gemessen: der Ausfall gehoert dem Agenten und der Maschine, nicht dem Board. Erholung ebenfalls gemessen: nach einem funktionierenden Lauf steht in agents.state recovered:[{error:api 429, failing_since, recovered_at, seconds:15}] und state:ok -- die Spur, aus der spaeter der Koordinationsagent ein Muster lesen soll. agents.state liegt wie behauptet neben der Config, nicht in .karr.state und nicht im Board. Rueckwaertskompatibilitaet gemessen: ein Board ohne Agentendefinition loggt weiter 'START command=' ohne agent=, und seine Ausgabe wird woertlich durchgereicht -- eine stream_event-Zeile steht roh im Log statt gerendert.
