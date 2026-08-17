@@ -120,7 +120,10 @@ sub _build_config_data {
 
 has _runner => (
   is      => 'lazy',
-  handles => [qw( _run_command _error_patterns _match_error )],
+  handles => [qw(
+    _run_command _error_patterns _match_error
+    _run_result _result_error _result_summary _result_line
+  )],
 );
 
 sub _build__runner {
@@ -326,8 +329,9 @@ Set C<max_runtime: 0> in F<.karr> to disable the per-run timeout entirely
 (agent runs until completion with no SIGKILL).
 
 B<Drain semantics.> Each iteration runs C<command> once, then classifies the
-result from what foundation can observe — exit code, board ref movement, and
-the run's captured output:
+result from what foundation can observe — the run's own report where it made
+one, otherwise the exit code, board ref movement, and the run's captured
+output:
 
 =over 4
 
@@ -376,10 +380,46 @@ tripped it on C<403> (#160).
 
 =back
 
+B<The run's own report.> An agent invoked with C<--output-format json> ends its
+output with one line: a JSON object saying whether the run failed, how it
+ended, how many turns it took, how long it ran and what it cost. Where a run
+leaves one, foundation classifies from it and the text scan below does not run
+at all.
+
+Foundation is not configured for this and does not inspect the command string
+for it — it reads the tail of the output, because that is where the format puts
+its result and nothing else has to be kept in step with anything. Only the
+B<last> non-empty line counts: prose before the object is irrelevant, prose
+containing one cannot be mistaken for it (an agent printing a board can print a
+pasted result object the same way #160's board printed a C<503>), and anything
+after it makes the run unstructured again, so the scan takes over. The
+reasoning is written out at C<_run_result> in L<App::karr::Foundation::Runner>.
+
+A reported error ranks with the exit code, not with the scan: it is the run's
+statement about itself, not an inference drawn from its prose, so the
+"what it did before what it printed" guard below does not apply to it. Its
+B<kind> decides what happens next. A provider status (C<api_error_status>) is
+the case the scan was written for and backs the board off as a rate limit
+always did. A spent turn budget (C<error_max_turns>) is not: the agent worked,
+the provider answered, and the task was simply larger than the budget it was
+given — so it is logged, the board is not parked, and the run is judged by what
+it moved. Any other reported error keeps its own name (C<error_during_execution>)
+and cools the board down. A non-zero exit a report of B<success> does not
+account for is still a common error: the report is the agent's, the exit code
+may be its wrapper's.
+
+In ticket mode the report is what finally separates the two stalls that used to
+look identical — "the agent reports it could not proceed" and "the agent did
+nothing" — and F<.karr.log> names which one it was
+(C<STALL task#N — the agent ran out of turns>). With no report it says exactly
+that rather than guessing.
+
 All state files are gitignored: C<.karr.state> (board hash, per-task attempts,
-cooldown, last error), C<.karr.lock>, C<.karr.log>. C<last_error> describes the
-B<last> run and is removed again by the next run that is not a common error, so
-it never outlives the cooldown it caused.
+cooldown, last error, last report), C<.karr.lock>, C<.karr.log>. C<last_error>
+describes the B<last> run and is removed again by the next run that is not a
+common error, so it never outlives the cooldown it caused. C<last_result> is
+the same for the report — how the last run ended, its turns, duration and cost
+— and is dropped again by a run that reported nothing.
 
 =cut
 
@@ -722,11 +762,25 @@ sub _process_repo {
   }
 
   # Update state
-  $self->_state_set( $repo,
+  my %state = (
     hash      => $self->_ref_hash( $repo ) // '',
     last_run  => localtime->datetime,
     last_exit => $result->{exit} // 0,
   );
+
+  # The last run's own report, where it made one (#187): how it ended, how many
+  # turns it took, how long it ran, what it cost. It is dropped again by a run
+  # that reported nothing, for the same reason last_error is (#160): a key that
+  # is still there describes the last run, and one describing a run three ticks
+  # ago is a contradiction nobody reading .karr.state can resolve.
+  if ( $result->{report} ) {
+    $state{last_result} = $result->{report};
+  }
+  else {
+    $self->_state_del( $repo, 'last_result' );
+  }
+
+  $self->_state_set( $repo, %state );
 }
 
 # ---------------------------------------------------------------------------
@@ -956,6 +1010,11 @@ sub _drain_repo {
   my $first      = 1;
   my $iter       = 0;
 
+  # The last run's own report, summarised (Runner::_result_summary), or undef
+  # while no run has made one. It survives the loop so a drain hands back what
+  # its final iteration reported.
+  my $last_report;
+
   # What this run's agent engages, accumulated across the whole drain: the
   # iteration that claims a task is the one that moves the board, so the stall
   # only becomes visible one or more iterations later.
@@ -986,19 +1045,54 @@ sub _drain_repo {
     my $hash_after = $self->_ref_hash( $repo ) // '';
     my $progressed = ( $hash_before ne $hash_after ) ? 1 : 0;
 
-    # Common error we can observe (bad exit, timeout, or a known output
-    # pattern): don't penalize any task — leave the board untouched and back
-    # off. What the run *did* is asked before what it *printed* (#160): a run
-    # that exited 0 and moved the board did work, whatever text went past on
-    # the way, and re-reading its own transcript is the one way to lose that
-    # work — the drain aborted, the progress was credited to nobody, and the
-    # cooldown climbed on every following run because the board still said the
-    # same words. So the output is evidence only where there is nothing else:
-    # a run that produced no board movement at all. The genuine case the scan
-    # exists for looks exactly like that, because an agent that hit a rate
-    # limit or a dead key could not move anything.
+    # What the run said about itself, where it said anything: a claude-code
+    # result object at the end of its output (Runner::_run_result explains how
+    # foundation finds one and why it looks there and nowhere else). This is
+    # the classification the text scan below has always been a stand-in for
+    # (#187) — error flag, error kind, turns, duration, cost, stated by the
+    # run rather than inferred from its prose.
+    my ( $ended, $rerr );
+    my $report = $self->_run_result( $output );
+    if ( $report ) {
+      ( $rerr, $ended ) = $self->_result_error( $report );
+      $last_report = $self->_result_summary( $report, $ended );
+      $self->_append_log( $repo, $self->_result_line( $report, $ended ) );
+    }
+
+    # Common error we can observe (bad exit, timeout, a report that says so, or
+    # a known output pattern): don't penalize any task — leave the board
+    # untouched and back off. What the run *did* is asked before what it
+    # *printed* (#160): a run that exited 0 and moved the board did work,
+    # whatever text went past on the way, and re-reading its own transcript is
+    # the one way to lose that work — the drain aborted, the progress was
+    # credited to nobody, and the cooldown climbed on every following run
+    # because the board still said the same words. So the output is evidence
+    # only where there is nothing else: a run that produced no board movement
+    # at all. The genuine case the scan exists for looks exactly like that,
+    # because an agent that hit a rate limit or a dead key could not move
+    # anything.
+    #
+    # A report is not in that ordering at all, and this is the one place to be
+    # careful not to invert it. The guard above protects the run from an
+    # *inference*: a word search over megabytes the agent printed, which cannot
+    # tell the agent's report from the board's own contents. A field in the
+    # agent's own result object is not an inference, so it ranks with the exit
+    # code rather than with the scan — and where there is a report, the scan
+    # does not run at all. That is the whole point: an agent that prints a
+    # backlog full of 503s and then reports success is a success.
     my $err;
-    if ( $exit != 0 ) {
+    if ( $report ) {
+      $err = $rerr;
+      # A non-zero exit the report does not account for is still an error: the
+      # report is claude's, the exit code may be the wrapper's, and a report of
+      # success says nothing about a pipeline that failed after it (or about
+      # the 128+SIGTERM the runner synthesizes for a run it had to kill). A
+      # report that *does* carry an error flag has already accounted for it,
+      # which is what lets a spent turn budget — claude exits 1 on
+      # error_max_turns — stop parking the board for an hour.
+      $err //= "exit=$exit" if $exit != 0 && !$report->{is_error};
+    }
+    elsif ( $exit != 0 ) {
       $err = "exit=$exit";     # or -1, the timeout — a hard signal, no scan
     }
     else {
@@ -1040,6 +1134,14 @@ sub _drain_repo {
       }
       else {
         $outcome = 'stall';
+        # Which stall it was. "The agent reports it cannot proceed" and "the
+        # agent did nothing" both end as a card that did not move, and until a
+        # run reported for itself there was nothing to tell them apart with
+        # (#187). Ticket mode is the caller that wants the difference most: it
+        # is the one place foundation already knows what the run was supposed
+        # to be about, so the only thing missing was what the agent made of it.
+        $self->_append_log( $repo,
+          "STALL task#$ticket \x{2014} " . $self->_stall_reason( $report, $ended ) );
         # foundation assigned this card, so it needs no activity-log evidence
         # that the agent engaged it -- the assignment is the evidence, and the
         # counter it bumps is foundation's own .karr.state. The auto-block a
@@ -1082,7 +1184,25 @@ sub _drain_repo {
     last unless $drain;   # single / ticket mode → one run and return
   }
 
-  return { outcome => $outcome, exit => $last_exit, ticket => $ticket };
+  return {
+    outcome => $outcome,
+    exit    => $last_exit,
+    ticket  => $ticket,
+    report  => $last_report,
+  };
+}
+
+# A ticket-mode stall, said in the terms a coordinator asks in. Without a
+# report there is nothing to say and it says so, rather than guessing: an agent
+# that produces no structured result is exactly the case foundation has no
+# information about, and inventing a reason for it is how the text scan got
+# into trouble in the first place (#160).
+sub _stall_reason {
+  my ( $self, $report, $ended ) = @_;
+  return 'no report from the agent' unless defined $ended;
+  return 'the agent ran out of turns'  if $ended eq 'max turns';
+  return "the agent ended with $ended" if $ended ne 'success';
+  return 'the agent reported success but the card did not move';
 }
 
 # Did the assigned card come out of the run different from how it went in?

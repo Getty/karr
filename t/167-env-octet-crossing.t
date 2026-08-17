@@ -96,7 +96,13 @@ subtest 'round-trip through %ENV yields the original characters' => sub {
 # drops the wrap would also drop the property, and a grep catches it.
 subtest 'Foundation/Runner wraps the three ENV writes through the helper' => sub {
     my $src = path('lib/App/karr/Foundation/Runner.pm')->slurp_utf8;
-    like( $src, qr/^use\s+App::karr::Encoding\s+qw\(\s*to_octets_for_env\s*\)/m,
+    # The import list, not the whole import line: what this pins is that
+    # Runner reaches %ENV through the helper, and Runner has since grown a
+    # second reason to import from App::karr::Encoding (#187 reads a run's
+    # result JSON at the character level). Anchoring on the exact list made
+    # adding one fail here, which is a false alarm -- the property is that
+    # to_octets_for_env is imported, not that it is imported alone.
+    like( $src, qr/^use\s+App::karr::Encoding\s+qw\([^)]*\bto_octets_for_env\b/m,
         'Runner imports to_octets_for_env' );
     like( $src, qr/^\s*local \$ENV\{KARR_REPO\} = to_octets_for_env\(/m,
         'KARR_REPO is written through to_octets_for_env' );

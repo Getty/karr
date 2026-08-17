@@ -1,14 +1,15 @@
-# ABSTRACT: karr-foundation command execution — fork/pipe/select tee + error classification
+# ABSTRACT: karr-foundation command execution — fork/pipe/select tee + run classification
 
 package App::karr::Foundation::Runner;
 our $VERSION = '0.501';
 use Moo;
 use App::karr::Error qw( clean_error user_error );
-use App::karr::Encoding qw( to_octets_for_env );
+use App::karr::Encoding qw( from_octets json_decode to_octets_for_env );
 use Encode ();
 use IO::Select;
 use IO::Handle ();
 use POSIX qw( SIGTERM SIGKILL SIGALRM WNOHANG setpgid );
+use Scalar::Util qw( looks_like_number );
 
 =head1 DESCRIPTION
 
@@ -16,15 +17,25 @@ L<App::karr::Foundation::Runner> runs a single agent command for
 L<App::karr::Foundation>. It forks the command under C</bin/sh -c>, reads its
 combined stdout/stderr over a native pipe, and tees each chunk to the
 persistent C<.karr.log>, the terminal (when streaming), and an in-memory buffer
-used for error scanning, enforcing the per-run C<max_runtime> timeout. It also
-classifies observable common errors (rate limit, auth, network, 5xx, ...) in
-that buffer: a symptom word counts only next to a failure word on the same
-line, or inside a phrase an API really emits, and an HTTP status only where
-something adjacent marks it as one. The drain asks at all only for a run that
-made no progress -- see L<App::karr::Foundation>'s "Drain semantics". A
+the run is classified from, enforcing the per-run C<max_runtime> timeout. A
 weak back-reference to the owning foundation supplies shared options and helpers
 (C<dry_run>, C<_stream_to_terminal>, C<_prompt_for>, C<_append_log>,
 C<_say_verbose>).
+
+That buffer is read twice over, in this order. First for the run's B<own
+report>: an agent invoked with C<--output-format json> ends its output with a
+JSON object saying whether the run failed, how it ended, how many turns it
+took, how long it ran and what it cost. C<_run_result> finds it -- at the tail
+of the output, which is the only place a mixture of prose and JSON cannot be
+misread -- and C<_result_error> says whether the ending it describes is a
+common error and of what kind.
+
+Only where a run left no report does the older text scan run: observable common
+errors (rate limit, auth, network, 5xx, ...) matched against the transcript,
+where a symptom word counts only next to a failure word on the same line, or
+inside a phrase an API really emits, and an HTTP status only where something
+adjacent marks it as one. The drain asks that at all only for a run that made
+no progress -- see L<App::karr::Foundation>'s "Drain semantics".
 
 The command is a shell template, not a string karr rewrites: C<PROMPT>,
 C<KARR_REPO>, C<KARR_ROLE> and C<KARR_TASK> are exported into the child's
@@ -350,6 +361,144 @@ sub _classify_exit {
   my $sig = $status & 127;
   return 128 + $sig if $sig;
   return ( $status >> 8 ) & 255;
+}
+
+# ---------------------------------------------------------------------------
+# Structured result (a claude-code run's own report)
+# ---------------------------------------------------------------------------
+
+# How much of a transcript is looked at for the report at its end. The buffer
+# is everything the agent printed and can be megabytes; the object itself is a
+# couple of kilobytes. A report that does not fit in the window fails to parse
+# and the run counts as unstructured, which is the safe direction.
+my $RESULT_TAIL_BYTES = 1_048_576;
+
+# The run's own report, or undef when it made none.
+#
+# How foundation finds out that a run answers structurally: it does not ask,
+# and it is not told. It reads what the run left at the end of its output.
+#
+# The two alternatives are both worse. A configuration key ("this board's agent
+# emits json") is a second copy of a fact the command already carries, and a
+# copy that has gone stale is worse than no copy at all -- it makes foundation
+# look for a report that is not there, or ignore one that is, and it puts the
+# operator in charge of keeping two strings in step. Sniffing the command
+# string for --output-format json means parsing a shell template foundation
+# deliberately does not parse (#159: the expansion is the shell's, not ours),
+# and it guesses wrong on the very pipeline this module's own documentation
+# recommends -- `... --output-format stream-json ... | jq -r ...` carries the
+# flag and delivers no JSON at all.
+#
+# What is not a guess is the output. `claude -p --output-format json` ends with
+# exactly one line, a JSON object with "type":"result". That is the format's
+# contract, so reading the tail asks the run itself.
+#
+# Only the LAST non-empty line is examined, and that is the whole answer to
+# "an agent that mixes prose and JSON must not be misclassified":
+#
+#   * prose BEFORE the object is irrelevant -- a wrapper's banner, a `set -x`
+#     line, a warning that reached the shared stdout/stderr pipe earlier;
+#   * prose CONTAINING an object cannot reach the classifier. An agent working
+#     a karr board prints the board, and a board can hold a pasted result
+#     object the way #160's board held a "503" and a "403". Anything that
+#     scans a whole transcript eventually reads the agent's own quotation as
+#     the agent's own report; a tail read cannot;
+#   * anything printed AFTER the object makes the run unstructured again and
+#     the text scan takes over. Structure is lost, never invented.
+sub _run_result {
+  my ( $self, $output ) = @_;
+  return undef unless defined $output && length $output;
+  my $tail = length($output) > $RESULT_TAIL_BYTES
+    ? substr( $output, -$RESULT_TAIL_BYTES )
+    : $output;
+  my ( $last ) = grep { /\S/ } reverse split /\n/, $tail, -1;
+  return undef unless defined $last;
+  $last =~ s/\A\s+//;
+  $last =~ s/\s+\z//;
+  # Cheap pre-filter before the parser, the same bargain _match_error makes
+  # with its trigger substrings: nearly every run ends in prose, and prose is
+  # rejected here without JSON::MaybeXS ever seeing it.
+  return undef unless $last =~ /\A\{.*\}\z/s;
+  # The buffer holds octets (the tee keeps the log and the scan byte-exact),
+  # and json_decode is the character-level door -- App::karr::Encoding owns
+  # both crossings, so the decode is from_octets and nothing else.
+  my $data = eval { json_decode( from_octets( $last ) ) };
+  return undef unless ref $data eq 'HASH';
+  return undef unless ( $data->{type} // '' ) eq 'result';
+  return $data;
+}
+
+# What the report says about how the run ended, as ( $error, $ended ):
+#
+#   $ended  always describes the ending, for the log and for .karr.state
+#   $error  is set only where that ending is a common error -- the same
+#           currency _match_error returns, so the drain treats a reported
+#           error and a scanned one alike from there on
+#
+# A reported error is a hard signal, not a near-miss: it is the run's own
+# statement about itself, not an inference drawn from its prose. The progress
+# guard #160 put in front of the text scan therefore does not belong in front
+# of this one -- that guard exists because a word search over a transcript
+# cannot tell the agent's report from the board's contents, which is a problem
+# a field in the agent's own result object does not have.
+sub _result_error {
+  my ( $self, $result ) = @_;
+  return ( undef, 'success' ) unless $result->{is_error};
+
+  my $subtype = $result->{subtype} // 'error';
+
+  # A status from the provider is exactly the case the text scan was written
+  # for, arriving as a number in a field instead of a word in a sentence. The
+  # board backs off, as it always did for a rate limit.
+  my $api = $result->{api_error_status};
+  return ( "api $api", "api $api" ) if defined $api && length $api;
+
+  # The turn budget ran out. This is the one error flag that reports no
+  # failure of the agent and none of the provider: both worked, the task was
+  # larger than the budget it was given, and the honest response is to run
+  # again rather than to park the board for an exponentially growing hour.
+  # So it names the ending and returns no error, and the run is judged the way
+  # every other run is -- by what the board did.
+  return ( undef, 'max turns' )
+    if $subtype eq 'error_max_turns'
+    || ( $result->{terminal_reason} // '' ) eq 'max_turns';
+
+  return ( $subtype, $subtype );
+}
+
+# The numbers worth keeping out of a report: how far the run got and what it
+# cost. .karr.state carries the last one so an operator -- and the coordination
+# agent this is groundwork for -- can read the last run's report without
+# parsing .karr.log.
+sub _result_summary {
+  my ( $self, $result, $ended ) = @_;
+  return {
+    ended    => $ended,
+    turns    => $result->{num_turns},
+    duration => $result->{duration_ms},
+    cost_usd => $result->{total_cost_usd},
+    session  => $result->{session_id},
+  };
+}
+
+# The same report as one .karr.log line. Every field is optional: a report is
+# read for its is_error flag first of all, and one that carries no numbers is
+# still a report.
+sub _result_line {
+  my ( $self, $result, $ended ) = @_;
+  my @bits;
+  my ( $turns, $ms, $cost ) =
+    @{$result}{qw( num_turns duration_ms total_cost_usd )};
+  # looks_like_number, not a regex: these come out of somebody else's JSON and
+  # the only thing being asked is whether they can be printed as numbers. A
+  # field that cannot is left out of the line rather than warned about -- a
+  # report is read for its error flag first of all, and one carrying no usable
+  # numbers is still a report.
+  push @bits, ( $turns == 1 ? '1 turn' : "$turns turns" )
+    if looks_like_number( $turns );
+  push @bits, sprintf( '%.1fs', $ms / 1000 ) if looks_like_number( $ms );
+  push @bits, sprintf( '$%.4f', $cost )      if looks_like_number( $cost );
+  return "RESULT $ended" . ( @bits ? ' (' . join( ', ', @bits ) . ')' : '' );
 }
 
 # ---------------------------------------------------------------------------

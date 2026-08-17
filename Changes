@@ -1,5 +1,29 @@
 {{$NEXT}}
 
+    - karr-foundation classifies a run from its own report rather
+      than from its transcript (#187). An agent invoked with
+      `--output-format json` ends its output with a JSON object
+      saying whether the run failed, how it ended, how many turns
+      it took, how long it ran and what it cost; where a run leaves
+      one, that is what the run is judged by and the text scan does
+      not run at all. Nothing is configured for this and the
+      command string is not inspected: foundation reads the tail of
+      the output, because that is where the format puts its result
+      and because only the last line can tell an agent's report
+      from an agent quoting one -- the class of mistake #160 is
+      named after. A reported error ranks with the exit code rather
+      than with the scan, and its kind decides what follows: a
+      provider status backs the board off as a rate limit always
+      did, while a spent turn budget no longer does -- the agent
+      worked, the provider answered, and the task was larger than
+      the budget it was given, which is a reason to run again and
+      not to park the board for an hour. In ticket mode the report
+      is what finally tells "the agent reports it could not
+      proceed" from "the agent did nothing", and .karr.log says
+      which of the two a stall was. The last report is kept in
+      .karr.state as `last_result` and dropped again by a run that
+      made none.
+
     - karr-foundation can run exactly one ticket and return
       (#185). `mode: ticket` in a .karr file (or in the config)
       picks the card the run is about before the agent starts --
