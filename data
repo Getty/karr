@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-08-15T09:31:42Z
+claimed_by: lion-real
+class: standard
+completed: 2026-08-17T01:44:19Z
+created: 2026-08-15T09:06:53Z
+id: 176
+priority: medium
+started: 2026-08-15T09:08:11Z
+status: done
+tags:
+- ux
+- agents
+- claims
+title: agentname mints a new name on every call — the documented $(karr agentname)
+  idiom silently breaks claim continuity
+updated: 2026-08-17T01:44:19Z
+---
+
+Verified: three consecutive `karr agentname` calls return claim-odds, feel-cast, page-gear. The name is freshly minted each time and nowhere persisted.
+
+Cmd/AgentName.pm:19 documents the idiom as:
+    karr pick --claim "$(karr agentname)" --move in-progress
+
+That is correct for the single call it shows. The trap is what it teaches by example: an agent that later runs `karr handoff ID --claim "$(karr agentname)"` gets a DIFFERENT name than the one it claimed with, so the claim does not match and continuity is lost. This bit a worker in this very session — it claimed #171 as one name and could not hand off under it.
+
+It matters because the whole multi-agent workflow is built on claims: pick/move take a claim, handoff and the claim-timeout logic compare against it, and karr-foundation attributes stalls per claim name. A mismatch is silent — nothing errors, the card just ends up attributed to a name nobody holds.
+
+Two directions:
+ (a) Make the name stable for the duration of an agent: derive it deterministically (repo + pid/session) or persist it, so repeated calls in one run agree. Careful: it must NOT become stable across genuinely different agents on the same repo, or two agents collide on one claim.
+ (b) Keep it random but make the docs carry the warning and show the only safe idiom:
+        NAME=$(karr agentname)
+        karr move ID in-progress --claim "$NAME"
+        karr handoff ID --claim "$NAME" --note "..."
+     and say plainly that the name is not recoverable once lost.
+
+(b) is the smaller change and may well be the right one — but decide deliberately, and whichever way it goes, the POD example must stop teaching the shape that breaks. Also check the kanban-issues-karr-cli skill for the same pattern.
+2026-08-15 09:31 Chose direction (b): generator stays random and stateless, docs carry the warning and show only the capture-once idiom. Rationale: every handle stable enough to survive across separate karr processes (board, git identity, host) is equally shared by concurrent agents on that board, so (a) would trade a refused mismatch for an unrefusable collision; and agentname is also legitimately used to mint several distinct names. Also corrected the ticket's premise that a lost name is unrecoverable — karr show ID prints Claimed:, karr pick prints (claimed by NAME), and check_claim's refusal names the holder; the docs now point at those.
+
+Changed: lib/App/karr/Cmd/AgentName.pm (SYNOPSIS shows NAME=$(karr agentname) reused by pick and handoff; DESCRIPTION states the name is never remembered, marks the two inline forms # DON'T, names the read paths that fail silently, and records why stability was rejected); share/claude-skill.md + .claude/skills/kanban-issues-karr-cli/SKILL.md Agent-name section (both patched in place, inodes preserved); docs/superpowers/specs/2026-03-19-v0004-release-design.md scenario 1, which claimed with $(karr agentname) and then handed off under a literal different name; .claude/rules/karr-rules.md coordination list; README command table; Changes.
+
+Test: t/176-agentname-claim-continuity.t — six agentname calls do not all agree; move under A then handoff under B is refused with A named, karr show reads A back, while list --claimed-by B and log --agent B are silently empty at exit 0; and a repo-wide scan fails on any doc line that starts with karr, passes --claim/--claimed-by and substitutes $(karr agent[-]name) inline unless marked # DON'T. Verified RED on HEAD (subtest 3, 4 of 6 assertions) and GREEN after.
+
+prove -l t/ run complete in a clean worktree at HEAD plus these changes (the shared working tree's lib/App/karr/Git.pm is mid-edit for #170 and does not compile, which would have reddened the whole suite): Files=162, Tests=1100, Result: FAIL with exactly one failing file, t/67-bin-version.t tests 3 and 6 — the known bin 0.500 vs lib 0.501 discrepancy of #175, untouched here. Everything else ok, t/176 included.
+
+Committed locally as cbf3b92, no push. Staged only my own files: another worker's uncommitted Changes entry for #172, Git.pm and t/172 were left in the working tree.
+
+Filed #177 for the behavioural half deliberately left out of this ticket: once a claim has expired the takeover is completely silent and re-stamps claimed_by with no trace of the previous holder.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
