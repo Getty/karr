@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-08-15T14:49:25Z
+claimed_by: road-fear
+class: standard
+completed: 2026-08-17T01:44:07Z
+created: 2026-08-15T09:03:55Z
+id: 175
+priority: medium
+started: 2026-08-15T14:35:08Z
+status: done
+tags:
+- release
+- version
+title: 't/67 is red on main: bin/karr and bin/karr-foundation still say 0.500 while
+  lib says 0.501'
+updated: 2026-08-17T01:44:07Z
+---
+
+Commit 053b61e ("increment \$VERSION after 0.500 release") bumped lib/App/karr.pm to 0.501 but left bin/karr:7 and bin/karr-foundation:6 at 0.500, so t/67-bin-version.t has been failing on main ever since:
+
+    #   Failed test 'bin/karr $VERSION (0.500) matches App::karr (0.501)'
+    #   Failed test 'bin/karr-foundation $VERSION (0.500) matches App::karr (0.501)'
+    t/67-bin-version.t (Wstat: 512) Tests: 6 Failed: 2
+
+Verified red at 053b61e itself, i.e. it is not the fault of anything on top of it. That is the only failing file in a full `prove -l t/` run of 161 files / 1097 tests (found while verifying #171).
+
+The fix is the two version lines; the more interesting question is why the post-release bump is a manual step that can bump one of three places. Whoever takes this should decide whether the bump belongs in a single place the other two read, or whether t/67 running before the commit is enough.
+2026-08-15 14:49 Fixed in bea9b7a: bin/karr:7 and bin/karr-foundation:6 to 0.501, matching lib/App/karr.pm. Scope was the two numbers only, no new bump.
+
+Checked the tooling before hand-editing, as asked. t/67-bin-version.t is the spec: each script must carry a literal 'our $VERSION = ...;' equal to $App::karr::VERSION, and the line must stay literal because the rewrite plugins only replace an existing assignment while their insert fallback needs a 'package' statement these scripts lack. History confirms hand maintenance: the numbers were last set in 2b29403 by hand, and the automated post-release bump 053b61e touched Changes + 54 lib/ files and nothing in bin/.
+
+Left unresolved on purpose, filed as #180: by the plugin defaults the bump SHOULD have covered bin/ (:ExecFiles is a default finder of RewriteVersion/BumpVersionAfterRelease, and @Basic's ExecDir does populate it), yet it demonstrably did not. Changing dist.ini on that guess would be cargo cult, so it is a ticket, not part of this fix.
+
+Verification (prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib): t/67 reproduced red first, green after. Full suite 163 files / 1102 tests: all green EXCEPT t/148-foundation-runner-group-kill.t, which is NOT mine -- it fails identically with my change stashed, 3/3 runs. Its orphan scan does an unanchored /sleep 30/ match over every process in /proc and was tripped by another agent session's unrelated 'sleep 300'. Filed as #179; the product-behaviour subtest in that file passes, so it is the detector at fault, not karr.
+
+Committed locally only, no push. Only my two files are in the commit; lib/App/karr/Git.pm (#178) untouched.
+Review 2026-08-17 (Orchestrator): Diff gelesen, Commit vorhanden, volle Suite gruen (169 Dateien / 1141 Tests / PASS auf HEAD 192e695 mit allen 13 Commits zusammen -- jedes Ticket war bisher nur gegen seinen eigenen Stand geprueft). Integrations-Smoke gegen ein Wegwerf-Repo: create/delete publiziert die Loeschung ueber Tombstone-Refspec (Remote-Ref weg, Tombstone danach geraeumt), destroy raeumt lokal und remote vollstaendig. Freigegeben -> done.
