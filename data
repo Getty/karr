@@ -1,0 +1,79 @@
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":174,"ts":"2026-08-15T08:44:14Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":175,"ts":"2026-08-15T09:03:55Z"}
+{"action":"handoff","agent":"from-kept","detail":"review","task_id":171,"ts":"2026-08-15T09:04:50Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":176,"ts":"2026-08-15T09:06:53Z"}
+{"action":"move","agent":"lion-real","detail":"in-progress","task_id":176,"ts":"2026-08-15T09:08:11Z"}
+{"action":"handoff","agent":"self-east","detail":"review","task_id":170,"ts":"2026-08-15T09:10:03Z"}
+{"action":"move","agent":"hear-step","detail":"in-progress","task_id":172,"ts":"2026-08-15T09:11:46Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":177,"ts":"2026-08-15T09:31:18Z"}
+{"action":"handoff","agent":"lion-real","detail":"review","task_id":176,"ts":"2026-08-15T09:31:42Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":178,"ts":"2026-08-15T09:38:41Z"}
+{"action":"handoff","agent":"hear-step","detail":"review","task_id":172,"ts":"2026-08-15T09:39:03Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"backlog","task_id":174,"ts":"2026-08-15T14:33:13Z"}
+{"action":"move","agent":"ours-stop","detail":"in-progress","task_id":178,"ts":"2026-08-15T14:34:42Z"}
+{"action":"move","agent":"road-fear","detail":"in-progress","task_id":175,"ts":"2026-08-15T14:35:08Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":179,"ts":"2026-08-15T14:48:31Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":180,"ts":"2026-08-15T14:49:05Z"}
+{"action":"handoff","agent":"road-fear","detail":"review","task_id":175,"ts":"2026-08-15T14:49:25Z"}
+{"action":"move","agent":"hire-tend","detail":"in-progress","task_id":179,"ts":"2026-08-15T14:50:42Z"}
+{"action":"move","agent":"pond-wash","detail":"in-progress","task_id":177,"ts":"2026-08-15T14:51:05Z"}
+{"action":"handoff","agent":"hire-tend","detail":"review","task_id":179,"ts":"2026-08-15T15:10:09Z"}
+{"action":"move","agent":"word-what","detail":"in-progress","task_id":180,"ts":"2026-08-15T15:11:19Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":181,"ts":"2026-08-15T15:17:14Z"}
+{"action":"edit","agent":"word-what","detail":"in-progress","task_id":180,"ts":"2026-08-15T15:17:50Z"}
+{"action":"edit","agent":"word-what","detail":"in-progress","task_id":180,"ts":"2026-08-15T15:18:24Z"}
+{"action":"edit","agent":"word-what","detail":"in-progress","task_id":180,"ts":"2026-08-15T15:18:54Z"}
+{"action":"handoff","agent":"word-what","detail":"review","task_id":180,"ts":"2026-08-15T15:19:18Z"}
+{"action":"edit","agent":"ours-stop","detail":"in-progress","task_id":178,"ts":"2026-08-15T15:31:39Z"}
+{"action":"handoff","agent":"ours-stop","detail":"review","task_id":178,"ts":"2026-08-15T15:31:49Z"}
+{"action":"move","agent":"zero-neck","detail":"in-progress","task_id":173,"ts":"2026-08-15T15:33:38Z"}
+{"action":"handoff","agent":"pond-wash","detail":"review","task_id":177,"ts":"2026-08-15T15:44:21Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":182,"ts":"2026-08-15T15:57:37Z"}
+{"action":"handoff","agent":"zero-neck","detail":"review","task_id":173,"ts":"2026-08-15T15:58:14Z"}
+{"action":"move","agent":"real-tale","detail":"in-progress","task_id":181,"ts":"2026-08-15T15:59:47Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":183,"ts":"2026-08-15T16:23:47Z"}
+{"action":"handoff","agent":"real-tale","detail":"review","task_id":181,"ts":"2026-08-15T16:24:11Z"}
+{"action":"move","agent":"just-here","detail":"in-progress","task_id":182,"ts":"2026-08-16T16:49:37Z"}
+{"action":"move","agent":"lift-toll","detail":"in-progress","task_id":183,"ts":"2026-08-16T16:49:44Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":184,"ts":"2026-08-16T17:12:25Z"}
+{"action":"move","agent":"lane-wage","detail":"in-progress","task_id":184,"ts":"2026-08-16T17:16:46Z"}
+{"action":"handoff","agent":"just-here","detail":"review","task_id":182,"ts":"2026-08-16T17:29:58Z"}
+{"action":"handoff","agent":"lift-toll","detail":"review","task_id":183,"ts":"2026-08-16T17:30:04Z"}
+{"action":"handoff","agent":"lane-wage","detail":"review","task_id":184,"ts":"2026-08-16T17:30:10Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":185,"ts":"2026-08-17T01:01:40Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":186,"ts":"2026-08-17T01:02:15Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":187,"ts":"2026-08-17T01:02:21Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":188,"ts":"2026-08-17T01:02:27Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":189,"ts":"2026-08-17T01:02:33Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":190,"ts":"2026-08-17T01:02:58Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":191,"ts":"2026-08-17T01:03:04Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":192,"ts":"2026-08-17T01:03:09Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":193,"ts":"2026-08-17T01:03:16Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"backlog","task_id":186,"ts":"2026-08-17T01:03:41Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"backlog","task_id":188,"ts":"2026-08-17T01:03:47Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"backlog","task_id":190,"ts":"2026-08-17T01:03:53Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"backlog","task_id":191,"ts":"2026-08-17T01:03:59Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"backlog","task_id":193,"ts":"2026-08-17T01:04:05Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":194,"ts":"2026-08-17T01:04:11Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":195,"ts":"2026-08-17T01:04:18Z"}
+{"action":"edit","agent":"self-east","detail":"review","task_id":170,"ts":"2026-08-17T01:43:12Z"}
+{"action":"move","agent":"self-east","detail":"done","task_id":170,"ts":"2026-08-17T01:43:18Z"}
+{"action":"edit","agent":"from-kept","detail":"review","task_id":171,"ts":"2026-08-17T01:43:24Z"}
+{"action":"move","agent":"from-kept","detail":"done","task_id":171,"ts":"2026-08-17T01:43:31Z"}
+{"action":"edit","agent":"hear-step","detail":"review","task_id":172,"ts":"2026-08-17T01:43:37Z"}
+{"action":"move","agent":"hear-step","detail":"done","task_id":172,"ts":"2026-08-17T01:43:43Z"}
+{"action":"edit","agent":"zero-neck","detail":"review","task_id":173,"ts":"2026-08-17T01:43:49Z"}
+{"action":"move","agent":"zero-neck","detail":"done","task_id":173,"ts":"2026-08-17T01:43:55Z"}
+{"action":"edit","agent":"road-fear","detail":"review","task_id":175,"ts":"2026-08-17T01:44:01Z"}
+{"action":"move","agent":"road-fear","detail":"done","task_id":175,"ts":"2026-08-17T01:44:07Z"}
+{"action":"edit","agent":"lion-real","detail":"review","task_id":176,"ts":"2026-08-17T01:44:13Z"}
+{"action":"move","agent":"lion-real","detail":"done","task_id":176,"ts":"2026-08-17T01:44:19Z"}
+{"action":"edit","agent":"pond-wash","detail":"review","task_id":177,"ts":"2026-08-17T01:44:25Z"}
+{"action":"move","agent":"pond-wash","detail":"done","task_id":177,"ts":"2026-08-17T01:44:31Z"}
+{"action":"edit","agent":"ours-stop","detail":"review","task_id":178,"ts":"2026-08-17T01:44:37Z"}
+{"action":"move","agent":"ours-stop","detail":"done","task_id":178,"ts":"2026-08-17T01:44:43Z"}
+{"action":"edit","agent":"hire-tend","detail":"review","task_id":179,"ts":"2026-08-17T01:44:49Z"}
+{"action":"move","agent":"hire-tend","detail":"done","task_id":179,"ts":"2026-08-17T01:44:55Z"}
+{"action":"edit","agent":"real-tale","detail":"review","task_id":181,"ts":"2026-08-17T01:45:01Z"}
+{"action":"move","agent":"real-tale","detail":"done","task_id":181,"ts":"2026-08-17T01:45:08Z"}
+{"action":"edit","agent":"just-here","detail":"review","task_id":182,"ts":"2026-08-17T01:45:24Z"}
