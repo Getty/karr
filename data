@@ -1,0 +1,50 @@
+---
+class: standard
+completed: 2026-08-17T03:54:24Z
+created: 2026-08-17T01:02:21Z
+id: 187
+priority: high
+started: 2026-08-17T03:07:14Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: classify a run from its result JSON instead of its transcript'
+updated: 2026-08-17T03:54:24Z
+---
+
+Outcome classification currently scans agent output for error patterns. That scan exists because there was nothing better to read — and it has already misfired once (#160: an agent printing its own board tripped it on a backlog title).
+
+A claude-code agent invoked with `--output-format json` returns a structured result: error flag, error kind, turn count, duration, cost. Classify from that and keep the text scan only as a fallback for agents that produce nothing structured.
+
+Note while implementing: this claude build has no `--max-turns`, so the existing `claude_max_turns` option produces an argument the binary does not accept. Verify and fix or drop.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+#185 added a fourth outcome, 'stall', for a ticket-mode run whose own card did not move (the drain path is unchanged). It is still derived from exit code, board movement and the output scan, which cannot tell 'the agent reported it could not proceed' from 'the agent did nothing' - both come out as stall. Ticket mode is the caller that most wants the structured result this ticket is about.
+--max-turns check (the note in this ticket): the claim is WRONG for the installed build. claude 2.1.233 registers --max-turns <turns> with a numeric validator; it is only hidden from --help. Evidence: 'claude --max-turns' -> "error: option '--max-turns <turns>' argument missing"; 'claude --max-turns abc -p x' -> "argument 'abc' is invalid. must be a number"; while an actually unknown flag gives "error: unknown option '--no-such-flag-here'", and a real 'claude --max-turns 30 -p ...' run completes normally. So claude_max_turns produces an argument the binary DOES accept, and the option is left untouched - neither repaired nor dropped.
+Done. Commit 1677b29 (local, not pushed).
+
+WHAT: a run that ends its output with a claude-code result object is classified from it; the text scan is now the fallback for runs that produce none. New in Foundation/Runner.pm: _run_result (find it), _result_error (error flag + kind), _result_summary / _result_line (turns, duration, cost). Foundation::_drain_repo consults it before exit code and scan; _stall_reason names which ticket-mode stall it was; _process_repo keeps the last report in .karr.state as last_result and drops it again on a run that made none. _drain_repo now returns { outcome, exit, ticket, report }.
+
+DECISIONS (all argued in the code):
+1. Discovery: no config key, no command sniffing. Foundation reads the tail of the output. A config key is a second copy of a fact the command already carries and can go stale; sniffing --output-format json means parsing a shell template #159 says is the shell's, and it guesses wrong on the documented '... stream-json ... | jq -r' pipeline, which carries the flag and delivers no JSON.
+2. Separation: only the LAST non-empty line, and only if it parses as an object with type=result. Prose before it is irrelevant; prose containing an object cannot reach the classifier (the #160 class: a board can hold a pasted result object); anything after it makes the run unstructured again and the scan takes over. Structure is lost, never invented.
+3. #160's ordering is NOT inverted. The guard protects a run from an inference - a word search that cannot tell the agent's report from the board's contents. A field in the agent's own result object is not an inference, so a reported error ranks with the exit code, not with the scan.
+4. Error kind decides the cooldown: api_error_status -> common error 'api NNN', cools down as a rate limit always did. error_max_turns -> NOT an error at all (the agent worked, the provider answered, the task was bigger than the budget); logged, no cooldown, run judged by board movement. Anything else -> common error under its subtype name. A non-zero exit a report of *success* does not account for stays 'exit=N' (the report is claude's, the exit may be the wrapper's, and the runner's 128+SIGTERM timeout still wins).
+5. Ticket mode (point 3): STALL task#N now carries a reason - 'the agent ran out of turns' / 'the agent reported success but the card did not move' / 'no report from the agent'. No change to the attempt/auto-block arithmetic #185 established.
+6. NOT done, deliberately: the synthesized 'claude: true' command is untouched. Appending --output-format json is literally what the spec assigns to kind: claude-code (#188). Noted on #188, including that plain json kills the live streaming the 'Live output' doc promises, while stream-json --include-partial-messages ends with the same object and would need the runner to render the stream.
+
+--max-turns CHECK: the ticket's note is WRONG for the installed build. claude 2.1.233 registers --max-turns <turns> with a numeric validator and only hides it from --help. Evidence: 'claude --max-turns' -> "error: option '--max-turns <turns>' argument missing"; 'claude --max-turns abc -p x' -> "argument 'abc' is invalid. must be a number"; an actually unknown flag gives "error: unknown option '--no-such-flag-here'"; a real 'claude --max-turns 30 -p ...' run completes. So claude_max_turns is left alone - neither repaired nor dropped.
+
+RED PROOF. New file t/187-foundation-result-json.t. With the reader present but the drain unchanged: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/187-foundation-result-json.t -> 'Failed 5/10 subtests' (3, 6, 7, 9, 10), units and the fallback green:
+ - 'an agent that reports success is not reclassified by its own prose': got 'common-error', log showed 'COMMON-ERROR rate limit - agent exited 0, run discarded' for a run that reported is_error:false
+ - 'a reported provider error backs the board off': got 'idle', last_error undef (api_error_status:429 was invisible)
+ - 'a spent turn budget is not a reason to park the board': got 'common-error' on exit=1, expected 'progress'
+ - 'a ticket-mode stall says which stall it was': no STALL line at all
+ - 'the last run report is kept in .karr.state': last_result missing
+Same command after the fix: PASS.
+
+TESTS. Narrow: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/187-foundation-result-json.t -> PASS (10 subtests). All 20 foundation files -> PASS (116 tests). Full: prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/ -> Files=171, Tests=1159, Result: PASS (baseline 170/1149; +1 file, +10 subtests, nothing else moved).
+
+ONE TEST TOUCHED OUTSIDE THIS FILE: t/167-env-octet-crossing.t asserted Runner's Encoding import line as exactly qw( to_octets_for_env ). Runner now also imports from_octets and json_decode, so it went red on an over-specified regex, not on a lost property. Loosened to qw([^)]*\bto_octets_for_env\b) with the reason in place. Worth a second opinion from whoever owns the encoding tests.
+Review 2026-08-17 (Orchestrator): freigegeben. Volle Suite selbst nachgefahren: 171 Dateien, 1159 Tests, PASS. Die --max-turns-Gegenaussage unabhaengig geprueft: 'claude --max-turns' meldet 'option --max-turns <turns> argument missing', ein echtes Unbekanntes dagegen 'unknown option' -- die Option existiert, die Ticketnotiz war falsch, claude_max_turns bleibt zu Recht stehen. Feldnamen gegen ECHTE claude-Ausgabe verifiziert statt gegen synthetisches Test-JSON (ein realer -p --output-format json Lauf): type:result, is_error, subtype, num_turns, duration_ms, total_cost_usd, session_id, terminal_reason und api_error_status existieren alle, api_error_status kommt als null und wird korrekt als 'kein Fehler' gelesen. Encoding geprueft: json_decode nimmt laut POD Zeichen, from_octets liefert Zeichen -- kein Doppel-Decode. End-to-End gegen echte foundation-Laeufe, vier Faelle: (a) Agent druckt 'rate limit exceeded', meldet aber Erfolg -> RESULT success (3 turns, 4.2s, $0.0200) + praeziser Stall-Grund, KEIN Cooldown; genau die #160-Fehlerklasse, jetzt richtig. (b) api_error_status 429 -> COMMON-ERROR api 429, cooldown_until gesetzt, last_error 'api 429'. (c) error_max_turns -> RESULT max turns, STALL 'the agent ran out of turns', kein Cooldown. (d) Prosa NACH dem Objekt -> Lauf gilt wieder als unstrukturiert, Textscan uebernimmt, COMMON-ERROR rate limit. Die Lockerung an t/167 mitgeprueft: das Muster pinnt weiterhin, dass Runner to_octets_for_env importiert, und die beiden ENV-Zusicherungen darunter sind unveraendert -- die alte Fassung pinnte zusaetzlich, dass NICHTS sonst importiert wird, was keine Eigenschaft der Encoding-Grenze ist. Akzeptiert.
