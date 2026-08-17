@@ -1,0 +1,56 @@
+---
+class: standard
+completed: 2026-08-17T07:47:30Z
+created: 2026-08-17T01:02:15Z
+depends_on:
+- 185
+id: 186
+priority: high
+started: 2026-08-17T06:42:11Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: concurrent runner with three concurrency levels'
+updated: 2026-08-17T07:47:30Z
+---
+
+The runner executes one command after another. Until that changes, every concurrency setting is decoration.
+
+Three levels, tightest wins:
+- a hard machine ceiling (local config) that protects CPU and memory, not a quota
+- the operator's per-agent estimates from their prose policy — these guess where a session limit sits and are allowed to be wrong, because being wrong marks the agent failing and the fallback takes over
+- the limits a particular run declares in its chain header (`limits: {concurrent: 4, per_agent: {minimax: 2}}`)
+
+One hard rule stays: one agent per repository. `.karr.lock` is per repo and should remain so — two agents in one working tree collide. Concurrency is across repositories, never inside one. Anything else would need a git worktree per agent, which is out of scope.
+
+Design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+#188 landed the agent definitions this will need. Two things for you when you get here: (1) the availability record (agents.state, beside the config) is read-modify-write with no lock -- two overlapping ticks can lose one update, which costs one probe interval today but matters more once the runner is concurrent; App::karr::Foundation::Agents::_read_state/_mutate is the place. (2) the spec's per_agent concurrency limits name the agents defined in that config's 'agents:' section, so Agents->definitions is the list to validate them against rather than a second free-form name space.
+#190 landed the sync of refs/karr-foundation/*, but only in `karr sync`. The runner still pulls the board only: App::karr::Foundation::_sync_pull calls $git->pull and nothing else, so a tick reads whatever chain this machine happened to have. The primitives are there -- App::karr::Git::pull_foundation / push_foundation, and App::karr::Role::SyncLifecycle::sync_pull_foundation / sync_push_foundation for the retrying versions. A tick that executes a step should pull the fleet namespace before it reads the chain and push it after it has written the step state and the run log, or two machines will happily run the same step.
+Concurrent runner + three concurrency levels. Commit 5a4df4c (local, not pushed).
+
+WHAT LANDED
+- New App::karr::Foundation::Limits resolves the three levels, tightest wins: config concurrent: (machine ceiling, default 1), concurrent: on a named agent definition (operator estimate), and the chain header's limits: {concurrent, per_agent}. per_agent names are checked against Agents->definitions (#188's note); an agent this machine does not define is dropped with a --verbose note, not refused, because agent definitions are local by design. A bad number is user_error in the local config and warn+ignore from the header.
+- Foundation::run builds the plan once (_plan_repos), pulls refs/karr-foundation/* from the configured hub: before the header is read (#190's note; nothing is pushed back, this runner writes no step state), then either _run_serially (ceiling 1, and always under --dry-run) or _run_concurrent.
+- _run_concurrent forks one child per board running the whole of _process_repo. Boards that will not start an agent (disabled, no agent, unknown agent name) are handled in the parent before the first fork. The queue is scanned rather than shifted, so a board at its agent's limit does not block the ones behind it.
+- Shutdown: the parent TERMs its children and each child runs the #148/#163 path for its own board (TERM then KILL to the agent's process group, release its lock); KILL only for a child that did not manage that. A child clears the inherited sibling list and lock fds at birth and leaves through POSIX::_exit.
+- Agents::_mutate now reads and writes agents.state inside one flock on a sibling agents.state.lock.
+
+TEST COMMAND
+prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/186-foundation-concurrency.t   -> 12 subtests, PASS
+prove -l -I ~/dev/p5-git-libgit2/lib -I ~/dev/p5-git-native/lib t/                               -> 175 files, 1202 tests, PASS (was 174/1190)
+
+RED PROOF (four, each isolating one claim)
+A) concurrency: pinned the runner to one board in run(). "two agents were live together" got 1, expected 2; "fast ran both boards" got 1, expected 2 (subtests 7-8).
+B) agents.state lock: restored the old unlocked _mutate. "every update survived" got 33, expected 100 (four processes, 25 updates each).
+C) fleet pull: removed the _sync_pull_foundation call. "the chain header the fleet published won over the local ceiling of 3" got 3, expected 1.
+D) shutdown: emptied the handler's child list. "one signal took every agent and every grandchild" got 4, expected 0, and both .karr.lock files survived (got 2, expected 0).
+
+NOT DONE, DELIBERATELY
+- No chain step execution and no push of refs/karr-foundation/*. This runner only reads the header for its limits, so there is no step state or run log to publish; the push half of #190's note belongs to the ticket that lands the step executor.
+- No routing: an existing assignment is executed, none is invented.
+- Untouched: #191 question mailbox, #192 cross-board dependencies, #193 on_drained.
+- The fleet pull is a bare Git::pull_foundation, not the retrying SyncLifecycle version: Foundation's own board pull is bare too, composing that role would add a --quiet option to karr-foundation's CLI, and a failed fleet pull falls back to the local ceiling, which is the safe direction. Worth revisiting if the step executor needs the retry.
+
+DOCS: Foundation POD (new Concurrency and The hub sections, config example), Agents POD, Changes, README config block, .claude/skills/karr-foundation-cli/SKILL.md. No push, no dzil release.
+Review 2026-08-17 (Orchestrator): freigegeben, auf main committet (kein Branch diesmal). Volle Suite selbst nachgefahren: 175 Dateien, 1202 Tests, PASS. Weil Fork-, Signal- und Lock-Code genau der Bereich ist, der Tests besteht und in Produktion spukt, habe ich das von Hand gegen eine Vier-Repo-Flotte gemessen, mit exakter argv-Pruefung statt Substring: (a) mit concurrent: 3 laufen GENAU 3 Agenten gleichzeitig, jeder unter einem eigenen geforkten Elternprozess (drei verschiedene ppids), das vierte Board wartet -- die Obergrenze greift und head-of-line blockiert nicht; (b) 3 gehaltene .karr.lock, also weiterhin genau ein Agent pro Repository; (c) SIGTERM an den Foundation-Prozess laesst 0 Agenten, 0 Waisen und 0 zurueckgelassene .karr.lock zurueck -- zweimal unabhaengig reproduziert, einmal mit drei gleichzeitigen Agenten und einmal mit zwei parallel laufenden Foundations; (d) ohne 'concurrent:' faehrt jede Foundation genau einen Agenten, der Default ist also byte-gleich das serielle Verhalten von vorher. Anmerkung zur Methode: mein erster Orphan-Check meldete faelschlich einen Ueberlebenden, weil 'pgrep -f' meine EIGENE Kommandozeile traf, die den Suchstring enthielt -- exakt die Falschtreffer-Klasse aus #179. Der Befund verschwand mit exakter argv-Gleichheit; die Lehre aus #179 gilt also auch fuer den, der sie prueft.
