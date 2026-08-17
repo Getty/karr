@@ -8,6 +8,7 @@ use File::Temp qw( tempdir );
 use Cwd qw( abs_path getcwd );
 use IPC::Open3 qw( open3 );
 use Symbol qw( gensym );
+use Encode qw( encode_utf8 );
 
 use App::karr::Git;
 
@@ -43,12 +44,21 @@ sub _default_branch {
 
 sub _run_karr {
     my ( $cwd, @argv ) = @_;
+    return _run_karr_stdin( $cwd, undef, @argv );
+}
+
+# $stdin_text is what the child finds on standard input: undef for a call that
+# does not use it, a string for one that does -- the pipe is closed either way,
+# so `karr set-refs REF` without CONTENT sees a real payload or a real EOF and
+# never waits (#195).
+sub _run_karr_stdin {
+    my ( $cwd, $stdin_text, @argv ) = @_;
     my $old = getcwd();
     chdir $cwd or die "chdir $cwd: $!";
 
     my $stderr = gensym;
     my $pid = open3(
-        undef,
+        my $stdin_fh,
         my $stdout_fh,
         $stderr,
         $^X,
@@ -56,6 +66,12 @@ sub _run_karr {
         $BIN,
         @argv,
     );
+
+    if ( defined $stdin_text ) {
+        binmode $stdin_fh, ':raw';
+        print {$stdin_fh} $stdin_text;
+    }
+    close $stdin_fh;
 
     my $stdout = do { local $/; <$stdout_fh> };
     my $stderr_text = do { local $/; <$stderr> };
@@ -162,6 +178,42 @@ subtest 'set-refs and get-refs roundtrip over a remote' => sub {
     is( $get->{exit}, 0, 'get-refs exits successfully' );
     is( $get->{stdout}, "hello world\n", 'get-refs prints payload to stdout' );
     like( $get->{stderr}, qr{refs/superpowers/spec/1234\.md}, 'get-refs reports fetch/read status on stderr' );
+};
+
+subtest 'a multi-line payload goes in on stdin and comes back unchanged' => sub {
+    # Ticket #195: the only way to hand set-refs a document was to make it one
+    # shell argument. Split across arguments -- a heredoc, an unquoted paste --
+    # every newline collapsed into a space and the corrupted payload was stored
+    # without a word. Arguments still join with a space; a call with none reads
+    # stdin, which is the form that was a usage error before and so cannot have
+    # changed anyone's meaning.
+    my $repo = tempdir( CLEANUP => 1 );
+    _init_repo( $repo, 'test@example.com', 'Test User' );
+
+    my $doc = "# Design\n\nFirst paragraph.\n\nZweiter Absatz: \x{e4}\x{f6}\x{fc}.\n";
+
+    my $set = _run_karr_stdin( $repo, encode_utf8($doc), 'set-refs', 'spec/design.md' );
+    is( $set->{exit}, 0, 'set-refs takes the payload from stdin' )
+        or diag $set->{stderr};
+
+    my $get = _run_karr( $repo, 'get-refs', 'spec/design.md' );
+    is( $get->{exit}, 0, 'get-refs reads the ref back' ) or diag $get->{stderr};
+    is( $get->{stdout}, encode_utf8($doc),
+        'every newline survived, and the payload is not double-encoded' );
+
+    # The shape every existing caller uses is untouched.
+    my $args = _run_karr( $repo, 'set-refs', 'spec/words.md', 'draft', 'ready' );
+    is( $args->{exit}, 0, 'the argument form still works' ) or diag $args->{stderr};
+    is( _run_karr( $repo, 'get-refs', 'spec/words.md' )->{stdout}, "draft ready\n",
+        'arguments still join with a single space' );
+
+    # An empty stdin is a mistake, not an empty payload: storing '' for it would
+    # report success for a command that received nothing.
+    my $empty = _run_karr_stdin( $repo, '', 'set-refs', 'spec/void.md' );
+    isnt( $empty->{exit}, 0, 'an empty stdin is refused' );
+    like( $empty->{stderr}, qr/stdin/i, 'and the error names stdin' );
+    isnt( _run_karr( $repo, 'get-refs', 'spec/void.md' )->{exit},
+        0, 'nothing was stored for it' );
 };
 
 subtest 'protected namespaces are rejected from the CLI' => sub {

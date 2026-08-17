@@ -357,6 +357,7 @@ remote board state too when a remote is configured. Prefer taking a
 
 ```bash
 karr set-refs superpowers/spec/1234.md draft ready
+karr set-refs superpowers/spec/1234.md < design.md    # multi-line payload
 karr get-refs superpowers/spec/1234.md
 ```
 
@@ -364,6 +365,11 @@ Stores and retrieves helper payloads in Git refs outside protected namespaces
 such as `refs/karr/*`, branches, and tags. Use this for shared planning blobs,
 agent scratch data, or similar workflow artifacts that should sync through Git
 without becoming task cards.
+
+The arguments after the ref are joined with a single space, so they are a
+one-line payload. A document goes in on stdin instead — with no content
+argument at all, `karr set-refs REF < file` stores the file verbatim and
+`karr get-refs REF > file` gives it back unchanged.
 
 ### Activity log
 
@@ -523,7 +529,11 @@ another repository vendors `karr` instead of installing it locally.
 # 1. Publish a shared planning blob
 karr set-refs superpowers/spec/1234.md initial draft ready for review
 
-# 2. Read it back elsewhere
+# 2. Or pipe a whole document in - arguments are joined with a space and
+#    would flatten it into one line
+karr set-refs superpowers/spec/1234.md < design.md
+
+# 3. Read it back elsewhere
 karr get-refs superpowers/spec/1234.md
 ```
 

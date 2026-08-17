@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - `karr set-refs` reads its payload from standard input when no
+      CONTENT argument is given (#195). The arguments are joined
+      with a single space, which is a one-line payload, so a
+      multi-line document handed over the obvious way -- a heredoc,
+      an unquoted paste -- had every newline collapsed into a space
+      and was stored corrupted without a word; the only shape that
+      worked was `karr set-refs REF "$(cat file)"`. Now `karr
+      set-refs REF < design.md` stores the file verbatim and `karr
+      get-refs REF > design.md` gives it back unchanged. Joining
+      with newlines instead would have silently rewritten the
+      payload of every multi-word call that works today, including
+      the shape the README, the packaged skill and this command's
+      own synopsis all teach, whereas the argument-less form was a
+      usage error before, so no invocation that worked changes
+      meaning. At a terminal it stays that usage error rather than
+      becoming a command that sits there waiting, and an empty stdin
+      is refused instead of being stored as an empty payload.
+
     - `karr set-refs` can no longer write the sync machinery's own
       refs (#199). refs/karr/ and refs/karr-local/ were blocked;
       refs/karr-remote/ -- the mirror that holds, per ref, the OID

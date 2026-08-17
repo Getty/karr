@@ -364,8 +364,14 @@ non-protected refs outside `refs/karr/*`.
 
 ```bash
 karr set-refs superpowers/spec/1234.md draft ready
+karr set-refs superpowers/spec/1234.md < design.md    # multi-line payload
 karr get-refs superpowers/spec/1234.md
 ```
+
+The arguments after the ref are joined with a single space, so they are a
+one-line payload. A document goes in on stdin instead: with no content argument
+at all, `karr set-refs REF < file` stores the file verbatim and
+`karr get-refs REF > file` gives it back unchanged.
 
 Use this for:
 
