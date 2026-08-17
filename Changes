@@ -1,5 +1,55 @@
 {{$NEXT}}
 
+    - karr-foundation can now run the chain it was already storing
+      (#202). The epic that built the fleet's coordination layer left
+      the middle out: the planner's output and the program were there
+      -- steps, edges, prechecks, run logs, compare-and-swap -- and
+      nothing ever chose a ready step, checked its precheck, ran it or
+      wrote its state back. `karr-foundation chain` is that missing
+      half. It pulls refs/karr-foundation/*, takes what the plan says
+      is ready, runs a `kind: ticket` step through the target repo's
+      existing ticket mode and a `kind: shell` step as a command under
+      that repo's own lock, and writes each step and the run log back.
+
+      It is a layer above the per-repo modes rather than a fourth one
+      beside drain/single/ticket: those are configured per repository
+      and the chain is fleet-wide, so a `mode: chain` could not have
+      answered the one question the chain poses -- which step is next.
+      A chain step therefore inherits the board lock, the claim
+      discipline, the ownership guard and the run's own report from
+      the mode it calls instead of carrying a second copy of them.
+
+      It is a command and not something an ordinary tick does on the
+      side: `karr-foundation` with no arguments has meant "drain my
+      boards" for as long as it has existed, and picking the chain up
+      automatically would have changed what every cron entry in a
+      fleet does on the day somebody wrote one.
+
+      A step whose precheck no longer holds is not executed: it is
+      marked stale and the planner is recorded as wanted. The facts a
+      precheck may ask about (`ticket_status`, `ticket_blocked`,
+      `ticket_claimed`, `board_actionable`) are measured by the
+      executor, because measuring a fact means reading a board and
+      reading a board is execution -- and a fact that cannot be
+      measured stays absent, which is what makes the precheck fail
+      safe. A step that fails stops its own branch by construction and
+      nothing else; a broken agent command, a locked or disabled board
+      and a repository this machine does not have are requeues, not
+      failures. `kind: question` and `kind: plan` steps are left
+      pending on purpose and say so.
+
+      The ordering is what keeps one step to one machine: pull before
+      reading the chain, and push the claim before the work starts.
+      The compare-and-swap on a step is the second line of defence,
+      not the first -- two clones that never exchange refs would each
+      win their own local CAS.
+
+    - A `kind: shell` chain step without a command is refused when the
+      chain is written rather than discovered when it is run, the same
+      way an unreadable precheck already was: a planning mistake the
+      planner still hears about beats a step the executor cannot do
+      anything with.
+
     - karr-foundation joins the exit-code contract (#201). It had no
       central handler, so an uncaught die left perl to pick the exit
       status: a config that is not a YAML mapping exited 255, an

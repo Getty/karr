@@ -264,6 +264,10 @@ karr-foundation --status           # read-only overview of every board, no runs
 karr-foundation ask "Which registry do we publish to?" \
     --options cpan,darkpan --default cpan --policy use_default --wait 3600
 karr-foundation answer 7 darkpan
+
+# execute the fleet's planned chain out of the hub
+karr-foundation chain
+karr-foundation chain --dry-run    # what is ready, and what its precheck says
 ```
 
 A question is a file with an answer field, not a dialogue: `ask` writes it into
@@ -273,6 +277,27 @@ coordination agent — needs to know nothing about the chain. `--policy` says wh
 happens when nobody answers at all: `block` (the default: wait), `use_default`
 (the `--default` becomes the answer once `--wait` has passed) or
 `escalate_to_ai`. `--status` lists the open mailbox.
+
+`karr-foundation chain` is the other half of "the AI is the compiler, the chain
+is the program, karr-foundation is the VM": it takes the steps the plan in the
+hub says are ready, checks each precheck against facts it measures off the
+boards, runs a `kind: ticket` step through the target repo's **ticket mode** and
+a `kind: shell` step as a command under that repo's own lock, and writes each
+step's state and the run log back. It is a layer *above* the per-repo modes, not
+a fourth one beside `drain`/`single`/`ticket` — those are configured per
+repository and the chain is fleet-wide, so a chain step inherits the lock, the
+claim and the ownership guard from the mode it calls instead of duplicating
+them. It is a command rather than something a plain tick does on the side, so
+writing a chain never changes what an existing cron entry does.
+
+A step whose precheck no longer holds is **not executed**: it is marked stale
+and the planner is recorded as wanted (no planner runs from here yet). A step
+that fails stops its own branch and nothing else — steps only become ready when
+everything they need is `done` — while a broken agent command, a locked or
+disabled board, and a repository this machine does not have are requeues rather
+than failures. Two machines are kept off one step by the order rather than by
+the compare-and-swap alone: pull before reading the chain, push the claim before
+the work starts. Full detail: `perldoc App::karr::Foundation::Executor`.
 
 It reads `~/.config/karr-foundation/config.yml` (or `--config`):
 

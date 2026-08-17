@@ -186,6 +186,13 @@ sub _validate_step {
     user_error("Chain step '$id' (ticket) needs a ticket id")
       unless defined $s{ticket} && length "$s{ticket}";
   }
+  # And a shell step needs something to run, for the same reason a precheck is
+  # parsed here rather than at execution time: a planning mistake the planner
+  # still hears about beats a step the executor later cannot do anything with.
+  if ( $kind eq 'shell' ) {
+    user_error("Chain step '$id' (shell) needs a command")
+      unless defined $s{command} && length "$s{command}";
+  }
 
   # YAML writes a one-element list as a scalar often enough that refusing one
   # would be pedantry; the board's frontmatter accepts both spellings too.

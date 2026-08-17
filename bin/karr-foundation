@@ -14,8 +14,8 @@ use App::karr::Error qw( is_usage_error );
 enable_std_utf8();
 decode_argv();
 
-# What is left of @ARGV after option parsing is the mailbox command, if any
-# (`ask`, `answer`) -- see App::karr::Foundation::run. MooX::Options is
+# What is left of @ARGV after option parsing is the hub command, if any
+# (`ask`, `answer`, `chain`) -- see App::karr::Foundation::run. MooX::Options is
 # configured with protect_argv => 0 in that class, which is what makes the
 # leftovers visible here.
 my $exit;
@@ -66,6 +66,9 @@ exit $exit;
     karr-foundation ask "Which registry?" --options cpan,darkpan --wait 3600
     karr-foundation answer 7 darkpan
 
+    # Execute the planned chain in the fleet hub
+    karr-foundation chain
+
 =description
 
 F<karr-foundation> reads a config file listing karr board directories, detects
@@ -84,11 +87,15 @@ exit-code contract as F<karr> (see F<docs/adr/0002-exit-code-contract.md>):
 =over 4
 
 =item * B<0> — the tick finished: boards were drained, an overview was
-printed, or a question was asked or answered.
+printed, a question was asked or answered, or the chain was worked through. A
+chain step that B<failed> does not change this: that is a statement about the
+plan, not about this binary.
 
 =item * B<1> — runtime failure: no repository could be discovered, the config
-file does not parse or is not a mapping, a mailbox command found no hub, or the
-question being answered already had an answer.
+file does not parse or is not a mapping, a hub command found no hub, the
+question being answered already had an answer, or C<chain> could not fetch
+C<refs/karr-foundation/*> and refused to run a step another machine may already
+be running.
 
 =item * B<2> — usage error: an unknown command, an unknown option, an invalid
 option value, or a missing or surplus positional argument.

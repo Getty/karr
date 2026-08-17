@@ -13,6 +13,7 @@ requires 'Scalar::Util';
 requires 'IO::Select';
 requires 'Errno';
 requires 'POSIX';
+requires 'Sys::Hostname';
 requires 'Time::HiRes';
 requires 'Git::Native', '0.005';
 requires 'Git::Libgit2', '0.007';

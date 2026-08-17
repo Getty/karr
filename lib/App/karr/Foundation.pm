@@ -4,7 +4,7 @@ package App::karr::Foundation;
 our $VERSION = '0.501';
 use Moo;
 use MooX::Options (
-  usage_string => 'USAGE: karr-foundation [ask QUESTION | answer ID ANSWER] [options]',
+  usage_string => 'USAGE: karr-foundation [ask QUESTION | answer ID ANSWER | chain] [options]',
   # The mailbox commands (#191) are positional, and MooX::Options hands the
   # leftovers back in @ARGV only when it is allowed to consume the options out
   # of it. Nothing else in this class reads @ARGV, and F<bin/karr-foundation>
@@ -29,6 +29,7 @@ use App::karr::Foundation::Overview;
 use App::karr::Foundation::Picker;
 use App::karr::Foundation::Agents;
 use App::karr::Foundation::ChainStore;
+use App::karr::Foundation::Executor;
 use App::karr::Foundation::Questions;
 use App::karr::Foundation::Limits;
 
@@ -294,6 +295,21 @@ sub _build__chain_store {
   return App::karr::Foundation::ChainStore->new( git => $git );
 }
 
+# The chain executor (#202): the layer above the repo modes that takes a ready
+# step, checks its precheck, runs it through one of those modes and writes its
+# state back. Built lazily and only reached by the `chain` command -- an
+# ordinary tick drains boards and executes no step, because a cron entry
+# written before the fleet had a chain must not start doing something else the
+# day somebody writes one.
+has _executor => (
+  is => 'lazy',
+);
+
+sub _build__executor {
+  my ( $self ) = @_;
+  return App::karr::Foundation::Executor->new( foundation => $self );
+}
+
 # The question mailbox, in the same repository and for the same reason: a
 # question is coordination, so it lives where every machine can see it (#191).
 has _questions => (
@@ -364,6 +380,9 @@ sub _take_lock_fh {
 
     # Read-only overview of every board (no agent runs)
     karr-foundation --status
+
+    # Execute the fleet's planned chain out of the hub
+    karr-foundation chain
 
 =description
 
@@ -557,9 +576,41 @@ B<The hub.> C<hub:> names the one repository of a fleet that carries
 C<refs/karr-foundation/*> -- the chain of planned steps and the run logs
 (L<App::karr::Foundation::ChainStore>). That namespace is pulled once at the
 start of a run, before anything reads it, so the limits a tick applies are the
-fleet's current ones and not whatever this machine last happened to fetch.
-Nothing is pushed back: this run reads the chain header and writes no step
-state.
+fleet's current ones and not whatever this machine last happened to fetch. An
+ordinary tick pushes nothing back: it reads the chain header for those limits
+and writes no step state. Executing the chain is C<karr-foundation chain>, a
+command of its own (see below), and that one does write and does push.
+
+B<Running the chain.> C<karr-foundation chain> is the VM of the design's
+"the AI is the compiler, the chain is the program": it takes the steps the plan
+says are ready, checks each precheck against facts it measures, runs
+C<kind: ticket> steps through B<ticket mode> in the target repository and
+C<kind: shell> steps as a command under that repository's own lock, and writes
+each step's state and the run log back to the hub.
+
+It is deliberately B<not> a fourth C<mode:> beside C<drain>, C<single> and
+C<ticket>. Those are per-repository settings and the chain is fleet-wide, so a
+C<mode: chain> in a F<.karr> file could not answer the only question the chain
+poses -- which step of the DAG is next. The executor is therefore the caller of
+those modes, and a chain step inherits the board lock, the claim discipline, the
+ownership guard and the run's own report from the mode it calls rather than
+carrying a second copy of them.
+
+It is also a command rather than something an ordinary tick does on the side:
+C<karr-foundation> with no arguments has meant "drain the boards in my config"
+for as long as it has existed, and picking the chain up automatically would have
+changed what every cron entry in a fleet does on the day somebody wrote one.
+
+  karr-foundation chain              # execute what is ready
+  karr-foundation chain --dry-run    # list the ready set and its verdicts
+
+With no C<hub:> configured this is an error and not a quiet no-op, exactly as
+the mailbox commands are: the chain is fleet state, and executing a plan nobody
+else can see is not a smaller version of executing the fleet's plan. With a hub
+but no chain written, it says so and returns C<0> -- a fleet nobody has planned
+for yet is a normal state, not a failure. The full argument, the fact vocabulary
+a precheck may use and what a failed step does to the DAG are in
+L<App::karr::Foundation::Executor>.
 
 B<The question mailbox.> A question is a file with an answer field, not a
 dialogue, which is what removes the special case for "a human happens to be
@@ -837,9 +888,10 @@ sub run {
     my $command = shift @argv;
     return $self->_run_ask(@argv)    if $command eq 'ask';
     return $self->_run_answer(@argv) if $command eq 'answer';
+    return $self->_run_chain(@argv)  if $command eq 'chain';
     # "Unknown command:" is the marker App::karr::Error::is_usage_error keys on,
     # so a typo here exits 2 (you called this wrong) and not 1 (ADR 0002).
-    user_error("Unknown command: '$command' (expected: answer, ask)");
+    user_error("Unknown command: '$command' (expected: answer, ask, chain)");
   }
 
   my @repos = $self->_discover_repos;
@@ -982,6 +1034,20 @@ sub _run_ask {
   printf "  nobody answers: %s%s\n", $q->{policy},
     ( defined $q->{deadline} ? " after $q->{deadline}" : '' );
   return 0;
+}
+
+# The chain (#202). A command of its own, not something an ordinary tick picks
+# up on the side: `karr-foundation` with no arguments has meant "drain the
+# boards in my config" since it existed, and the day somebody wrote a chain into
+# the hub every cron entry in the fleet would silently have started doing
+# something else. Opting into execution is the rule agent execution itself
+# follows here, and the chain is a bigger opt-in, not a smaller one.
+sub _run_chain {
+  my ( $self, @argv ) = @_;
+  user_error( 'Usage: karr-foundation chain [--dry-run] [--verbose] '
+    . "\x{2014} the chain takes no arguments; what runs is what the plan in "
+    . 'the hub says is ready' ) if @argv;
+  return $self->_executor->run;
 }
 
 sub _run_answer {
@@ -1273,10 +1339,11 @@ sub _handle_shutdown_signal {
     exit App::karr::Foundation->new_with_options->run(@ARGV);
 
 The single entry point, invoked by F<bin/karr-foundation>. What is left of
-C<@ARGV> after option parsing is a mailbox command and is answered first:
-C<ask> and C<answer> (see "The question mailbox" above) work on the hub alone,
-discover no board and start no agent, and an argument that is neither is a user
-error rather than a silent drain. With no arguments -- how cron invokes it --
+C<@ARGV> after option parsing is a hub command and is answered first: C<ask> and
+C<answer> (see "The question mailbox" above) work on the hub alone, discover no
+board and start no agent, and C<chain> (see "Running the chain" above) executes
+the fleet's plan through L<App::karr::Foundation::Executor>. An argument that is
+none of the three is a user error rather than a silent drain. With no arguments -- how cron invokes it --
 it is one pass over every configured repo, then returns -- there is no internal loop; running
 periodically is left to cron/systemd-timer/an external C<while> loop, per
 L</DESCRIPTION>. Returns C<1> (a process exit code, not an exception) when
@@ -1379,8 +1446,20 @@ sub _is_karr_board_root {
 # Per-repo processing
 # ---------------------------------------------------------------------------
 
+# One pass over one repository. Returns the drain's own result hash, or
+# { outcome => 'skipped', reason => ... } for a repo this tick did not take up
+# at all -- a shape the serial and concurrent runners ignore and the chain
+# executor (#202) reads: a step whose board was locked, disabled, in cooldown or
+# on a failing agent is a step to try again, not a step that failed.
+#
+# %opt is the chain's half of the contract, and only the chain passes it:
+# `ticket` names the card this run is about (which forces ticket mode -- the
+# plan has already decided what this run is, whatever the .karr file's `mode`
+# says, and a chain step that named a card is by construction work to do, so it
+# needs no board-movement check to justify starting) and `timeout` is the
+# step's own budget for it.
 sub _process_repo {
-  my ( $self, $repo ) = @_;
+  my ( $self, $repo, %opt ) = @_;
 
   # Check if repo has karr board (either .karr file or karr refs). Resolve the
   # ref via libgit2 so packed refs and worktrees are handled — $repo is an
@@ -1389,7 +1468,7 @@ sub _process_repo {
               || App::karr::Git->new( dir => "$repo" )->ref_exists('refs/karr/config');
   unless ( $has_karr ) {
     $self->_say_verbose("skip $repo \x{2014} no karr board");
-    return;
+    return { outcome => 'skipped', reason => 'no karr board' };
   }
 
   # Board-level disable flag, checked FIRST: before the agent command is even
@@ -1397,7 +1476,8 @@ sub _process_repo {
   # no drain, no auto-block, no agent run — so the flag wins over --command,
   # the config's default_command, the .karr command and 'claude: true'. It is
   # deliberately absolute: --force does not override it.
-  return if $self->_skip_disabled( $repo );
+  return { outcome => 'skipped', reason => 'the board is disabled' }
+    if $self->_skip_disabled( $repo );
 
   my $karr = $self->_load_karr( $repo );
 
@@ -1407,20 +1487,21 @@ sub _process_repo {
   my ( $cmd, $agent ) = $self->_resolve_agent( $repo, $karr );
   unless ( defined $cmd ) {
     $self->_say_verbose("skip $repo \x{2014} no agent configured (see --status)");
-    return;
+    return { outcome => 'skipped', reason => 'no agent configured' };
   }
 
   # Check lock — skip if another instance is running
   if ( $self->_lock_held( $repo ) ) {
     $self->_say_verbose("skip $repo \x{2014} locked by running agent");
-    return;
+    return { outcome => 'skipped', reason => 'the board lock is held' };
   }
 
   # Respect exponential cooldown left by a previous common-error run
   if ( $self->_cooldown_active( $repo ) ) {
     my $until = $self->_state_get( $repo, 'cooldown_until' ) // 0;
     $self->_say_verbose( "skip $repo \x{2014} in cooldown for " . ( $until - time ) . "s" );
-    return;
+    return { outcome => 'skipped',
+      reason => 'the board is in cooldown for ' . ( $until - time ) . 's' };
   }
 
   # And the agent's own availability, which is the same idea one level up. The
@@ -1436,7 +1517,8 @@ sub _process_repo {
     $self->_say_verbose( "skip $repo \x{2014} agent '$agent->{name}' failing"
       . ( defined $av->{last_error} ? " ($av->{last_error})" : '' )
       . ", next attempt in ${wait}s" );
-    return;
+    return { outcome => 'skipped',
+      reason => "agent '$agent->{name}' is failing, next attempt in ${wait}s" };
   }
 
   # Pull latest refs. A pull that refuses -- the wholesale-wipe guard, the
@@ -1457,15 +1539,20 @@ sub _process_repo {
     warn "karr-foundation: pull error in $repo: $_\n";
     0;
   };
-  return unless $pull_ok;
+  return { outcome => 'skipped', reason => 'the board could not be pulled' }
+    unless $pull_ok;
 
   # The pull may have just brought the disable flag in from another machine —
   # re-check before committing to a drain, so a board disabled elsewhere is
   # never drained even once by this host.
-  return if $self->_skip_disabled( $repo );
+  return { outcome => 'skipped', reason => 'the board is disabled' }
+    if $self->_skip_disabled( $repo );
 
-  # Decide whether to start a drain at all
-  my $should_run = $self->force;
+  # Decide whether to start a drain at all. A chain step naming a card is the
+  # third answer beside --force and the board's own movement: the plan already
+  # decided this run has something to do, and asking the board again could only
+  # disagree with it.
+  my $should_run = $self->force || defined $opt{ticket};
   unless ( $should_run ) {
     my $prev_hash = $self->_state_get( $repo, 'hash' ) // '';
     my $curr_hash = $self->_ref_hash( $repo ) // '';
@@ -1477,7 +1564,8 @@ sub _process_repo {
 
   unless ( $should_run ) {
     $self->_say_verbose("skip $repo \x{2014} no board change and no actionable tasks");
-    return;
+    return { outcome => 'skipped',
+      reason => 'no board change and no actionable tasks' };
   }
 
   # Acquire lock — flock-based now, so two ticks that overlap race on the
@@ -1486,10 +1574,10 @@ sub _process_repo {
   # on instead of spewing over the existing lock.
   unless ( $self->_acquire_lock( $repo ) ) {
     $self->_say_verbose("skip $repo \x{2014} lock contended (another tick holds it)");
-    return;
+    return { outcome => 'skipped', reason => 'the board lock is contended' };
   }
   my $result = try {
-    $self->_drain_repo( $repo, $karr, $cmd, $agent );
+    $self->_drain_repo( $repo, $karr, $cmd, $agent, %opt );
   } catch {
     warn "karr-foundation: drain error in $repo: $_\n";
     { outcome => 'error', exit => 1 };
@@ -1552,6 +1640,8 @@ sub _process_repo {
   }
 
   $self->_state_set( $repo, %state );
+
+  return $result;
 }
 
 # ---------------------------------------------------------------------------
@@ -1908,12 +1998,18 @@ sub _stuck_tasks {
 #   report => {...}, error => STR } (ticket is undef outside mode: ticket;
 # error is set only on a common-error outcome).
 # $agent is the named agent definition behind $cmd, or undef.
+#
+# %opt is the chain executor's (#202): `ticket` is the card the plan named --
+# which makes this a ticket-mode run whatever the .karr file says, because a
+# step that names a card and a repo configured to drain cannot both be obeyed
+# and the plan is the more specific statement -- and `timeout` is the step's own
+# budget, which beats the board's default for the same reason.
 sub _drain_repo {
-  my ( $self, $repo, $karr, $cmd, $agent ) = @_;
-  my $max_runtime  = $karr->{max_runtime}    // 1800;
+  my ( $self, $repo, $karr, $cmd, $agent, %opt ) = @_;
+  my $max_runtime  = $opt{timeout} // $karr->{max_runtime} // 1800;
   my $max_attempts = $karr->{max_attempts}   // 2;
   my $max_iter     = $karr->{max_iterations} // 50;
-  my $mode         = $self->_run_mode( $karr );
+  my $mode         = defined $opt{ticket} ? 'ticket' : $self->_run_mode( $karr );
   my $drain        = $mode eq 'drain' ? 1 : 0;
   my $patterns     = $self->_error_patterns( $karr );
 
@@ -1928,7 +2024,7 @@ sub _drain_repo {
   # run without a card.
   my $ticket;
   if ( $mode eq 'ticket' ) {
-    $ticket = $self->_select_ticket( $repo );
+    $ticket = defined $opt{ticket} ? $opt{ticket} : $self->_select_ticket( $repo );
     unless ( defined $ticket ) {
       $self->_append_log( $repo, "TICKET none assignable \x{2014} no agent run" );
       return { outcome => 'idle', exit => 0, ticket => undef };
@@ -1975,7 +2071,8 @@ sub _drain_repo {
     last if $iter >= $max_iter;
 
     my $hash_before = $self->_ref_hash( $repo ) // '';
-    my ( $exit, $output ) = $self->_run_command( $repo, $karr, $cmd, $ticket, $agent );
+    my ( $exit, $output ) = $self->_run_command( $repo, $karr, $cmd, $ticket, $agent,
+      ( defined $opt{timeout} ? ( max_runtime => $opt{timeout} ) : () ) );
     $last_exit = $exit;
     $first     = 0;
     $iter++;
