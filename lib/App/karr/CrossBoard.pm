@@ -308,6 +308,28 @@ part of a fleet at all.
 
 =cut
 
+has config_data => (
+    is        => 'ro',
+    predicate => 1,
+);
+
+=attr config_data
+
+The same fleet config, B<already parsed>, for a caller that has read it
+itself -- L<App::karr::Foundation> holds it as it runs, and its chain executor
+resolves cross-board links out of that (L<App::karr::Foundation::Executor>).
+Supplied, it wins over L</config_file> and nothing on disk is read.
+
+It is not a second source: it is the one source, read once. Handing the
+directories over instead would be, because C<dirs:>, C<scan:> and the basename
+match that turns them into a board name are one rule and belong in one place.
+Reading the file again here would be a second answer where the caller's own
+copy came from somewhere else -- C<--config>, or a foundation constructed with
+its configuration in hand -- and the two would then disagree about which fleet
+this machine is part of.
+
+=cut
+
 has _candidates => ( is => 'lazy' );
 
 has _stores => (
@@ -317,6 +339,11 @@ has _stores => (
 
 sub _config_data {
     my ($self) = @_;
+
+    if ( $self->has_config_data ) {
+        my $data = $self->config_data;
+        return ref $data eq 'HASH' ? $data : {};
+    }
 
     my $file = $self->config_file;
     my $explicit = $self->has_config_file && defined $file && length $file;

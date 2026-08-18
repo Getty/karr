@@ -1,5 +1,43 @@
 {{$NEXT}}
 
+    - A chain step can wait for a card in ANOTHER repository (#209,
+      the open half of #192). Cross-board links existed as a tag on a
+      card and as `karr needs` for a person to run, and nothing in
+      karr-foundation's chain executor could see one: no precheck
+      could be about a card on another board, so a plan could not say
+      "not until the escalation over there is closed".
+
+      There is now a fact for it, measured where every other fact is:
+      `ticket_links`, off the card the step names, alongside
+      `ticket_status`, `ticket_blocked` and `ticket_claimed`. It is
+      `settled` when every `needs:BOARD#ID` link on the card is in one
+      of the FAR board's own terminal statuses (#67, never a hardcoded
+      `done`) -- and for a card carrying no link at all, which is what
+      keeps a precheck holding after `karr needs --resolve` has
+      settled the link and dropped the tag. Otherwise it reports the
+      first unsettled link in tag order: `open` for a far card still
+      being worked on, `missing` for one the far board does not have,
+      because unblocking on the strength of a ticket nobody can find
+      is the silent wrong answer.
+
+      A link naming a board this machine does not hold makes the fact
+      ABSENT rather than guessed at, and an absent fact makes a
+      precheck not hold whichever operator it uses: the step goes
+      stale, the planner hears about it, and the machine that does
+      have that board is the one that runs it. The directories come
+      from the fleet config this run already read (`dirs:` outright,
+      `scan:` as children, matched on the directory basename), handed
+      to App::karr::CrossBoard parsed -- so `--config` relocates it
+      here too and no second file describing the same fleet appears.
+
+      The executor MEASURES and does not resolve: nothing is fetched,
+      the far board is read as it stands in that working copy, and a
+      settled link does not lift the `blocked` flag or drop the tag on
+      the near card. The link is the fact and `blocked` is a decision
+      somebody took on purpose; lifting it is still `karr needs
+      --resolve`, and an executor that did it unasked would be
+      stricter than the board it coordinates.
+
     - A push to a remote whose push URL is a local path no longer
       publishes the board to the fetch URL and calls it a success
       (#208). libgit2's local transport pushes by opening the remote's

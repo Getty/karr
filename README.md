@@ -487,14 +487,27 @@ ignored. The four kinds:
 
 A `precheck` is the condition the planner assumed, in the grammar
 `<fact> == <value>` (or `!=`). The facts are `board_actionable`,
-`ticket_status`, `ticket_blocked`, `ticket_claimed` and — for a question step
-only, measured off the mailbox rather than a board — `question_state`
-(`answered`, `open` or `overdue`). A fact that cannot be measured is
-**absent**: a repository this machine does not have, a card that is not on the
-board, a question step nothing in the mailbox names. An absent fact makes the
-precheck not hold whichever operator it uses — every uncertainty falls to the
-side that costs a planning round rather than the side that runs the wrong
-thing.
+`ticket_status`, `ticket_blocked`, `ticket_claimed`, `ticket_links` and — for a
+question step only, measured off the mailbox rather than a board —
+`question_state` (`answered`, `open` or `overdue`). A fact that cannot be
+measured is **absent**: a repository this machine does not have, a card that is
+not on the board, a question step nothing in the mailbox names. An absent fact
+makes the precheck not hold whichever operator it uses — every uncertainty
+falls to the side that costs a planning round rather than the side that runs
+the wrong thing.
+
+`ticket_links` is the one measured off **another** board: the cross-board links
+(`needs:BOARD#ID`) the step's card carries. It is `settled` when every one of
+them is in one of the *far* board's own terminal statuses — and for a card
+carrying no link at all, so a precheck keeps holding once `karr needs
+--resolve` has settled the link and dropped the tag. Otherwise it reports the
+first unsettled link in tag order, `open` or `missing`; a far card that does
+not exist settles nothing. A link naming a board this machine does not hold
+makes the fact absent, so the step goes stale here and the machine that has
+that board runs it. The far board is read as it stands in that working copy —
+nothing is fetched — and the block on the near card is **not** lifted when the
+last link settles: the link is the fact, `blocked` is the decision, and lifting
+it is still `karr needs --resolve`.
 
 The question a chain waits on is asked by whoever wrote the plan, not by the
 step — a step that asked its own question would have to carry the question text,

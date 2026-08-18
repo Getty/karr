@@ -9,6 +9,8 @@ use Try::Tiny;
 use Path::Tiny;
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Git;
+use App::karr::BoardStore;
+use App::karr::CrossBoard;
 
 =head1 SYNOPSIS
 
@@ -84,6 +86,7 @@ comes off B<one> board read:
     ticket_status       the status of the step's own ticket
     ticket_blocked      yes | no
     ticket_claimed      the claim name on it, or the empty string
+    ticket_links        settled | open | missing
     question_state      answered | open | overdue
 
 C<question_state> is the one that is not measured off a board at all: it comes
@@ -92,11 +95,78 @@ because that is the only kind that has a question. Measuring it for every step
 would buy a fact no other kind's precheck could be about and pay a mailbox read
 per step for it.
 
+C<ticket_links> is measured off B<another> board -- the one the card's
+cross-board links name (L</A cross-board link is a fact about another board>).
+It comes off the same card as the other three C<ticket_*> facts and on the same
+condition, which is that the step B<names a card that is on the board>, not
+that its kind is C<ticket>: a C<kind: shell> step naming the card its build
+belongs to gets the same four facts, and gating one of them on the kind would
+mean two rules for one card read. What it costs is bounded by the card and not
+by the kind -- a card with no C<< needs: >> tag reaches no other repository at
+all, which is why the argument that keeps C<question_state> behind its kind
+does not apply to it.
+
 A fact that cannot be measured -- a repository that is not a board, a ticket
 that is not on it, a question step nothing in the mailbox names -- is B<absent>,
 and an absent fact makes a precheck not hold whichever operator it uses
 (L<App::karr::Foundation::ChainStore/precheck_holds>). That is the direction
 that costs a planning round rather than whatever the step would have done.
+
+=head2 A cross-board link is a fact about another board
+
+A card can wait on a card in a B<different repository>: C<< needs:BOARD#ID >>,
+the link L<App::karr::CrossBoard> puts on it (#192). C<ticket_links> is what
+the chain can ask about that, in one word for the whole card:
+
+=over 4
+
+=item * C<settled> -- every link the card carries is in one of the B<far>
+board's own terminal statuses, never a hardcoded C<done> (#67). A card carrying
+B<no> link is settled too: nothing elsewhere is holding it, exactly as
+C<ticket_blocked> says C<no> for a card nobody blocked. That is also what keeps
+a precheck working after C<< karr needs --resolve >> has done its job and
+dropped the tag -- the reading where an empty card had no answer would make the
+successful resolution of the link the thing that stops the step for ever.
+
+=item * C<open> -- a far card exists and is not finished.
+
+=item * C<missing> -- a link names a card the far board does not have. Not
+C<settled>: unblocking on the strength of a ticket nobody can find is the
+silent wrong answer, which karr already declines for C<depends_on> (#123) and
+declines here too (#192, decision 5). Where the card carries several links the
+value is the first unsettled one in tag order, and C<settled> only when every
+one of them is -- the same order in which they release the card, and the same
+rule C<question_state> follows.
+
+=back
+
+The fact is B<absent> as soon as one link names a board this machine cannot
+place: an unknown name, or a directory holding no board. #192 treats that as an
+answer rather than an error and so does this -- but the answer is "not
+measurable here", so the precheck does not hold, the step goes stale and the
+planner hears about it. A machine holding four repositories of a six-repository
+fleet must not run a step on the strength of a board it never read, and the
+other machine, the one that does have it, measures the fact and runs the step.
+
+Where the directories come from is B<not> a decision this class takes twice:
+the fleet config this run already read (C<dirs:> outright, C<scan:> as
+children, matched on the directory basename) is handed to
+L<App::karr::CrossBoard/config_data> as it stands, so C<--config> relocates it
+here as well and a second local file describing the same fleet never appears --
+the argument #189 used for resolving the hub exactly once.
+
+What this does B<not> do is resolve anything. The far board is read exactly as
+it stands in that working copy -- nothing is fetched, because pulling somebody
+else's repository from inside a tick is transport nobody asked for -- and the
+C<blocked> flag on the near card is left alone even when every link has
+settled. B<The link is the fact, C<blocked> is the decision> (#192, decision
+4): somebody set it on purpose, C<< karr needs --resolve >> is what lifts it,
+and an executor that lifted it unasked would be stricter than the board it
+coordinates -- the line C<Picker> holds by not filtering (#185) and C<pick> by
+handing the card over with a warning (#123). C<verified>, the back-reference
+half of the link, is not part of the fact either: C<< --resolve >> settles on
+C<settled> alone, and a second opinion here would mean a far card whose author
+forgot the C<< escalated-from: >> tag could never settle anything.
 
 =head2 What a failure does to the DAG
 
@@ -195,11 +265,14 @@ are for.
 C<kind: plan> steps are recognised and B<left pending>, with the planner
 recorded as wanted and a line saying so -- the planner they want is the same
 coordination agent C<escalate_to_ai> asks for, and the note above about it not
-existing yet is the whole of the answer here too. Resolving cross-board links
-automatically (L<App::karr::CrossBoard>) is the other seam left open. Both hang
-off the dispatch on C<kind> at the top of one step and off L</facts_for>'s
-table, which is why each of them is one place rather than a thread through this
-class.
+existing yet is the whole of the answer here too. It hangs off the dispatch on
+C<kind> at the top of one step, which is why it is one place rather than a
+thread through this class.
+
+Cross-board links are B<measured and not resolved>, and that is a decision
+rather than the seam it used to be: C<ticket_links> tells a precheck what the
+far cards are doing, and lifting the block stays with the person or the command
+that took it on (L</A cross-board link is a fact about another board>).
 
 Steps are executed one at a time within a tick. Concurrency in the chain is
 across machines -- which is what the pull/claim/push ordering above buys -- and
@@ -881,7 +954,8 @@ sub _stale_reason {
 
     my $facts = $executor->facts_for($step);
     # { board_actionable => 'yes', ticket_status => 'todo',
-    #   ticket_blocked => 'no', ticket_claimed => '' }
+    #   ticket_blocked => 'no', ticket_claimed => '',
+    #   ticket_links => 'settled' }
     # { question_state => 'open' }                     # a kind: question step
 
 Measures the facts a step's precheck may ask about, off the board the step names
@@ -903,6 +977,14 @@ the fact is about the question and the policy is a separate thing the plan can
 read. Where a step has more than one question the fact reports the lowest-id one
 nobody has answered, and C<answered> only when every one of them has been, which
 is the same order in which they release the step.
+
+C<ticket_links> is the state of the card's cross-board links, and the only fact
+here measured off a repository the step does not name. It is a report and never
+a repair: nothing is fetched, nothing on either board is written, and a settled
+link does not lift the C<blocked> flag on the near card. See
+L</A cross-board link is a fact about another board> for what each value means,
+for why a card with no links is C<settled>, and for why a link this machine
+cannot place takes the fact away rather than defaulting it.
 
 =cut
 
@@ -933,6 +1015,9 @@ sub facts_for {
       $facts{ticket_status}  = $card->{status} // '';
       $facts{ticket_blocked} = $card->{blocked} ? 'yes' : 'no';
       $facts{ticket_claimed} = defined $card->{claimed_by} ? $card->{claimed_by} : '';
+
+      my $links = $self->_links_state( $repo, $step->{ticket} );
+      $facts{ticket_links} = $links if defined $links;
     }
   }
   return \%facts;
@@ -951,6 +1036,59 @@ sub _question_state {
     return $r->{state} if $r->{state} ne 'answered';
   }
   return 'answered';
+}
+
+# The far boards, out of the configuration this run has already read -- see
+# L</A cross-board link is a fact about another board> for why that file and no
+# other. Built once per executor, so a chain whose steps wait on the same board
+# opens it once (App::karr::CrossBoard caches the stores it opens).
+has _fleet => ( is => 'lazy' );
+
+sub _build__fleet {
+  my ( $self ) = @_;
+  return App::karr::CrossBoard->new(
+    config_data => $self->foundation->_config_data );
+}
+
+# One value for a card that may carry several cross-board links, and undef --
+# an absent fact -- where the question cannot be answered on this machine at
+# all. A card carrying no link is `settled`: nothing elsewhere is holding it,
+# which is the same shape ticket_blocked has for a card nobody blocked, and
+# the alternative would make the precheck stop holding the moment
+# `karr needs --resolve` succeeded and dropped the tag.
+sub _links_state {
+  my ( $self, $repo, $id ) = @_;
+
+  # The card itself, not the summary %states carries: the link lives in `tags`
+  # (#192, decision 3), and one ref read for the step's own card is the cheaper
+  # half of the trade against widening a structure three other callers share
+  # for one of them.
+  my $refs = try {
+    my $store = App::karr::BoardStore->new(
+      git => App::karr::Git->new( dir => "$repo" ) );
+    my $card = $store->find_task( $id );
+    $card ? [ App::karr::CrossBoard->needs_of( $card ) ] : undef;
+  } catch { undef };
+  return undef unless $refs;
+  return 'settled' unless @$refs;
+
+  my $unsettled;
+  for my $ref ( @$refs ) {
+    my $state = try { $self->_fleet->link_state( $ref ) } catch { undef };
+    my $what = ref $state eq 'HASH' ? $state->{state} : undef;
+
+    # A board this machine cannot place, or a directory that holds no board:
+    # the fact is absent for EVERY link on the card, not merely for this one.
+    # "Is anything elsewhere still holding this card" has no answer here once
+    # one of the answers is missing, and reporting the rest would let a
+    # precheck hold on the strength of a board nobody read.
+    return undef unless defined $what;
+    return undef if $what eq 'unknown-board' || $what eq 'no-board';
+
+    next if $what eq 'settled';
+    $unsettled //= $what;    # `open` or `missing`, first in tag order
+  }
+  return $unsettled // 'settled';
 }
 
 # ---------------------------------------------------------------------------

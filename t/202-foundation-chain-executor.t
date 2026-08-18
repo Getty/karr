@@ -191,13 +191,14 @@ subtest 'the executor measures the facts, off one board read' => sub {
   is_deeply $exec->facts_for(
     { kind => 'ticket', repo => "$repo", ticket => 1 } ),
     { board_actionable => 'yes', ticket_status => 'todo',
-      ticket_blocked => 'no', ticket_claimed => '' },
+      ticket_blocked => 'no', ticket_claimed => '', ticket_links => 'settled' },
     'the vocabulary a precheck may use, for a plain open card';
 
   is_deeply $exec->facts_for(
     { kind => 'ticket', repo => "$repo", ticket => 2 } ),
     { board_actionable => 'yes', ticket_status => 'in-progress',
-      ticket_blocked => 'no', ticket_claimed => 'someone-else' },
+      ticket_blocked => 'no', ticket_claimed => 'someone-else',
+      ticket_links => 'settled' },
     'the claim name is reported as the card carries it';
 
   is $exec->facts_for( { kind => 'ticket', repo => "$repo", ticket => 3 } )
