@@ -19,6 +19,15 @@ helpers (C<_say_verbose>).
 
 =cut
 
+=attr foundation
+
+The owning L<App::karr::Foundation> instance, held C<weak_ref> to avoid a
+reference cycle. Supplies C<dry_run> (every writing method here is a no-op
+under it) and C<_say_verbose>, and holds the open lock filehandles this
+class's lock methods stash and recover between acquire and release.
+
+=cut
+
 has foundation => (
   is       => 'ro',
   weak_ref => 1,

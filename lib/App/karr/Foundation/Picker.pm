@@ -42,6 +42,13 @@ would go quiet for ever -- nothing would run, so nothing would reap the claim.
 
 =cut
 
+=attr store
+
+The L<App::karr::BoardStore> for the board L</next_ticket> picks from.
+Required.
+
+=cut
+
 has store => (
   is       => 'ro',
   required => 1,
@@ -54,6 +61,19 @@ has store => (
 # shape of that: never JSON, never printing.
 sub json  { 0 }
 sub quiet { 1 }
+
+=method json
+
+Always false. Exists only to satisfy L<App::karr::Role::ClaimTimeout>'s
+contract; karr-foundation's ticket-mode selection has no C<--json> and never
+emits any.
+
+=method quiet
+
+Always true, for the same reason as L</json>: nothing here prints, ever --
+karr-foundation says what it did through F<.karr.log> instead.
+
+=cut
 
 # Composed here, not at the top of the file: Moo applies a role at the point the
 # "with" stands, and the role chain requires the three names above it.

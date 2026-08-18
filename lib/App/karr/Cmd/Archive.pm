@@ -22,9 +22,9 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
 
 =head1 DESCRIPTION
 
-Soft-deletes tasks by moving them to the C<archived> status. The task file
-remains on disk, which keeps history and metadata intact while hiding the task
-from the default C<karr list> output.
+Soft-deletes tasks by moving them to the C<archived> status. The task's ref
+remains, which keeps history and metadata intact while hiding the task from
+the default C<karr list> output.
 
 =head1 CLAIMS
 

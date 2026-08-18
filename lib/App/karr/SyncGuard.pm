@@ -75,6 +75,12 @@ has git => (
     required => 1,
 );
 
+=attr git
+
+The L<App::karr::Git> instance the insurance push runs through. Required.
+
+=cut
+
 has _done => (
     is       => 'rw',
     default  => 0,
@@ -84,6 +90,15 @@ has quiet => (
     is      => 'ro',
     default => 0,
 );
+
+=attr quiet
+
+Mirrors the command's own C<--quiet>: when true, the insurance push's retry
+announcements are suppressed the same way L<App::karr::Role::SyncLifecycle>'s
+own retries are. Errors and the final guidance are shown either way. Defaults
+to false.
+
+=cut
 
 has _errors => (
     is       => 'ro',

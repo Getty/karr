@@ -73,6 +73,15 @@ classify a hook.
 
 =cut
 
+=attr foundation
+
+The owning L<App::karr::Foundation> instance, held C<weak_ref> to avoid a
+reference cycle. Supplies the shared options and helpers a run needs
+(C<dry_run>, C<_stream_to_terminal>, C<_prompt_for>, C<_append_log>,
+C<_say_verbose>) that do not belong to the Runner itself.
+
+=cut
+
 has foundation => (
   is       => 'ro',
   weak_ref => 1,

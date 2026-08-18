@@ -23,9 +23,9 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
 
 =head1 DESCRIPTION
 
-Deletes one or more task files from the board. This is the destructive
-alternative to L<App::karr::Cmd::Archive>, which only changes the status to
-C<archived>.
+Permanently removes one or more tasks' refs from the board. This is the
+destructive alternative to L<App::karr::Cmd::Archive>, which only changes the
+status to C<archived>.
 
 =head1 OPTIONS
 

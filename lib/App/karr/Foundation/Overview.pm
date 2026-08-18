@@ -29,6 +29,14 @@ that routes work.
 
 =cut
 
+=attr foundation
+
+The owning L<App::karr::Foundation> instance, held C<weak_ref> to avoid a
+reference cycle. Supplies the per-repo board data, state helpers, agent
+registry, and question mailbox this dashboard reads.
+
+=cut
+
 has foundation => (
   is       => 'ro',
   weak_ref => 1,

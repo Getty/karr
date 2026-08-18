@@ -34,6 +34,24 @@ L<App::karr::Git>
 has file => ( is => 'ro', required => 1 );
 has data => ( is => 'lazy' );
 
+=attr file
+
+A L<Path::Tiny> path to the board's materialized C<config.yml>, required at
+construction and read by the lazy L</data> builder below. C<save> dumps
+L</data> back out to it. An instance built through L</from_merged> answers
+C<undef> here in spite of C<required> -- that constructor blesses its hash
+directly rather than going through Moo's C<new>.
+
+=attr data
+
+The config hash this instance wraps; every accessor below (L</statuses>,
+L</priorities>, L</classes>, ...) reads from here. Lazily loaded from
+L</file> via C<LoadFile> on first access for an ordinary instance;
+L</from_merged> sets it directly instead, so the lazy builder never runs for
+those.
+
+=cut
+
 sub _build_data {
   my ($self) = @_;
   my $file = $self->file;

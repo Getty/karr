@@ -41,6 +41,10 @@ Writes go into the target file B<in place>, keeping its inode, so a
 F<SKILL.md> that is one link of a hardlink chain shared across projects stays
 part of that chain instead of being silently broken out of it.
 
+C<--global> selects the home-directory location instead of the project-local
+one; the two coincide for C<claude-code> and C<cursor> but differ for
+C<codex> (see L</SUPPORTED AGENTS>).
+
 =head1 SUPPORTED AGENTS
 
 The built-in agent targets are C<claude-code>, C<codex>, and C<cursor>. When
@@ -53,7 +57,9 @@ falls back to all known agents if nothing is detected.
 
 =item * C<install>
 
-Writes the current bundled skill file to the selected target locations.
+Writes the current bundled skill file to the selected target locations. A
+target that already has a F<SKILL.md> is left alone and reported C<exists>
+unless C<--force> is given, which overwrites it unconditionally.
 
 =item * C<check>
 

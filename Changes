@@ -1,5 +1,33 @@
 {{$NEXT}}
 
+    - A pass over the POD of the whole distribution (#206). Three
+      statements had been overtaken by the refs rewrite and by later
+      tickets, and each of them told a reader something that stopped
+      being true: `karr archive` and `karr delete` were still described
+      in terms of task files on disk, when a board has been
+      refs/karr/* for some time and neither command touches a file; and
+      `karr repair` was documented as the double-encoded-UTF-8
+      migration alone, though it also fixes the pre-#68 `started`
+      stamps that precede their own card's `created`. bin/karr's
+      command list was missing `metrics`, `needs`, `materialize` and
+      `import` entirely.
+
+      Otherwise completeness: `=attr` for the attributes that had none
+      (App::karr::ActivityLog, BoardStore, SyncGuard, Config), and
+      App::karr::Foundation::Agents documented throughout rather than
+      in its header only. One documented oddity that had lived in the
+      code alone: Config->from_merged blesses its hash directly instead
+      of going through Moo's constructor, so `file` answers undef there
+      in spite of being `required`.
+
+      Nothing behavioural changed, and podchecker's complaints about
+      the source files are not defects: it reads =attr/=method as
+      unknown commands and the L</...> links that point at the headings
+      PodWeaver generates as unresolved. Measured on the built
+      distribution, where the reader's POD actually lives: 154 reported
+      errors in the Git.pm source and 679 across lib/ become 0 after
+      weaving.
+
     - karr-foundation runs `kind: question` chain steps against the
       question mailbox (#200). The mailbox had existed since #191 --
       refs/karr-foundation/questions/*, `ask` and `answer`, and a

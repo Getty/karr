@@ -227,6 +227,17 @@ Moves work into review and optionally appends a timestamped note.
 
 Prints activity log entries from C<refs/karr/log/*>.
 
+=item * L<App::karr::Cmd::Metrics>
+
+Reports flow metrics -- throughput, lead/cycle time, flow efficiency, and
+aging work -- derived from each task's lifecycle stamps.
+
+=item * L<App::karr::Cmd::Needs>
+
+Reports, and optionally resolves, the cross-board dependencies recorded with
+C<< karr create --needs >> / C<--escalated-from> and C<< karr edit
+--add-needs >>.
+
 =item * L<App::karr::Cmd::AgentName>
 
 Generates short random agent names for multi-agent workflows.
@@ -257,9 +268,21 @@ Deletes the whole board namespace from the repository.
 
 =item * L<App::karr::Cmd::Repair>
 
-Migrates a board written by karr 0.402 or earlier off double-encoded UTF-8.
-Reports by default; C<--yes> rewrites the affected refs. Idempotent, and a
-no-op on a board that is already current.
+Migrates a board off two old karr-writing bugs: double-encoded UTF-8 (boards
+written by karr 0.402 or earlier) and C<started> stamps that precede their
+own card's C<created> (pre-#68 bare-date stamps). Reports by default; C<--yes>
+rewrites the affected refs. Idempotent, and a no-op on a board that is
+already current.
+
+=item * L<App::karr::Cmd::Materialize>
+
+Writes the current C<refs/karr/*> board out as a F<tasks/> file view -- a
+bridge for kanban-md interop and grepping task files, not a storage backend.
+
+=item * L<App::karr::Cmd::Import>
+
+Reads a materialized F<tasks/> file view back into C<refs/karr/*>, the
+reverse of Materialize.
 
 =back
 

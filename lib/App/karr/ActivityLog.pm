@@ -79,6 +79,13 @@ another agent.
 
 =cut
 
+=attr git
+
+The L<App::karr::Git> instance this log reads and writes refs through.
+Required.
+
+=cut
+
 has git => (
     is       => 'ro',
     required => 1,
@@ -283,7 +290,7 @@ sub _active_segment {
 True when C<$ref> is one of this identity's log refs under the current naming
 scheme -- segment 0 (C<refs/karr/log/>L</identity>) or any of its rotated
 segments. Refs left behind by the pre-#75 schemes are not claimed;
-L</_legacy_refs> is what reads those.
+the internal C<_legacy_refs> is what reads those.
 
 C<karr context> uses this to leave the invoking identity's own entries out of
 the cross-agent activity it summarises: comparing against L</identity> alone

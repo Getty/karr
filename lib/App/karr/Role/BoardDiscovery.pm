@@ -40,6 +40,9 @@ repository and BoardStore. It provides:
 
 =item * C<config> — shortcut to C<< $self->store->effective_config >> (lazy)
 
+=item * C<role> — activity log identity role, C<user> (default) or C<agent>;
+read from C<KARR_ROLE> when not overridden
+
 =back
 
 Commands that need the sync lifecycle should also compose

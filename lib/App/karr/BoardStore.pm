@@ -14,6 +14,13 @@ has git => (
     required => 1,
 );
 
+=attr git
+
+The L<App::karr::Git> instance this store reads and writes board refs
+through. Required.
+
+=cut
+
 =head1 SYNOPSIS
 
     my $store = App::karr::BoardStore->new( git => $git );

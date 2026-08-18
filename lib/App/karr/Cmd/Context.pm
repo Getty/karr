@@ -45,6 +45,11 @@ bounded by C<--activity-limit> (default 5). An agent reading its own briefing
 already knows what it just did -- C<karr show --me> is the tool for that --
 so what belongs in a briefing is what everyone *else* has been doing.
 
+C<recently-completed> looks back C<--days> days (default 7) from now; a task
+qualifies when its C<completed> stamp falls on or after that cutoff, compared
+to day granularity rather than to the second so the comparison stays correct
+whether the stamp is a bare C<YYYY-MM-DD> or a full RFC3339 timestamp.
+
 =head1 FILE UPDATE MODE
 
 When C<--write-to> is used, the command replaces the content between

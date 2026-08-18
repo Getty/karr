@@ -41,6 +41,15 @@ another probe interval.
 
 =cut
 
+=attr foundation
+
+The owning L<App::karr::Foundation> instance, held C<weak_ref> to avoid a
+reference cycle (Agents lives inside the Foundation it belongs to). Required.
+Definitions and the default probe interval are read from its C<_config_data>;
+the availability state file sits beside its C<_config_path>.
+
+=cut
+
 has foundation => (
   is       => 'ro',
   weak_ref => 1,
@@ -77,6 +86,19 @@ my %KNOWN_KEY = map { $_ => 1 } qw(
 # ---------------------------------------------------------------------------
 # Definitions
 # ---------------------------------------------------------------------------
+
+=attr definitions
+
+Every configured agent definition, keyed by name, lazily parsed and
+validated from L</foundation>'s C<agents:> config section. Each value is a
+hashref carrying at least C<command> and C<kind> (defaulted to C<shell>),
+plus whatever else the config gave it -- C<probe_seconds> is added during
+parsing from C<probe_every> (see L</probe_seconds>). An empty hashref when
+the config has no C<agents:> section at all; a malformed section or
+definition (not a mapping, no C<command>, an unknown C<kind>) dies rather
+than starting with a fleet that silently cannot run.
+
+=cut
 
 has definitions => (
   is      => 'lazy',
@@ -135,6 +157,16 @@ sub _duration {
   return $n * $mult{ lc $unit };
 }
 
+=method definition
+
+    my $def = $agents->definition('claude-code');
+
+The parsed definition hashref for C<$name> (see L</definitions>), or dies
+naming the known agents -- or saying the config has none at all -- rather
+than handing back C<undef> for a typo'd name.
+
+=cut
+
 sub definition {
   my ( $self, $name ) = @_;
   my $def = $self->definitions->{$name}
@@ -145,11 +177,38 @@ sub definition {
   return $def;
 }
 
+=method names
+
+    my @names = $agents->names;
+
+Every configured agent name, sorted.
+
+=cut
+
 sub names { return sort keys %{ $_[0]->definitions } }
 
 # ---------------------------------------------------------------------------
 # The invocation contract
 # ---------------------------------------------------------------------------
+
+=method invocation
+
+    my $inv = $agents->invocation('claude-code');
+    # { name => 'claude-code', kind => 'claude-code',
+    #   command => '...', render => 'stream-json', description => '...' }
+
+Everything L<App::karr::Foundation::Runner> needs to run one named agent: the
+assembled shell command, the C<kind> and C<name> to log it under, a
+C<render> hint (C<stream-json> for C<kind: claude-code>, C<undef>
+otherwise), and the definition's C<description>. For C<kind: shell> the
+command is the config's C<command> template verbatim; for C<kind:
+claude-code> it is built by appending karr's own arguments --
+C<--output-format stream-json --verbose> (so the run streams live output
+I<and> ends with the structured result L<App::karr::Foundation::Runner>
+reads), C<--permission-mode>, C<--max-turns>, and C<--allowed-tools> as
+configured.
+
+=cut
 
 # Everything foundation needs to run one named agent: the assembled shell
 # command, the name to log it under, and how to render its live output.
@@ -238,6 +297,21 @@ sub _shq {
 # that defines the agents. That also makes it follow --config: a second fleet
 # (or a test) pointed at another config gets its own availability and cannot
 # write over the real one.
+=attr state_file
+
+The path to F<agents.state>, the machine-local, agent-scoped availability
+record -- lazily built as a sibling of L</foundation>'s C<_config_path>, so
+it follows C<--config> the way the config itself does.
+
+It lives neither in C<.karr.state> (per-repository, and availability is not
+a property of a repository -- two boards driven by the same agent must share
+one answer, or the second rediscovers the outage on its own) nor on the
+board (C<refs/karr/config> syncs, and an agent command or a spent account
+limit is local to this machine, not something to push at a colleague's
+fleet). Config-adjacent and unsynced is the one place both constraints allow.
+
+=cut
+
 has state_file => (
   is      => 'lazy',
   builder => '_build_state_file',
@@ -337,6 +411,20 @@ sub _lock_state {
 #   { state => 'failing', failing_since => EPOCH, next_attempt => EPOCH, ... }
 # Timestamps are epoch seconds, as .karr.state's cooldown_until is; rendering
 # them for a human is --status's job.
+=method availability
+
+    my $rec = $agents->availability('minimax');
+    # { state => 'ok' }
+    # { state => 'failing', failing_since => EPOCH, next_attempt => EPOCH, ... }
+
+What is known about C<$name> right now, as one of the two states the spec
+names -- C<ok>, or C<failing> with C<failing_since>, C<next_attempt>, and
+(when one was given) C<last_error>. Timestamps are epoch seconds, as
+C<.karr.state>'s C<cooldown_until> are; rendering them for a human is
+C<karr-foundation --status>'s job, not this method's.
+
+=cut
+
 sub availability {
   my ( $self, $name ) = @_;
   my $rec = $self->_read_state->{$name};
@@ -349,6 +437,19 @@ sub availability {
 # round answers yes -- that IS the probe. There is no separate probing run:
 # retrying the agent on the work that is waiting is the probe, and a probe that
 # did not do the work would be a second kind of run to reason about.
+=method available
+
+    next unless $agents->available('minimax');
+
+May C<$name> be run right now? True for an agent that is C<ok>, and true
+again for a C<failing> one whose L</probe_seconds> has elapsed since
+C<failing_since> -- that elapsed check IS the probe. There is no separate
+probing run: retrying the agent on the work already waiting is the probe,
+and a probe that skipped the work would be a second kind of run to reason
+about.
+
+=cut
+
 sub available {
   my ( $self, $name ) = @_;
   my $rec = $self->_read_state->{$name};
@@ -357,12 +458,31 @@ sub available {
   return ( $rec->{next_attempt} // 0 ) <= time ? 1 : 0;
 }
 
+=method probe_seconds
+
+    my $wait = $agents->probe_seconds('minimax');
+
+How long a failing C<$name> waits before it is retried: the agent's own
+C<probe_every> when its definition set one, otherwise L</default_probe_seconds>.
+
+=cut
+
 sub probe_seconds {
   my ( $self, $name ) = @_;
   my $def = $self->definitions->{$name};
   return $def->{probe_seconds} if $def && defined $def->{probe_seconds};
   return $self->default_probe_seconds;
 }
+
+=attr default_probe_seconds
+
+The fallback probe interval for an agent whose definition sets no
+C<probe_every> of its own: lazily read from the config's top-level
+C<probe_every>, or C<600> (ten minutes) when that is absent too -- short
+enough that a five-minute blip does not park a fleet for an hour, long
+enough that a hard rate limit is not hammered once a minute.
+
+=cut
 
 has default_probe_seconds => (
   is      => 'lazy',
@@ -382,6 +502,22 @@ sub _build_default_probe_seconds {
 # same fixed-interval retry is the right answer to all of them. $reason is kept
 # verbatim so an operator (and --status) can see what it was, not so anything
 # branches on it.
+=method record_failure
+
+    $agents->record_failure('minimax', 'rate limited');
+
+Records that C<$name> just failed and schedules its next probe
+L</probe_seconds> out. Which of the many reasons it can fail is not asked --
+a rate limit, a spent budget, a revoked key, and a wrapper missing on this
+machine all present the same way (it does not work now), and the same
+fixed-interval retry is the right answer to all of them. C<$reason> (optional)
+is kept verbatim as C<last_error>, for an operator or C<--status> to read,
+not for anything to branch on. C<failing_since> is set once, on the first
+failure of a run, and survives every further one, so it keeps saying when the
+outage started rather than resetting on each attempt.
+
+=cut
+
 sub record_failure {
   my ( $self, $name, $reason ) = @_;
   my $now = time;
@@ -409,6 +545,22 @@ sub record_failure {
 # point of the fixed-interval retry: karr does not learn the reset rhythm, it
 # leaves a legible trail of outages for whoever (a person, the coordination
 # agent) wants to read one out of it.
+=method record_success
+
+    $agents->record_success('minimax');
+
+Records that C<$name> worked. A no-op, both for the caller (returns C<0>) and
+for the state file (nothing is written), when the agent was already C<ok> --
+an ordinary successful run would otherwise rewrite the file for no news. For
+one that was C<failing> it moves the record to C<ok> and appends a recovery
+entry (C<failing_since>, C<recovered_at>, C<seconds>, and the last
+C<last_error> if there was one) to a capped history, and returns C<1>. karr
+does not learn a reset rhythm from that history; it leaves a legible trail of
+outages for whoever -- a person, the coordination agent -- wants to read one
+out of it.
+
+=cut
+
 sub record_success {
   my ( $self, $name ) = @_;
   my $rec = $self->_read_state->{$name};
