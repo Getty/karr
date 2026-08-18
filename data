@@ -1,0 +1,51 @@
+---
+claimed_at: 2026-08-18T04:38:56Z
+claimed_by: beat-heat
+class: standard
+completed: 2026-08-18T04:38:56Z
+created: 2026-08-17T23:30:14Z
+id: 203
+priority: medium
+started: 2026-08-18T03:39:38Z
+status: done
+tags:
+- transport
+- docs
+- git
+title: Git.pm still documents the ssh:// timeout gap that the 1.9.3 floor closed
+updated: 2026-08-18T04:38:56Z
+---
+
+Follow-up to #174, which closed the ssh:// hang by pinning Alien::Libgit2
+0.002 (pkg-config floor libgit2 1.9.3, the release carrying PR #7165). The
+dependency now guarantees a libgit2 whose ssh transport honours
+GIT_OPT_SET_SERVER_TIMEOUT, but four places in lib/App/karr/Git.pm still tell
+the reader the opposite:
+
+  * POD ~L60-66: "libgit2 applies it to its own socket transports (git://,
+    http://, https://), not to ssh://, whose reads go through libssh2" --
+    no longer true from 1.9.3 up.
+  * Comment ~L289-292: "an ssh:// remote still hangs the native path [...]
+    only bounded route for ssh".
+  * Comment ~L1409-1415 (remote_has_board): "cannot be bounded for ssh:// --
+    libssh2 retries past libgit2s socket timeout [...] (#174, measured)".
+  * POD ~L1472-1474: for ssh:// the CLI is described as the only route.
+
+The POD text is the smaller half. The real question is remote_has_board: it
+deliberately skips the native transport altogether, and the reason given is
+exactly the gap that is now closed. With the floor in place that argument no
+longer holds, so either the native path becomes admissible there again -- it
+runs unasked in front of every read command (#173), so the cost is a fork per
+call -- or the CLI-only choice needs a reason that survives 1.9.3.
+
+Deliberately left alone while closing #174: that ticket was decided as "no
+transport policy change, no version switch in App::karr::Git", and reopening
+remote_has_board is a policy change. It wants its own decision.
+
+Also worth having: t/170-native-transport-timeout.t states in its header that
+it uses git:// rather than ssh:// "because the ssh case does not come back".
+With the floor it does come back, so the ssh case can finally be a regression
+test -- guarded by a skip on Git::Libgit2::version() < 1.9.3 for anyone
+running against an older system lib on purpose.
+Maintainer-Entscheidung 2026-08-18: (1) remote_has_board wird nativ zuerst mit CLI-Fallback, also die Hauspolitik des restlichen Git.pm, statt weiter CLI-only. (2) Der ssh://-Fall kommt als Regressionstest in t/170, uebersprungen bei Git::Libgit2::version() < 1.9.3. Damit ist die im Ticket offen gelassene Policy-Frage beantwortet; die vier Doku-Stellen und remote_has_board werden zusammen gezogen.
+Committet als f95abbe. Verifiziert vor dem Commit: prove -l t/ = 182 Dateien, 1272 Tests, Result PASS, exit 0, keine Skips (unabhaengig nachgelaufen, nicht nur vom Worker berichtet). ssh://-Fall in t/170 kommt bei 3s Budget nach 3.06s zurueck; t/203-remote-board-probe.t faellt gegen HEAD, beisst also. Offen geblieben und als #204 abgespalten: der DESCRIPTION-Absatz, der insteadOf faelschlich als CLI-only fuehrt -- libgit2 wendet die Rewrite-Regel selbst an.
