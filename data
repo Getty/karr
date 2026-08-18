@@ -1,0 +1,124 @@
+---
+claimed_at: 2026-08-15T15:19:18Z
+claimed_by: word-what
+class: standard
+completed: 2026-08-18T03:27:23Z
+created: 2026-08-15T14:49:05Z
+id: 180
+priority: low
+started: 2026-08-15T15:11:19Z
+status: done
+tags:
+- release
+- version
+- dist-zilla
+title: Post-release $VERSION bump reaches lib/ only, though :ExecFiles is a default
+  finder — find out why bin/ is skipped
+updated: 2026-08-18T03:27:23Z
+---
+
+Split out of #175, which fixed the symptom (bin/karr and bin/karr-foundation stuck at 0.500 while lib/App/karr.pm went to 0.501) by hand. The cause is still open.
+
+What is established:
+
+- [@Author::GETTY] routes versioning through @Git::VersionManager, i.e. RewriteVersion::Transitional and BumpVersionAfterRelease::Transitional. dist.ini sets no `version_finder`, so plugin defaults apply.
+- Those defaults are `[ :InstallModules, :ExecFiles ]` (RewriteVersion.pm:147, BumpVersionAfterRelease.pm:204), and @Basic -- which the bundle pulls in with only GatherDir/PruneCruft removed -- still provides ExecDir, so bin/ genuinely is in :ExecFiles.
+- The Transitional subclass only wraps rewrite_version; it inherits the finder unchanged.
+- assign_re / matching_re match a plain `our $VERSION = ${q(0.500)};` line, which is exactly what both scripts had.
+
+By that reading the post-release bump should have rewritten bin/. It did not: 053b61e touched Changes and 54 files under lib/, nothing under bin/. Same for the release commit itself (56b48b8 left bin/ alone). The last time those two numbers changed was 2b29403, a hand edit by the maintainer.
+
+So one of the established points above is wrong, and it is worth twenty minutes with `dzil dumpphases` / a debug-logged `dzil build` to find out which -- most likely candidates: :ExecFiles resolving empty at the time the bump plugin runs (plugin ordering: @Basic is added well before @Git::VersionManager), or munge_file bailing on those files for a reason its `log` line would name ("Skipping: ...").
+
+Worth resolving because as it stands the bump is a manual step spread over three places, and the only thing that notices a miss is t/67-bin-version.t -- which did notice, but only after main had been red for a day. If the finder can be made to cover bin/, the class of bug disappears; if it cannot, the reason belongs in a comment next to those two lines so the next person does not re-derive it.
+
+Explicitly NOT a request to change dist.ini blind: adding `version_finder = :ExecFiles` without knowing why the default failed would be cargo cult, and could narrow the finder and stop lib/ being bumped too.
+test note
+probe
+ROOT CAUSE FOUND. None of the three established premises is actually false -- the
+finder genuinely works. The bug is one layer further down, in a mechanism the
+ticket's investigation hadn't reached yet: the git-commit step that is supposed
+to persist the bump is scoped by a second, independent, hardcoded allowlist
+that @Git::VersionManager never wires to version_finder/:ExecFiles at all.
+
+Evidence (installed modules on this machine, not docs):
+- Dist::Zilla::Plugin::RewriteVersion 0.018, BumpVersionAfterRelease 0.018,
+  Dist::Zilla::PluginBundle::Author::GETTY 0.318, Dist::Zilla::PluginBundle::Git::VersionManager 0.007.
+- dist.ini sets no version_finder. Author::GETTY.pm:326-337: version_finder
+  defaults to `[]` (no_cpan is false here), and GETTY.pm:653-656 only passes
+  '*.finder' overrides into @Git::VersionManager's payload if @{version_finder}
+  -- with it empty, NO finder override reaches RewriteVersion::Transitional or
+  BumpVersionAfterRelease, so both fall back to their own class default
+  [:InstallModules, :ExecFiles] (RewriteVersion.pm:147, BumpVersionAfterRelease.pm:204).
+  ExecDir (from @Basic, untouched by GETTY's -remove list) does populate
+  :ExecFiles from bin/.
+- Verified live, not just read: dzil build -v in a throwaway clone shows
+  RewriteVersion::Transitional actually processing bin/karr and
+  bin/karr-foundation -- "updating $VERSION assignment in bin/karr" appears
+  in the log, right alongside every lib/*.pm file. So :ExecFiles is NOT empty
+  at runtime -- the "finder resolves empty" premise is ruled out.
+- Ruled out the PkgVersion/package-statement insert-path premise too: both
+  bin/karr and bin/karr-foundation already carry a literal
+  our $VERSION = '0.500'; matching assign_re/matching_re exactly -- verified
+  by running BumpVersionAfterRelease::_Util::matching_re("0.500") against the
+  actual historical file content (git show 56b48b8:bin/karr): it matches. The
+  insert/PkgVersion fallback (needs a package statement, per t/67's own
+  comment) is irrelevant here since an existing assignment is found and
+  rewritten, not inserted.
+
+So BumpVersionAfterRelease would rewrite bin/karr and bin/karr-foundation on
+disk during after_release, same as RewriteVersion does at build time. The
+actual break is downstream, in @Git::VersionManager's hardcoded
+"post-release commit" Git::Commit instance (VersionManager.pm ~140-149, POD
+~276-282 -- the installed module's own documented default, not something
+GETTY overrides):
+
+    [Git::Commit / post-release commit]
+    allow_dirty = Changes  (+ Makefile.PL/Build.PL if munged)
+    allow_dirty_match = ^lib/.*\.pm$
+    commit_msg = increment $VERSION after %v release
+    (this message matches 053b61e exactly -- confirms that commit IS this
+    plugin's output)
+
+allow_dirty_match is a plain hardcoded string in configure(), never derived
+from version_finder/BumpVersionAfterRelease.finder -- no code path extends it
+to bin/. Not user-overridable through the GETTY bundle either: Git::Commit's
+two instances ('release snapshot' and 'post-release commit') are added
+directly, not through _payload_for(), and GETTY's plugin -remove matches by
+class name only (Git::Commit), so removing it to reconfigure would kill both
+commit steps, not just the wrong one.
+
+Dist::Zilla::Role::Git::DirtyFiles::list_dirty_files($git, 1) (confirmed from
+source) filters dirty files against that allowlist and silently drops
+anything that doesn't match -- no warning, no fatal, it's just absent from
+the list Git::Commit stages and commits. Mechanism: BumpVersionAfterRelease
+bumps bin/karr's and bin/karr-foundation's $VERSION on disk correctly, but
+the post-release commit step only ever stages lib/*.pm (+ Changes/
+Makefile.PL/Build.PL) -- the bumped bin/ content is left as an uncommitted,
+unstaged working-tree diff that dzil release finishes "successfully" without
+ever surfacing. Whatever later touched that working copy (fresh clone, pull,
+reset, or nobody noticing before the tree was reused) is why bin/ came back
+showing 0.500 in every subsequent commit though nothing ever committed that
+value on purpose.
+
+NOT FIXED -- staying inside the audit boundary given for this task. Real
+options for whoever picks this up next:
+- Lowest risk: documented manual step -- after dzil release, before git push,
+  check git status; if bin/karr / bin/karr-foundation show modified, fold
+  into the release commit (git add + amend). Zero code risk, picks up what's
+  already correct on disk. Just a habit, one step earlier than t/67 catching
+  it after the fact.
+- Real fix needs either patching upstream Dist::Zilla::PluginBundle::Git::VersionManager
+  (not part of this repo) to extend allow_dirty_match by version_finder, or
+  removing+reimplementing both Git::Commit steps by hand in dist.ini (GETTY's
+  -remove can't isolate just the post-release one). Both are dist.ini/bundle
+  changes explicitly out of scope for this audit -- handing to karr-worker
+  with this writeup so the approach gets picked deliberately, with maintainer
+  sign-off since it's release machinery.
+
+Verification: nothing in the real repo was touched -- reproduction ran in a
+throwaway git clone under scratch. No dzil release/version bump/CPAN upload
+run anywhere. t/67-bin-version.t currently green (confirms 0.501/0.501 from
+#175's hand fix); no repo file changed so full suite not re-run.
+2026-08-15 15:19 Root cause found and documented in the activity log with source-level evidence. Finder was never the problem: :ExecFiles genuinely includes bin/, verified live via dzil build -v (RewriteVersion::Transitional does process bin/karr and bin/karr-foundation). The break is a second, independent, hardcoded allowlist in @Git::VersionManager's post-release Git::Commit step (allow_dirty_match = ^lib/.*.pm$, never derived from version_finder), which silently drops non-lib/ dirty files from the commit -- no warning, no fatal. BumpVersionAfterRelease likely bumps bin/ on disk during after_release, but that change never gets committed. Not fixed, per audit boundary: this is a dist.ini/bundle-level change needing a deliberate choice plus maintainer sign-off (release machinery). Two remediation options laid out in the ticket for karr-worker/maintainer to pick. No repo files touched, no dzil release run.
+Behoben ausserhalb dieses Repos: Author::GETTY 0.319 gibt 'post-release commit.allow_dirty_match' => ['^bin/'] an @Git::VersionManager mit (GETTY.pm:651-655). Live geprueft via Dist::Zilla::Dist::Builder->from_config: die Instanz traegt jetzt ^lib/.*.pm$ UND ^bin/ -- der Payload-Schluessel wird angehaengt, nicht ersetzt, die befuerchtete Verengung tritt nicht ein. Damit staged der post-release-Commit auch bin/karr und bin/karr-foundation. t/67-bin-version.t bleibt als Netz.
