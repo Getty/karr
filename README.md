@@ -1,7 +1,9 @@
 # App::karr
 
 Git-native kanban for shared helper agents, human operators, and downstream
-repos that want a board without checking a board directory into the work tree.
+repos that want a board without checking a board directory into the work tree —
+and `karr-foundation`, the coordinator that keeps agents working across many of
+those boards unattended.
 
 `karr` keeps canonical state in `refs/karr/*`, not in commits, branches, or a
 persistent `karr/` folder. Tasks, config, logs, snapshots, and helper refs move
@@ -17,6 +19,9 @@ Most task tools assume a central web service or a checked-in file tree.
 - mutating commands pull, materialize, write back, and push
 - tasks stay separate from branches and commits
 - downstream projects can vendor the CLI through Docker and keep the exact same UX
+- `karr-foundation` runs the boards: it scans repositories, decides where there
+  is work, and runs an agent there — or, with no agent configured anywhere,
+  simply shows you every board at once
 
 That gives you a shared board with far fewer file-level collisions and without
 having to bolt on another ticket system just to coordinate agents.
@@ -47,6 +52,745 @@ karr backup > karr-backup.yml
 karr restore --yes < karr-backup.yml
 karr destroy --yes
 ```
+
+## karr-foundation: the agent coordinator
+
+A board is half the tool. `karr-foundation` is the other half, and the reason
+`karr` is not just a file kanban: a single-shot, idempotent companion binary
+that watches **many** repositories, decides per board whether there is work,
+and runs the configured agent command until the board stops moving. Point cron,
+a systemd timer or a `while` loop at it — every tick is complete in itself.
+
+```bash
+*/5 * * * * karr-foundation           # a fleet on a cron line
+```
+
+Agent execution is **opt-in**, and both halves are useful on their own:
+
+| You want | You run | You get |
+|---|---|---|
+| a picture of every board | `karr-foundation --status` | status counts, in-progress/blocked ids, lock, cooldown, agent state, open questions — read-only, no agent is ever started |
+| agents to work the boards | `karr-foundation` | one agent per repository, per the `.karr` file in it. With no `.karr` anywhere, this prints the overview instead |
+
+Where the pieces live, and which of them travel:
+
+| File or ref | Scope | Written by |
+|---|---|---|
+| `~/.config/karr-foundation/config.yml` | this machine (`--config` relocates it) | you |
+| `<repo>/.karr` | this machine, this repo | you |
+| `<repo>/.karr.state`, `.karr.lock`, `.karr.log` | this machine, this repo | foundation |
+| `agents.state`, beside `config.yml` | this machine | foundation |
+| `refs/karr/config` → `foundation.enabled` | **the board — syncs** | `karr disable` / `karr enable` |
+| `refs/karr-foundation/*` in the hub — the chain, its run logs, the question mailbox | **the fleet — syncs** | `karr-foundation chain` / `ask` / `answer` |
+
+The four `<repo>` files are machine-local and belong in `.gitignore`. `karr
+init` does not put them there — it only ignores the materialized file view
+(`tasks/`, `config.yml`) — so add them yourself:
+
+```gitignore
+.karr
+.karr.state
+.karr.lock
+.karr.log
+```
+
+Every transcript below is a real run of these commands; only repository paths
+and the hostname are rewritten to readable ones.
+
+### Case 1: one repository, one card per run
+
+Start with nothing configured at all:
+
+```console
+$ karr-foundation
+karr-foundation: config not found at /home/dev/.config/karr-foundation/config.yml — nothing to do
+karr-foundation: no repos found — check config
+$ echo $?
+1
+```
+
+Name the repository. `dirs:` is the explicit list:
+
+```yaml
+# ~/.config/karr-foundation/config.yml
+dirs:
+  - /srv/webapp
+```
+
+That is already enough for the read-only half:
+
+```console
+$ karr-foundation --status
+webapp
+  3 tasks
+  backlog:1  todo:2
+```
+
+A plain tick still does nothing, and says why:
+
+```console
+$ karr-foundation
+No agent will run on any board. Showing overview (set 'command:', 'agent:' or 'claude: true' in a .karr file to enable agents; a board disabled with 'karr disable' never runs one).
+
+webapp
+  3 tasks
+  backlog:1  todo:2
+```
+
+Now opt in, in the repository itself:
+
+```yaml
+# /srv/webapp/.karr
+mode: ticket
+command: my-agent --task "$KARR_TASK" --prompt "$PROMPT"
+max_runtime: 1800
+max_attempts: 2
+```
+
+`mode: ticket` is one agent run about **one card foundation names**. It picks
+the card with `karr pick`'s own eligibility and ranking (not terminal, not
+blocked, not held by a live claim; class, then priority, then id) and tells the
+agent twice: as a closing sentence in `$PROMPT` naming the id, and as
+`$KARR_TASK` for a template that wants the bare number. It does **not** claim
+the card — the claim is the agent's work session (`karr agentname`), and the
+board's `.karr.lock` already keeps everyone else out for the length of the run.
+
+See what the next tick would do without doing it:
+
+```console
+$ karr-foundation --dry-run --verbose
+sync --pull /srv/webapp
+[2026-08-18T05:35:34] 1565842: TICKET task#1
+[2026-08-18T05:35:34] 1565842: START command=my-agent --task "$KARR_TASK" --prompt "$PROMPT"
+exec in /srv/webapp: my-agent --task "$KARR_TASK" --prompt "$PROMPT"
+[2026-08-18T05:35:34] 1565842: DRY-RUN (skipped)
+[2026-08-18T05:35:34] 1565842: STALL task#1 — no report from the agent
+```
+
+A dry run starts nothing and writes nothing — no agent, no `.karr.state`, no
+`.karr.log`, and not even the pull the first line announces. It is also silent
+without `--verbose`: those log lines are the verbose stream, not a report.
+
+Then the real thing:
+
+```console
+$ karr-foundation --verbose
+sync --pull /srv/webapp
+[2026-08-18T05:35:34] 1565844: TICKET task#1
+[2026-08-18T05:35:34] 1565844: START command=my-agent --task "$KARR_TASK" --prompt "$PROMPT"
+exec in /srv/webapp: my-agent --task "$KARR_TASK" --prompt "$PROMPT"
+working on #1 as fund-duty
+[2026-08-18T05:35:35] 1565844: END elapsed=1s exit=0
+```
+
+The agent's own output is streamed to the terminal when there is one (or with
+`--verbose`) and is always appended to `.karr.log`. The card moved, so nothing
+else is said. `.karr.state` now carries the board fingerprint the next tick
+compares against:
+
+```json
+{"hash":"e256a65404833f0e801b323e1e2301fd","last_exit":0,"last_run":"2026-08-18T05:35:35"}
+```
+
+### How a run is judged
+
+After every agent run foundation classifies the outcome from what it can
+observe — the run's own report where the agent emitted one, otherwise the exit
+code, the board's ref movement and the captured output:
+
+| Outcome | What it means | What follows |
+|---|---|---|
+| **progress** | the board moved (in `mode: ticket`: *this* card moved) | keep draining |
+| **stall** | a card the agent engaged did not move | bump that card's attempt counter; at `max_attempts` auto-block it |
+| **common-error** | non-zero exit, timeout, or an error pattern in a run that moved nothing | no card is penalized; the repo goes into exponential cooldown |
+| **idle** | the agent did nothing and grabbed nothing | stop |
+
+A stall that repeats ends the loop rather than spinning on it. Here the same
+agent ran twice and left its card where it was — only the tail of each tick
+is shown:
+
+```console
+$ karr-foundation --force --verbose
+...
+I cannot make progress on #2
+[2026-08-18T05:35:43] 1565933: END elapsed=0s exit=0
+[2026-08-18T05:35:43] 1565933: STALL task#2 — no report from the agent
+
+$ karr-foundation --force --verbose
+...
+I cannot make progress on #2
+[2026-08-18T05:35:43] 1565937: END elapsed=0s exit=0
+[2026-08-18T05:35:43] 1565937: STALL task#2 — no report from the agent
+[2026-08-18T05:35:43] 1565937: AUTOBLOCK task#2: auto-block: no progress after 2 attempts (foundation)
+```
+
+The auto-block is a fallback, not a verdict: the agent may always set a better
+reason itself with `karr edit --block`, and a card somebody else holds is never
+blocked on foundation's say-so. Where there is no evidence that the agent
+engaged a card at all — an agent that does not write through `karr` — nothing
+is auto-blocked and the drain ends on its iteration cap instead.
+
+`mode:` says what one pass over a repository is: `drain` (the default: run
+again until the board stops moving), `single` (exactly one run, the agent picks
+its own work) or `ticket` (one run, one named card).
+
+### Case 2: a fleet — `scan:`, `concurrent:`, the hub
+
+```yaml
+# ~/.config/karr-foundation/config.yml
+scan:
+  - /srv                    # every direct subdir that is a board
+concurrent: 3               # boards that may have an agent at once (default: 1)
+hub: /srv/fleet-hub         # the repo carrying refs/karr-foundation/*
+```
+
+`scan:` takes the direct children of a directory that have a `.karr` file or
+are karr boards themselves; `dirs:` names repositories explicitly. A repository
+reachable both ways is processed once, not twice.
+
+```console
+$ karr-foundation --status
+webapp
+  3 tasks  [agent]
+  backlog:1  todo:2
+
+docs-site
+  2 tasks  [agent]
+  in-progress:1  todo:1
+  in-progress: #2
+```
+
+`concurrent:` is a **machine ceiling**, not a quota. One agent per repository
+stays the hard rule — two agents in one working tree would collide over the
+index and the checkout — so concurrency is across repositories and never inside
+one. Three limits bound what actually runs and **the tightest wins**: the
+machine ceiling here, a `concurrent:` on a named agent definition (the
+operator's estimate of a session limit), and the `limits:` block in the current
+chain header. `--dry-run` stays serial whatever the ceiling says.
+
+`hub:` names the one repository of a fleet that carries
+`refs/karr-foundation/*` — the chain, its run logs and the question mailbox. An
+ordinary tick pulls that namespace before it reads anything and writes nothing
+back to it; executing the chain is a command of its own (case 5).
+
+### Case 3: `on_drained` — the hook karr deliberately does not understand
+
+When a board has drained — no actionable task left, everything done, archived
+or blocked — foundation can run one command in it:
+
+```yaml
+# /srv/gate/.karr
+command: my-agent --prompt "$PROMPT"
+on_drained: ./release-gate.sh
+on_drained_max_runtime: 1800
+on_drained_max_rounds: 3
+```
+
+```console
+$ karr-foundation --verbose
+sync --pull /srv/gate
+[2026-08-18T05:35:54] 1566032: START command=my-agent --prompt "$PROMPT"
+exec in /srv/gate: my-agent --prompt "$PROMPT"
+no card assigned, nothing to do
+[2026-08-18T05:35:54] 1566032: END elapsed=0s exit=0
+[2026-08-18T05:35:54] 1566032: START role=hook command=./release-gate.sh
+exec in /srv/gate: ./release-gate.sh
+release gate in /srv/gate (role=hook)
+[2026-08-18T05:35:54] 1566032: END elapsed=0s exit=0
+[2026-08-18T05:35:54] 1566032: ON-DRAINED exit=0
+```
+
+**karr does not know what that command does, and must not.** In the fleet this
+design came from it is a release gate that builds a distribution, installs it,
+tests every dependent against it and raises version requirements — across 44
+distributions, none of which karr is allowed to learn a single thing about.
+Everything domain-specific — what "done" means for a project, how a release is
+verified, which project depends on which — reaches karr through `on_drained`
+and through nothing else. So the exit code is written to `.karr.log` and
+`.karr.state` and interpreted by nobody: a failing hook does not park the
+board, does not mark its agent failing, and never becomes the run's
+`last_error`. It is not an agent run and is not classified as one.
+
+The hook is told where it is and nothing else: `KARR_REPO`, and `KARR_ROLE=hook`
+so that its own `karr` writes land in their own activity log instead of counting
+as an agent's engagement with a card. `PROMPT` and `KARR_TASK` are empty. It
+runs in the board's directory, under the board's own `.karr.lock`, with its own
+budget (`on_drained_max_runtime`) — how long an agent may take says nothing
+about how long a release gate may.
+
+An empty board is not the same as finished work: the hook may fail and file
+tickets, the next tick works them, the board drains again and the hook is asked
+again. That cycle is the point, so it is bounded rather than forbidden — the
+same board is not asked twice (the fingerprint it last ran at is in
+`.karr.state`), and consecutive rounds in which the hook itself made work are
+capped by `on_drained_max_rounds` (default 3, `0` disables). `--force`
+overrides both.
+
+### Case 4: named agents, and what happens when one breaks
+
+A board has one command. A fleet has several agent commands with different
+strengths and different failure modes, so the config names them and a board
+picks one:
+
+```yaml
+# ~/.config/karr-foundation/config.yml
+agents:
+  main:
+    command: claude
+    kind: claude-code         # karr appends -p "$PROMPT", output format, limits
+    permission_mode: bypassPermissions
+    max_turns: 30
+    concurrent: 2
+    probe_every: 15m
+    description: >-
+      Strong on refactors and tests. Expensive.
+  cheap:
+    command: my-small-agent --quiet
+    probe_every: 5m
+    description: >-
+      Fine for copy edits and docs. Weak on multi-file changes.
+default_agent: cheap
+```
+
+```yaml
+# /srv/docs-site/.karr
+agent: cheap
+mode: drain
+```
+
+`kind: shell` (the default) means karr appends **nothing** — the command is a
+complete shell template, because karr cannot know what the thing at the other
+end understands. `kind: claude-code` is the one invocation contract it does
+know: it appends `-p "$PROMPT"`, the `stream-json` output format, and
+`--permission-mode`, `--max-turns` and `--allowed-tools` from the definition —
+so permission escalation is a property of the agent definition rather than
+something baked into a wrapper script. `description` is never read by karr; it is
+carried for the agent that routes work across the fleet, and `--status
+--verbose` prints it:
+
+```console
+$ karr-foundation --status --verbose
+...
+Agents
+  cheap  ok
+         kind: shell
+         Fine for copy edits and docs. Weak on multi-file changes.
+  main   ok
+         kind: claude-code
+         Strong on refactors and tests. Expensive.
+```
+
+Now let the agent break — a rate limit, an expired token, a missing binary; from
+the outside they are the same event, so one mechanism covers all of them:
+
+```console
+$ karr-foundation --verbose
+sync --pull refs/karr-foundation/*
+sync --pull /srv/docs-site
+[2026-08-18T05:36:04] 1579195: START agent=cheap command=my-small-agent --quiet
+exec in /srv/docs-site: my-small-agent --quiet
+API error: 429 Too Many Requests
+[2026-08-18T05:36:04] 1579195: END elapsed=0s exit=1
+[2026-08-18T05:36:04] 1579195: COMMON-ERROR exit=1
+cooldown /srv/docs-site — 1m (level 1)
+```
+
+Two records, one level apart. The **board** cools down, in `.karr.state`:
+
+```json
+{"cooldown_level":1,"cooldown_until":1787031424,"hash":"06f46bec5e62ca7d8cddafac75eb8299","last_error":"exit=1","last_exit":1,"last_run":"2026-08-18T05:36:04"}
+```
+
+and the **agent** is marked failing, in `agents.state` beside the config file:
+
+```json
+{"cheap":{"failing_since":1787031364,"last_error":"exit=1","next_attempt":1787031664,"state":"failing"}}
+```
+
+That second record is the one that scales: while an agent is failing, **every**
+board that uses it is skipped, because the fact is about the command and this
+machine, not about a repository. Two boards on one agent share the outage
+instead of each burning a window rediscovering it. Both are visible:
+
+```console
+$ karr-foundation --status
+docs-site
+  2 tasks  [cooldown 60s (exit=1), agent:cheap failing]
+  in-progress:1  todo:1
+  in-progress: #2
+
+Agents
+  cheap  failing since 2026-08-18T05:36:04, next attempt at 2026-08-18T05:41:04 (exit=1)
+```
+
+and the next tick simply says so and moves on:
+
+```console
+$ karr-foundation --verbose
+sync --pull refs/karr-foundation/*
+skip /srv/docs-site — in cooldown for 59s
+```
+
+Neither wait is overridden by `--force`, and neither needs an operator: the
+cooldown grows `cooldown_base × 2^level` minutes up to `cooldown_max` and resets
+on the next clean run, and the agent is retried after `probe_every` — the probe
+**is** the next run, on the work that was waiting. karr keeps no cost, token or
+quota model; it keeps `ok`, or `failing since X, next attempt at Y`, plus a
+bounded record of past recoveries so a rhythm can be read out of it later.
+Reading that rhythm is a coordination agent's job, never a learning algorithm
+inside karr.
+
+`agents.state` is deliberately not board state and not per repository: an agent
+command that exists on one machine does not exist on the next, and a spent
+account limit is a property of a person, not of a project.
+
+### Case 5: the chain — write a plan, run it, read the run log
+
+`karr-foundation chain` is the VM of "the AI is the compiler, the chain is the
+program": the chain lives in the hub as a DAG of steps, and the executor takes
+what the plan says is ready, checks each precheck against facts it measures off
+the boards, runs it, and writes the state and the run log back.
+
+A chain is written into `refs/karr-foundation/chain/*` — with a schema, a cycle
+check and compare-and-swap updates, which is why `karr set-refs` refuses that
+namespace outright. Today that means writing it from Perl:
+
+```perl
+use App::karr::Git;
+use App::karr::Foundation::ChainStore;
+
+my $chain = App::karr::Foundation::ChainStore->new(
+    git => App::karr::Git->new( dir => '/srv/fleet-hub' ) );
+
+$chain->write_chain( [
+    { id => 'docs',     kind => 'shell', repo => '/srv/docs-site',
+      command => './build-docs.sh', precheck => 'board_actionable == yes' },
+    { id => 'smoke',    kind => 'shell', repo => '/srv/webapp',
+      command => './smoke-test.sh' },
+    { id => 'registry', kind => 'question', needs => [ 'docs', 'smoke' ] },
+    { id => 'publish',  kind => 'shell', repo => '/srv/webapp',
+      needs => [ 'registry' ], command => './publish.sh' },
+], limits => { concurrent => 4 }, note => 'release 0.6' );
+```
+
+A step names an id, a `kind`, and the steps it `needs`; steps with no edge
+between them may run at once. It may **not** name an agent: the chain is shared
+state and an agent is a property of a machine, so that is refused rather than
+ignored. The four kinds:
+
+| Kind | What it is |
+|---|---|
+| `ticket` | one card through the target repo's **ticket mode** (case 1) — the lock, the claim discipline, the ownership guard and the run's own report all come from there, not from a second copy here |
+| `shell` | a command in the repo, under that repo's own `.karr.lock`, with `KARR_ROLE=chain` |
+| `question` | waits on the mailbox (below) |
+| `plan` | recognised, left pending, planner recorded as wanted — see "What is built" |
+
+A `precheck` is the condition the planner assumed, in the grammar
+`<fact> == <value>` (or `!=`). The facts are `board_actionable`,
+`ticket_status`, `ticket_blocked`, `ticket_claimed` and — for a question step
+only, measured off the mailbox rather than a board — `question_state`
+(`answered`, `open` or `overdue`). A fact that cannot be measured is
+**absent**: a repository this machine does not have, a card that is not on the
+board, a question step nothing in the mailbox names. An absent fact makes the
+precheck not hold whichever operator it uses — every uncertainty falls to the
+side that costs a planning round rather than the side that runs the wrong
+thing.
+
+The question a chain waits on is asked by whoever wrote the plan, not by the
+step — a step that asked its own question would have to carry the question text,
+its options, its policy, its default and its deadline, which is the mailbox's
+schema written out a second time:
+
+```console
+$ karr-foundation ask "Which registry does 0.6 go to?" --options cpan,darkpan --step registry
+Asked question #1: Which registry does 0.6 go to?
+  answer with: karr-foundation answer 1 <cpan|darkpan>
+  nobody answers: block
+```
+
+Look before you leap — a dry run pulls nothing, claims nothing and executes
+nothing:
+
+```console
+$ karr-foundation chain --dry-run
+chain 20260818T053250Z-18641c: 2 step(s) ready (dry run, nothing pulled, claimed or executed)
+  step docs (shell) in /srv/docs-site: would run
+  step smoke (shell) in /srv/webapp: would run
+```
+
+Then run it:
+
+```console
+$ karr-foundation chain
+step docs (shell) in /srv/docs-site: done — exit=0
+step smoke (shell) in /srv/webapp: done — exit=0
+step registry (question): left pending — question #1 is unanswered (policy: block)
+chain 20260818T053250Z-18641c: 2 done, 1 pending
+```
+
+Waiting never holds the tick up: the question step is considered once, said out
+loud and left — **pending and unclaimed**, with no attempt counted and no
+started stamp, so the next tick finds it exactly as the planner left it. Its
+dependents wait by construction (a step becomes ready only when everything it
+`needs` is `done`) and every other branch runs in the same tick. Answer it, and
+the next tick walks on:
+
+```console
+$ karr-foundation answer 1 darkpan
+Answered question #1: darkpan
+  Which registry does 0.6 go to?
+
+$ karr-foundation chain
+step registry (question): done — question #1 answered 'darkpan' by Dev <dev@example.com>
+step publish (shell) in /srv/webapp: done — exit=0
+chain 20260818T053250Z-18641c: 2 done
+```
+
+What a question step does is the mailbox's state plus the policy the asker wrote
+down for the case where nobody answers:
+
+| Mailbox state | The step |
+|---|---|
+| `answered` | **done**, with the answer in the run log |
+| `open` | **pending and unclaimed** — dependents wait, every other branch runs |
+| `overdue` + `block` | keeps waiting: waiting *is* what `block` means |
+| `overdue` + `use_default` | **done**, with the `--default` as the answer |
+| `overdue` + `escalate_to_ai` | pending, and the planner recorded as wanted — **no agent is called**, because there is none |
+| nothing in the mailbox names the step | **`stale`** — a planning error, reported as one |
+
+Asked with `--policy use_default` and a `--default`, a deadline that passes
+therefore settles the step without anybody typing anything — here the whole
+chain finishes in one tick:
+
+```console
+$ karr-foundation chain
+step docs (shell) in /srv/docs-site: done — exit=0
+step smoke (shell) in /srv/webapp: done — exit=0
+step registry (question): done — question #1 went unanswered past its deadline; its default 'cpan' stands as the answer
+step publish (shell) in /srv/webapp: done — exit=0
+chain 20260818T053024Z-e7bc10: 4 done
+```
+
+and a ready question step nothing in the mailbox names is **not** left waiting
+quietly for a question that is never going to arrive:
+
+```console
+$ karr-foundation chain
+step docs (shell) in /srv/docs-site: done — exit=0
+step smoke (shell) in /srv/webapp: done — exit=0
+step registry (question): stale — no question in the mailbox names step registry — a question step is asked by the planner ('karr-foundation ask ... --step registry'), it does not ask itself
+chain 20260818T052941Z-acdde8: 2 done, 1 stale
+the planner is wanted for step(s) registry (no question was ever asked about it) — no planner runs from here yet; re-plan the chain
+```
+
+A step waits until **every** question naming it is settled; a question whose
+step is not ready yet is simply not looked at, which is the good case — it can
+be answered long before the step arrives, and then the step never waits at all.
+One limit is worth knowing: a question names a **step id and nothing else**, so
+a later chain that reuses an id inherits whatever the earlier one left
+unanswered under it. Answer or delete a question the fleet has stopped caring
+about.
+
+A step whose precheck no longer holds is **not** executed: it is marked `stale`
+and the planner is recorded as wanted. A step that fails stops its own branch
+and nothing else. A rate-limited agent, a locked or disabled board and a
+repository this machine does not have are requeues, not failures — none of them
+is a statement about the plan.
+
+The run log is one ref per run, in the hub, and reading it is what `get-refs` is
+for:
+
+```console
+$ cd /srv/fleet-hub
+$ git for-each-ref --format='%(refname)' refs/karr-foundation/log/
+refs/karr-foundation/log/2026-08-18-053250a33ef5
+refs/karr-foundation/log/2026-08-18-0532510c55f1
+
+$ karr get-refs refs/karr-foundation/log/2026-08-18-053250a33ef5
+{"chain":"20260818T053250Z-18641c","event":"start","host":"fleet-01","pid":1563039,"ts":"2026-08-18T05:32:50Z"}
+{"event":"step","kind":"shell","repo":"/srv/docs-site","state":"running","step":"docs","ts":"2026-08-18T05:32:50Z"}
+{"detail":"exit=0","event":"step","state":"done","step":"docs","ts":"2026-08-18T05:32:50Z"}
+{"event":"step","kind":"shell","repo":"/srv/webapp","state":"running","step":"smoke","ts":"2026-08-18T05:32:50Z"}
+{"detail":"exit=0","event":"step","state":"done","step":"smoke","ts":"2026-08-18T05:32:50Z"}
+{"detail":"question #1 is unanswered (policy: block)","event":"step","kind":"question","state":"pending","step":"registry","ts":"2026-08-18T05:32:50Z"}
+{"chain":"20260818T053250Z-18641c","done":2,"event":"end","pending":1,"ts":"2026-08-18T05:32:50Z"}
+```
+
+The waiting step has a `pending` entry and no `running` one before it — nothing
+was claimed and nothing was started. Run logs are segmented and pruned by
+themselves (14 days, 500 runs).
+
+`chain` is a command rather than something a plain tick does on the side: a cron
+entry written before the fleet had a chain must not start doing something else
+the day somebody writes one.
+
+### Case 6: the question mailbox
+
+A question is a file with an answer field, not a dialogue — which is what
+removes the special case for "a human happens to be present". `ask` writes one
+into the hub and returns; whoever answers needs to know nothing about the chain:
+
+```console
+$ karr-foundation ask "Which registry do we publish the 0.6 release to?" \
+    --context "the release gate is waiting" \
+    --options cpan,darkpan --default cpan --policy use_default --wait 3600
+Asked question #1: Which registry do we publish the 0.6 release to?
+  answer with: karr-foundation answer 1 <cpan|darkpan>
+  nobody answers: use_default after 2026-08-18T06:37:44Z
+```
+
+Open questions show up in the overview, with the id `answer` takes:
+
+```console
+$ karr-foundation --status
+...
+Open questions
+  #1  Which registry do we publish the 0.6 release to?
+      options: cpan, darkpan  use_default after 2026-08-18T06:37:44Z
+```
+
+```console
+$ karr-foundation answer 1 darkpan --note "this one is a private release"
+Answered question #1: darkpan
+  Which registry do we publish the 0.6 release to?
+```
+
+`--policy` is what happens when nobody answers:
+
+| Policy | With `--wait` elapsed |
+|---|---|
+| `block` (default) | keep waiting — that is what blocking means |
+| `use_default` | `--default` becomes the answer |
+| `escalate_to_ai` | recorded, and the planner noted as wanted — no agent is called, because there is none |
+
+An answer is create-only and is validated against the options it was offered, so
+two answers cannot silently become one; `--force` on `answer` is what replaces
+one deliberately. Both commands sync the fleet namespace around what they write.
+`--step ID` is what binds a question to a chain step.
+
+### The board's own opt-out
+
+A board can refuse automated runs **in its own karr state**, which is what a
+fleet-wide `default_command` otherwise makes impossible:
+
+```console
+$ karr disable --reason "docs freeze until the 0.6 release"
+Board disabled for automated agent runs (karr-foundation).
+  Reason: docs freeze until the 0.6 release
+
+$ karr-foundation --status
+docs-site
+  2 tasks  [disabled]
+  in-progress:1  todo:1
+  disabled:    docs freeze until the 0.6 release
+  in-progress: #2
+
+$ karr enable
+Board enabled for automated agent runs (karr-foundation).
+```
+
+Unlike `.karr`, this is board state (`foundation.enabled` in `refs/karr/config`),
+so it syncs and every foundation instance on every machine honours it. A
+disabled board is skipped **whole**: the flag is checked before the agent
+command is resolved and before the drain decision, so there is no drain, no
+auto-block and no agent run. It wins over `--command`, `default_command`, the
+`.karr` `command` and `claude: true`, and `--force` does *not* override it. The
+same state is readable and settable through `karr config get` / `karr config
+set` (`foundation.enabled`, `foundation.reason`).
+
+### What is built, and what is not
+
+The design has three layers and karr owns two of them: **coordination** —
+shared and synced, the tickets, the chain, the questions, the run log;
+**execution** — local and never in a repository, which agent commands exist
+here, whether they work, how many may run at once; and **judgement** — an agent
+that plans and routes, invoked only when a written plan is missing or has
+broken. The third layer is the one that was never built, which is why "the
+planner is wanted" is a line of output rather than a call.
+
+| Piece | State |
+|---|---|
+| overview, discovery, drain/single/ticket modes, cooldown, stall detection, auto-block | built |
+| `disable` / `enable`, per-repo lock and state, concurrency, `on_drained` | built |
+| named agents, `kind: claude-code`, availability probing, `agents.state` | built |
+| the question mailbox: `ask`, `answer`, `--status` listing, policies | built |
+| `chain` with `kind: ticket`, `kind: shell` and `kind: question` steps, prechecks, run logs | built |
+| `kind: question` resolving the mailbox | built — pending and unclaimed while the answer is `open`, done once it is there, the default taken on `use_default`, `stale` when nothing in the mailbox names the step |
+| `kind: plan` steps | **not executed.** Recognised, left pending, with the planner recorded as wanted |
+| the coordination agent / planner | **not built.** It is the one layer of the design that was never written, and it has no ticket |
+| writing a chain from the CLI | not built — a chain is written through `App::karr::Foundation::ChainStore` |
+| `escalate_to_ai` | recorded only, for the same reason: there is no agent to escalate to |
+| cross-board links in a chain | not built — no step and no precheck fact reaches a card on another board; `karr needs` is the by-hand half |
+
+Where the design says "call the planner", foundation records that the planner is
+wanted and says so at the end of the tick — nothing is written that a future
+planner would have to undo, and no agent is invented to fill the gap:
+
+```console
+$ karr-foundation chain
+step smoke (shell) in /srv/webapp: done — exit=0
+step replan (plan): left pending — this foundation runs kind: ticket, kind: shell and kind: question
+chain 20260818T053131Z-c075f7: 1 done, 1 skipped
+the planner is wanted for step(s) replan (kind: plan is not executed here) — no planner runs from here yet; re-plan the chain
+```
+
+### Reference
+
+`karr-foundation` options:
+
+| Option | Effect |
+|---|---|
+| `--config PATH` | config file (default `~/.config/karr-foundation/config.yml`); also relocates `agents.state` |
+| `--status` | read-only overview of every board, then exit |
+| `--dry-run` | decide everything, execute nothing (serial, and silent without `--verbose`) |
+| `--verbose` | log lines and agent output on the terminal, agent descriptions in `--status` |
+| `--force` | run regardless of board state; on `answer`, replace an existing answer |
+| `--command CMD` | one agent command for every board, overriding each `.karr` |
+| `ask` / `answer` / `chain` | the hub commands (`--context`, `--options`, `--default`, `--policy`, `--wait`, `--step`; `--note`) |
+
+Exit codes follow the same contract as `karr`: `0` the tick finished, `1` a
+runtime failure (no repos, unparsable config, a hub command with no hub), `2` a
+usage error. A chain step that *failed* does not change the exit code — that is
+a statement about the plan, not about the binary.
+
+`config.yml` keys:
+
+| Key | Meaning |
+|---|---|
+| `dirs:` | explicit board repositories |
+| `scan:` | parent directories whose direct children are checked for a board |
+| `concurrent:` | machine ceiling of boards with an agent at once (default 1) |
+| `hub:` | the repository carrying `refs/karr-foundation/*` |
+| `agents:` / `default_agent:` / `probe_every:` | named agent definitions, the fallback board agent, the default retry interval |
+| `default_command:` / `default_prompt:` | fleet-wide command and prompt |
+| `mode:`, `claude:`, `claude_bin:`, `claude_max_turns:`, `claude_permission_mode:`, `on_drained:`, `on_drained_max_runtime:`, `on_drained_max_rounds:` | fleet-wide defaults for the `.karr` keys of the same name |
+
+`.karr` keys, per repository (each wins over the config-wide value):
+
+| Key | Meaning |
+|---|---|
+| `command:` | the agent command; a shell template, `$PROMPT` and `$KARR_TASK` exported into it |
+| `prompt:` | the instruction handed over as `$PROMPT` |
+| `agent:` | a named agent from `agents:` |
+| `claude:` / `claude_bin:` / `claude_max_turns:` / `claude_permission_mode:` | synthesize the canonical claude command (opt-in) |
+| `mode:` | `drain` (default), `single`, `ticket`; `drain: true\|false` is the older spelling of the first two |
+| `on_idle:` | `skip` (default) or `always-run` |
+| `max_runtime:` | per-command SIGKILL in seconds (`0` = no timeout) |
+| `max_attempts:` | stalls on one card before it is auto-blocked (default 2) |
+| `max_iterations:` | hard cap on drain iterations (default 50) |
+| `cooldown_base:` / `cooldown_max:` | cooldown minutes at level 0 (default 1) and the ceiling (default 64) |
+| `error_patterns:` | extra case-insensitive substrings that count as a common error |
+| `on_drained:` / `on_drained_max_runtime:` / `on_drained_max_rounds:` | the domain hook, its budget and its round cap |
+
+Command resolution order, highest first: `--command`, `default_command`, the
+`.karr` `command`, the `.karr` `agent`, `default_agent`, `claude: true`. A board
+disabled with `karr disable` runs none of them.
+
+Full detail: `perldoc App::karr::Foundation`, and for the chain
+`perldoc App::karr::Foundation::Executor`,
+`perldoc App::karr::Foundation::ChainStore`,
+`perldoc App::karr::Foundation::Questions`,
+`perldoc App::karr::Foundation::Agents`.
 
 ## Installation
 
@@ -239,149 +983,6 @@ karr show --me
 - `standard`
 - `intangible`
 
-## Automated execution: karr-foundation
-
-`karr-foundation` is a single-shot, idempotent companion binary — a multi-board
-**coordinator**. Point cron (or a systemd timer, or a tight loop) at it and it
-scans configured repos, decides whether there is work, and **drains** each
-board — running the configured agent command repeatedly until no actionable
-task remains.
-
-Agent execution is opt-in. When no board has an agent configured, the default
-action is a read-only **overview** of every board (status counts,
-in-progress/blocked tasks, lock and cooldown state) — so a human can use
-foundation purely to coordinate their own work, with no AI involved.
-
-```bash
-# every 5 minutes
-*/5 * * * * karr-foundation
-
-karr-foundation --force            # run regardless of board state
-karr-foundation --dry-run --verbose
-karr-foundation --status           # read-only overview of every board, no runs
-
-# ask the fleet something, and answer it from anywhere
-karr-foundation ask "Which registry do we publish to?" \
-    --options cpan,darkpan --default cpan --policy use_default --wait 3600
-karr-foundation answer 7 darkpan
-
-# execute the fleet's planned chain out of the hub
-karr-foundation chain
-karr-foundation chain --dry-run    # what is ready, and what its precheck says
-```
-
-A question is a file with an answer field, not a dialogue: `ask` writes it into
-the hub and returns, the chain carries on with every step that does not depend
-on the answer, and whoever answers — a person at a terminal, a chat bridge, the
-coordination agent — needs to know nothing about the chain. `--policy` says what
-happens when nobody answers at all: `block` (the default: wait), `use_default`
-(the `--default` becomes the answer once `--wait` has passed) or
-`escalate_to_ai`. `--status` lists the open mailbox.
-
-`karr-foundation chain` is the other half of "the AI is the compiler, the chain
-is the program, karr-foundation is the VM": it takes the steps the plan in the
-hub says are ready, checks each precheck against facts it measures off the
-boards, runs a `kind: ticket` step through the target repo's **ticket mode** and
-a `kind: shell` step as a command under that repo's own lock, and writes each
-step's state and the run log back. It is a layer *above* the per-repo modes, not
-a fourth one beside `drain`/`single`/`ticket` — those are configured per
-repository and the chain is fleet-wide, so a chain step inherits the lock, the
-claim and the ownership guard from the mode it calls instead of duplicating
-them. It is a command rather than something a plain tick does on the side, so
-writing a chain never changes what an existing cron entry does.
-
-A step whose precheck no longer holds is **not executed**: it is marked stale
-and the planner is recorded as wanted (no planner runs from here yet). A step
-that fails stops its own branch and nothing else — steps only become ready when
-everything they need is `done` — while a broken agent command, a locked or
-disabled board, and a repository this machine does not have are requeues rather
-than failures. Two machines are kept off one step by the order rather than by
-the compare-and-swap alone: pull before reading the chain, push the claim before
-the work starts. Full detail: `perldoc App::karr::Foundation::Executor`.
-
-It reads `~/.config/karr-foundation/config.yml` (or `--config`):
-
-```yaml
-dirs:
-  - /path/to/repo1          # explicit board repos
-scan:
-  - /path/to/parent-dir     # auto-discover direct subdirs that have a .karr
-concurrent: 4               # boards that may have an agent at once (default: 1)
-hub: /path/to/hub-repo      # the repo carrying refs/karr-foundation/* (the chain)
-```
-
-`concurrent` is a machine ceiling, not a quota — one agent per repository stays
-the hard rule, so concurrency is across repositories and never inside one. Two
-tighter limits may cut it further: a per-agent estimate on a named agent
-definition, and the `limits:` block of the current chain header. Full detail:
-`perldoc App::karr::Foundation`.
-
-Each repo carries a `.karr` file describing how to run its agent:
-
-```yaml
-claude: true                # synthesize the canonical claude command (opt-in)
-claude_bin: claude          # binary for claude: true (default: claude)
-claude_max_turns: 30        # --max-turns for claude: true
-claude_permission_mode: bypassPermissions
-prompt: >-                  # agent instruction, exposed to the command as $PROMPT
-  Use the karr-coordinator skill: pick the next actionable task and move it.
-# command: claude -p "$PROMPT"   # explicit command; wins over claude: true
-on_idle: skip               # 'skip' (default) | 'always-run'
-max_runtime: 1800           # per-command SIGKILL in seconds (0 = no timeout)
-drain: true                 # loop until drained (default) | false: single run
-max_attempts: 2             # stalls on one task before auto-block
-max_iterations: 50          # hard cap on drain iterations (the drain budget)
-cooldown_base: 1            # cooldown minutes at level 0
-cooldown_max: 64            # cooldown ceiling in minutes
-error_patterns:             # extra case-insensitive substrings → common-error
-  - my custom api error
-```
-
-`claude`, `claude_bin`, the `claude_*` knobs, `command` and `prompt` may also be
-set globally in `config.yml` (as `default_command` / `default_prompt`); the
-per-repo `.karr` value wins. The agent's output streams to the terminal when run
-interactively or with `--verbose`, and is always appended to `.karr.log`.
-
-A board can also opt out **in its own karr state**, which is what a global
-`default_command` otherwise makes impossible:
-
-```bash
-karr disable --reason "abandoned driver, backlog parked"
-karr enable
-```
-
-Unlike `.karr` — local machine state — the flag is board state
-(`foundation.enabled` in `refs/karr/config`), so it syncs with the board and
-every foundation instance on every machine honours it. A disabled board is
-skipped **whole**: the flag is checked before the agent command is resolved and
-before the drain decision, so there is no drain, no auto-block and no agent run.
-It wins over `--command`, `default_command`, the `.karr` `command` and
-`claude: true`, and `--force` does *not* override it. `--status` shows such a
-board with a `disabled` flag and its reason. The same state is visible and
-settable through `karr config` (`foundation.enabled` / `foundation.reason`).
-
-After every agent run, foundation classifies the outcome from what it can
-observe — exit code, board ref movement, and the run's captured output:
-
-- **progress** — the board changed; keep draining.
-- **stall** — a task the agent claimed or left `in-progress` did not move. Its
-  attempt counter is bumped, and at `max_attempts` it is **auto-blocked** (a
-  `blocked:` reason is written so it drops out of the actionable set and the
-  drain can finish). The agent may always set a better reason itself with
-  `karr edit --block`; the auto-block is only a fallback so the loop always
-  terminates.
-- **common-error** — a non-zero/timeout exit, or output matching a known
-  pattern (rate limit, auth, network, 5xx, plus your `error_patterns`). No task
-  is penalized; the repo enters an **exponential cooldown** (`cooldown_base` ×
-  2^level minutes, capped at `cooldown_max`, reset on the next clean run) and is
-  skipped until it expires.
-- **idle** — the agent did nothing and grabbed nothing; stop.
-
-Concurrent invocations are safe: a PID lock per repo means a cron tick that
-fires while an agent is still running simply skips that repo. All per-repo state
-is gitignored: `.karr.state` (board hash, per-task attempts, cooldown, last
-error), `.karr.lock`, and `.karr.log`.
-
 ## Helper refs
 
 Not all shared workflow state belongs in tasks. `karr` also supports arbitrary
@@ -407,7 +1008,10 @@ Use this for:
 
 Protected namespaces such as branches, tags, remotes, stash, `refs/karr/*` and
 `refs/karr-local/*` (where `karr pick` keeps its process-local locks) are
-blocked.
+blocked. `refs/karr-foundation/chain/*`, `.../log/*` and `.../questions/*` are
+read-only for `set-refs` — karr-foundation writes those with a schema and
+compare-and-swap — while `get-refs` reads them freely, which is how one looks
+at a step, a run log or a question.
 
 ## Skills
 
