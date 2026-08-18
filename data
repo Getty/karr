@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-18T07:20:06Z
+claimed_by: clan-wrap
+class: standard
+completed: 2026-08-18T07:20:06Z
+created: 2026-08-18T06:36:42Z
+id: 209
+priority: medium
+started: 2026-08-18T06:37:02Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+- chain
+title: 'Chain: Cross-Board-Links als Fakt aufloesen (offene Haelfte von #192)'
+updated: 2026-08-18T07:20:06Z
+---
+
+Der Epic #194 nennt diese Luecke, sie hat aber kein eigenes Ticket, weshalb sie den Epic offenhaelt, ohne irgendwo als Arbeit zu stehen.
+
+#192 hat die Cross-Board-Links gebaut: needs:BOARD#ID / escalated-from:BOARD#ID als Tag auf der Karte, App::karr::CrossBoard mit resolve/link_state, und `karr needs [--resolve]` als Hand-Kommando. Was fehlt, ist die Bruecke in den Chain-Ausfuehrer: kein Schritt und kein Precheck-Fakt erreicht eine Karte auf einem anderen Board, also loest ein Chain-Lauf nichts davon auf.
+
+Natuerlicher Landeplatz laut #194: facts_for (ein Fakt ueber die ferne Karte) oder eine eigene Schrittart. Der erste Weg ist der kleinere -- question_state hat mit #200 gerade gezeigt, wie ein Fakt aussieht, der nicht von einem Board im ueblichen Sinn kommt, samt der Regel, dass ein nicht messbarer Fakt abwesend bleibt statt gedefaultet zu werden.
+
+Zu entscheiden beim Bauen:
+- Welche Frage der Fakt beantwortet: ob alle Links der Karte gesettled sind, oder der Zustand eines einzelnen. link_state kennt bereits verified/unverified und die Terminalstatus-Regel aus #67.
+- Ob der Chain-Lauf Links auch aufloest (die Karte entblockt) oder nur misst. #192s Entscheidung 4 ist hier bindend: der Link ist der FAKT, blocked ist die ENTSCHEIDUNG. Ein Ausfuehrer, der ungefragt entblockt, waere strenger als das Board.
+- Woher die Pfade der fernen Boards kommen: CrossBoard::resolve liest bereits ~/.config/karr-foundation/config.yml. Der Ausfuehrer haelt dieselbe Konfiguration schon in der Hand -- keine zweite Quelle erfinden.
+- Was passiert, wenn ein fernes Board auf dieser Maschine gar nicht liegt. #192 hat das als ANTWORT behandelt, nicht als Fehler; hier vermutlich ein abwesender Fakt.
+
+Nicht Teil davon: karr needs selbst, das ist fertig.
+Umgesetzt, nicht committet. Der Fakt heisst ticket_links und wird in App::karr::Foundation::Executor::facts_for gemessen, neben ticket_status/blocked/claimed.
+
+ENTSCHEIDUNGEN
+- FRAGE: ueber die ganze Karte, nicht ueber einen Link. Die Precheck-Grammatik ist <fact> == <value> und hat keine Stelle, an der ein einzelner Link benannt werden koennte, also waere ein Pro-Link-Fakt gar nicht erfragbar. Werte: settled (jeder Link in einem eigenen Terminalstatus des FERNEN Boards, #67), sonst der Zustand des ersten ungesettleten Links in Tag-Reihenfolge -- open oder missing. Dieselbe Regel, die question_state fuer mehrere Fragen faehrt.
+- KARTE OHNE LINK = settled. Traegt die Last: karr needs --resolve LOESCHT den Tag, wenn ein Link settled; waere die leere Karte ein abwesender Fakt, wuerde genau das erfolgreiche Aufloesen des Links den Schritt fuer immer stranden. Formgleich mit ticket_blocked => no fuer eine Karte, die niemand blockiert hat -- abwesend ist fuer UNMESSBAR reserviert, nicht fuer leer.
+- FERNE KARTE EXISTIERT NICHT: missing, nie settled (Entscheidung 5). Eigener Wert statt open, weil eine Karte, die niemand lesen kann, keine Karte ist, an der jemand arbeitet -- und der Stale-Grund das dann auch sagt.
+- FERNES BOARD NICHT AUF DIESER MASCHINE: Fakt abwesend, und zwar fuer die ganze Karte, auch neben lesbaren Links. Ein abwesender Fakt haelt keinen Precheck, mit keinem Operator -- der Schritt wird stale, der Planer hoert davon, und die Maschine, die das Board hat, misst und laeuft. Das ist #192s Haltung (Antwort statt Fehler) plus die etablierte Executor-Regel.
+- PFADE: aus der Konfiguration, die dieser Lauf ohnehin schon geparst haelt. App::karr::CrossBoard bekam dafuer ein Attribut config_data (bereits geparste Fleet-Config, schlaegt config_file). Begruendung: keine zweite Quelle und auch kein zweites Lesen derselben Datei -- eine Foundation, deren _config_data von --config kam oder injiziert wurde, wuerde sonst mit CrossBoards eigener Lesung ueber die Flotte streiten. Die Regel selbst (dirs:, scan:-Kinder, Basename-Abgleich) bleibt vollstaendig in CrossBoard; #189s Argument.
+- GEMESSEN, WENN DER SCHRITT EINE KARTE NENNT (nicht nur kind: ticket). Die drei anderen ticket_*-Fakten haengen schon an "der Schritt nennt eine Karte, die auf dem Board liegt"; einen der vier zusaetzlich an der kind zu haengen waere zwei Regeln fuer eine Kartenlesung. question_states Kind-Gate greift hier nicht: dessen Kosten fallen pro SCHRITT an, diese pro KARTE MIT TAG -- eine Karte ohne needs:-Tag erreicht kein fremdes Repository.
+- NICHTS WIRD AUFGELOEST (Entscheidung 4): kein Fetch, kein Schreiben auf beiden Boards, kein Entblocken, kein Tag-Loeschen. Auch verified ist nicht Teil des Fakts -- --resolve settled auf settled allein, und eine zweite Meinung hier hiesse, dass eine ferne Karte ohne escalated-from-Rueckverweis nie etwas settlen koennte.
+
+Keine eigene Schrittart noetig: der Fakt loest die Aufgabe (ein Schritt kann auf eine Karte in einem anderen Repository warten), und da nichts geschrieben wird, waere eine Schrittart nur ein zweiter Weg zu derselben Messung.
+
+DATEIEN: lib/App/karr/Foundation/Executor.pm (Fakt + _links_state + _fleet + POD-Abschnitt "A cross-board link is a fact about another board"), lib/App/karr/CrossBoard.pm (nur config_data), t/209-foundation-cross-board-facts.t (neu, 8 Subtests), t/202-foundation-chain-executor.t (zwei is_deeply-Fakt-Saetze um ticket_links => settled ergaenzt), Changes, README.md (Fakt-Vokabular). Git.pm (#208) nicht angefasst.
+
+ROTBEWEIS, alles gemessen (prove -I<kopie-von-lib> t/209..., weil prove -l lib VOR -I stellt und ein -I-Schatten dort wirkungslos ist):
+1) Unveraenderte Executor.pm + CrossBoard.pm aus HEAD: 7 von 8 Subtests fallen (1-3, 5-8). Nur Subtest 4 haelt, weil "abwesend" in beiden Welten abwesend ist -- der wird von Mutation 2 abgedeckt.
+2) unknown-board/no-board als messbar behandelt (return undef -> next): Subtests 4, 5, 8 fallen, u.a. "got settled, expected undef".
+3) missing wie settled behandelt: Subtests 3 und 5 fallen ("got settled, expected missing").
+4) In link_state den Terminalstatus hart auf done/archived gesetzt statt is_terminal_status: Subtests 2 und 6 fallen -- die #67-Falle beisst durch den neuen Fakt hindurch.
+5) Executor entblockt die Karte, wenn alle Links settled: Subtest 6 faellt ("die Karte ist danach IMMER NOCH blockiert").
+
+TESTS: prove -l t/209-foundation-cross-board-facts.t -> PASS, 8 Subtests. Volle Suite prove -l t/ -> Files=185, Tests=1298, 0 Skips, exit 0, PASS (Vorher-Stand 183/1283; +1 Datei/+8 von mir, +1 Datei/+7 vom parallelen #208). Kein Agent gestartet, alles in Wegwerf-Repos, HOME im Test auf einen Koeder umgebogen, der jede Zweitquelle auffliegen liesse.
+Committet als e2a4bce. Verifiziert: prove -l t/ = 185 Dateien, 1298 Tests, PASS, exit 0, 0 Skips. Fuenf getrennte Mutationen als Rot-Probe, nicht eine. Damit ist die vom Epic #194 benannte offene Haelfte von #192 geschlossen.
