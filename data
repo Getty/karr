@@ -1,0 +1,81 @@
+---
+claimed_at: 2026-08-18T06:42:25Z
+claimed_by: cell-dead
+class: standard
+completed: 2026-08-18T06:42:25Z
+created: 2026-08-18T04:09:35Z
+id: 204
+priority: low
+started: 2026-08-18T06:03:33Z
+status: done
+tags:
+- docs
+- git
+- transport
+title: Git.pm's DESCRIPTION names insteadOf as CLI-only, but libgit2 applies it
+updated: 2026-08-18T06:42:25Z
+---
+
+App::karr::Git DESCRIPTION (the paragraph on the CLI transport fallback)
+says:
+
+    because libgit2/libssh2 doesn't read ~/.ssh/config and can't run a
+    ProxyCommand -- directives like Host aliases, IdentityFile, and
+    insteadOf only take effect through the CLI.
+
+The list mixes two different config files, and the git-config half of it
+is wrong: url.<base>.insteadOf is applied by libgit2 itself. Measured on
+libgit2 1.9.3 (the floor #174 pinned), with KARR_NO_CLI_FALLBACK=1 so
+that no git CLI could be involved:
+
+    git config url."$work/".insteadOf karrboard:
+    git remote add alias karrboard:board.git
+    remote_has_board("alias")  ->  1        # native, rewrite applied
+
+Without a matching insteadOf rule, the same shape goes to DNS for the
+literal host ("failed to resolve address for karrboard"), so the 1 above
+can only come from libgit2 having done the rewrite. A rewrite pointing at
+a path that does not exist fails as "unsupported URL protocol", which is
+what made the first reading of this look the other way round.
+
+What is genuinely CLI-only is the ~/.ssh/config half: Host aliases and
+the IdentityFile, User and Port under them, plus ProxyCommand. libssh2
+takes board:karr.git for the literal host "board".
+
+Found while doing #203, which rewrote the same argument for
+remote_has_board (there it is now stated as the ssh-config half only,
+with a note that insteadOf is not part of it). This ticket is the
+DESCRIPTION paragraph that still governs fetch/push, left alone because
+#203 was scoped to the probe and to the four ssh-timeout doc sites.
+
+Worth checking at the same time: pushInsteadOf, and whether libgit2
+applies insteadOf to ssh:// and https:// URLs as well as to the local
+paths measured here.
+DESCRIPTION paragraph rewritten in lib/App/karr/Git.pm; Changes entry under {{$NEXT}}. Both open questions answered by measurement on libgit2 1.9.3 (raw Git::Native, git_remote_lookup + git_remote_push, no CLI anywhere in the loop), throwaway repos under the scratchpad only.
+
+Q1 pushInsteadOf: YES, libgit2 applies it. Two bare repos A and B behind a
+`git daemon --enable=receive-pack`; url.git://.../A/.insteadOf=karrsplit: and
+url.git://.../B/.pushInsteadOf=karrsplit:, remote karrsplit:board.git. Fetch
+reached A, push landed in B. An explicit remote.<name>.pushurl behaves the
+same way over git://.
+
+Q2 ssh:// and https:// : YES, both, and on both sides of a rule. As the URL
+being rewritten, ssh://karrhost.invalid/board.git and the https:// equivalent
+with a matching insteadOf pointing at a valid local bare repo both fetched and
+pushed OK, while the identical URLs with the rule removed failed at DNS. As
+the rewrite target, karralias:board.git under url.ssh://rewritten.invalid/.insteadOf
+(and the https:// twin) failed naming rewritten.invalid, against a control
+naming karralias. So it is a textual prefix substitution ahead of any protocol
+handling, not a local-path-only feature.
+
+The first pass got Q1 backwards, exactly the way #203 warns about. Measuring
+pushInsteadOf with both targets as local paths showed the push landing at the
+insteadOf target, which reads as "pushInsteadOf ignored". It is not: libgit2
+connects to the push URL (pushInsteadOf aimed at ssh://pushtarget.invalid/
+fails naming that host) and its local transport then writes to the fetch URL.
+That is behaviour, not prose, so it is #208 rather than a silent fix, and the
+new paragraph names it as the one corner that does not hold.
+
+Test: prove -l t/  ->  Files=183, Tests=1283, 0 skips, Result: PASS, exit 0.
+Identical to the stated before-state. Nothing committed.
+Committet als 2cabea2. Verifiziert: prove -l t/ = 183 Dateien, 1283 Tests, PASS, exit 0, 0 Skips. Beide offenen Fragen des Tickets sind durch Messung beantwortet: (1) pushInsteadOf wird angewandt, auf echtem Transport korrekt; (2) der Rewrite ist eine textuelle Praefix-Substitution vor jeder Protokollpruefung, gilt also fuer ssh:// und https:// auf beiden Seiten einer Regel. Jede Messung mit regelfreier Kontrolle und Rueckleseprobe, welches Repository die Refs bekam. Der lokale Sonderfall wurde nicht still mitgefixt, sondern als #208 abgespalten.
