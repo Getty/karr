@@ -1,0 +1,80 @@
+---
+claimed_at: 2026-08-18T07:19:52Z
+claimed_by: pour-from
+class: standard
+completed: 2026-08-18T07:19:52Z
+created: 2026-08-18T06:13:57Z
+id: 208
+priority: low
+started: 2026-08-18T06:36:55Z
+status: done
+tags:
+- git
+- transport
+- upstream
+title: Native push to a local-path remote ignores the push URL and writes to the fetch
+  URL
+updated: 2026-08-18T07:19:52Z
+---
+
+Measured while answering #204's open questions, on the libgit2 1.9.3 that
+Alien::Libgit2 carries here, with no git CLI in the picture (raw
+Git::Native, git_remote_lookup + git_remote_push).
+
+libgit2 honours the push URL -- both url.<base>.pushInsteadOf and an
+explicit remote.<name>.pushurl -- on a real transport, and drops it on a
+local path.
+
+Over git:// (a `git daemon --enable=receive-pack` in front of two bare
+repos A and B):
+
+    url.git://127.0.0.1:9419/A/.insteadOf     = karrsplit:
+    url.git://127.0.0.1:9419/B/.pushInsteadOf = karrsplit:
+    remote probe = karrsplit:board.git
+
+    fetch -> A       push -> B        # correct
+
+    remote.probe.pushurl = git://127.0.0.1:9419/B/board.git
+    fetch -> A       push -> B        # correct
+
+The same two shapes with both sides as local bare-repo paths:
+
+    fetch -> A       push -> A        # push URL dropped, push reports OK
+
+It is not that the rewrite fails to happen. The push connects to the push
+URL and only writes to the wrong one: with pushInsteadOf aimed at
+ssh://pushtarget.invalid/ and insteadOf at a valid local path, the push
+fails with "failed to resolve address for pushtarget.invalid" -- so the
+push URL reached the transport. Aim it at a local path that does not exist
+and the failure is "failed to resolve path .../nope/board.git", again the
+push URL. Aim it at a local path that does exist and the connect succeeds,
+after which the objects and refs land at the fetch URL instead. That
+matches libgit2 local_push() opening remote->url rather than the
+transport's own url.
+
+Why it matters here: App::karr::Git->push is _push_refspecs -> $repo->remote
+-> ->push, exactly the path measured, so a clone whose origin is a local
+path and whose push URL differs publishes refs/karr/* to the fetch URL and
+reports success. Silent, and the CLI fallback never runs because nothing
+failed. Rare shape -- most boards sync over ssh or https, where libgit2 is
+correct -- hence low.
+
+Confirmed the config itself is right by pushing the same repo with git
+2.47.3, which lands at the push URL in every one of these cases.
+
+Not fixed under #204, which was scoped to the DESCRIPTION paragraph.
+Options if this is worth acting on: detect a local-path remote carrying a
+distinct push URL and route that push through the CLI fallback, or refuse
+it with a named error rather than reporting a success that went elsewhere.
+Fixed. Reproduced both shapes first (remote.<name>.pushurl and url.<base>.pushInsteadOf) by reading back which of two bare repos actually received refs/karr/*: push returned 1, the refs were in the fetch repo, the push repo empty.
+
+_push_refspecs now checks the resolved push URL before handing the push to libgit2. libgit2 resolves it at git_remote_lookup time (pushurl with insteadOf applied, or pushInsteadOf against the fetch URL, NULL when neither is set), but Git::Native exposes only ->url and Git::Libgit2::FFI binds no git_remote_pushurl -- so App::karr::Git::_remote_pushurl reaches it through their shared FFI instance as a function object, never attached into their namespace.
+
+Detection is three conditions: a push URL exists at all (NULL for every ordinary board -- one check, no string work), it differs from the fetch URL, and it is a local-transport path (_is_local_url: file:// yes, any other scheme no, a colon before the first slash is scp-style ssh, the rest is a path). Anything left over goes through the CLI fallback, which lands at the push URL. Under KARR_NO_CLI_FALLBACK there is no route, so it fails with a message naming both URLs -- the ticket's second option, kept for the case where the first is unavailable, rather than instead of it.
+
+Chose routing over refusing: karr already keeps the CLI transport for ssh-config cases, so a correct route exists and refusing would be a refusal without need. ssh/https boards are untouched -- they have no push URL at all, so the check never gets past its first line.
+
+Regression test t/208-push-local-push-url.t (7 subtests). Red probe with the fix reverted: subtests 1-3 fail (board lands in the fetch repo, no refusal, empty last_error) and the file dies at subtest 6. prove -l t/ : 184 files, 1290 tests, 0 skips, exit 0 (baseline 183/1283 plus this file's 7).
+
+Also touched: the DESCRIPTION corner paragraph now says what karr does about it, =method push notes the route, Changes entry under {{$NEXT}}. Not committed.
+Committet als 6c9dab3. Verifiziert: prove -l t/ = 185 Dateien, 1298 Tests, PASS, exit 0, 0 Skips (183/1283 Basis + 2 Dateien und 15 Tests aus #208 und #209). Rot-Probe bestaetigt: gegen das unveraenderte Modul fallen die ersten drei Subtests, inklusive des stillen Falls -- Board landet an der Fetch-URL, last_error leer.
