@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - The ssh:// hang is gone, by requiring a libgit2 that does not have
+      it (#174). Against a remote that accepts the TCP connection and then
+      stays silent, an ssh fetch could park a karr command forever: libssh2
+      does its own reads and retries past libgit2's socket timeout, so
+      KARR_TRANSPORT_TIMEOUT reached git:// and http:// but never ssh://,
+      and no Perl-level alarm can break into a blocking C call.
+
+      libgit2 fixed it upstream in 1.9.3 (PR #7165: stop looping on
+      LIBSSH2_ERROR_TIMEOUT, enable TCP keepalive). Measured here against
+      a silent listener -- on 1.9.0 the fetch was still blocked when it
+      was killed at 25s; on 1.9.3 it returns at the configured timeout
+      (3s -> 3.11s, 8s -> 8.07s), while 0 ("no limit") keeps waiting as
+      documented.
+
+      Enforced through the dependency rather than through a workaround in
+      the transport: cpanfile now pins Alien::Libgit2 0.002, whose
+      pkg-config floor is 1.9.3, so a distribution libgit2 below the fix
+      -- Debian trixie still ships 1.9.0 -- falls through to the bundled
+      source build instead of being used. No transport policy changed and
+      no version switch sits in App::karr::Git.
+
     - karr-foundation can now run the chain it was already storing
       (#202). The epic that built the fleet's coordination layer left
       the middle out: the planner's output and the program were there

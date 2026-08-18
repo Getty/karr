@@ -17,6 +17,14 @@ requires 'Sys::Hostname';
 requires 'Time::HiRes';
 requires 'Git::Native', '0.005';
 requires 'Git::Libgit2', '0.007';
+# Not used directly -- Git::Libgit2 loads the C library through it. Pinned so
+# an install cannot land on libgit2 < 1.9.3, where the ssh transport loops
+# forever against a peer that accepts the connection and then stays silent:
+# libssh2 does its own reads and no libgit2 timeout option reaches that loop,
+# so KARR_TRANSPORT_TIMEOUT cannot bound it either (#174, fixed upstream by
+# libgit2 PR #7165). 0.002 raises the pkg-config floor to 1.9.3, so a
+# distribution lib below the fix falls through to the bundled source build.
+requires 'Alien::Libgit2', '0.002';
 
 on test => sub {
     requires 'Test::More';
