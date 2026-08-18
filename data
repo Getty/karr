@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-08-18T05:27:12Z
+claimed_by: join-bell
+class: standard
+completed: 2026-08-18T05:27:12Z
+created: 2026-08-17T08:20:53Z
+id: 200
+priority: medium
+started: 2026-08-18T04:42:35Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+title: 'karr-foundation: run kind: question steps against the mailbox'
+updated: 2026-08-18T05:27:12Z
+---
+
+The mailbox exists since #191: refs/karr-foundation/questions/<id>/ask and .../answer, `karr-foundation ask` / `answer`, and App::karr::Foundation::Questions->resolve returning answered / open / overdue plus the policy that applies when nobody answers. Nothing in the runner reads any of it yet.
+
+A chain step of `kind: question` (#189) can be written and depended on, but no tick waits on one, none fires `use_default` when the deadline passes, and none calls the planner on `escalate_to_ai`. The link is in the data already -- `ask --step ID` records which step a question belongs to -- and nothing walks it.
+
+What is missing: a ready step of kind question resolves its question and then (a) stays pending while the answer is `open`, so its dependents wait and everything else in the chain keeps running, (b) is done once the answer is there, with the answer in the run log, (c) on `overdue` does what the policy says -- block keeps waiting, use_default takes the default, escalate_to_ai calls the coordination agent. Also to decide: whether such a step asks the question itself when none exists yet, or whether the planner always writes the question first.
+
+Deliberately not part of #191, which was the mailbox and its two commands.
+Entscheidungen vor der Umsetzung 2026-08-18: (1) Ein kind: question Schritt stellt seine Frage NICHT selbst -- der Planer schreibt sie vorher per 'ask --step ID', der Schritt loest sie nur auf. Grund: das Step-Schema (ChainStore.pm:134) fuehrt id/kind/repo/ticket/needs/timeout/precheck/command/note; ein selbstfragender Schritt muesste Fragetext, options, policy, default und deadline aus dem Postfach-Schema ins Chain-Schema duplizieren. Nachruestbar, falls der Planer es spaeter anders braucht. Ein ready Frage-Schritt ohne Frage im Postfach ist ein Planungsfehler und wird sichtbar gemacht, nicht stumm pending gelassen. (2) escalate_to_ai kann nur protokollieren: der Koordinationsagent ist nicht gebaut, nicht aufrufbar und nicht als Ticket erfasst (siehe #194). Diese Policy vermerkt den Planer als gewuenscht und bleibt pending -- es wird kein Agent erfunden.
+Committet als 99dfb36. Unabhaengig verifiziert vor dem Commit: prove -l t/ = 183 Dateien, 1283 Tests, Result PASS, exit 0, keine Skips und keine TODOs. Der neue t/200-foundation-question-steps.t beisst nachweislich: gegen das unveraenderte Modul auf @INC fallen 11 von 11 Subtests mit 36 Assertions. Nicht Teil davon und bewusst so: escalate_to_ai protokolliert nur, weil der Koordinationsagent nicht existiert (#194).
