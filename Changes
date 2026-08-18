@@ -1,5 +1,35 @@
 {{$NEXT}}
 
+    - App::karr::Git's DESCRIPTION no longer names `insteadOf` as
+      something only the git CLI can do (#204). The paragraph that
+      explains why the CLI transport fallback exists listed `Host`
+      aliases, `IdentityFile` and `insteadOf` in one breath, which
+      mixes two different configuration files and gets the git-config
+      half of it wrong: libgit2 applies `url.<base>.insteadOf` itself.
+      #203 had already corrected the same claim where it stood over
+      the remote probe; this is the paragraph that governs fetch and
+      push.
+
+      The two questions that ticket left open are answered by
+      measurement rather than out of the documentation, on the libgit2
+      1.9.3 Alien::Libgit2 carries here. `pushInsteadOf` is applied as
+      well: with the two rules aimed at two different repositories
+      served over git://, the fetch reached the first and the push the
+      second. And the rewrite is not confined to the local paths #203
+      tried it on -- it is a textual prefix substitution that runs
+      before anything inspects the protocol, so `ssh://` and `https://`
+      serve both as the URL being rewritten and as what it is
+      rewritten to, each read against a control with the rule removed.
+
+      The care was warranted, because the obvious experiment lies
+      twice. A rule aimed at a path that does not exist fails as
+      "unsupported URL protocol", which is what made the first reading
+      of `insteadOf` come out backwards; and a rule aimed at a local
+      path that does exist hides a libgit2 corner where the push
+      connects to the push URL and then writes to the fetch URL
+      anyway. That last one is behaviour rather than prose, so it is
+      filed as #208 rather than papered over here.
+
     - A pass over the POD of the whole distribution (#206). Three
       statements had been overtaken by the refs rewrite and by later
       tickets, and each of them told a reader something that stopped

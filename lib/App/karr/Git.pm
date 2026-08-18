@@ -47,11 +47,29 @@ supplied through the libgit2 credential-acquire callback.
 
 Network fetch/push (C<fetch>, C<pull>, C<push>, C<push_ref>, C<pull_ref>)
 also try the native libgit2 transport first. If that transport fails, they
-fall back to the system C<git> CLI (via L<IPC::Open3>), because libgit2/
-libssh2 doesn't read C<~/.ssh/config> and can't run a C<ProxyCommand> —
-directives like C<Host> aliases, C<IdentityFile>, and C<insteadOf> only take
-effect through the CLI. Set C<KARR_NO_CLI_FALLBACK=1> to disable the
-fallback and surface native transport failures directly.
+fall back to the system C<git> CLI (via L<IPC::Open3>). What the fallback is
+there for is C<~/.ssh/config>, which libgit2 does not read: a C<Host> alias,
+the C<IdentityFile>, C<User> or C<Port> written under it, and a
+C<ProxyCommand> all take effect through the CLI and nowhere else. libssh2
+reads a remote spelled C<board:karr.git> as the literal host C<board> and
+stops at the name lookup, so for a board reached through an alias the CLI is
+not a second opinion but the only route. Set C<KARR_NO_CLI_FALLBACK=1> to
+disable the fallback and surface native transport failures directly.
+
+Git's own URL rewriting is not part of that list, though this paragraph
+listed it for a long time. libgit2 applies C<< url.<base>.insteadOf >>
+itself, and C<pushInsteadOf> alongside it -- on the 1.9.3 that
+L<Alien::Libgit2> carries, a fetch goes where the first rule points and a
+push where the second does. That was settled by aiming the two rules at two
+different repositories and reading back which one each end had reached,
+because a rewrite is easy to measure wrongly: a rule pointing at a path that
+does not exist fails as C<unsupported URL protocol>, which looks exactly like
+no rewrite having happened at all. The substitution is textual and runs
+before anything inspects the protocol, so it is not confined to the local
+paths it was first tried on -- C<ssh://> and C<https://> serve on either side
+of a rule, as the URL being rewritten or as what it is rewritten to. One
+corner does not hold: where the push side of a rule resolves to a local path,
+libgit2 connects there and then writes to the fetch URL regardless (#208).
 
 Every CLI transport run is bounded by a wall-clock timeout, 120 seconds by
 default; C<KARR_TRANSPORT_TIMEOUT> overrides it (in seconds, C<0> disables
