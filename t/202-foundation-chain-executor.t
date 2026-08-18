@@ -43,8 +43,10 @@ use App::karr::Task;
 #   6. Not every non-run is a failure: a broken agent command, a locked or
 #      disabled board and a repository this machine does not have are all
 #      requeues, because none of them says anything about the plan.
-#   7. kind: question and kind: plan are left pending on purpose (#200 and the
-#      open half of #192 land there), and the tick says so.
+#   7. kind: plan is left pending on purpose -- the coordination agent it wants
+#      does not exist -- and the tick says so. kind: question is no longer one
+#      of those: it resolves against the mailbox, which is #200 and lives in
+#      t/200-foundation-question-steps.t.
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -456,20 +458,21 @@ subtest 'a repository this machine does not have is left alone entirely' => sub 
 # The seams left open on purpose
 # ---------------------------------------------------------------------------
 
-subtest 'question and plan steps are left pending, and the tick says so' => sub {
+subtest 'a plan step is left pending, and the tick says so' => sub {
   my $repo = make_repo();
   my $hub  = make_repo();
   my $done = path($repo)->child('done');
 
   chain_store($hub)->write_chain( [
-    { id => 1, kind => 'question', note => 'which registry?' },
+    { id => 1, kind => 'plan', note => 'what next?' },
     { id => 2, kind => 'shell', repo => "$repo", needs => [1],
       command => "echo x >> '$done'" },
   ] );
 
   my ( $out ) = tick($hub);
   is step_of( $hub, 1 )->{state}, 'pending',
-    'a question step waits for the mailbox, which is its own ticket';
+    'a plan step waits for the coordination agent, which is not built, not '
+    . 'callable from here and not a ticket yet (#194)';
   is step_of( $hub, 2 )->{state}, 'pending', 'and its dependent waits with it';
   ok !$done->exists, 'nothing downstream ran';
   like $out, qr/left pending/, 'the tick says a kind it does not run was reached';

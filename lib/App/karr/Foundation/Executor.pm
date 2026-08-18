@@ -35,6 +35,7 @@ is the B<caller> of those modes rather than their sibling:
     ready_steps()
       kind: ticket   -> the existing ticket-mode path in the target repo
       kind: shell    -> the command, in the target repo, under its own lock
+      kind: question -> the mailbox in the hub, resolved under its own policy
     update_step (CAS) + log_run
     push refs/karr-foundation/*
 
@@ -76,19 +77,26 @@ publishes it. Refusing to record a run that is over would be the worse answer.
 C<ChainStore> reads the precheck grammar and evaluates it, and deliberately
 measures nothing: measuring a fact means reading a board, and reading a board is
 execution. This class is where execution lives, so this is where the facts come
-from (L</facts_for>). The vocabulary is small and every entry comes off B<one>
-board read:
+from (L</facts_for>). The vocabulary is small, and everything about a board
+comes off B<one> board read:
 
     board_actionable    yes | no     any task an agent could still pick
     ticket_status       the status of the step's own ticket
     ticket_blocked      yes | no
     ticket_claimed      the claim name on it, or the empty string
+    question_state      answered | open | overdue
+
+C<question_state> is the one that is not measured off a board at all: it comes
+from the question mailbox in the hub, and only for a C<kind: question> step,
+because that is the only kind that has a question. Measuring it for every step
+would buy a fact no other kind's precheck could be about and pay a mailbox read
+per step for it.
 
 A fact that cannot be measured -- a repository that is not a board, a ticket
-that is not on it -- is B<absent>, and an absent fact makes a precheck not hold
-whichever operator it uses (L<App::karr::Foundation::ChainStore/precheck_holds>).
-That is the direction that costs a planning round rather than whatever the step
-would have done.
+that is not on it, a question step nothing in the mailbox names -- is B<absent>,
+and an absent fact makes a precheck not hold whichever operator it uses
+(L<App::karr::Foundation::ChainStore/precheck_holds>). That is the direction
+that costs a planning round rather than whatever the step would have done.
 
 =head2 What a failure does to the DAG
 
@@ -126,15 +134,72 @@ is the ordinary case in a fleet, not a broken plan.
 
 =back
 
+=head2 A question step resolves a question, it does not ask one
+
+A C<kind: question> step waits on the mailbox
+(L<App::karr::Foundation::Questions>): the planner asks the question first, with
+C<karr-foundation ask --step ID>, and the step does nothing but resolve it. A
+step does B<not> ask its own question, and that is a decision about schemas
+rather than about convenience -- a self-asking step would have to carry the
+question text, its C<options>, its C<policy>, its C<default> and its C<deadline>
+in the step itself, which is the mailbox's schema written out a second time and
+kept in step with the first one by hand.
+
+The consequence is that a B<ready question step nothing in the mailbox names is
+a planning error>, and it is reported as one: C<stale>, with the reason in the
+run log and on the tick's output, rather than left waiting quietly for a
+question that is never going to arrive. Same answer, same cost and same reason
+as a C<kind: ticket> step whose card is not on the board.
+
+What a step that does have its question then does is
+L<App::karr::Foundation::Questions/resolve> plus the policy the asker wrote
+down for the case where nobody answers:
+
+    answered                  done, and the answer is in the run log
+    open                      pending and unclaimed; its dependents wait
+    overdue + block           pending: waiting IS what block means
+    overdue + use_default     done, with the default as the answer
+    overdue + escalate_to_ai  pending, and the planner recorded as wanted
+
+Waiting never holds the tick up: a step that waits is considered once, said out
+loud and left, every other branch of the chain runs, and the dependents of the
+question wait by construction because C<ready_steps> releases a step only when
+everything it C<needs> is C<done>.
+
+C<escalate_to_ai> can only be B<recorded>, and that is deliberate rather than
+unfinished. The coordination agent that policy names is the judgement layer of
+the spec: it is not built, it is not callable from here, and it is not even a
+ticket yet (#194). So that policy does exactly what a C<kind: plan> step does --
+records that the planner is wanted, leaves the step alone, prints a line saying
+so -- and nothing is written that a coordination agent would later have to undo.
+
+A step waits until B<every> question naming it is settled. More than one
+question on one step is not what a planner normally writes; what decides it is
+that the alternative -- the first answer releasing a step somebody has asked a
+second question about -- would drop an unanswered question on the floor, which
+is the one thing this mailbox refuses to do anywhere else. A question whose step
+is not ready yet is simply not looked at, and that is the good case: it can be
+answered long before the step arrives, and then the step never waits at all.
+
+What a question names is a B<step id and nothing else>, so a planner that
+re-uses an id in a later chain inherits whatever the earlier chain left
+unanswered under it. It is not fixed by scoping the question to a chain,
+because a question asked B<before> the chain that waits on it is the good case
+above and no timestamp can tell the two apart; it is fixed by answering or
+deleting a question the fleet has stopped caring about, which is what
+C<karr-foundation answer> and L<App::karr::Foundation::Questions/delete_question>
+are for.
+
 =head2 What this executor does not do yet
 
-C<kind: question> and C<kind: plan> steps are recognised and B<left pending>,
-with the planner recorded as wanted and a line saying so. Running a question
-against the mailbox is its own ticket (the mailbox and its C<resolve> already
-exist, L<App::karr::Foundation::Questions>), and so is resolving cross-board
-links automatically (L<App::karr::CrossBoard>). Both hang off the dispatch on
-C<kind> at the top of one step and off L</facts_for>'s table, which is why each
-of them is one place rather than a thread through this class.
+C<kind: plan> steps are recognised and B<left pending>, with the planner
+recorded as wanted and a line saying so -- the planner they want is the same
+coordination agent C<escalate_to_ai> asks for, and the note above about it not
+existing yet is the whole of the answer here too. Resolving cross-board links
+automatically (L<App::karr::CrossBoard>) is the other seam left open. Both hang
+off the dispatch on C<kind> at the top of one step and off L</facts_for>'s
+table, which is why each of them is one place rather than a thread through this
+class.
 
 Steps are executed one at a time within a tick. Concurrency in the chain is
 across machines -- which is what the pull/claim/push ordering above buys -- and
@@ -304,9 +369,28 @@ sub _preview {
     my $facts = $self->facts_for( $step );
     my $holds = $store->precheck_holds( $step, $facts );
     $self->_say( '  ' . $self->_describe($step) . ': '
-      . ( $holds ? 'would run' : $self->_stale_reason( $step, $facts ) ) );
+      . ( $holds ? $self->_would_do( $step, $facts )
+                 : $self->_stale_reason( $step, $facts ) ) );
   }
   return 0;
+}
+
+# What a dry run says about a step whose precheck holds. "would run" for the
+# kinds that run something, and something more exact for a question step, read
+# off the fact that has already been measured for it: "would run" about a step
+# that is in fact going to sit and wait would be the one line of this command
+# nobody could trust afterwards.
+sub _would_do {
+  my ( $self, $step, $facts ) = @_;
+  return 'would run' unless ( $step->{kind} // '' ) eq 'question';
+  my $state = $facts->{question_state};
+  return "no question in the mailbox names it \x{2014} would go stale"
+    unless defined $state;
+  return "its question is answered \x{2014} would finish the step"
+    if $state eq 'answered';
+  return "its question is overdue \x{2014} the policy on it decides"
+    if $state eq 'overdue';
+  return "its question is unanswered \x{2014} would wait";
 }
 
 sub _describe {
@@ -331,21 +415,28 @@ sub _do_step {
   my $id    = $step->{id};
   my $kind  = $step->{kind} // '';
 
-  # A kind this executor does not run. Left pending and unclaimed on purpose:
-  # a question step waits for the mailbox and a plan step waits for the
-  # planner, and neither is this ticket's to run. Its dependents wait with it,
-  # which is the honest state of a chain that has reached something nothing
-  # here can do.
+  # A question step is not executed but resolved, against the mailbox that
+  # lives in the same fleet namespace as the chain. It is dispatched before the
+  # repo check below because it names no repository at all: a question is
+  # fleet-wide, so any machine that can read the chain can resolve it (#200).
+  return $self->_do_question_step( $run, $step ) if $kind eq 'question';
+
+  # A kind this executor does not run: `kind: plan`, and whatever a later
+  # planner invents. Left pending and unclaimed on purpose -- a plan step waits
+  # for the coordination agent, which is not built, not callable from here and
+  # not a ticket yet (#194), so this is a deliberate stop and not an omission.
+  # Its dependents wait with it, which is the honest state of a chain that has
+  # reached something nothing here can do.
   unless ( $kind eq 'ticket' || $kind eq 'shell' ) {
     $self->_say( $self->_describe($step)
-      . ": left pending \x{2014} this foundation runs kind: ticket and "
-      . 'kind: shell' );
+      . ": left pending \x{2014} this foundation runs kind: ticket, "
+      . 'kind: shell and kind: question' );
     $store->log_run( $run, event => 'step', step => "$id", kind => $kind,
       state => 'pending', detail => 'kind not executed here' );
     # Recorded as wanting the planner for the same reason a failure is: a chain
     # that cannot proceed must not do it quietly. It is the only signal that
-    # exists today -- once a question step runs against the mailbox it will be
-    # executed rather than re-planned, and this branch is where that lands.
+    # exists for a plan step -- nothing here can call the agent that would
+    # write the next chain, so saying that it is wanted is the whole answer.
     $store->log_run( $run, event => 'planner', step => "$id", policy => 'plan',
       reason => "kind: $kind is not executed here" );
     $self->_push;
@@ -386,6 +477,33 @@ sub _do_step {
   }
 
   # ----- claim, and publish the claim before any work starts -----
+  return { state => 'declined' } unless $self->_claim( $run, $step,
+    repo => "$repo",
+    ( defined $step->{ticket} ? ( ticket => "$step->{ticket}" ) : () ) );
+
+  # ----- run it -----
+  my $verdict = $kind eq 'ticket'
+    ? $self->_run_ticket_step( $step, $repo )
+    : $self->_run_shell_step( $step, $repo );
+
+  return $self->_requeue( $run, $step, $verdict->{detail} )
+    if $verdict->{state} eq 'pending';
+  return $self->_finish( $run, $step, $verdict );
+}
+
+# The claim and the publication of it, shared by every kind that writes a step
+# back. A method rather than the inline block it started as because the
+# ordering it implements -- compare-and-swap, then publish, then work -- is what
+# actually keeps one step to one machine (see L</Pull before reading, push
+# before working>), and a second copy of it would be a second place to get it
+# wrong. Returns true when this tick owns the step; a decline has already been
+# said out loud. %entry is whatever the kind wants in the run log beside the
+# claim: a repo, a ticket, or for a question nothing at all.
+sub _claim {
+  my ( $self, $run, $step, %entry ) = @_;
+  my $store = $self->store;
+  my $id    = $step->{id};
+
   my $claimed = $store->update_step( $id, sub {
     my ( $current ) = @_;
     return undef unless ( $current->{state} // 'pending' ) eq 'pending';
@@ -398,41 +516,31 @@ sub _do_step {
   unless ( $claimed ) {
     $self->foundation->_say_verbose(
       $self->_describe($step) . ': taken by another tick' );
-    return { state => 'declined' };
+    return 0;
   }
 
-  $store->log_run( $run, event => 'step', step => "$id", kind => $kind,
-    state => 'running', repo => "$repo",
-    ( defined $step->{ticket} ? ( ticket => "$step->{ticket}" ) : () ) );
+  $store->log_run( $run, event => 'step', step => "$id",
+    kind => ( $step->{kind} // '' ), state => 'running', %entry );
 
-  unless ( $self->_push ) {
-    # Nobody else ever saw this claim, so taking it back costs nothing and
-    # leaving it would park the step as `running` on a machine that is not
-    # running it.
-    $store->update_step( $id, sub {
-      my ( $current ) = @_;
-      return undef unless ( $current->{state} // '' ) eq 'running';
-      $current->{state} = 'pending';
-      delete $current->{started};
-      return $current;
-    } );
-    $self->_say( $self->_describe($step)
-      . ": claim could not be published \x{2014} left for the next tick" );
-    return { state => 'declined' };
-  }
+  return 1 if $self->_push;
 
-  # ----- run it -----
-  my $verdict = $kind eq 'ticket'
-    ? $self->_run_ticket_step( $step, $repo )
-    : $self->_run_shell_step( $step, $repo );
-
-  return $self->_requeue( $run, $step, $verdict->{detail} )
-    if $verdict->{state} eq 'pending';
-  return $self->_finish( $run, $step, $verdict );
+  # Nobody else ever saw this claim, so taking it back costs nothing and
+  # leaving it would park the step as `running` on a machine that is not
+  # running it.
+  $store->update_step( $id, sub {
+    my ( $current ) = @_;
+    return undef unless ( $current->{state} // '' ) eq 'running';
+    $current->{state} = 'pending';
+    delete $current->{started};
+    return $current;
+  } );
+  $self->_say( $self->_describe($step)
+    . ": claim could not be published \x{2014} left for the next tick" );
+  return 0;
 }
 
 # ---------------------------------------------------------------------------
-# The two kinds
+# The two kinds that run something
 # ---------------------------------------------------------------------------
 
 # Into the existing ticket-mode path (#185), which is what makes this a layer
@@ -507,6 +615,169 @@ sub _run_shell_step {
 }
 
 # ---------------------------------------------------------------------------
+# A question step (#200)
+# ---------------------------------------------------------------------------
+
+# Resolve, rather than execute: the planner asked the question, this decides
+# what its current answer means for the step waiting on it. See L</A question
+# step resolves a question, it does not ask one> for why the step does not ask
+# it itself, and what each of the mailbox's three states does here.
+#
+# Nothing is pulled and no board is read. The mailbox is
+# refs/karr-foundation/questions/*, which is the namespace the tick already
+# pulled before it read the chain (#190/#191) -- one fetch for the plan and the
+# questions together, which is half the reason they share a namespace.
+sub _do_question_step {
+  my ( $self, $run, $step ) = @_;
+  my $store = $self->store;
+  my $id    = $step->{id};
+
+  my $facts = $self->facts_for( $step );
+  unless ( $store->precheck_holds( $step, $facts ) ) {
+    return $self->_stale( $run, $step, $self->_stale_reason( $step, $facts ) );
+  }
+
+  # A ready question step with nothing in the mailbox naming it is a planning
+  # error, and the one thing it must not do is wait quietly for ever: the
+  # question is written before the step can become ready, so an empty mailbox
+  # here means that never happened. Stale, for the same reason and at the same
+  # cost as a ticket step whose card is not on the board. (The mailbox is read
+  # twice on this path, once for the fact and once here; it is a handful of
+  # refs, and the alternative is a public facts_for that takes measurements as
+  # arguments.)
+  my $mailbox = $self->_mailbox;
+  my @asked   = $self->_questions_for( $step );
+  return $self->_stale( $run, $step,
+    "no question in the mailbox names step $id \x{2014} a question step is "
+    . "asked by the planner ('karr-foundation ask ... --step $id'), it does "
+    . 'not ask itself',
+    'no question was ever asked about it' )
+    unless $mailbox && @asked;
+
+  my @verdicts = map { $self->_question_verdict( $mailbox, $_ ) } @asked;
+  my @waiting  = grep { defined $_->{wait} } @verdicts;
+
+  if ( @waiting ) {
+    my $detail = join '; ', map { $_->{wait} } @waiting;
+
+    # Pending and UNCLAIMED: nothing ran, so there is no attempt to count and
+    # no started stamp to write, and the next tick finds the step exactly as
+    # the planner left it. Its dependents wait with it because ready_steps
+    # releases a step only when everything it needs is done; every other branch
+    # of the chain runs, because the tick considers each ready step once and
+    # moves on rather than blocking on this one.
+    $store->log_run( $run, event => 'step', step => "$id", kind => 'question',
+      state => 'pending', detail => $detail );
+
+    # One planner entry, not one per question: the tick's report names steps,
+    # and the reasons are in the step entry above either way.
+    my ( $planner ) = grep { defined $_->{planner} } @waiting;
+    $store->log_run( $run, event => 'planner', step => "$id",
+      policy => ( $planner->{policy} // 'plan' ), reason => $planner->{planner} )
+      if $planner;
+
+    $self->_push;
+    $self->_say( $self->_describe($step) . ": left pending \x{2014} $detail" );
+    return { state => 'pending',
+      ( $planner ? ( planner => $planner->{planner} ) : () ) };
+  }
+
+  # Every question naming the step has an answer, so the step is done. The
+  # answers go into the run log and into the step's result, and NOT into a
+  # field of their own on the step: the step schema is the planner's vocabulary
+  # (ChainStore's %STEP_KEY, which would warn about an unknown key anyway), and
+  # an answer copied into it would be the mailbox's schema kept in a second
+  # place -- the same duplication that keeps the question out of the step.
+  #
+  # Claimed like any other step even though resolving does no work: the claim
+  # is what makes exactly one tick write the result and log the answer, instead
+  # of every machine in the fleet logging the same answer on the same tick.
+  return { state => 'declined' } unless $self->_claim( $run, $step );
+  return $self->_finish( $run, $step, { state => 'done',
+    detail => join( '; ', map { $_->{detail} } @verdicts ) } );
+}
+
+# The mailbox, which is in the hub the chain is in. Undef only where there is no
+# hub at all, and L</store> has already refused the tick by then.
+sub _mailbox { return $_[0]->foundation->_questions }
+
+# The questions a step waits on: the ones whose `step` names it. Walked here
+# rather than asked of the mailbox through a lookup method of its own, because
+# the link is one field compared as a string and App::karr::Foundation::Questions
+# is deliberately ignorant of chains -- it records `step` and never reads it, so
+# a step-shaped query on it would be chain knowledge in the one class that has
+# none. Compared stringwise because a step id may be `1` or `release`, and YAML
+# reads the first back as a number on one side and a string on the other.
+sub _questions_for {
+  my ( $self, $step ) = @_;
+  my $mailbox = $self->_mailbox or return ();
+  my $id = defined $step->{id} ? "$step->{id}" : '';
+  return () unless length $id;
+  return grep { defined $_->{step} && "$_->{step}" eq $id } $mailbox->questions;
+}
+
+# What one question means for the step waiting on it: an answer to take
+# (`answer` plus the `detail` that records where it came from) or a reason to
+# keep waiting (`wait`, and `planner` where waiting is somebody's cue). The
+# mailbox stops at "what does this resolve to" on purpose -- a mailbox does not
+# execute chains -- so this is the one place where a state plus a policy becomes
+# a decision.
+sub _question_verdict {
+  my ( $self, $mailbox, $q ) = @_;
+  my $id = defined $q->{id} ? $q->{id} : '?';
+  my $r  = $mailbox->resolve($q)
+    or return { wait => "question #$id could not be read" };
+
+  return {
+    answer => $r->{answer},
+    detail => "question #$id answered '$r->{answer}'"
+      . ( defined $r->{answered_by} ? " by $r->{answered_by}" : '' ),
+  } if $r->{state} eq 'answered';
+
+  my $policy = $r->{policy} // 'block';
+  return { wait => "question #$id is unanswered (policy: $policy)" }
+    if $r->{state} eq 'open';
+
+  # Overdue: the policy is what the asker wrote down for exactly this moment.
+  if ( $policy eq 'use_default' ) {
+    # resolve() carries the default along as the answer, so a question that
+    # reaches here without one cannot be settled by its own policy at all.
+    # `ask` refuses that combination, which means the ref was hand-written --
+    # a planning error rather than a wait, and recorded as one.
+    return {
+      wait    => "question #$id has policy use_default and no default to fall "
+               . 'back on, so its deadline settles nothing',
+      planner => "question #$id cannot be settled by its own policy",
+    } unless defined $r->{answer};
+
+    return {
+      answer => $r->{answer},
+      detail => "question #$id went unanswered past its deadline; its default "
+              . "'$r->{answer}' stands as the answer",
+    };
+  }
+
+  # escalate_to_ai can only be recorded. The coordination agent it names is the
+  # judgement layer of the spec: not built, not callable from here, and not a
+  # ticket yet (#194). So this policy does what a `kind: plan` step does --
+  # planner wanted, step untouched, a line that says so -- and that is a
+  # deliberate stop rather than a hole somebody forgot to fill. Anything else
+  # would mean inventing the agent here.
+  return {
+    wait    => "question #$id is past its deadline and its escalate_to_ai "
+             . 'policy wants the coordination agent, which is not built',
+    planner => "escalate_to_ai on question #$id, and no coordination agent "
+             . 'runs from here',
+    policy  => 'escalate_to_ai',
+  } if $policy eq 'escalate_to_ai';
+
+  # block, the default and the only policy that never invents an answer:
+  # waiting is not a failure of the plan, it IS the plan.
+  return { wait => "question #$id is past its deadline and its block policy "
+    . 'keeps waiting for a person' };
+}
+
+# ---------------------------------------------------------------------------
 # Writing a step back
 # ---------------------------------------------------------------------------
 
@@ -574,8 +845,12 @@ sub _requeue {
   return { state => 'pending' };
 }
 
+# $summary is the half-line the tick's closing report puts in brackets after
+# the step id; the reason itself, which is a sentence, goes on the step and into
+# the run log. Defaulted rather than derived because the caller is the only one
+# that knows which of the two stale cases this is.
 sub _stale {
-  my ( $self, $run, $step, $reason ) = @_;
+  my ( $self, $run, $step, $reason, $summary ) = @_;
   my $store = $self->store;
   $store->mark_stale( $step->{id}, $reason );
   $store->log_run( $run, event => 'step', step => "$step->{id}",
@@ -584,7 +859,8 @@ sub _stale {
     policy => 'plan', reason => $reason );
   $self->_push;
   $self->_say( $self->_describe($step) . ": stale \x{2014} $reason" );
-  return { state => 'stale', planner => 'the precheck no longer holds' };
+  return { state => 'stale',
+    planner => ( $summary // 'the precheck no longer holds' ) };
 }
 
 sub _stale_reason {
@@ -606,6 +882,7 @@ sub _stale_reason {
     my $facts = $executor->facts_for($step);
     # { board_actionable => 'yes', ticket_status => 'todo',
     #   ticket_blocked => 'no', ticket_claimed => '' }
+    # { question_state => 'open' }                     # a kind: question step
 
 Measures the facts a step's precheck may ask about, off the board the step names
 -- which is why it lives here and not in the store: reading a board is
@@ -617,19 +894,38 @@ claim is still live: whether a claim has expired is C<karr pick>'s question
 (L<App::karr::Role::PickRules>) and answering it differently here would be a
 second opinion about the same card.
 
+C<question_state> is measured only for a C<kind: question> step, off the
+mailbox rather than off a board, and it is the state
+L<App::karr::Foundation::Questions/resolve> gives -- C<answered>, C<open> or
+C<overdue> -- not this class's conclusion about it: an C<overdue> question with
+a C<use_default> policy settles the step and still reports C<overdue>, because
+the fact is about the question and the policy is a separate thing the plan can
+read. Where a step has more than one question the fact reports the lowest-id one
+nobody has answered, and C<answered> only when every one of them has been, which
+is the same order in which they release the step.
+
 =cut
 
 sub facts_for {
   my ( $self, $step ) = @_;
+  my %facts;
+
+  # Before the board facts, and not under them: a question step names no
+  # repository, so everything below returns early for it.
+  if ( ( $step->{kind} // '' ) eq 'question' ) {
+    my $state = $self->_question_state( $step );
+    $facts{question_state} = $state if defined $state;
+  }
+
   my $repo = $step->{repo};
-  return {} unless defined $repo && length $repo;
-  return {} unless App::karr::Git->new( dir => "$repo" )->is_repo;
+  return \%facts unless defined $repo && length $repo;
+  return \%facts unless App::karr::Git->new( dir => "$repo" )->is_repo;
 
   my $f = $self->foundation;
   my %states = try { $f->_task_states( $repo ) } catch { () };
 
-  my %facts = ( board_actionable =>
-    ( grep { $f->_is_actionable( $states{$_} ) } keys %states ) ? 'yes' : 'no' );
+  $facts{board_actionable} =
+    ( grep { $f->_is_actionable( $states{$_} ) } keys %states ) ? 'yes' : 'no';
 
   if ( defined $step->{ticket} ) {
     my $card = $states{ $step->{ticket} };
@@ -640,6 +936,21 @@ sub facts_for {
     }
   }
   return \%facts;
+}
+
+# One state for a step that may have several questions, and undef where it has
+# none at all -- absent, so a precheck about it does not hold and the step is
+# reported rather than left waiting on nothing.
+sub _question_state {
+  my ( $self, $step ) = @_;
+  my $mailbox = $self->_mailbox or return undef;
+  my @asked   = $self->_questions_for( $step ) or return undef;
+
+  for my $q ( @asked ) {
+    my $r = $mailbox->resolve($q) or next;
+    return $r->{state} if $r->{state} ne 'answered';
+  }
+  return 'answered';
 }
 
 # ---------------------------------------------------------------------------

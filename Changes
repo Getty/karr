@@ -1,5 +1,49 @@
 {{$NEXT}}
 
+    - karr-foundation runs `kind: question` chain steps against the
+      question mailbox (#200). The mailbox had existed since #191 --
+      refs/karr-foundation/questions/*, `ask` and `answer`, and a
+      resolve that says answered / open / overdue plus the policy for
+      when nobody answers -- and nothing in the runner read a word of
+      it: a question step could be planned and depended on, and every
+      tick recognised it, left it pending and asked for the planner.
+
+      A ready question step now resolves its question. `open` leaves
+      the step pending and unclaimed, so its dependents wait while
+      every other branch of the chain runs in the same tick;
+      `answered` finishes the step, with the answer in the run log;
+      `overdue` does what the asker wrote down -- block keeps waiting,
+      because waiting is what block means, and use_default takes the
+      default resolve already hands over.
+
+      escalate_to_ai can only be recorded, and that is a deliberate
+      stop rather than an unfinished one. The coordination agent that
+      policy names is the judgement layer of the fleet spec: not
+      built, not callable from here, not yet a ticket. So it does what
+      a `kind: plan` step does -- records that the planner is wanted,
+      leaves the step alone, prints a line saying so -- and nothing is
+      written that a coordination agent would later have to undo.
+
+      The step resolves a question, it does not ask one: the planner
+      asks first, with `karr-foundation ask --step ID`, because a
+      self-asking step would have to carry the question text, its
+      options, policy, default and deadline in the chain, which is the
+      mailbox's schema written out a second time. The consequence is
+      that a ready question step nothing in the mailbox names is a
+      planning error and is reported as one -- stale, with the reason
+      on the step and in the run log, exactly like a ticket step whose
+      card is not on the board. Waiting quietly for a question that is
+      never coming is the one thing it must not do.
+
+      `question_state` joins the facts a precheck may ask about. It is
+      measured off the mailbox rather than off a board, and only for a
+      `kind: question` step -- every other kind would pay a mailbox
+      read for a fact its precheck cannot be about -- and it is absent
+      where nothing names the step, which is what makes a precheck
+      about it fail safe. A step with more than one question waits for
+      all of them; releasing it on the first answer would drop an
+      unanswered question on the floor.
+
     - The probe that asks the remote whether it has a board now takes the
       native transport first, with the git CLI as its fallback (#203).
       It was the CLI and only the CLI because #174 left ssh:// unbounded
