@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-08-18T06:03:13Z
+claimed_by: ours-poor
+class: standard
+completed: 2026-08-18T06:03:13Z
+created: 2026-08-18T05:04:02Z
+id: 206
+priority: medium
+started: 2026-08-18T05:27:28Z
+status: done
+tags:
+- docs
+- pod
+title: POD-Durchgang ueber die gesamte Distribution
+updated: 2026-08-18T06:03:13Z
+---
+
+Ein Durchgang durch das POD aller .pm-Dateien und der beiden Skripte unter bin/, nach [@Author::GETTY]/PodWeaver-Konvention: inline =attr/=method/=opt direkt hinter dem Code, # ABSTRACT auf jeder .pm, keine handgeschriebenen NAME/VERSION/AUTHOR-Abschnitte.
+
+Anlass: die Distribution ist ueber viele Tickets gewachsen, das POD ist stellenweise mitgewachsen und stellenweise nicht. Konkret bekannt:
+
+- podchecker meldet auf lib/App/karr/Git.pm 154 Fehler, vor und nach #203 gleich viele -- L</...>-Linknoise aus dem =method-Stil. Entweder ist der Stil falsch oder podchecker ist hier das falsche Mass; die Frage gehoert beantwortet, nicht weiter ignoriert.
+- Ob jede .pm ein ABSTRACT hat, ob jedes public attribute ein =attr und jede public method ein =method hat, ist nie systematisch geprueft worden.
+- Aussagen im POD, die von spaeteren Tickets ueberholt wurden -- #196 und #203 haben je einen solchen Fall gefunden, beide erst Monate spaeter. Es ist unwahrscheinlich, dass das die einzigen waren.
+
+Zu tun: pruefen, auflisten, korrigieren. Ein Befund, der eine Verhaltensaenderung braeuchte statt einer Textaenderung, wird ein eigenes Ticket und nicht still mitgefixt.
+
+Deliberately nicht Teil davon: README.md (#205).
+Committet als 962ee1a. Verifiziert von mir, nicht nur berichtet: prove -l t/ = 183 Dateien, 1283 Tests, PASS, exit 0, 0 Skips -- unveraendert gegenueber dem Stand vor dem Durchgang, wie es bei reiner Doku sein muss. Die podchecker-Frage ist beantwortet und selbst gemessen: podchecker auf der ungewebten Quelle ist das falsche Mass (=attr/=method sind PodWeaver-Kommandos, die L</...>-Links zeigen auf erst beim Weaving erzeugte Ueberschriften). Gebaut und nachgemessen: Git.pm 154 Fehler -> 'pod syntax OK', ganze lib 679 -> 0. Keine Verhaltensaenderung, keine Folgetickets. Nebenbefund zur Umgebung: dzil build webt vollstaendig, bricht hier aber am Docker::API-Plugin ab (kein Docker-Daemon auf dieser Maschine) -- Umgebung, kein Code.
