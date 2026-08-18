@@ -57,13 +57,15 @@ Every CLI transport run is bounded by a wall-clock timeout, 120 seconds by
 default; C<KARR_TRANSPORT_TIMEOUT> overrides it (in seconds, C<0> disables
 it). A run that blows the timeout is killed and reported as a failure. The
 same setting bounds the native transport, as libgit2's per-read/write network
-timeout -- one knob for both routes. Two limits to that half: it needs libgit2
-1.8 or newer (older ones reject the option and stay unbounded), and libgit2
-applies it to its own socket transports (C<git://>, C<http://>, C<https://>),
-not to C<ssh://>, whose reads go through libssh2. The CLI fallback is bounded
-either way. L</remote_has_board> is the one call that does not try the native
-transport at all, for that reason: it runs unasked in front of a read command
-(#173), so it takes the only route whose deadline also holds for C<ssh://>.
+timeout -- one knob for both routes. It reaches every transport libgit2
+speaks, C<ssh://> included: those reads go through libssh2, which used to
+retry past the socket timeout, and the C<Alien::Libgit2> this distribution
+requires carries the libgit2 1.9.3 that stopped it (#174). The two bounds are
+not the same shape, though -- the CLI's is the whole run's wall clock,
+libgit2's is one read or write -- so nothing that finishes under the CLI rule
+can fail under the native one. L</remote_has_board> narrows both: it runs
+unasked in front of a read command (#173), so its budget is capped at 10
+seconds and split between its two attempts.
 
 C<push> sends C<refs/karr/*> under a forced refspec, plus one delete refspec
 for every board ref this clone deleted and has not published yet. It
@@ -285,17 +287,31 @@ sub _repo {
 # state. It is keyed on the value so a caller that changes the environment
 # mid-process -- tests do -- is not answered from a stale global.
 #
-# Only libgit2's own socket transports honour these: git://, http:// and
-# https://. The ssh transport does its reads through libssh2, which retries
-# past the socket timeout, so an ssh:// remote still hangs the native path
-# (measured: still blocked after 75 s -- #174). The CLI fallback remains the
-# only bounded route for ssh.
+# Every transport libgit2 speaks honours these, ssh:// included -- from 1.9.3
+# up. Below that the ssh reads went through a libssh2 loop that retried past
+# the socket timeout, so a peer that accepted the connection and then went
+# quiet hung the native path with no deadline in sight (measured: still
+# blocked after 75 s -- #174). karr answers that through the dependency rather
+# than through a version test here: cpanfile requires an Alien::Libgit2 whose
+# pkg-config floor is 1.9.3, so the broken half is not a library karr runs on.
+# Measured on 1.9.3 against a silent listener: a native ssh:// ref listing
+# comes back at the configured timeout (1.5 s -> 1.51 s).
 my $NATIVE_TRANSPORT_TIMEOUT;
 
 sub _apply_native_transport_timeouts {
     my $seconds = _transport_timeout();
     return if defined $NATIVE_TRANSPORT_TIMEOUT
         && $NATIVE_TRANSPORT_TIMEOUT == $seconds;
+    return _set_native_transport_timeouts($seconds);
+}
+
+# The same write without the latch check, for the one caller whose budget is
+# not the transport's: remote_has_board lowers the globals to the probe's share
+# for one call and puts them back through _apply_native_transport_timeouts
+# afterwards. The latch is updated here so the restore is a no-op when the two
+# values coincide.
+sub _set_native_transport_timeouts {
+    my ($seconds) = @_;
 
     # A sub-millisecond budget must not round down to 0 -- that is libgit2's
     # "no limit", the exact opposite of what was asked for.
@@ -303,13 +319,15 @@ sub _apply_native_transport_timeouts {
     $ms = 1 if $seconds > 0 && $ms < 1;
 
     # Both options were appended to libgit2's option enum in 1.8. An older
-    # library -- Debian bookworm ships 1.5.1, which karr's own CI runs on --
-    # answers -1 ("invalid option") and does nothing, leaving the native
-    # transport as unbounded as it was before. That is not worth a warning on
-    # every command: it would fire for purely local work, where no socket is
-    # involved and nothing can hang, and the CLI fallback still bounds the one
-    # path that reaches a network. The version requirement is in the POD
-    # instead.
+    # library answers -1 ("invalid option") and does nothing, leaving the
+    # native transport as unbounded as it was before. cpanfile's floor is
+    # 1.9.3, well above that, and it holds even where the system library is
+    # older -- Debian bookworm's 1.5.1, which karr's own CI installs, is
+    # rejected by Alien::Libgit2's pkg-config check and replaced by a source
+    # build. So this is only reachable by forcing an older library in on
+    # purpose, and a warning would not be worth it there either: it would fire
+    # for purely local work, where no socket is involved and nothing can hang,
+    # and the CLI fallback still bounds the one path that reaches a network.
     Git::Libgit2::FFI::git_libgit2_opts_int( $_, $ms )
         for GIT_OPT_SET_SERVER_CONNECT_TIMEOUT, GIT_OPT_SET_SERVER_TIMEOUT;
 
@@ -1404,53 +1422,114 @@ otherwise -- including when the repository can't be opened.
 # caller's other outcome is a refusal, and it has to answer within a bounded
 # time, because it runs unasked in front of `karr list`.
 #
-# Deliberately the CLI and only the CLI. The native transport is the faster
-# route and the preferred one everywhere else, but it is also the one that
-# cannot be bounded for ssh:// -- libssh2 retries past libgit2's socket
-# timeout, so a remote that accepts the connection and then goes quiet parks
-# the process in a C call no Perl signal can reach (#174, measured). ssh is
-# what karr boards actually use, so a native probe here would put an
-# unbounded, unrequested network read in front of every read command in a
-# board-less repository. _run_git's deadline is the one bound that holds for
-# ssh, so the probe pays a fork to get it. Where the CLI is switched off
-# entirely (KARR_NO_CLI_FALLBACK) the question simply goes unanswered.
+# Native first, CLI as the fallback -- the same order every other transport
+# here takes. It was the CLI and only the CLI until #203, on the grounds that
+# libssh2 retried past libgit2's socket timeout and an ssh:// probe therefore
+# had no deadline at all (#174, measured); the 1.9.3 floor cpanfile pins closed
+# that, and the argument went with it. What the CLI is still needed for is the
+# reason the rest of this class keeps it: libgit2 reads no ~/.ssh/config, so a
+# Host alias, the IdentityFile, User or Port under it, and a ProxyCommand all
+# exist only for the CLI. libssh2 takes a remote written as `board:karr.git`
+# for the literal host `board` and stops at the name lookup (measured), so
+# there the fallback is not a second opinion but the only route. git config's
+# own url.*.insteadOf is not part of that list: libgit2 applies the rewrite
+# itself, as 1.9.3 does here.
+#
+# The budget (_probe_timeout: KARR_TRANSPORT_TIMEOUT capped at 10 s) is split
+# rather than spent twice. The native attempt gets half of it, the CLI gets
+# whatever is left of the deadline when the native one returns -- so a remote
+# that is silent rather than absent, the case where both attempts run all the
+# way to their limit, still costs the cap once. A native attempt that ended the
+# budget by itself leaves nothing to fall back with, and the probe reports the
+# deadline instead of forking. With KARR_NO_CLI_FALLBACK there is no second
+# attempt to hold anything back for, so the native one gets the whole budget:
+# the switch means "native only" here, the way it does everywhere else in this
+# class, rather than the "do not ask at all" it used to mean when the CLI was
+# the only route.
 #
 # Nothing here may prompt: this call is not one the user made, so a passphrase
 # prompt appearing in the middle of `karr list --json` would be a surprise
-# that only the deadline ends. GIT_TERMINAL_PROMPT=0 (set by _run_git) covers
-# git's own credential prompts; BatchMode covers ssh's, which git never sees.
-# It is appended to the user's own GIT_SSH_COMMAND rather than replacing it,
-# so a configured wrapper still runs -- and ssh takes the first value it is
-# given for an option, so an explicit BatchMode of theirs still wins.
+# that only the deadline ends. On the CLI side GIT_TERMINAL_PROMPT=0 (set by
+# _run_git) covers git's own credential prompts; BatchMode covers ssh's, which
+# git never sees. It is appended to the user's own GIT_SSH_COMMAND rather than
+# replacing it, so a configured wrapper still runs -- and ssh takes the first
+# value it is given for an option, so an explicit BatchMode of theirs still
+# wins. The native side runs no ssh binary at all: _default_credentials_cb
+# hands libgit2 an agent, a key file with an explicit (empty) passphrase, or
+# nothing, and never an interactive credential -- so a passphrase-protected
+# key with no agent behind it fails the connection rather than asking anyone.
 sub remote_has_board {
     my ( $self, $remote ) = @_;
     $remote //= 'origin';
     return 0 unless $self->has_remote($remote);
-    return undef if $ENV{KARR_NO_CLI_FALLBACK};
 
+    my $budget   = _probe_timeout();
+    my $share    = $ENV{KARR_NO_CLI_FALLBACK} ? $budget : $budget / 2;
+    my $deadline = Time::HiRes::time() + $budget;
+
+    # Set for both attempts: the CLI reaches ssh through this variable, and a
+    # libgit2 built against the exec ssh transport rather than libssh2 would
+    # reach it through the same one.
     local $ENV{GIT_SSH_COMMAND} =
         ( $ENV{GIT_SSH_COMMAND} || 'ssh' ) . ' -o BatchMode=yes';
-    my $run = $self->_run_git( { timeout => _probe_timeout() },
-        'ls-remote', '--quiet', $remote, BOARD_ROOT . '*' );
 
-    if ( $run->{ok} && !$run->{status} ) {
-        # An answer with no ref in it is an answer: the remote has no board.
-        return $run->{out} =~ /\S/ ? 1 : 0;
+    my ( $names, $native_why );
+    if ( my $repo = $self->_repo ) {
+        # _repo has just applied the transport budget; the probe's is smaller.
+        _set_native_transport_timeouts($share);
+        try {
+            $names = $repo->remote($remote)
+                ->list_refs( credentials => _default_credentials_cb() );
+        } catch {
+            $native_why = clean_error($_);
+        };
+        _apply_native_transport_timeouts();
     }
 
-    # git's first line is the one that says what went wrong ("ssh: connect to
-    # host ...", "fatal: '/x' does not appear to be a git repository"); the
-    # rest is the standard advice underneath it, and this becomes one line in
-    # front of a refusal that has four of its own.
-    my $detail = $run->{err} // '';
-    $detail =~ s/\s+\z//;
-    $detail = ( split /\n/, $detail )[0] // '';
-    my $why =
-          $run->{failure} eq 'start'   ? "could not run git: $detail"
-        : $run->{failure} eq 'timeout' ? "no answer within $run->{timeout}s"
-        : length $detail               ? $detail
-        :                                "git ls-remote exited " . ( $run->{status} >> 8 );
-    $self->{_last_error} = $why;
+    # list_refs answers with the remote's own ref names, HEAD included and no
+    # refspec mapping applied, so the board is a prefix match. An answer with
+    # no board ref in it is an answer: the remote has none.
+    return ( grep { index( $_, BOARD_ROOT ) == 0 } @$names ) ? 1 : 0
+        if $names;
+
+    my $why  = $native_why;
+    my $left = $deadline - Time::HiRes::time();
+    if ( $ENV{KARR_NO_CLI_FALLBACK} ) {
+        # Native only: whatever it said is the whole answer.
+    }
+    elsif ( $left <= 0 ) {
+        $why = "no answer within ${budget}s";
+    }
+    else {
+        my $run = $self->_run_git( { timeout => $left },
+            'ls-remote', '--quiet', $remote, BOARD_ROOT . '*' );
+
+        if ( $run->{ok} && !$run->{status} ) {
+            # An answer with no ref in it is an answer: the remote has no board.
+            return $run->{out} =~ /\S/ ? 1 : 0;
+        }
+
+        # git's first line is the one that says what went wrong ("ssh: connect
+        # to host ...", "fatal: '/x' does not appear to be a git repository");
+        # the rest is the standard advice underneath it, and this becomes one
+        # line in front of a refusal that has four of its own.
+        my $detail = $run->{err} // '';
+        $detail =~ s/\s+\z//;
+        $detail = ( split /\n/, $detail )[0] // '';
+        # No git to run leaves the native attempt as the only thing that
+        # happened, so its reason is carried along. The timeout names the whole
+        # probe's deadline rather than the slice this attempt was given: what
+        # the caller waited through is both attempts together.
+        my $start = "could not run git: $detail"
+            . ( defined $native_why ? " (native: $native_why)" : '' );
+        $why =
+              $run->{failure} eq 'start'   ? $start
+            : $run->{failure} eq 'timeout' ? "no answer within ${budget}s"
+            : length $detail               ? $detail
+            :                                "git ls-remote exited " . ( $run->{status} >> 8 );
+    }
+
+    $self->{_last_error} = $why // 'the remote could not be asked';
     return undef;
 }
 
@@ -1462,16 +1541,27 @@ Asks C<$remote> whether it advertises anything under C<refs/karr/> without
 fetching. Three answers, and the third is not the second: C<1> when the remote
 has a board, C<0> when it answered and has none (C<$remote> not being
 configured included), and C<undef> when the question could not be put --
-unreachable remote, no C<git> CLI, C<KARR_NO_CLI_FALLBACK> set, or no answer
-within the probe's budget. L</last_error> carries the reason for C<undef>.
+unreachable remote, no C<git> CLI, or no answer within the probe's budget.
+L</last_error> carries the reason for C<undef>.
 
 The budget is C<KARR_TRANSPORT_TIMEOUT> capped at 10 seconds, and the cap
 applies to C<0> ("no limit") as well: this call runs unasked in front of a
 read command, and an unasked round trip that can hang forever is worse than
-one that gives up. It runs through the C<git> CLI even though the native
-transport would be faster, because for C<ssh://> the CLI is the only route
-whose timeout can be enforced (see L</DESCRIPTION> and #174), and it never
-prompts for credentials or an ssh passphrase.
+one that gives up. It is the budget for the probe, not for each attempt: the
+native transport is asked first with half of it, and the C<git> CLI gets
+whatever is left of the deadline, so a silent remote costs the cap once rather
+than twice. C<KARR_NO_CLI_FALLBACK> leaves the native attempt alone with the
+whole budget instead.
+
+The CLI is still worth a fallback now that the native transport is bounded for
+C<ssh://> too (#174, #203), because libgit2 reads no C<~/.ssh/config>: a
+C<Host> alias, the C<IdentityFile>, C<User> or C<Port> under it, and a
+C<ProxyCommand> exist only for the CLI, and a remote written as C<board:x.git>
+is taken by libssh2 for the literal host C<board>.
+
+Neither route can stop and ask: no credential prompt, no ssh passphrase
+prompt. A key that needs a passphrase with no agent behind it fails the probe
+instead.
 
 L<App::karr::Role::BoardDiscovery/require_local_board> is the caller: a fresh
 clone holds no C<refs/karr/*> because C<git clone> does not fetch them, which
@@ -2890,9 +2980,10 @@ sub _transport_timeout {
 
 # The budget for remote_has_board, which is not the transport budget: that one
 # is a ceiling for a transfer somebody asked for, this one bounds a round trip
-# nobody asked for, taken in front of a read command. `git ls-remote` against a
-# reachable remote answers in milliseconds, so ten seconds is already an
-# unreasonable remote rather than a slow one.
+# nobody asked for, taken in front of a read command. A ref advertisement from
+# a reachable remote arrives in milliseconds over either transport, so ten
+# seconds is already an unreasonable remote rather than a slow one -- and it is
+# the budget for the whole probe, both of its attempts together.
 use constant BOARD_PROBE_TIMEOUT => 10;
 
 # KARR_TRANSPORT_TIMEOUT lowers it and never raises it, 0 ("no limit")

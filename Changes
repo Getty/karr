@@ -1,5 +1,35 @@
 {{$NEXT}}
 
+    - The probe that asks the remote whether it has a board now takes the
+      native transport first, with the git CLI as its fallback (#203).
+      It was the CLI and only the CLI because #174 left ssh:// unbounded
+      on the native side, and a round trip taken unasked in front of
+      `karr list` cannot be allowed to hang; the libgit2 1.9.3 floor
+      that closed #174 closed that argument with it. The probe now
+      follows the same policy as every other transport in
+      App::karr::Git, and the ordinary case answers without forking a
+      git at all.
+
+      Its budget is unchanged in size and now covers both attempts:
+      KARR_TRANSPORT_TIMEOUT capped at 10 seconds, the native attempt
+      getting half of it and the CLI whatever is left of the deadline,
+      so a remote that accepts the connection and then says nothing
+      still costs the cap once rather than once per route. Measured with
+      KARR_TRANSPORT_TIMEOUT=3 against a listener that never answers:
+      3.10s for both attempts together.
+
+      KARR_NO_CLI_FALLBACK=1 therefore means here what it means
+      everywhere else in App::karr::Git -- native only -- instead of
+      "leave the question unanswered", and the native attempt then has
+      the whole budget. Neither route can stop and ask for anything: a
+      passphrase-protected key with no agent behind it fails the probe.
+
+      The fallback stays for the reason the rest of the class keeps one:
+      libgit2 reads no ~/.ssh/config, so a Host alias, the IdentityFile,
+      User or Port under it, and a ProxyCommand exist only for the CLI.
+      The four places that still documented the ssh:// timeout gap as
+      open now describe the floor that closed it.
+
     - The ssh:// hang is gone, by requiring a libgit2 that does not have
       it (#174). Against a remote that accepts the TCP connection and then
       stays silent, an ssh fetch could park a karr command forever: libssh2
