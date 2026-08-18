@@ -1,0 +1,178 @@
+---
+class: standard
+completed: 2026-08-17T23:30:40Z
+created: 2026-08-15T08:44:14Z
+id: 174
+priority: high
+started: 2026-08-17T23:30:40Z
+status: done
+tags:
+- transport
+- hang
+- git
+title: 'native ssh:// transport is still unbounded: libgit2''s server timeout does
+  not reach libssh2'
+updated: 2026-08-18T01:41:18Z
+---
+
+Follow-up to #170, which bounded the native transport by setting GIT_OPT_SET_SERVER_CONNECT_TIMEOUT and GIT_OPT_SET_SERVER_TIMEOUT from KARR_TRANSPORT_TIMEOUT when the repository is opened.
+
+Measured while fixing #170: those options only reach libgit2's own socket transports. Against a peer that accepts the TCP connection and then stays silent:
+
+  git://   fails after the configured timeout ("could not read from socket: timed out")
+  http://  same
+  ssh://   still blocked after 75 s with both options set, killed from outside
+
+So an ssh remote -- which is what karr boards actually use -- can still park a karr command in an uninterruptible read forever on the native path. libssh2 does its own reads and retries past the socket timeout; no libgit2 option covers it, and no Perl-level alarm can break into a blocking C call.
+
+Options, none of them free:
+
+  1. For ssh:// remotes, run the git CLI first instead of as a fallback. The
+     CLI transport is already bounded by _run_git's deadline, and the native
+     ssh path is the one that cannot read ~/.ssh/config or run a ProxyCommand
+     anyway, i.e. the one that most often fails first. This is a transport
+     policy change and wants the maintainer's call.
+  2. Run the native transport in a forked child and enforce the deadline from
+     the parent. Works for fetch (the child's objects and refs land on disk),
+     but push results (per-ref rejections, App::karr::Git->push_rejections)
+     would have to come back over IPC.
+  3. Wait for libgit2 to honour the timeout in its ssh transport.
+
+Reproduce: a listener that accepts and never answers
+
+  perl -MIO::Socket::INET -e 'my $s=IO::Socket::INET->new(LocalAddr=>"127.0.0.1",LocalPort=>0,Listen=>50,ReuseAddr=>1); print $s->sockport,"\n"; my @k; while(my $c=$s->accept){push @k,$c}'
+
+then point origin at ssh://git@127.0.0.1:<port>/x.git in a throwaway repo and
+fetch with KARR_NO_CLI_FALLBACK=1. t/170-native-transport-timeout.t has the
+same setup over git://; it deliberately does not use ssh, because the ssh case
+does not come back.
+Nachrecherche 2026-08-17: UPSTREAM HAT ES GELOEST. Option 3 ist eingeloest, aber
+die Maschine hier laeuft auf einer Version davor.
+
+libgit2 PR #7165 ('prevent SSH timeout infinite loop and enable TCP keepalive',
+@ambv, behebt Issue #7143) ist am 2026-05-02 gemerged und in Release v1.9.3
+(2026-05-04) enthalten. Die Beschreibung trifft diesen Fall woertlich: ein Peer,
+der die TCP-Verbindung annimmt und dann schweigt. Zwei Aenderungen -- bei
+LIBSSH2_ERROR_TIMEOUT nicht mehr ewig schleifen, und TCP-Keepalive auf allen
+Sockets, um tote Verbindungen zu erkennen, die sonst in ESTABLISHED haengen
+bleiben. Der PR bringt einen Test mit, der den Hang ohne den Patch zeigt.
+
+Nicht zu verwechseln mit PR #6721 (2024-02-05, in v1.8.1), der
+libssh2_session_set_timeout() ueberhaupt erst gesetzt hat. Der war zum
+Messzeitpunkt von #170/#174 laengst drin -- und half nicht, weil die
+EAGAIN-Schleife den gesetzten Timeout nie zu Gesicht bekam. Das ist der Grund,
+warum die Messung damals 'beide Optionen gesetzt und trotzdem 75 s' ergab: die
+Option kam an, die Schleife ignorierte sie.
+
+Hier gemessen, nicht vermutet (Reproduktionsrezept aus diesem Ticket, ssh://
+gegen einen stillen Listener, KARR_NO_CLI_FALLBACK=1):
+
+    libgit2 1.9.0 (via FFI)
+    KARR_TRANSPORT_TIMEOUT=3 -> STILL HANGING, killed after 25.01s
+    KARR_TRANSPORT_TIMEOUT=0 -> STILL HANGING, killed after 25.02s
+
+Also unveraendert kaputt auf dieser Maschine. Der Grund steht in dpkg:
+libgit2-1.9:amd64 1.9.0+ds-2 (Debian trixie), libssh2 1.11.1. 1.9.0 ist drei
+Patchreleases vor dem Fix; neueste Version ist 1.9.7 (Mitte August 2026).
+Git::Libgit2 bindet per FFI gegen die System-libgit2, das Binding selbst ist
+also unbeteiligt -- 0.007 gegen eine 1.9.3+ waere sofort heil.
+
+Was das fuer die abgelehnten Workarounds bedeutet: der Einwand gegen Option 1
+('Transport-Policy-Aenderung, die jedes Board betrifft') faellt weg, wenn die
+Bedingung nicht 'ssh://' lautet, sondern 'ssh:// UND libgit2 < 1.9.3'. Dann
+trifft es nur kaputte Installationen und verschwindet von selbst, sobald die
+Distribution nachzieht. Git::Libgit2::version() liefert die drei Zahlen zur
+Laufzeit -- in dieser Nachrecherche benutzt, funktioniert.
+
+Zu entscheiden (Maintainer): (a) einfach libgit2 >= 1.9.3 voraussetzen und das
+Ticket schliessen, (b) zusaetzlich eine Laufzeit-Weiche in App::karr::Git, die
+unterhalb 1.9.3 fuer ssh:// den CLI-Pfad zuerst nimmt, (c) nur dokumentieren.
+Nicht gebaut, nichts geaendert -- das ist ein Befund, keine Aenderung.
+VERIFIZIERT 2026-08-17: libgit2 1.9.3 behebt es, hier gemessen.
+
+Die Recherche hielt die Verifikation fuer blockiert ("kein cmake installiert").
+Sie war es nicht. Zwei Dinge, die dabei uebersehen wurden:
+
+  * Git::Libgit2::FFI laedt nicht per FFI::CheckLib gegen die System-libgit2,
+    sondern ueber Alien::Libgit2->dynamic_libs.
+  * Alien::Libgit2 (Gettys eigenes p5-alien-libgit2) buendelt bereits
+    share/libgit2-1.9.3.tar.gz -- exakt die Version mit PR #7165 -- und baut
+    sie im share-Zweig mit plugin Build::CMake, das cmake ueber Alien::cmake3
+    selbst beschafft. System-cmake wird nie gebraucht.
+
+Isolierter share-Build in einen temporaeren lib-Pfad, System-libgit2
+unangetastet, gleiches Reproduktionsrezept (stiller Listener, ssh://,
+KARR_NO_CLI_FALLBACK=1, Deadline 25 s):
+
+    libgit2 1.9.0 (system, /usr/lib/x86_64-linux-gnu/libgit2.so.1.9.0)
+      KARR_TRANSPORT_TIMEOUT=3 -> STILL HANGING, killed after 25.05s
+
+    libgit2 1.9.3 (share-build via Alien::Libgit2)
+      KARR_TRANSPORT_TIMEOUT=3 -> RETURNED after 3.11s (fetch failed)
+      KARR_TRANSPORT_TIMEOUT=8 -> RETURNED after 8.07s (fetch failed)
+      KARR_TRANSPORT_TIMEOUT=0 -> STILL HANGING, killed after 25.02s
+
+Die Rueckkehrzeit folgt dem gesetzten Timeout, und 0 ("kein Limit") haengt
+weiter -- also greift wirklich der Timeout und nicht irgendein anderer
+Fehlerpfad. ssh:// ist auf 1.9.3 genauso beschraenkt wie git:// und http://.
+
+Zur Lage auf dieser Maschine: die neue libgit2 ist NICHT installiert. dpkg
+haelt weiterhin libgit2-1.9 1.9.0+ds-2, und apt bietet in trixie keinen
+neueren Kandidaten. Systemweit existiert genau eine libgit2.so, und das ist
+1.9.0. Der Satz aus der Recherche, das Problem verschwinde von selbst "sobald
+die Distribution nachzieht", traegt daher nicht: Debian stable springt nicht
+auf 1.9.3.
+
+Damit steht neben (a)/(b)/(c) eine vierte Moeglichkeit, die keine der drei
+Nachteile hat -- Option (d): im alienfile von p5-alien-libgit2 die
+PkgConfig-Schwelle von minimum_version 1.5 auf 1.9.3 anheben. Dann faellt jede
+System-libgit2 unterhalb des Fixes durch, Alien baut automatisch die schon
+gebuendelte 1.9.3, und karr pinnt Alien::Libgit2 im cpanfile entsprechend.
+Keine Transport-Policy-Aenderung, keine Laufzeit-Weiche in App::karr::Git,
+nichts, was der Anwender tun muss. Preis: wer keine 1.9.3+ im System hat,
+baut libgit2 einmal aus Quellen.
+ENTSCHIEDEN 2026-08-17 (Maintainer): Option (d).
+
+Nicht (a)/(b)/(c). Der Boden wird ueber die Abhaengigkeit erzwungen statt ueber
+eine Weiche im Transport:
+
+  * p5-alien-libgit2: alienfile PkgConfig minimum_version 1.5 -> 1.9.3. Der
+    Tarball libgit2-1.9.3.tar.gz lag dort bereits in share/, nur die Schwelle
+    stand noch auf 1.5. Eine System-libgit2 unterhalb des Fixes faellt jetzt
+    durch und Alien baut die gebuendelte 1.9.3.
+  * karr cpanfile: requires Alien::Libgit2 0.002.
+
+Damit aendert sich weder Transport-Policy noch App::karr::Git, und es haengt
+nicht daran, dass eine Distribution nachzieht -- was Debian stable ohnehin
+nicht tut.
+
+End-to-End verifiziert auf dieser Maschine (System-libgit2 unangetastet 1.9.0):
+
+  * Install ohne ALIEN_INSTALL_TYPE waehlt von selbst share:
+        install_type: share / libgit2 1.9.3
+  * karr-Testsuite gegen 1.9.3: Files=181, Tests=1267, Result: PASS
+
+Was cmake angeht, das die Recherche als Blocker sah: wird nicht gebraucht.
+plugin Build::CMake zieht Alien::cmake3, das sich cmake selbst beschafft.
+
+Offen geblieben und als #203 abgelegt: POD und Kommentare in Git.pm
+beschreiben ssh:// weiter als grundsaetzlich unbounded, und remote_has_board
+meidet den nativen Transport mit genau der Begruendung, die jetzt entfallen
+ist. Das ist eine Policy-Frage und gehoert nicht in dieses Ticket.
+Lokal ausgerollt 2026-08-18: Alien::Libgit2 0.002 ist in ~/perl5
+installiert, install_type share, libgit2 1.9.3. Git::Libgit2 sieht 1.9.3, die
+System-libgit2 bleibt unberuehrt auf 1.9.0 (dpkg unveraendert).
+
+Reproduktionsrezept in der normalen Umgebung, ohne PERL5LIB-Trick:
+KARR_TRANSPORT_TIMEOUT=3 -> RETURNED after 3.06s. Der Hang ist auf dieser
+Maschine damit real weg, nicht nur in einer isolierten Messung.
+
+Beim ersten Installationsversuch schlug alien_clean_install fehl
+("Path::Tiny paths require defined, positive-length parts", runtime_prop
+prefix undef). Ursache war kein Fehler der Aenderung, sondern ein
+wiederverwendetes Build-Verzeichnis aus einem frueheren Testlauf -- cpanm baut
+im Quellverzeichnis, und der liegengebliebene blib/_alien-Zustand liess den
+Build-Schritt ueberspringen. Aus einem frisch gebauten Dist lief es durch.
+
+Offen fuer Dritte: Alien-Libgit2 0.002 ist noch nicht auf CPAN (dort nur
+0.001), der cpanfile-Pin ist also bis zum Release nur lokal aufloesbar.
