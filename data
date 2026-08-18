@@ -1,0 +1,38 @@
+---
+claimed_at: 2026-08-18T05:41:02Z
+claimed_by: must-onto
+class: standard
+completed: 2026-08-18T05:41:02Z
+created: 2026-08-18T05:03:40Z
+id: 205
+priority: high
+started: 2026-08-18T05:04:16Z
+status: done
+tags:
+- docs
+- readme
+- foundation
+title: 'README: karr-foundation prominent machen, mit durchgerechneten Anwendungsfaellen'
+updated: 2026-08-18T05:41:02Z
+---
+
+Der karr-foundation-Abschnitt steht heute auf Zeile 242 von 528, hinter Installation, Command map und Multi-Agent-Workflow -- also genau da, wo ihn niemand findet, der wissen will, wofuer das Ding eigentlich gebaut wurde. Der Daueragent ueber mehrere Boards ist das, was karr von einem Datei-Kanban unterscheidet; im README ist er eine Fussnote.
+
+Was zu tun ist:
+
+1. Prominenz. Der Abschnitt gehoert weit nach oben -- direkt nach dem Quick start bzw. dem "Why it exists", vor die Command map. Auch die Einleitung oben soll ihn nennen, statt karr nur als Kanban zu beschreiben.
+
+2. Durchgerechnete Faelle statt Optionsliste. Heute ist der Abschnitt im Wesentlichen ein kommentiertes config.yml. Was fehlt, sind vollstaendige Szenarien vom leeren System bis zum laufenden Agenten:
+   - Ein einzelnes Repo, ticket-Modus, von "nichts konfiguriert" bis zum ersten --dry_run und dann zum echten Lauf.
+   - Mehrere Repos ueber scan:, mit concurrent: und dem hub.
+   - on_drained als Domaenen-Haken (was karr bewusst NICHT weiss).
+   - Named agents und was passiert, wenn ein Agent-Kommando ausfaellt (Cooldown, agents.state).
+   - Die Chain: einen Plan schreiben, chain laufen lassen, Run-Log lesen.
+   - Das Fragen-Postfach: ask/answer.
+
+3. Ehrlichkeit ueber den Stand. Was gebaut ist und was nicht, gehoert hin -- nicht als Roadmap-Prosa, sondern damit niemand etwas konfiguriert, das nicht laeuft.
+
+Stil-Referenz: das README von ~/dev/dbio-dev/dbio -- Tabellen, konkrete Beispiele, Verweise, keine Marketingprosa.
+
+Deliberately nicht Teil davon: POD in den .pm-Dateien (eigenes Ticket).
+Committet als 09fcbd3. README von 528 auf 1132 Zeilen; der karr-foundation-Abschnitt steht jetzt auf Zeile 56 direkt nach dem Quick start, mit sechs durchgerechneten Faellen. Stichprobe von mir nachgeprueft: alle gezeigten Kommandos existieren (karr disable/enable/get-refs/needs, karr-foundation ask/answer/chain mit --status/--dry-run/--force/--verbose). Zwei Befunde nebenbei: (1) die alte Behauptung 'All per-repo state is gitignored' war falsch -- karr init schreibt nur tasks/ und config.yml, die .karr*-Zeilen in diesem Repo sind handgetragen; (2) vier Transcripts der ersten Fassung waren aus dem Code komponiert statt mitgeschnitten und wurden gegen Stand-in-Executables neu erzeugt. Kein echter Agent wurde dabei gestartet.
