@@ -1,5 +1,28 @@
 {{$NEXT}}
 
+    - A push to a remote whose push URL is a local path no longer
+      publishes the board to the fetch URL and calls it a success
+      (#208). libgit2's local transport pushes by opening the remote's
+      fetch URL rather than the URL it just connected to, so a clone
+      configured with `remote.<name>.pushurl` or with
+      `url.<base>.pushInsteadOf` pointing at a second local repository
+      wrote refs/karr/* into the first one and returned success --
+      measured in both shapes on the libgit2 1.9.3 Alien::Libgit2
+      carries, by reading back which of two bare repositories had
+      actually received the refs. Nothing failed, so the git CLI
+      fallback never ran, and the mirror update behind the push then
+      recorded the remote as holding refs it had never been sent.
+
+      karr now takes that push off the native transport before it runs
+      and sends it through the CLI, which lands at the push URL in
+      every one of these cases -- the same fallback the distribution
+      already keeps for ~/.ssh/config. With KARR_NO_CLI_FALLBACK there
+      is no route left, and the push fails naming both URLs rather
+      than reporting a success that went elsewhere. The detection is
+      deliberately narrow: a remote with no push URL, one whose push
+      URL names its fetch URL, and one whose push URL is a real
+      transport are all left to libgit2, which is correct there.
+
     - App::karr::Git's DESCRIPTION no longer names `insteadOf` as
       something only the git CLI can do (#204). The paragraph that
       explains why the CLI transport fallback exists listed `Host`

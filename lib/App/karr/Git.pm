@@ -67,9 +67,20 @@ does not exist fails as C<unsupported URL protocol>, which looks exactly like
 no rewrite having happened at all. The substitution is textual and runs
 before anything inspects the protocol, so it is not confined to the local
 paths it was first tried on -- C<ssh://> and C<https://> serve on either side
-of a rule, as the URL being rewritten or as what it is rewritten to. One
-corner does not hold: where the push side of a rule resolves to a local path,
-libgit2 connects there and then writes to the fetch URL regardless (#208).
+of a rule, as the URL being rewritten or as what it is rewritten to.
+
+One corner does not hold, and it is the second thing the fallback is there
+for. Where a remote's push URL resolves to a local path other than its fetch
+URL -- from C<pushInsteadOf>, or from an explicit C<< remote.<name>.pushurl >>
+-- libgit2's local transport connects to the push URL and then writes the
+objects and refs to the fetch URL regardless, reporting success. Nothing fails,
+so nothing used to fall back, and the board was published to the wrong
+repository in silence. Such a push is therefore taken off the native transport
+before it runs and sent through the CLI, which lands at the push URL in every
+one of these cases; with C<KARR_NO_CLI_FALLBACK> there is no route left and it
+fails naming both URLs instead (#208). A push URL that is absent, that names
+the fetch URL, or that is a real transport is untouched by this -- libgit2 is
+correct there, which is where ssh and https boards are.
 
 Every CLI transport run is bounded by a wall-clock timeout, 120 seconds by
 default; C<KARR_TRANSPORT_TIMEOUT> overrides it (in seconds, C<0> disables
@@ -1811,6 +1822,85 @@ sub _push_rejection_error {
     } @$rejected;
 }
 
+# libgit2 resolves a remote's push URL when it looks the remote up -- an
+# explicit remote.<name>.pushurl, or url.<base>.pushInsteadOf applied to the
+# fetch URL when there is none -- and leaves it NULL when neither is
+# configured, which is every ordinary board. Git::Native exposes the fetch URL
+# and not this one, and Git::Libgit2::FFI binds no git_remote_pushurl, so it is
+# reached here through their shared FFI instance. Deliberately a function
+# object rather than an attached sub, and never installed into their namespace:
+# a binding added upstream later must not collide with this one. Undef when the
+# symbol cannot be reached at all, which reads the same as "no push URL" and
+# leaves the push exactly as it was before this check existed.
+my $REMOTE_PUSHURL_FN;
+
+sub _remote_pushurl {
+    my ($remote_obj) = @_;
+    unless ( defined $REMOTE_PUSHURL_FN ) {
+        $REMOTE_PUSHURL_FN = try {
+            Git::Libgit2::FFI::ffi->function(
+                git_remote_pushurl => ['opaque'] => 'string' );
+        } catch { 0 };
+    }
+    return undef unless $REMOTE_PUSHURL_FN;
+    my $url = try { $REMOTE_PUSHURL_FN->call( $remote_obj->_handle ) }
+        catch { undef };
+    return defined $url && length $url ? from_octets($url) : undef;
+}
+
+# Which transport libgit2 picks for a URL, reduced to the one distinction that
+# matters here: its local transport, or a real one. Same reading git does -- an
+# explicit scheme decides and file:// is the local one, otherwise a colon
+# before the first slash makes it an scp-style ssh remote, and what is left is
+# a path.
+sub _is_local_url {
+    my ($url) = @_;
+    return 1 if $url =~ m{\Afile://}i;
+    return 0 if $url =~ m{\A[A-Za-z][A-Za-z0-9+.\-]*://};
+    return 0 if $url =~ m{\A[^/]*:};
+    return 1;
+}
+
+# The one shape where the native push connects to the right repository and
+# writes to the wrong one (#208).
+#
+# libgit2's local transport pushes by opening remote->url -- the *fetch* URL --
+# rather than the URL it was handed for the push. So a remote whose push URL
+# resolves to a local path different from its fetch URL connects to the push
+# URL, and then puts the objects and the refs in the fetch URL's repository and
+# reports success. Measured on the 1.9.3 Alien::Libgit2 carries, in both shapes
+# that produce a distinct push URL -- remote.<name>.pushurl and
+# url.<base>.pushInsteadOf -- by reading back which of two bare repositories
+# had actually received refs/karr/*. That is a published board that never
+# reached the remote, with nothing failing for the CLI fallback to catch, so
+# the fallback is put in front of the push instead: the git CLI lands at the
+# push URL in every one of these cases, which is where this remote's board
+# belongs.
+#
+# Narrow on purpose. An ordinary board has no push URL at all, so this is one
+# NULL check and no string work; a push URL identical to the fetch URL is the
+# same repository either way; and where the push URL is a real transport
+# libgit2 is correct, which is where all the ssh and https boards are. What is
+# left over is the shape above -- and a fetch URL that is not local, where the
+# native push would fail rather than misdirect (it opens a URL that is no path)
+# and the CLI is the route regardless.
+#
+# Returns the reason as a message, or the empty list when the push may run
+# natively. The message is what App::karr::Git/last_error carries when
+# KARR_NO_CLI_FALLBACK leaves no route to take instead: a named refusal, rather
+# than a success that went somewhere else.
+sub _misdirected_local_push {
+    my ($remote_obj) = @_;
+    my $push = _remote_pushurl($remote_obj) or return ();
+    my $url  = from_octets( $remote_obj->url // '' );
+    return () if $push eq $url;
+    return () unless _is_local_url($push);
+    return "the remote's push URL ($push) is a local path different from its "
+      . "fetch URL ($url), and libgit2's local transport writes to the fetch "
+      . "URL regardless (#208) -- the git CLI is the only route that lands "
+      . "where this remote points";
+}
+
 # Send @$refspecs and report the outcome the way every caller here needs it:
 # native transport first, CLI fallback on a transport failure, and a per-ref
 # rejection turned into a false return with last_error and push_rejections set.
@@ -1825,6 +1915,10 @@ sub _push_refspecs {
     my $result;
     my $ok = try {
         my $r = $repo->remote($remote);
+        if ( my $why = _misdirected_local_push($r) ) {
+            $self->{_last_error} = $why;
+            return $self->_cli_transport( 'push', $remote, $refspecs );
+        }
         $result = $r->push(
             refspecs    => $refspecs,
             credentials => _default_credentials_cb(),
@@ -1957,6 +2051,12 @@ deletion records, because they are what this clone owes a remote and there is
 no remote to owe (#197). Otherwise a repository that never pushes accumulates
 one tombstone per deleted card forever, and adding a remote later publishes
 every deletion it ever made in a single push.
+
+A remote whose push URL is a local path other than its fetch URL never takes
+the native transport at all: libgit2 connects to the push URL there and writes
+to the fetch URL anyway, so the CLI carries it instead, or -- under
+C<KARR_NO_CLI_FALLBACK> -- this returns C<0> with L</last_error> naming both
+URLs (#208, and L</DESCRIPTION> for the whole of it).
 
 =cut
 
