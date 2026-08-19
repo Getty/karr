@@ -45,3 +45,9 @@ App-karr-*
 /cover_db/
 /blib/
 /pm_to_blib
+
+# ex/ fleet sandbox — generated state (setup.sh), never commit
+ex/webapp/
+ex/docs-site/
+ex/fleet-hub/
+ex/config.yml

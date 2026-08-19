@@ -1,0 +1,6 @@
+# Machine-local sandbox state, built by ex/setup.sh — never commit.
+# Only ex/README.md, ex/setup.sh, ex/bin/ and ex/scripts/ live in the repo.
+/webapp/
+/docs-site/
+/fleet-hub/
+/config.yml

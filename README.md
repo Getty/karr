@@ -730,10 +730,10 @@ planner is wanted" is a line of output rather than a call.
 | `chain` with `kind: ticket`, `kind: shell` and `kind: question` steps, prechecks, run logs | built |
 | `kind: question` resolving the mailbox | built — pending and unclaimed while the answer is `open`, done once it is there, the default taken on `use_default`, `stale` when nothing in the mailbox names the step |
 | `kind: plan` steps | **not executed.** Recognised, left pending, with the planner recorded as wanted |
-| the coordination agent / planner | **not built.** It is the one layer of the design that was never written, and it has no ticket |
+| the coordination agent / planner | **not built.** It is the one layer of the design that was never written; ticket #210 on the karr board carries the build instructions |
 | writing a chain from the CLI | not built — a chain is written through `App::karr::Foundation::ChainStore` |
 | `escalate_to_ai` | recorded only, for the same reason: there is no agent to escalate to |
-| cross-board links in a chain | not built — no step and no precheck fact reaches a card on another board; `karr needs` is the by-hand half |
+| cross-board links in a chain | built — the `ticket_links` fact measures the far cards for a precheck (`settled` / `open` / `missing`); resolving stays with `karr needs --resolve` |
 
 Where the design says "call the planner", foundation records that the planner is
 wanted and says so at the end of the tick — nothing is written that a future
@@ -778,7 +778,8 @@ a statement about the plan, not about the binary.
 | `default_command:` / `default_prompt:` | fleet-wide command and prompt |
 | `mode:`, `claude:`, `claude_bin:`, `claude_max_turns:`, `claude_permission_mode:`, `on_drained:`, `on_drained_max_runtime:`, `on_drained_max_rounds:` | fleet-wide defaults for the `.karr` keys of the same name |
 
-`.karr` keys, per repository (each wins over the config-wide value):
+`.karr` keys, per repository (where a fleet-wide default of the same name
+exists, the `.karr` value wins; the rest exist only per repository):
 
 | Key | Meaning |
 |---|---|
@@ -788,7 +789,7 @@ a statement about the plan, not about the binary.
 | `claude:` / `claude_bin:` / `claude_max_turns:` / `claude_permission_mode:` | synthesize the canonical claude command (opt-in) |
 | `mode:` | `drain` (default), `single`, `ticket`; `drain: true\|false` is the older spelling of the first two |
 | `on_idle:` | `skip` (default) or `always-run` |
-| `max_runtime:` | per-command SIGKILL in seconds (`0` = no timeout) |
+| `max_runtime:` | per-command timeout in seconds — TERM to the process group, KILL two seconds later (`0` = no timeout) |
 | `max_attempts:` | stalls on one card before it is auto-blocked (default 2) |
 | `max_iterations:` | hard cap on drain iterations (default 50) |
 | `cooldown_base:` / `cooldown_max:` | cooldown minutes at level 0 (default 1) and the ceiling (default 64) |
@@ -804,6 +805,26 @@ Full detail: `perldoc App::karr::Foundation`, and for the chain
 `perldoc App::karr::Foundation::ChainStore`,
 `perldoc App::karr::Foundation::Questions`,
 `perldoc App::karr::Foundation::Agents`.
+
+## Run the examples yourself: the `ex/` sandbox
+
+Every transcript above is a real run; the `ex/` directory turns that claim into
+something you can verify in minutes. `ex/setup.sh` builds two sample
+repositories (`webapp`, `docs-site`) with seeded boards, wires them into one
+`karr-foundation` fleet with a hub and a demo chain, and ships demo agents —
+ticket mode, drain mode, a lazy agent that stalls, and one that fails with an
+API error for the cooldown case. Everything runs on one machine with no server,
+no remote and no credentials:
+
+```bash
+./ex/setup.sh --reset
+perl -Ilib bin/karr-foundation --config ex/config.yml --status
+perl -Ilib bin/karr-foundation --config ex/config.yml
+```
+
+`ex/README.md` is the full guide — build the sandbox, run each scenario, and
+exercise the chain (`karr-foundation chain` / `ask` / `answer`) against a real
+setup.
 
 ## Installation
 
@@ -930,6 +951,9 @@ Important refs:
 | `karr restore --yes` | replace the board from a YAML snapshot |
 | `karr destroy --yes` | remove the board completely |
 | `karr sync` | explicitly pull/push board refs |
+| `karr materialize` | write the `tasks/` file view from the refs |
+| `karr import --yes` | read the file view back into the refs |
+| `karr repair` | migrate a 0.402-or-earlier board off double-encoded UTF-8 |
 | `karr disable` / `karr enable` | opt this board out of (or back into) automated agent runs |
 
 ### Task lifecycle
@@ -955,6 +979,7 @@ Important refs:
 | `karr needs` | report or resolve cross-board dependencies (`BOARD#ID` in another repository) |
 | `karr context` | generate agent-facing board summary |
 | `karr log` | inspect per-agent or per-task activity |
+| `karr metrics` | throughput, lead/cycle time, flow efficiency off the cards' lifecycle stamps |
 | `karr agentname` | generate short claim names (a new one every call - capture it once, see below) |
 
 ### Skills and helper refs
