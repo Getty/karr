@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-08-19T00:14:00Z
+claimed_by: sold-door
+class: standard
+completed: 2026-08-19T00:14:00Z
+created: 2026-08-18T18:20:05Z
+id: 212
+priority: medium
+started: 2026-08-18T18:20:36Z
+status: done
+tags:
+- docs
+- example
+title: 'ex/: Sample-Setup zum direkten Testen (Fleet-Sandbox)'
+updated: 2026-08-19T00:14:00Z
+---
+
+Machbar: ex/ Verzeichnis im Repo mit Setup-Skript, das Beispiel-Boards (webapp, docs-site, fleet-hub), .karr-Dateien, karr-foundation config.yml, fake-agent und eine Chain anlegt. Refs werden nicht committet, also erzeugt ex/setup.sh den Zustand zur Laufzeit (idempotent), ex/ wird gitignored.
+
+Damit lassen sich die Console-Beispiele aus karr-artikel.md direkt nachspielen: karr list/board/pick/claim/handoff, foundation --status, Drain, Ticket-Modus, Cooldown, disable/enable, Fragen-Postfach, Chain.
+
+Zusätzlich: englische Fassung des Artikels + Basis-Instruktionen als ex/README.md, Erwähnung im Repo-README, karr-artikel.md ggf. korrigieren wo das Durchspielen Fehler zeigt.
