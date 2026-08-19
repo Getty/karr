@@ -17,7 +17,7 @@ use App::karr::Error qw( user_error clean_error );
 #
 # Probed pre-fix, `karr skill install` into an unwritable directory:
 #
-#   mkpath failed for .claude/skills/karr: Permission denied at
+#   mkpath failed for .claude/skills/kanban-issues-karr-cli: Permission denied at
 #   /.../lib/App/karr/Cmd/Skill.pm line 134.
 #
 # App::karr::Error is the single place that turns such an error into one clean

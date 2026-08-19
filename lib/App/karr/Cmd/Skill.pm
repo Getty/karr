@@ -258,7 +258,7 @@ sub _read_skill {
 
 # _write_skill -- the in-place write, and why it has to be one -- lives in
 # App::karr::Role::SkillFile, composed above: `karr init --claude-skill` writes
-# the very same .claude/skills/karr/SKILL.md, and kept its own spew_utf8 copy of
+# the very same .claude/skills/kanban-issues-karr-cli/SKILL.md, and kept its own spew_utf8 copy of
 # this rule until ticket #145 because the rule lived here (#142). _skill_content,
 # which finds the bundled file in the first place, followed it there in #146 --
 # it was duplicated in Cmd::Init down to the last line but one.
@@ -291,7 +291,7 @@ sub _skill_dir {
   my $base = $self->global
     ? path($ENV{HOME})->child($spec->{global})
     : path('.')->child($spec->{project});
-  return $base->child('karr');
+  return $base->child('kanban-issues-karr-cli');
 }
 
 1;

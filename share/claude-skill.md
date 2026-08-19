@@ -1,6 +1,6 @@
 ---
-name: karr
-description: Use when managing Git-native kanban tasks or shared helper refs with the karr CLI in agent workflows.
+name: kanban-issues-karr-cli
+description: Use when picking up, claiming, handing off or creating agent tickets with the karr CLI, or when reading a repo's karr board.
 ---
 
 # karr — Kanban Assignment & Responsibility Registry

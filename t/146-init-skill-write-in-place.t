@@ -12,7 +12,7 @@ use App::karr::Cmd::Skill;
 
 # Ticket #145: the half of ticket #142 that was left standing one command over.
 #
-# `karr init --claude-skill` installs .claude/skills/karr/SKILL.md -- the very
+# `karr init --claude-skill` installs .claude/skills/kanban-issues-karr-cli/SKILL.md -- the very
 # file `karr skill install --agent claude-code` installs -- and did it with the
 # spew_utf8 that #142 removed from Cmd::Skill. spew_utf8 writes a temp file and
 # renames it over the target, so the path comes back on a *new* inode. A
@@ -42,11 +42,11 @@ sub ident {
     return { dev => $st[0], ino => $st[1], nlink => $st[3] };
 }
 
-# A project root whose .claude/skills/karr/SKILL.md is already hardlinked to a
+# A project root whose .claude/skills/kanban-issues-karr-cli/SKILL.md is already hardlinked to a
 # second path, i.e. the manage-skills situation this ticket is about.
 sub chained_install {
     my ( $root, $content ) = @_;
-    my $installed = path($root)->child('.claude/skills/karr/SKILL.md');
+    my $installed = path($root)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
     $installed->parent->mkpath;
     $installed->spew_utf8($content);
     my $elsewhere = path($root)->child('elsewhere/SKILL.md');
@@ -144,7 +144,7 @@ subtest 'init keeps the inode, so every link in the chain updates' => sub {
 subtest 'the content is encoded exactly once' => sub {
     my $dir = tempdir( CLEANUP => 1 );
     install_into( $dir, $NEW );
-    my $installed = path($dir)->child('.claude/skills/karr/SKILL.md');
+    my $installed = path($dir)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
 
     my $raw = do {
         open my $fh, '<:raw', "$installed" or die "open $installed: $!";
@@ -158,7 +158,7 @@ subtest 'the content is encoded exactly once' => sub {
 
 subtest 'a project without .claude yet still gets the skill installed' => sub {
     my $dir = tempdir( CLEANUP => 1 );
-    my $installed = path($dir)->child('.claude/skills/karr/SKILL.md');
+    my $installed = path($dir)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
     ok( !$installed->exists, 'nothing there to begin with' );
 
     my $r = install_into( $dir, $NEW );

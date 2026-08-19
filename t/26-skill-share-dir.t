@@ -227,7 +227,7 @@ subtest 'karr init --claude-skill through the real CLI, with nothing installed' 
     is( $r->{exit}, 0, 'it exits 0' ) or diag "stderr: $r->{stderr}";
     like( $r->{stdout}, qr/Installed Claude Code skill/, 'and reports the install' );
 
-    my $installed = path($repo)->child('.claude/skills/karr/SKILL.md');
+    my $installed = path($repo)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
     ok( $installed->exists, 'the skill is there' ) or return;
     is( $installed->slurp_raw, $SHARE->slurp_raw,
         'and it is this checkout\'s share/claude-skill.md, byte for byte' );

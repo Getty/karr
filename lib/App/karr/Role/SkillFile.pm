@@ -23,7 +23,7 @@ use File::ShareDir ();
 
 Three commands need the bundled skill file: C<karr skill install> and
 C<karr skill update> write it, C<karr skill show> prints it, and
-C<karr init --claude-skill> writes the same F<.claude/skills/karr/SKILL.md> that
+C<karr init --claude-skill> writes the same F<.claude/skills/kanban-issues-karr-cli/SKILL.md> that
 C<karr skill install --agent claude-code> does. This role is the single place
 that knows both I<where that file comes from> and I<how> it has to be written,
 so neither rule can be fixed in one command and left wrong in the other, which

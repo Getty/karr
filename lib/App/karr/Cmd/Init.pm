@@ -62,7 +62,7 @@ it is for (#95).
 
 =item * C<--claude-skill>
 
-Copies the bundled skill file to F<.claude/skills/karr/SKILL.md> -- the same
+Copies the bundled skill file to F<.claude/skills/kanban-issues-karr-cli/SKILL.md> -- the same
 file L<App::karr::Cmd::Skill> installs for the C<claude-code> agent, and written
 the same way: B<in place>, keeping the inode of a F<SKILL.md> that is already
 there, so one that is a link of a hardlink chain shared across projects stays
@@ -259,7 +259,7 @@ sub _refuse_if_remote_has_board {
 
 sub _install_claude_skill {
   my ($self, $root) = @_;
-  my $skill_dir = $root->child('.claude/skills/karr');
+  my $skill_dir = $root->child('.claude/skills/kanban-issues-karr-cli');
   # An unwritable .claude is the project's layout, not a karr bug: Path::Tiny
   # would otherwise report this file and line at the user (#77). Kept here
   # rather than left to the mkpath inside _write_skill, which would report the
@@ -283,7 +283,7 @@ sub _install_claude_skill {
   # is also where the read-only fallback and its warning live, so there is one
   # description of how a skill file gets written rather than two that drift.
   $self->_write_skill( $skill_dir->child('SKILL.md'), $skill_content );
-  print "Installed Claude Code skill to .claude/skills/karr/SKILL.md\n";
+  print "Installed Claude Code skill to .claude/skills/kanban-issues-karr-cli/SKILL.md\n";
 }
 
 1;
