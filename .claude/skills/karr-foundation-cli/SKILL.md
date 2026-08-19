@@ -1,6 +1,6 @@
 ---
 name: karr-foundation-cli
-description: Use when managing karr-foundation — periodic agent execution across multiple karr boards, drain loops, ticket mode, and auto-block logic.
+description: Use when running karr-foundation — periodic agent execution across several karr boards, drain loops, ticket mode, auto-block logic.
 ---
 
 # karr-foundation — Periodic Agent Executor for karr Boards

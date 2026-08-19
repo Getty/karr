@@ -5,8 +5,8 @@ model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
   skills:
-    - perl-core
-    - perl-moo
+    - getty-perl-core
+    - getty-perl-moo
 ---
 
 You are the board-domain worker for **App::karr**. Implement and debug the behavior users

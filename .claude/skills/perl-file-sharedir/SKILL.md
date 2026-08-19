@@ -1,6 +1,6 @@
 ---
 name: perl-file-sharedir
-description: "File::ShareDir — packaging and accessing non-code data files (templates, schemas, configs, skills) in Perl distributions."
+description: Use when packaging or reading non-code data files in a Perl distribution — File::ShareDir, the share/ layout, Dist::Zilla wiring, the development fallback.
 user-invocable: true
 ---
 

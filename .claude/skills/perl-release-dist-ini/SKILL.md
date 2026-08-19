@@ -1,13 +1,13 @@
 ---
 name: perl-release-dist-ini
-description: "Load when reading, editing, or debugging any dist.ini file — any Perl distribution, any plugin bundle (Author::GETTY, Author::ETHER, Author::KENTNL, etc.), checking version config, plugins, metadata, prereqs"
+description: Load when reading, editing or debugging any dist.ini — any Perl distribution or plugin bundle (Author::GETTY, Author::ETHER, ...), version config, plugins, prereqs.
 user-invocable: false
 allowed-tools: Read, Grep
 model: sonnet
 ---
 
 Generic Dist::Zilla dist.ini reference — applies to any distribution regardless of author bundle.
-For `[@Author::GETTY]`-specific conventions (next-version semantics, POD commands, bundle options), the perl-release-author-getty skill applies additionally.
+For `[@Author::GETTY]`-specific conventions (next-version semantics, POD commands, bundle options), the getty-perl-release-author-getty skill applies additionally.
 
 When analyzing dist.ini:
 

@@ -5,10 +5,10 @@ model: inherit
 allowed-tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
   skills:
-    - perl-core
-    - perl-moo
+    - getty-perl-core
+    - getty-perl-moo
     - kanban-issues-karr-cli
-    - perl-release-author-getty
+    - getty-perl-release-author-getty
     - perl-release-dist-ini
     - perl-file-sharedir
 ---

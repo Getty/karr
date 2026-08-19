@@ -1,6 +1,6 @@
 ---
-name: perl-core
-description: Getty's house rules for all Perl code — module loading, Moose patterns, cpanfile versioning for Getty-authored CPAN distributions, stylistic choices that differ from defaults. Load on any Perl edit in a Getty project.
+name: getty-perl-core
+description: Load on any Perl edit in a Getty project — module loading, Moose patterns, cpanfile versioning, and the house choices that differ from Perl defaults.
 ---
 
 # Perl Core — Getty House Rules
@@ -68,10 +68,9 @@ Why: bare subs hide what the call needs (`$gm` passed manually each time), can't
 
 ## JSON
 
-- **`JSON::MaybeXS`** always. Never `JSON::PP`, `JSON::XS` or `Cpanel::JSON::XS` directly. When encoding, set `canonical => 1, convert_blessed => 1` on the encoder object.
-- **Booleans: `JSON->true` / `JSON->false`.** `JSON` is the backend-name constant `JSON::MaybeXS` exports, and every backend answers `->true`/`->false` with the same `JSON::PP::Boolean` singleton. So `use JSON::MaybeXS;` on its own covers both the codec and the booleans.
-- **Never `JSON::PP::true` / `JSON::PP::false`.** Those are barewords, so they must resolve at compile time and need their own `use JSON::PP ();` — and `JSON::MaybeXS` does NOT pull `JSON::PP` in when `Cpanel::JSON::XS` is installed. Such code compiles only as long as something else happened to load `JSON::PP` first, and dies the day that stops being true. A `require JSON::PP;` inside the sub does not save it: that loads at runtime, the bareword is parsed at compile time.
-- `JSON->true` is an ordinary runtime method call and has no such ordering trap. It also serialises correctly under `$YAML::XS::Boolean = 'JSON::PP'` — that string is one of YAML::XS's fixed mode names, not a module choice, so leave it alone.
+- **`JSON::MaybeXS`** always — never `JSON::PP`, `JSON::XS` or `Cpanel::JSON::XS` directly. Encoders get `canonical => 1, convert_blessed => 1`.
+- **Booleans: `JSON->true` / `JSON->false`.** `use JSON::MaybeXS;` covers both the codec and the booleans.
+- `$YAML::XS::Boolean = 'JSON::PP'` is one of YAML::XS's fixed mode names, not a module choice — leave it alone.
 
 ## DBIC-ish result classes
 

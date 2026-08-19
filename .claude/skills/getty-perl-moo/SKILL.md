@@ -1,8 +1,6 @@
 ---
-name: Perl Moo
-description: Moo Perl object system - roles, attributes, inheritance patterns, and best practices
-trigger: when working with Moo, Moo::Role, Perl OO, or perl-moo
-category: language
+name: getty-perl-moo
+description: Use when writing or refactoring Perl OO with Moo or Moo::Role — attributes, roles with requires, extends, thin classes, house-style import modules.
 ---
 
 # Perl/Moo – Architecture & Implementation Patterns

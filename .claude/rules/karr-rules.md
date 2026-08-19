@@ -80,4 +80,4 @@ release the `$VERSION` bump in `lib/App/karr.pm` is a separate, deliberate commi
 ## Perl specifics — reference, don't restate
 
 Module loading, Moo/Moose patterns, cpanfile pinning for Getty-authored deps, and house style
-live in skill `perl-core` (force-loaded for `karr-*` agents). Do not duplicate that content here.
+live in skill `getty-perl-core` (force-loaded for `karr-*` agents). Do not duplicate that content here.

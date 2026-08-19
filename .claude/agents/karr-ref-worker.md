@@ -5,8 +5,8 @@ model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
   skills:
-    - perl-core
-    - perl-moo
+    - getty-perl-core
+    - getty-perl-moo
 ---
 
 You are the Git/ref persistence worker for **App::karr**. You own the path from an in-memory
