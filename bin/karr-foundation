@@ -93,13 +93,19 @@ was worked through. A chain step that B<failed> does not change this: that is a
 statement about the plan, not about this binary.
 
 =item * B<1> — runtime failure: no repository could be discovered, the config
-file does not parse or is not a mapping, a hub command found no hub, the
-question being answered already had an answer, the chain document handed to
-C<plan> is not a chain, or C<chain> could not fetch C<refs/karr-foundation/*>
-and refused to run a step another machine may already be running.
+file does not parse or is not a mapping, a hub command found no hub, C<ask>
+rejects a value it accepted syntactically as the wrong string (an unrecognized
+C<--policy>, a C<--default> not among C<--options>, a policy that needs a
+C<--deadline> it was not given), the question being answered already had an
+answer, the chain document handed to C<plan> is not a chain, or C<chain>
+could not fetch C<refs/karr-foundation/*> and refused to run a step another
+machine may already be running.
 
-=item * B<2> — usage error: an unknown command, an unknown option, an invalid
-option value, or a missing or surplus positional argument.
+=item * B<2> — usage error: an unknown command, an unknown option, an option
+value MooX::Options itself rejects by type (C<--wait> takes an integer), or a
+missing or surplus positional argument. A value MooX::Options accepts as a
+plain string but a command then rejects on its own terms -- see B<1> above --
+is a runtime failure, not this.
 
 =back
 

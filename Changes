@@ -1,5 +1,13 @@
 {{$NEXT}}
 
+    - `karr-foundation`'s EXIT CODES POD no longer lumps every invalid
+      option value under exit 2 (#217). Only a value MooX::Options itself
+      rejects by type does -- `--wait abc` -- and that already worked; a
+      value MooX::Options accepts as a string but a command then rejects on
+      its own terms, like an unrecognized `--policy`, exits 1, the same as
+      any other runtime refusal. The README's "2 = usage error" line was
+      already correct and is untouched.
+
     - New `karr-foundation plan` command (#213): a chain is written
       by a command now, not from Perl. It reads the whole chain as
       one YAML document on stdin (JSON goes through the same

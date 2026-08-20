@@ -137,6 +137,17 @@ subtest 'other runtime failures exit 1' => sub {
         'ask', 'Q?' );
     is( $nohub->{exit}, 1, 'ask without a hub exits 1' );
     like( $nohub->{stderr}, qr/hub/, 'and names what is missing' );
+
+    # A value MooX::Options accepts as a plain string, then ask's own
+    # validation rejects, is a runtime failure -- not the usage error the
+    # subtest below pins for a value MooX::Options itself cannot parse
+    # (--wait). Ticket #217: the POD used to lump both under "invalid option
+    # value" as if either exited 2.
+    my $badpolicy = run_foundation( $repo,
+        '--config', write_config("hub: $repo\ndirs:\n  - $repo\n"),
+        'ask', 'Q?', '--policy', 'nonsense' );
+    is( $badpolicy->{exit}, 1, 'an unrecognized --policy value exits 1, not 2' );
+    like( $badpolicy->{stderr}, qr/unknown policy/, 'and says why' );
 };
 
 subtest 'answering an already answered question exits 1 (#191)' => sub {
