@@ -1,0 +1,36 @@
+---
+claimed_at: 2026-08-20T16:18:27Z
+claimed_by: body-back
+class: standard
+completed: 2026-08-20T16:18:27Z
+created: 2026-08-20T01:29:16Z
+id: 214
+priority: low
+started: 2026-08-20T16:02:45Z
+status: done
+tags:
+- foundation
+- encoding
+title: Foundation warnt mit Wide characters, wenn es ohne bin/karr-foundation geladen
+  wird
+updated: 2026-08-20T16:18:27Z
+---
+
+Beim vollen Testlauf zu #210 aufgefallen (nicht davon verursacht, der Code ist aelter):
+
+    Wide character in warn at lib/App/karr/Foundation.pm line 179.
+
+Drei warn-Aufrufe geben einen Em-Dash (\x{2014}) an STDERR:
+- Foundation.pm:179  "config not found at ... — nothing to do"
+- Foundation.pm:992  "no repos found — check config"
+- Foundation/Limits.pm:203  "... — ignored"
+
+Ueber bin/karr-foundation ist das in Ordnung: das Skript ruft in Zeile 14 enable_std_utf8(), STDERR traegt dann :encoding(UTF-8), und der Em-Dash kommt korrekt heraus (nachgeprueft mit einem echten Aufruf gegen ein leeres HOME -- keine Warnung, sauberes Zeichen).
+
+Der Fehler tritt auf, wenn App::karr::Foundation als MODUL geladen wird, ohne dass jemand vorher die Handles eingerichtet hat -- genau das tun t/31-foundation-drain.t und t/33-foundation-run.t mit "use App::karr::Foundation; App::karr::Foundation->new". Zwei Folgen:
+
+1. Rauschen im Testlauf, das echte Warnungen ueberdecken kann.
+2. Fuer eine Distribution auf CPAN ist die Annahme "jemand anders hat meine Handles schon konfiguriert" unsauber -- wer App::karr::Foundation als Bibliothek benutzt, bekommt die Warnung.
+
+Das beruehrt die Encoding-Hausregel ("Characters inside, octets only at the edges", App::karr::Encoding besitzt jeden Uebergang, auch STDOUT/STDERR). Zu entscheiden beim Bauen: ob die Bibliothek ihre eigenen Handles absichert, ob diese Meldungen ASCII werden (der Em-Dash traegt hier keine Bedeutung, die ein "--" nicht auch traegt), oder ob die Tests das Setup uebernehmen -- Letzteres loest nur das Testrauschen, nicht Punkt 2.
+Foundation-Meldungen sind jetzt ASCII. 45 \x{2014}-Vorkommen in Code-Strings ersetzt durch '--': Foundation.pm (20), Executor.pm (17), Limits.pm (3), Coordinator.pm (3), Runner.pm (1), State.pm (1). Kein POD, kein Kommentar, kein bin/ angefasst. Punkt 2 (Handles absichern) bewusst NICHT gebaut: :encoding-Layer stapeln sich, ein Bibliotheks-binmode auf ein schon konfiguriertes STDERR waere ein Doppel-Encode, und CLAUDE.md gibt die beiden Std-Handle-Uebergaenge App::karr::Encoding in der Hand der bin/-Skripte. Neuer Test t/214-foundation-ascii-messages.t: vier Meldungen ueber ein STDERR ohne Layer (reproduziert vorher 'Wide character in warn'), plus PPI-Scan aller Foundation-Quellen auf Nicht-ASCII in String-Literalen (roh oder als \x{}-Escape). t/152 und t/187 auf '--' nachgezogen, veralteter Kommentar in t/30 korrigiert. Changes-Bullet gesetzt. 24 Testdateien gruen, volle Suite bewusst nicht gefahren (zweiter Worker parallel).
