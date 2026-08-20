@@ -1,4 +1,4 @@
-# ABSTRACT: karr-foundation read-only overview — multi-board status dashboard
+# ABSTRACT: karr-foundation read-only overview -- multi-board status dashboard
 
 package App::karr::Foundation::Overview;
 our $VERSION = '0.501';

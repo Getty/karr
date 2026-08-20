@@ -29,10 +29,10 @@ A disabled board is skipped by L<App::karr::Foundation> B<whole>: no drain, no
 auto-block, no agent run. The flag is checked before the agent command is even
 resolved, so it wins over C<karr-foundation --command>, the config's
 C<default_command>, the per-repo F<.karr> C<command>, and C<< claude: true >>.
-C<--force> does not override it — disabled means disabled.
+C<--force> does not override it -- disabled means disabled.
 
 Nothing else changes: the board stays fully usable for humans and for agents
-driven by hand (C<karr list>, C<karr pick>, C<karr move>, …). Use it for a
+driven by hand (C<karr list>, C<karr pick>, C<karr move>, ...). Use it for a
 repository whose backlog is parked rather than abandoned, so an automation host
 that drains every discovered board leaves this one alone.
 

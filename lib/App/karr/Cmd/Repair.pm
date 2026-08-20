@@ -38,7 +38,7 @@ stamp on every card it rewrites would destroy the very history it is repairing.
 
 =head2 Double-encoded UTF-8
 
-karr up to and including 0.402 handed C<YAML::XS::Dump> output — UTF-8 octets —
+karr up to and including 0.402 handed C<YAML::XS::Dump> output -- UTF-8 octets --
 around as if it were characters, so every board written by those versions
 carries UTF-8 encoded twice in its task frontmatter, its board config, and its
 activity log. Task bodies are not affected: they were concatenated onto the
@@ -68,12 +68,12 @@ comes out bit-identical apart from the new marker ref;
 karr wrote C<started> as a bare C<YYYY-MM-DD> date until ticket #68 made it a
 full timestamp. A bare date reads as midnight UTC, so every card filed and
 picked up on the same day carries a C<started> that is earlier than its own
-C<created> — by up to a day. On karr's own board that is 75 of 116 finished
+C<created> -- by up to a day. On karr's own board that is 75 of 116 finished
 cards. Nothing can be measured from such a stamp: counted, its cycle time
 exceeds its lead time, which is why L<App::karr::Cmd::Metrics> leaves those
 cards out of the averages entirely.
 
-This command raises C<started> to the card's own C<created> — the only
+This command raises C<started> to the card's own C<created> -- the only
 defensible value, since the work cannot have begun before the card existed.
 
 B<What that costs, stated because it is not recoverable afterwards:>
@@ -82,7 +82,7 @@ B<What that costs, stated because it is not recoverable afterwards:>
 
 =item * A clamped card asserts that the work began the instant the card was
 filed, i.e. zero queue time. For a card filed in the morning and picked up at
-night that is false, and the true start is not recorded anywhere else — the
+night that is false, and the true start is not recorded anywhere else -- the
 activity log does not cover the boards whose history is oldest.
 
 =item * After the clamp nothing on the card marks the stamp as having been
@@ -108,8 +108,8 @@ The criterion is deliberately narrow. A card is clamped only when its
 C<started> is a bare C<YYYY-MM-DD> date I<and> its C<created> is a full
 C<YYYY-MM-DDTHH:MM:SSZ> stamp of karr's own writing I<and> midnight of that
 date really does precede that C<created>. A C<started> that precedes C<created>
-in any other shape is a different, unknown fault — a hand edit, a clock skew,
-an import from another tool — and clamping it blind would erase the evidence
+in any other shape is a different, unknown fault -- a hand edit, a clock skew,
+an import from another tool -- and clamping it blind would erase the evidence
 for it, so it is reported and left alone.
 
 =head2 Stamps this command does not repair
@@ -138,7 +138,7 @@ change.
 
 Emit the report as JSON instead of text. C<up_to_date> answers for the encoding
 migration alone, as it always has, so it is not on its own an answer to "does
-this board need repairing" — read C<started_clamped> beside it. C<applied>
+this board need repairing" -- read C<started_clamped> beside it. C<applied>
 distinguishes a dry run's C<repaired>/C<started_clamped> ("would") from a
 C<--yes> run's ("did"). C<stamp_anomalies> carries the findings above, and its
 lists are never acted on.

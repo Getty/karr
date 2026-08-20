@@ -309,14 +309,14 @@ F<docs/adr/0002-exit-code-contract.md>):
 
 =over 4
 
-=item * B<0> — success, including no-op successes such as re-archiving a task
+=item * B<0> -- success, including no-op successes such as re-archiving a task
 that is already archived.
 
-=item * B<1> — runtime failure: a task id was not found, the board is missing,
+=item * B<1> -- runtime failure: a task id was not found, the board is missing,
 a Git or sync operation failed, a destructive command was refused for want of
 C<--yes>, or a batch committed partial work but at least one item failed.
 
-=item * B<2> — usage error: an unknown command, an unknown option, an invalid
+=item * B<2> -- usage error: an unknown command, an unknown option, an invalid
 option value, or a surplus or missing positional argument.
 
 =back

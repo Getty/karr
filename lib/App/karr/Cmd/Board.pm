@@ -52,8 +52,8 @@ Lists every status as a C<## Status> section (in board order, empty sections
 included; an empty C<archived> is hidden, and C<done> is hidden unless C<--done>
 is given). Each task renders as C<- id | title> followed by C<priority>
 (non-default only), C<@claimant>, C<blocked:reason>, and C<due:date> tokens where
-applicable. A footer line totals tasks, claims, and blocks, and — when the
-C<done> section is hidden and non-empty — appends a C<(N done hidden)> hint so
+applicable. A footer line totals tasks, claims, and blocks, and -- when the
+C<done> section is hidden and non-empty -- appends a C<(N done hidden)> hint so
 the count is not silently lost.
 
 =item * C<--tags>

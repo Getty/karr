@@ -1,4 +1,4 @@
-# ABSTRACT: Single-shot foundation daemon — periodic agent execution across karr boards
+# ABSTRACT: Single-shot foundation daemon -- periodic agent execution across karr boards
 
 package App::karr::Foundation;
 our $VERSION = '0.501';
@@ -392,7 +392,7 @@ sub _take_lock_fh {
 
 =synopsis
 
-    # Typical cron entry — run every 5 minutes
+    # Typical cron entry -- run every 5 minutes
     */5 * * * * /path/to/karr-foundation
 
     # Force a run regardless of board state
@@ -446,7 +446,7 @@ B<Per-repo .karr file:>
   max_iterations: 50        # hard cap on drain iterations (default: 50)
   cooldown_base: 1          # cooldown minutes at level 0 (default: 1)
   cooldown_max: 64          # cooldown ceiling in minutes (default: 64)
-  error_patterns:           # extra case-insensitive substrings → common-error
+  error_patterns:           # extra case-insensitive substrings -> common-error
     - my custom api error   # (added to the defaults; matched as written)
   on_drained: ./release-gate.sh   # run when the board has no work left
   on_drained_max_runtime: 1800    # seconds for that command (0 = no limit)
@@ -834,7 +834,7 @@ B<no agent>, logs C<TICKET none assignable>, and returns C<idle>; C<--force> and
 C<< on_idle: always-run >> force the check, not a run without a card.
 
 B<Board-level disable.> A board can opt out of automated agent runs in its own
-karr state — C<foundation.enabled> in C<refs/karr/config>, set with
+karr state -- C<foundation.enabled> in C<refs/karr/config>, set with
 C<karr disable [--reason "why"]> and cleared with C<karr enable>. Because the
 flag is board state it syncs with the board, so every foundation instance on
 every machine honours it. A disabled board is skipped B<whole>: the flag is
@@ -904,7 +904,7 @@ C<--force> is documented to override, and unlike the cooldown and the agent
 availability the cap is not time-bounded and does not end by itself -- so it
 needs a way out, and the operator is it.
 
-B<Coordinator and overview.> Agent execution is opt-in — a board runs an agent
+B<Coordinator and overview.> Agent execution is opt-in -- a board runs an agent
 only via C<command>, a named C<agent> or C<< claude: true >>. When B<no> board
 has an agent configured, the default action is a read-only B<overview> of every
 board (status counts, in-progress/blocked tasks, lock and cooldown state, which
@@ -927,15 +927,15 @@ Set C<max_runtime: 0> in F<.karr> to disable the per-run timeout entirely
 (agent runs until completion with no SIGKILL).
 
 B<Drain semantics.> Each iteration runs C<command> once, then classifies the
-result from what foundation can observe — the run's own report where it made
+result from what foundation can observe -- the run's own report where it made
 one, otherwise the exit code, board ref movement, and the run's captured
 output:
 
 =over 4
 
-=item * B<progress> — the board changed; keep draining.
+=item * B<progress> -- the board changed; keep draining.
 
-=item * B<stall> — a task B<this run's agent engaged> did not move. That task's
+=item * B<stall> -- a task B<this run's agent engaged> did not move. That task's
 attempt counter is bumped; at C<max_attempts> it is auto-blocked
 (C<blocked: auto-block: no progress after N attempts (foundation)>) so it drops
 out of the actionable set and the drain can finish. The agent may always set a
@@ -944,24 +944,24 @@ better reason itself with C<karr edit --block>; the auto-block is a fallback.
 B<Engaged> means foundation can prove the agent worked on that card during
 B<this> drain: the agent runs with C<KARR_ROLE=agent>, so every C<karr> write
 it makes is recorded in the board's own activity log under the C<agent>
-identity, and only the tasks named there — held by nobody, or by a claim name
-the agent itself wrote under — can be penalized. A card somebody else holds is
+identity, and only the tasks named there -- held by nobody, or by a claim name
+the agent itself wrote under -- can be penalized. A card somebody else holds is
 never touched, and neither is one the agent merely left claimed in an earlier
 run: a stale claim is what C<claim_timeout> and C<karr unlock> are for. Where
-that evidence is missing altogether — an agent that does not write through
-C<karr>, an unreadable log — foundation auto-blocks B<nothing> rather than
+that evidence is missing altogether -- an agent that does not write through
+C<karr>, an unreadable log -- foundation auto-blocks B<nothing> rather than
 guess: the drain then simply ends on its iteration cap, which is far cheaper
 than blocking a human's in-progress card out from under them (#158).
 
-=item * B<common-error> — a non-zero/timeout exit, or an error pattern in the
-output of a run that moved B<nothing> (rate limit, auth, network, 5xx, …). No
-task is penalized; the repo enters an exponential cooldown (C<cooldown_base> ×
+=item * B<common-error> -- a non-zero/timeout exit, or an error pattern in the
+output of a run that moved B<nothing> (rate limit, auth, network, 5xx, ...). No
+task is penalized; the repo enters an exponential cooldown (C<cooldown_base> x
 2^level minutes, capped at C<cooldown_max>, reset on the next clean run) and is
 skipped until it expires.
 
 What the run did is asked before what it printed: a run that exited 0 and moved
 the board is progress whatever text scrolled past, and is never reclassified by
-its own transcript. The scan is evidence only where there is no other — a run
+its own transcript. The scan is evidence only where there is no other -- a run
 that produced no board movement at all, which is what a rate-limited or
 unauthenticated agent looks like. A pattern seen in a run that B<did> move the
 board is noted in F<.karr.log> and otherwise ignored.
@@ -974,7 +974,7 @@ not in a diffstat or a line number. Before this, an agent that printed its own
 board tripped the scan on a backlog title, and a diffstat of 403 changed lines
 tripped it on C<403> (#160).
 
-=item * B<idle> — the agent did nothing and grabbed nothing; stop.
+=item * B<idle> -- the agent did nothing and grabbed nothing; stop.
 
 =back
 
@@ -985,7 +985,7 @@ leaves one, foundation classifies from it and the text scan below does not run
 at all.
 
 Foundation is not configured for this and does not inspect the command string
-for it — it reads the tail of the output, because that is where the format puts
+for it -- it reads the tail of the output, because that is where the format puts
 its result and nothing else has to be kept in step with anything. Only the
 B<last> non-empty line counts: prose before the object is irrelevant, prose
 containing one cannot be mistaken for it (an agent printing a board can print a
@@ -1000,16 +1000,16 @@ B<kind> decides what happens next. A provider status (C<api_error_status>) is
 the case the scan was written for and backs the board off as a rate limit
 always did. A spent turn budget (C<error_max_turns>) is not: the agent worked,
 the provider answered, and the task was simply larger than the budget it was
-given — so it is logged, the board is not parked, and the run is judged by what
+given -- so it is logged, the board is not parked, and the run is judged by what
 it moved. Any other reported error keeps its own name (C<error_during_execution>)
 and cools the board down. A non-zero exit a report of B<success> does not
 account for is still a common error: the report is the agent's, the exit code
 may be its wrapper's.
 
 In ticket mode the report is what finally separates the two stalls that used to
-look identical — "the agent reports it could not proceed" and "the agent did
-nothing" — and F<.karr.log> names which one it was
-(C<STALL task#N — the agent ran out of turns>). With no report it says exactly
+look identical -- "the agent reports it could not proceed" and "the agent did
+nothing" -- and F<.karr.log> names which one it was
+(C<STALL task#N -- the agent ran out of turns>). With no report it says exactly
 that rather than guessing.
 
 All per-board state files are gitignored: C<.karr.state> (board hash, per-task
@@ -1019,8 +1019,8 @@ Agent availability is not among them: it is not per board and does not live in
 the repository at all (see "Agent availability" above). C<last_error>
 describes the B<last> run and is removed again by the next run that is not a
 common error, so it never outlives the cooldown it caused. C<last_result> is
-the same for the report — how the last run ended, its turns, duration and cost
-— and is dropped again by a run that reported nothing.
+the same for the report -- how the last run ended, its turns, duration and cost
+-- and is dropped again by a run that reported nothing.
 
 =cut
 

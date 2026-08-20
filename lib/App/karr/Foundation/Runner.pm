@@ -1,4 +1,4 @@
-# ABSTRACT: karr-foundation command execution — fork/pipe/select tee + run classification
+# ABSTRACT: karr-foundation command execution -- fork/pipe/select tee + run classification
 
 package App::karr::Foundation::Runner;
 our $VERSION = '0.501';

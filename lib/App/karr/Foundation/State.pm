@@ -1,4 +1,4 @@
-# ABSTRACT: karr-foundation per-repo state — lock file, JSON state, cooldown backoff
+# ABSTRACT: karr-foundation per-repo state -- lock file, JSON state, cooldown backoff
 
 package App::karr::Foundation::State;
 our $VERSION = '0.501';

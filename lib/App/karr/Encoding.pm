@@ -28,32 +28,32 @@ The edges, and who guards them:
 
 =over 4
 
-=item * B<C<@ARGV>> — L</decode_argv>, called from F<bin/karr> and
+=item * B<C<@ARGV>> -- L</decode_argv>, called from F<bin/karr> and
 F<bin/karr-foundation>.
 
-=item * B<C<STDOUT>/C<STDERR>> — L</enable_std_utf8>, likewise called from the
+=item * B<C<STDOUT>/C<STDERR>> -- L</enable_std_utf8>, likewise called from the
 two scripts. An in-process caller that captures output (a test, say) has to put
 the same layer on its capture handle, because reopening C<STDOUT> drops the
 layer the script installed.
 
-=item * B<Git refs> — L<App::karr::Git/write_ref> and
+=item * B<Git refs> -- L<App::karr::Git/write_ref> and
 L<App::karr::Git/read_ref> call L</to_octets> and L</from_octets>. Blobs hold
 UTF-8 octets; everything above C<read_ref> sees characters.
 
-=item * B<Files> — L<Path::Tiny>'s C<slurp_utf8>/C<spew_utf8>, which are
+=item * B<Files> -- L<Path::Tiny>'s C<slurp_utf8>/C<spew_utf8>, which are
 already character-level. Nothing extra is needed, and nothing extra may be
 added: an C<Encode::encode> in front of a C<spew_utf8> is a double encode.
 
-=item * B<YAML> — L</yaml_dump> and L</yaml_load>. C<YAML::XS::Dump> emits
+=item * B<YAML> -- L</yaml_dump> and L</yaml_load>. C<YAML::XS::Dump> emits
 octets and C<YAML::XS::Load> expects them, which is the opposite of the rule
 above, so those two functions are never called directly. (C<DumpFile> and
 C<LoadFile> B<are> character-level and are used unwrapped.)
 
-=item * B<JSON> — L</json_encode> and L</json_decode>. The C<encode_json> and
+=item * B<JSON> -- L</json_encode> and L</json_decode>. The C<encode_json> and
 C<decode_json> functions are octet-level for the same reason and are likewise
 not used directly.
 
-=item * B<C<%ENV>> — L</to_octets_for_env> and L</from_octets_from_env>.
+=item * B<C<%ENV>> -- L</to_octets_for_env> and L</from_octets_from_env>.
 Perl's C<%ENV> is a byte boundary: assigning a character string warns
 C<Wide character in setenv>, and C<$ENV{NAME}> reads back whatever bytes
 were stored. The crossing is named here so neither side is handled ad hoc
@@ -67,7 +67,7 @@ karr up to and including 0.402 mixed the two levels, and every board written by
 those versions has UTF-8 octets encoded a second time in its task frontmatter,
 its config, and its activity log. Task bodies are unaffected: they never passed
 through C<Dump>. L</repair_mojibake> undoes exactly that second encoding, and
-L<App::karr::Git/board_encoding_version> decides when to apply it — see
+L<App::karr::Git/board_encoding_version> decides when to apply it -- see
 L<App::karr::Cmd::Repair> for the migration.
 
 =head1 SEE ALSO
@@ -297,8 +297,8 @@ afterwards and the repair is safe to run over a whole board;
 misread as characters, so it is already correct and is left alone;
 
 =item * what remains must additionally form valid UTF-8 when read back as
-bytes. Ordinary Latin-1 text almost never does — C<"\x{fc}ber"> is C<fc 62>,
-which is not valid UTF-8 — whereas C<"\x{c3}\x{bc}ber"> is C<c3 bc 65 72>,
+bytes. Ordinary Latin-1 text almost never does -- C<"\x{fc}ber"> is C<fc 62>,
+which is not valid UTF-8 -- whereas C<"\x{c3}\x{bc}ber"> is C<c3 bc 65 72>,
 which decodes to C<"\x{fc}ber">.
 
 =back

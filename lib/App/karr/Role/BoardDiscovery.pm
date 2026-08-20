@@ -30,17 +30,17 @@ repository and BoardStore. It provides:
 
 =over 4
 
-=item * C<dir> — CLI option overriding the directory discovery starts from
+=item * C<dir> -- CLI option overriding the directory discovery starts from
 
-=item * C<git_root> — path to the Git repository (walks up from C<dir> or CWD)
+=item * C<git_root> -- path to the Git repository (walks up from C<dir> or CWD)
 
-=item * C<store> — L<App::karr::BoardStore> instance backed by the Git repo
+=item * C<store> -- L<App::karr::BoardStore> instance backed by the Git repo
 
-=item * C<git> — shortcut to C<< $self->store->git >> (lazy)
+=item * C<git> -- shortcut to C<< $self->store->git >> (lazy)
 
-=item * C<config> — shortcut to C<< $self->store->effective_config >> (lazy)
+=item * C<config> -- shortcut to C<< $self->store->effective_config >> (lazy)
 
-=item * C<role> — activity log identity role, C<user> (default) or C<agent>;
+=item * C<role> -- activity log identity role, C<user> (default) or C<agent>;
 read from C<KARR_ROLE> when not overridden
 
 =back
@@ -163,11 +163,11 @@ different things from the reader (#133):
 
 =over 4
 
-=item * nothing under C<refs/karr/> — "No karr board found. Run 'karr init' to
+=item * nothing under C<refs/karr/> -- "No karr board found. Run 'karr init' to
 create one.", the sentence C<backup>, C<destroy>, C<materialize> and C<repair>
 raise off L<App::karr::BoardStore/has_board_refs> for the same state;
 
-=item * refs present, C<refs/karr/config> missing — a half-board: the message
+=item * refs present, C<refs/karr/config> missing -- a half-board: the message
 names it as one, says how many task refs are at stake, and says that C<karr
 init> completes it without discarding them.
 
@@ -236,18 +236,18 @@ read path:
 
 =over 4
 
-=item * nothing under C<refs/karr/> — fetch it, if there is anything to fetch;
+=item * nothing under C<refs/karr/> -- fetch it, if there is anything to fetch;
 otherwise refuse. Where the repository has a remote and that remote advertises
 C<refs/karr/*>, the board is not missing, it is merely unfetched, and karr can
 see that from where it stands, so it pulls once and answers the question that
 was asked (#173). One line on STDERR says it did; C<KARR_NO_AUTO_FETCH=1>
 switches it off for good, in an environment where karr may not touch the
-network. The refusal stays for the case where it is the truth — no remote, or
-a remote with no board — and where there is a remote it still leads with
+network. The refusal stays for the case where it is the truth -- no remote, or
+a remote with no board -- and where there is a remote it still leads with
 C<karr sync> rather than C<karr init>, which is the one command that would
 answer an unfetched board by starting a second, empty one.
 
-=item * refs present, C<refs/karr/config> missing — a half-board: go on, and
+=item * refs present, C<refs/karr/config> missing -- a half-board: go on, and
 say so on STDERR. Refusing would hide tasks that are demonstrably there, which
 is the mistake #133 was about; but the board name, statuses and defaults being
 rendered are karr's own, not the board's, and nothing else on the page says so.

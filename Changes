@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - POD and `# ABSTRACT` no longer carry non-ASCII prose punctuation
+      (#215): 65 em dashes become `--`, two ellipses become `...`, one
+      arrow becomes `->`, and one multiplication sign becomes `x`, across
+      12 files under `lib/` and `bin/`. Not an `=encoding` fix -- PodWeaver
+      already adds one to every file it weaves, confirmed against a built
+      dist, so podchecker's "Non-ASCII character seen before =encoding" on
+      the bare source was warning about something the built dist does not
+      have. The maintainer's call is to keep POD itself plain ASCII anyway:
+      there are hundreds of interfaces that render it, and not all of them
+      handle UTF-8 equally well. Code comments (never rendered) and string
+      literals (#214) are untouched. `t/215-pod-ascii-only.t` guards the
+      rule going forward.
+
     - `karr-foundation`'s own messages are plain ASCII (#214). Loaded as a
       module rather than run through `bin/karr-foundation` -- which puts the
       `:encoding(UTF-8)` layer on the standard handles -- every warning

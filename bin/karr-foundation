@@ -74,7 +74,7 @@ exit $exit;
 
 F<karr-foundation> reads a config file listing karr board directories, detects
 board changes or open tasks, and invokes a configured agent command for each
-active repo. It is designed to be called repeatedly — by cron, a systemd timer,
+active repo. It is designed to be called repeatedly -- by cron, a systemd timer,
 or a tight while-loop.
 
 See L<App::karr::Foundation> for full documentation.
@@ -87,12 +87,12 @@ exit-code contract as F<karr> (see F<docs/adr/0002-exit-code-contract.md>):
 
 =over 4
 
-=item * B<0> — the tick finished: boards were drained, an overview was
+=item * B<0> -- the tick finished: boards were drained, an overview was
 printed, a question was asked or answered, a chain was written, or the chain
 was worked through. A chain step that B<failed> does not change this: that is a
 statement about the plan, not about this binary.
 
-=item * B<1> — runtime failure: no repository could be discovered, the config
+=item * B<1> -- runtime failure: no repository could be discovered, the config
 file does not parse or is not a mapping, a hub command found no hub, C<ask>
 rejects a value it accepted syntactically as the wrong string (an unrecognized
 C<--policy>, a C<--default> not among C<--options>, a policy that needs a
@@ -101,7 +101,7 @@ answer, the chain document handed to C<plan> is not a chain, or C<chain>
 could not fetch C<refs/karr-foundation/*> and refused to run a step another
 machine may already be running.
 
-=item * B<2> — usage error: an unknown command, an unknown option, an option
+=item * B<2> -- usage error: an unknown command, an unknown option, an option
 value MooX::Options itself rejects by type (C<--wait> takes an integer), or a
 missing or surplus positional argument. A value MooX::Options accepts as a
 plain string but a command then rejects on its own terms -- see B<1> above --
