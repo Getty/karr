@@ -1,0 +1,185 @@
+---
+claimed_at: 2026-08-20T05:31:48Z
+claimed_by: true-clan
+class: standard
+completed: 2026-08-20T05:31:48Z
+created: 2026-08-20T04:45:43Z
+id: 220
+priority: high
+started: 2026-08-20T04:45:59Z
+status: done
+tags:
+- dashboard
+- ui
+title: 'karr dashboard: ein Ueberblick ueber alle Boards unter einem Verzeichnis'
+updated: 2026-08-20T05:31:48Z
+---
+
+SPEC (Auftrag des Maintainers 2026-08-20). Zweck in seinen Worten: "damit ich den verdammten Ueberblick behalte". Es soll BEWUSST klein bleiben -- "das muss nicht dick sein erstmal".
+
+WAS ES TUT
+Ein Kommando, das von einem Startverzeichnis aus rekursiv nach Git-Repositories sucht (Merkmal: ein .git), fuer jedes gefundene prueft, ob es ein karr-Board hat, und das Ergebnis als kompakte, farbige, MEHRSPALTIGE Uebersicht ausgibt. Eine Zeile pro Repo, in Spalten nebeneinander -- ausdruecklich KEINE stumpfe Liste untereinander.
+
+Pro Repo: der Verzeichnisname, und daneben visuell, wo die Tickets stehen. Der Maintainer beschreibt es als "verzeichnis XXXXXyyyyy" -- also ein Balken aus Blockzeichen neben dem Namen, ein Block je Ticket, eingefaerbt nach Status. Wer den Balken ansieht, soll ohne Lesen erkennen: hier liegt Arbeit, hier laeuft was, hier ist nichts.
+
+NAME UND ORT: `karr dashboard`, also lib/App/karr/Cmd/Dashboard.pm. Bewusst KEIN drittes Binary neben karr und karr-foundation -- der Maintainer sagte "kommando", und ein Unterkommando ist die kleinere Loesung. Es braucht kein Board im aktuellen Verzeichnis (wie `karr agentname`), also NICHT App::karr::Role::BoardAccess komponieren, sondern die Boards selbst oeffnen.
+
+ABGRENZUNG ZU karr-foundation --status: Das gibt es schon und macht etwas anderes -- es braucht eine Flotten-Konfiguration und zeigt, was die Agenten tun. Dieses Kommando ist KONFIGURATIONSFREI: es findet, was da ist, und zeigt nur, wo Tickets liegen. Genau das ist sein Daseinsgrund. Overview.pm nicht umbauen und nicht wiederverwenden, wenn es die Sache verkompliziert -- abgucken ist erlaubt.
+
+SUCHE
+- Startpunkt: ein optionales Positionsargument, sonst das aktuelle Verzeichnis.
+- Rekursiv nach Verzeichnissen mit .git. Ein gefundenes Repo NICHT weiter durchsuchen (keine Submodule-Jagd), und niemals in .git hineinsteigen.
+- Tiefe begrenzen -- Vorgabe 4, ueber --depth aenderbar. Ohne Grenze laeuft das auf einem Home-Verzeichnis endlos.
+- Symlinks nicht verfolgen (Schleifengefahr). Unlesbare Verzeichnisse ueberspringen, nicht abbrechen.
+
+PRO REPO
+- Hat es refs/karr/*? Wenn nein: als "kein Board" fuehren.
+- Wenn ja: Karten laden und nach Status zaehlen.
+- WICHTIG: Statusnamen sind pro Board konfigurierbar (#67) -- NICHTS hardcoden, weder die Namen noch welcher terminal ist. Die Statusliste und die terminalen Status kommen aus der Konfiguration des jeweiligen Boards. Zwei Boards nebeneinander koennen verschiedene Statuslisten haben; die Darstellung muss das aushalten.
+- Erledigtes gehoert nicht in den Balken. Gezeigt wird OFFENE Arbeit -- das ist die Frage, die das Kommando beantwortet. Blockierte Karten sollen erkennbar sein.
+
+AUSGABE
+- Mehrspaltig, Spaltenzahl aus der Terminalbreite abgeleitet (Fallback 80, wenn nicht ermittelbar).
+- Farben ueber Term::ANSIColor, GENAU nach der Konvention aus Cmd/Board.pm: nur faerben, wenn `-t STDOUT && !$ENV{NO_COLOR}`. Die Statusfarben, die Board.pm schon verwendet, uebernehmen -- zwei Kommandos derselben Distribution duerfen denselben Status nicht verschieden einfaerben.
+- Repos ohne Board unauffaellig (gedaempft) und zusammengefasst, nicht gleichrangig neben den Boards. Ein Schalter, der sie ganz ausblendet, ist willkommen.
+- Eine Summenzeile am Ende (wie viele Repos, wie viele mit Board, wie viele offene Karten).
+- --json ueber App::karr::Role::Output wie bei jedem anderen Kommando. Unter --json niemals Farbe.
+
+NICHT BAUEN (Grenzen)
+- Keine Interaktivitaet, kein TUI, keine Tastatursteuerung. Es gibt dafuer ein eigenes, archiviertes Ticket (#127).
+- Kein Schreiben. Das Kommando aendert nie ein Board.
+- Keine Konfigurationsdatei, kein Persistieren gefundener Pfade. Es sucht bei jedem Aufruf.
+- Kein Netzwerk: nicht fetchen, nicht pushen, keine Remotes befragen. Nur lokale Refs.
+
+TESTS: gegen Wegwerf-Repos in einem temporaeren Verzeichnis, niemals gegen das echte Board. Abzudecken mindestens: ein Baum mit mehreren Repos, davon einige mit und einige ohne Board; die Tiefenbegrenzung; ein Board mit abweichenden Statusnamen; --json; und dass unter NO_COLOR keine Escape-Sequenzen in der Ausgabe landen.
+
+POD nach [@Author::GETTY], ABSTRACT nicht vergessen, Changes-Eintrag unter {{$NEXT}}. Die Befehlstabellen in README.md und CLAUDE.md ergaenzen.
+Implemented in lib/App/karr/Cmd/Dashboard.pm (+ t/220-dashboard.t). Decisions
+made where the spec left them open:
+
+- Bar cap: 10 blocks max per entry (MAX_BAR_BLOCKS), not 20 -- chosen so
+  several entries fit per row at an ordinary 80-column terminal (the whole
+  point of "mehrspaltig"). Above the cap, segments are scaled down by
+  largest-remainder / Hamilton apportionment so the bar always sums to
+  exactly 10; the exact count is always printed after the bar as "(N)" so
+  compression never loses information, only visual precision.
+
+- Blocked visibility: a blocked card is pulled OUT of its status colour into
+  its own trailing bar segment, always bold red (matching Board.pm's
+  blocked:reason colour). The apportionment guarantees that segment never
+  rounds away to zero when blocked > 0, even under heavy compression --
+  that is the one category the bar promises stays visible without reading
+  text.
+
+- Empty board (0 open tasks): bar area is simply blank, "(0)" is the only
+  marker. No separate placeholder glyph -- it reads as "calm" and is
+  visually distinct from a no-board repo, which is grouped in its own dimmed
+  section entirely.
+
+- Terminal width: $ENV{COLUMNS} first (numeric, works headless/piped, makes
+  this testable without a real pty), then `tput cols`, then 80. Deliberately
+  NOT gated on -t STDOUT (unlike colour, which follows Board.pm's convention
+  exactly) -- width detection and colour are separate concerns here.
+
+- Grid layout: ls -C style (one shared cell width = widest entry across the
+  whole grid), but filled row-major (left-to-right, top-to-bottom / reading
+  order) rather than ls's own column-major fill, since this is meant to be
+  read start to finish, not scanned by column. Names are left-padded to a
+  shared width first so every bar starts at the same horizontal offset
+  regardless of grid position.
+
+- Sort order: alphabetical by repo basename -- predictable, and keeps tests
+  and screen output deterministic. No --sort flag; spec didn't ask for one
+  and it's easy to add later if wanted.
+
+- No-board repos: listed in one dimmed "No board: a, b, c" line below the
+  grid, never mixed into it. --hide-no-board drops it entirely (and drops
+  the JSON no_board key too).
+
+- A repo that errors while being probed (corrupt refs, unreadable ref) is
+  treated the same as "no board" plus one line on STDERR naming it --
+  mirrors Foundation's own "one broken board cannot stop the rest of the
+  run", so one bad repo can't blank the whole dashboard.
+
+- Symlinked directories are never followed anywhere in the recursive scan
+  (loop safety), full stop -- including a symlink that happens to point
+  straight at a repo. The explicitly named start PATH itself is exempt (an
+  explicit argument is trusted).
+
+Unasked-for but required to keep the suite green: t/136 (skill command
+coverage) and t/62 (skill doc sync) both check that every Cmd/*.pm is
+documented in share/claude-skill.md, byte-identical (minus frontmatter) to
+.claude/skills/kanban-issues-karr-cli/SKILL.md. Added a short "Multi-board
+dashboard" section + decision-tree entry to share/claude-skill.md, then
+synced the .claude copy via `cat >` (not Edit/Write) to preserve its
+hardlink inode, per the manage-skills convention.
+
+Tests: prove -l t/220-dashboard.t (new, 9 subtests, all pass) plus
+t/37-board-render.t, t/131-help-column-alignment.t, t/124-source-ascii-only.t,
+t/136-skill-command-coverage.t, t/62-skill-doc-sync.t,
+t/211-skill-doc-double-encoding.t -- all green, no full-suite run per the
+K8s-load caution.
+
+Docs: README.md and CLAUDE.md command tables updated, Changes entry under
+{{$NEXT}}, POD in the module itself. Not committed -- diff left for review.
+karr dashboard implemented, tested, documented. Diff left uncommitted for review (per instructions).
+Review round 2 (layout). Both points addressed.
+
+PUNKT 1 -- Ursache war NICHT die Kapazitaetsrechnung.
+Die 205 wurden in BYTES gemessen: der Balkenblock U+2588 ist 3 UTF-8-Bytes,
+und die Zeile enthaelt 25 Bloecke. In Zeichen -- was eine Terminalspalte ist --
+war dieselbe Zeile 160 bei COLUMNS=200, also innerhalb der Breite. Die Formel
+Spalten x Zellbreite + Trenner x (Spalten-1) war von Anfang an vorhanden und
+korrekt; ueber 60..300 Spalten gemessen ueberschritt keine Gitterzeile je die
+Breite. Ich habe das mit einer Mutation nachgewiesen: nimmt man den Trenner aus
+der Kapazitaetsrechnung heraus, faellt der neue Test sofort um -- die Zusicherung
+haette den vermuteten Fehler also gefangen, wenn es ihn gegeben haette.
+
+Es gab aber sehr wohl einen echten Ueberlauf, nur an anderer Stelle: eine
+einzelne Zelle kann breiter sein als das Terminal (langer Repo-Name auf
+schmalem Terminal), und eine einspaltige Zeile kann nicht unter ihren eigenen
+Inhalt schrumpfen -- bei COLUMNS<=40 liefen Zeilen ueber. Behoben, indem der
+Inhalt gedeckelt wird: erst der Name (der einzige unbegrenzte Teil), dann der
+Balken, beide aus $width abgeleitet. Header und Summenzeile laufen jetzt
+ebenfalls durch _truncate. Bei normalen Breiten greift keiner der Deckel und
+es wird nichts abgeschnitten. Ein Schnitt wird mit '..' markiert, damit ein
+gekuerzter Name nicht als echter kuerzerer Name gelesen wird.
+
+PUNKT 2 -- No-board-Zeile. Drei Faelle statt einer 837-Zeichen-Zeile:
+  - passt auf eine Zeile -> unveraendert vollstaendig ausgeben;
+  - --show-no-board -> auf die Breite umgebrochen, Folgezeilen unter dem
+    Praefix eingerueckt (10 Spalten);
+  - sonst -> "No board: 46 repos (--show-no-board to list them)".
+Ich habe die Bedeutung des vorhandenen Schalters NICHT umgedreht:
+--hide-no-board bleibt wie dokumentiert (blendet ganz aus, inkl. JSON-Key) und
+gewinnt gegen --show-no-board. Neu ist --show-no-board als Gegenstueck. Damit
+sind es drei klare Stufen (aus / automatisch / voll) statt einer Umdeutung, die
+Changes, README und Skill-Doc haetten widersprechen muessen.
+
+NEUE ZUSICHERUNGEN in t/220-dashboard.t (jetzt 13 Subtests):
+  - "no rendered line ever exceeds the terminal width": misst die breiteste
+    Zeile bei 24/40/80/120/200 Spalten x drei Modi (default, --show-no-board,
+    --hide-no-board), gegen einen Baum mit 12 Boards + 20 Repos ohne Board.
+    Gemessen wird nach s/\s+$// und nach Entfernen der ANSI-Escapes.
+  - "the grid really is multi-column at these widths": haelt die obige
+    Zusicherung davon ab, leer zu bestehen -- eine einspaltige Liste wuerde sie
+    sonst erfuellen und genau den Zweck verlieren.
+  - "many board-less repos": Default kollabiert auf die Zaehlzeile, die
+    Summenzeile bleibt darunter lesbar; --show-no-board bricht um, mit
+    eingerueckten Folgezeilen.
+  - "a single over-wide entry is truncated": schmales Terminal, langer Name.
+
+Wichtig fuer kuenftige Tests hier: der Capture-Handle traegt dieselbe
+:encoding(UTF-8)-Schicht wie bin/karr, $buf enthaelt also Oktette. Die Helfer
+dekodieren jetzt vor dem Messen -- sonst misst man genau den Byte/Zeichen-
+Fehler, der diese Runde ausgeloest hat.
+
+Mutationsproben (alle drei fangen der Test): Name-Deckel entfernt -> FAIL,
+No-board-Umbruch entfernt -> FAIL, Trenner aus der Kapazitaetsrechnung -> FAIL.
+
+Tests: prove -l t/220-dashboard.t (13/13) sowie t/37-board-render.t,
+t/124-source-ascii-only.t, t/136-skill-command-coverage.t, t/62-skill-doc-sync.t,
+t/211-skill-doc-double-encoding.t -- alle gruen. Keine volle Suite, kein -j.
+Docs: POD, Changes, README, Skill-Doc (via cat >, Inode erhalten). Nicht committet.
+Layout review addressed: width invariant enforced and tested at 24/40/80/120/200; no-board line wrapped/collapsed with new --show-no-board. Point 1 was a byte-vs-character measurement artifact; real overflow was narrow-terminal cells. Diff uncommitted.
+Committet als ac67852. Volle Suite danach zentral: Files=189, Tests=1388, PASS, 0 Skips (vorher 188/1374).
