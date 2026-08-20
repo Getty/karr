@@ -1,0 +1,71 @@
+---
+class: standard
+completed: 2026-08-20T04:41:02Z
+created: 2026-08-17T01:04:11Z
+depends_on:
+- 185
+- 186
+- 187
+- 188
+- 189
+- 190
+- 191
+- 192
+- 193
+- 210
+id: 194
+priority: high
+started: 2026-08-20T04:41:02Z
+status: done
+tags:
+- fleet-coordination
+- epic
+title: 'EPIC karr-foundation: coordinated execution across boards'
+updated: 2026-08-20T04:41:02Z
+---
+
+Today karr-foundation drains one board at a time. That is enough for independent repositories and not enough for a fleet whose repositories depend on each other, where several agent commands with different strengths are available, and where a human wants to be asked rather than surprised.
+
+Full design: `karr get-refs refs/karr-foundation/spec/fleet-execution.md`
+
+Three layers, karr owns the first two:
+- Coordination (shared): tickets, dependencies, escalations, the chain, questions, the run log — all in git refs, synced.
+- Execution (local): which agent commands exist here, whether they work, when to retry, how many at once. Never in the repository.
+- Judgement (an agent): planning and routing, invoked only when a written plan is missing or has broken.
+
+The AI is the compiler, the chain is the program, karr-foundation is the VM. No AI runs in the hot path.
+
+Deliberately out of karr: everything domain-specific. What 'done' means for a project, how a release is verified, which project depends on which — that reaches karr through `on_drained` and nothing more. The fleet this came from is 44 Dist::Zilla distributions; karr must not learn a single thing about them.
+
+Already present, no work needed: process-group kill (#148).
+Work item 4 (#188) done: named agent definitions, the claude-code invocation contract, and per-agent availability. For the routing step the spec describes: the two inputs it needs are both plain local files today -- the config's 'agents:' section (command, kind, probe_every, prose description) and agents.state beside it (per agent: ok, or failing_since/next_attempt/last_error, plus a bounded list of recorded recoveries). There is deliberately no CLI surface wrapping them; if the coordination agent turns out to want one, that is a new ticket rather than a change to #188.
+Stand 2026-08-17 nach #202 (Commit 01e87c5):
+
+Alle neun Arbeitspakete der Spec sind gelandet (#185-#193), und die Luecke, die
+beim Review-Abschluss auffiel -- der Schritt-Ausfuehrer, der in der Paketliste
+schlicht fehlte -- ist mit #202 geschlossen. 'karr-foundation chain' zieht jetzt
+den Namespace, nimmt was der Plan als ready ausweist, misst die Fakten, prueft den
+precheck, fuehrt kind: ticket ueber den bestehenden Ticket-Modus und kind: shell
+als Kommando aus, und schreibt Schrittzustand und Run-Log zurueck. Die VM laeuft.
+
+Was den Epic noch offen haelt, beides bewusst aus #202 herausgehalten und mit einer
+Naht versehen:
+- #200 -- kind: question gegen das Postfach. Der Ausfuehrer erkennt den Schritt,
+  laesst ihn pending und protokolliert den Planer als gewuenscht. Landeplatz: der
+  eine kind-Zweig oben in _do_step plus ein Eintrag in facts_for.
+- #192 offene Haelfte -- nichts loest Cross-Board-Links automatisch auf. Natuerlicher
+  Ort ebenfalls facts_for (ein Fakt ueber die ferne Karte) oder eine eigene Schrittart.
+
+Ausserdem nicht gebaut und nicht als Ticket erfasst: der Koordinationsagent selbst
+(die Judgement-Schicht der Spec). Der Ausfuehrer ruft ihn nirgends, er protokolliert
+nur, dass er gewuenscht waere -- kind: plan verhaelt sich wie kind: question. Wer den
+Epic schliessen will, muss entscheiden, ob das ein zehntes Arbeitspaket ist oder
+bewusst ausserhalb von karr bleibt.
+Stand 2026-08-18: Beide im Stand-Eintrag vom 17.08. genannten Restarbeiten sind geschlossen -- #200 (kind: question gegen das Postfach, Commit 99dfb36) und die offene Haelfte von #192 als eigenes Ticket #209 (ticket_links-Fakt in facts_for, Commit e2a4bce). Was den Epic allein noch offenhaelt, ist die dort benannte Entscheidung: ob der Koordinationsagent (Judgement-Schicht der Spec) ein zehntes Arbeitspaket wird oder bewusst ausserhalb von karr bleibt. Das ist eine Scope-Entscheidung des Maintainers, kein umsetzbarer Arbeitsstand.
+Entscheidung des Maintainers 2026-08-18: Der Koordinationsagent wird als zehntes Arbeitspaket gebaut -- Ticket #210 (angelegt, mit vollstaendigen Bauanweisungen, noch nicht zur Umsetzung freigegeben). Der Epic haengt jetzt formal an #210 und bleibt offen, bis es done ist.
+Stand 2026-08-20: Mit #210 (Commit 8a433a9) ist das zehnte und letzte Arbeitspaket gelandet -- alle zehn Depends dieses Epics stehen auf done. Die Judgement-Schicht existiert als App::karr::Foundation::Coordinator: erkannt ueber 'role: coordinator' in der agents:-Sektion, gerufen genau einmal pro Tick und nur bei Abweichung, Routing ueber assignment.yml neben agents.state (lokal, nie in refs). Die drei Schichten der Spec sind damit vollstaendig: Koordination in refs, Execution lokal, Judgement als Agent. Kein AI im Hot Path -- ein Board, das seinen Agenten selbst nennt, ruft den Koordinationsagenten nie.
+
+Bewusst NICHT in diesem Epic gebaut und als eigene Tickets erfasst: #213 (ein CLI zum Schreiben einer Chain -- heute bekommt der Koordinationsagent den Perl-Einzeiler im Prompt) und #214 (Wide-character-Warnung, wenn Foundation als Modul geladen wird; aelter als der Epic). Beide sind Nacharbeiten, keine offenen Spec-Punkte.
+
+Damit ist der Epic inhaltlich vollstaendig; das Schliessen ist eine Entscheidung des Maintainers.
+Epic geschlossen 2026-08-20 auf Anweisung des Maintainers. Alle zehn Arbeitspakete (#185-#193, #210) sind done; die drei Schichten der Spec -- Koordination in refs, Execution lokal, Judgement als Agent -- sind vollstaendig. Offene Nacharbeiten leben als eigene Tickets weiter (#213 Chain-CLI, #214, #215, #217) und halten den Epic nicht auf.
