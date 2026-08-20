@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-08-20T16:54:17Z
+claimed_by: home-wire
+class: standard
+completed: 2026-08-20T16:54:17Z
+created: 2026-08-20T02:12:24Z
+id: 215
+priority: low
+started: 2026-08-20T16:19:15Z
+status: done
+tags:
+- docs
+- pod
+- encoding
+title: POD ohne =encoding, obwohl 13 Quelldateien Non-ASCII im POD haben
+updated: 2026-08-20T16:54:17Z
+---
+
+Beim POD-Durchgang nach #210/#211 aufgefallen, aelter als beide.
+
+podchecker meldet an acht Stellen "Non-ASCII character seen before =encoding ... Assuming UTF-8": bin/karr, bin/karr-foundation, Cmd/Board.pm, Cmd/Disable.pm, Cmd/Repair.pm, Encoding.pm, Foundation.pm, Role/BoardDiscovery.pm. Nachgezaehlt: 13 Dateien unter lib/ und bin/ enthalten Non-ASCII, und KEINE einzige Datei traegt ein =encoding.
+
+Wichtig zur Einordnung -- das ist KEIN Verstoss gegen t/124-source-ascii-only.t. Der Test nimmt POD und Kommentare ausdruecklich aus (sie sind nicht ausfuehrbar, PodWeaver nimmt einen eigenen Weg), und genau dort sitzen diese Zeichen. Die Quelldateien sind also regelkonform.
+
+ZUERST ZU KLAEREN, bevor irgendwas geaendert wird: ob [@Author::GETTY] bzw. PodWeaver beim Weben ohnehin ein =encoding einfuegt. Wenn ja, ist hier NICHTS zu tun und das Ticket wird geschlossen -- podchecker sieht nur die ungewobene Quelle und warnt deshalb zu Recht ueber etwas, das im Dist nicht mehr gilt. Lokal war das nicht pruefbar: App::karr ist auf dieser Maschine nicht installiert, und dzil build scheitert derzeit an der LICENSE-Konfiguration (siehe dort). Der Weg waere ein Blick in ein gebautes Dist oder in die veroeffentlichte Fassung auf MetaCPAN.
+
+Nur falls PodWeaver es NICHT einfuegt: dann fehlt den betroffenen Dateien ein =encoding UTF-8, und POD-Parser raten die Kodierung, statt sie zu lesen.
+Nachtrag 2026-08-20: der im Ticket genannte Grund stimmt nicht mehr. dzil build scheitert hier nicht an der LICENSE-Konfiguration, sondern an [@Author::GETTY::Docker / runtime-root]: "Cannot connect to Unix socket /var/run/docker.sock". Auf dieser Maschine laeuft kein Docker-Daemon. Der Weg zur Klaerung (gebautes Dist ansehen, ob PodWeaver ein =encoding einfuegt) braucht also entweder eine Maschine mit Docker oder einen Build mit abgeschalteten Docker-Plugins.
+Geklaert 2026-08-20 mit einem Build ohne die Docker-Plugins (Klon, dist.ini ohne [@Author::GETTY::Docker], dzil build laeuft dort sauber durch): PodWeaver SETZT ein =encoding -- 67 Dateien im gebauten Dist tragen eins. Die urspruengliche Sorge des Tickets trifft im Dist also nicht zu, podchecker warnt nur ueber die ungewobene Quelle.
+
+Das Ticket bleibt trotzdem offen, mit anderer Aufgabe: Entscheidung des Maintainers ist, Non-ASCII im POD generell zu vermeiden -- es gibt hunderte Interfaces, die POD darstellen, und nicht alle behandeln UTF-8 gleich gut. Zu tun ist also nicht "=encoding einfuegen", sondern die Non-ASCII-Zeichen aus POD und # ABSTRACT entfernen (Em-Dash -> --, typografische Anfuehrungszeichen -> ASCII, usw.).
+
+Betroffen im gebauten Dist: Encoding.pm, Foundation/Picker.pm, Git.pm, Role/BoardDiscovery.pm, Foundation/State.pm, Foundation/Overview.pm, Cmd/Repair.pm, Cmd/Disable.pm, Foundation.pm, Foundation/Runner.pm, Cmd/Board.pm, bin/karr, bin/karr-foundation.
+POD und # ABSTRACT jetzt frei von Non-ASCII: 69 Zeichen an 17 POD/ABSTRACT-Stellen in 12 Dateien ersetzt -- 65 Em-Dashes -> '--', 2 Ellipsen -> '...' (Cmd/Disable.pm UND Foundation.pm:957, im Ticket nur eine genannt), 1 Pfeil -> '->' (Foundation.pm:449), 1 Multiplikationszeichen -> 'x' (Foundation.pm:958, im Ticket gar nicht erwaehnt, beim Nachpruefen gefunden). Git.pm bewusst unveraendert: seine beiden Treffer sind #-Kommentare (SSH-agent-Kette, PASSTHROUGH), keine POD. Keine Ausnahme noetig: Encoding.pm und Cmd/Repair.pm zeigen Bytes nur ueber C<"\x{fc}ber">-Escapes, nie ueber ein literales Zeichen, also traf der Sonderfall nirgends zu -- %EXEMPT im neuen Test bleibt leer. podchecker: 8x 'Non-ASCII character seen before =encoding' vorher (Encoding.pm, BoardDiscovery.pm, Foundation.pm, Repair.pm, Board.pm, Disable.pm, bin/karr, bin/karr-foundation), 0 danach. Neuer Test t/215-pod-ascii-only.t: PPI-Scan ueber PPI::Token::Pod und '# ABSTRACT'-Kommentare in lib/+bin/, mit zwei Fixture-Subtests (faengt POD+ABSTRACT-Treffer; laesst Kommentar und String-Literal in Ruhe, mit Beleg dass die Fixture ueberhaupt Non-ASCII traegt) und einem Ausnahmeliste-Slot fuer den Sonderfall. Gegenprobe: Em-Dash testweise in Encoding.pm zurueckgespielt -- Test schlug fehl und nannte Datei/Zeile/Zeichen, danach zurueckgesetzt und wieder gruen. Micro-Zeichen in Config.pm und BLOCK_CHAR in Dashboard.pm unangetastet (Code, keine POD). Volle Suite bei mir gruen: Files=192, Tests=1410, PASS. Changes-Eintrag unter {{$NEXT}} ergaenzt, vor dem #214-Eintrag.
