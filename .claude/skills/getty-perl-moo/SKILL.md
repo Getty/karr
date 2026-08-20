@@ -1,12 +1,23 @@
 ---
 name: getty-perl-moo
-description: Use when writing or refactoring Perl OO with Moo or Moo::Role — attributes, roles with requires, extends, thin classes, house-style import modules.
+description: "Use when writing classes or roles in a Moo distribution — `use Moo`, `use Moo::Role`, attributes, roles, delegation, lifecycle."
 ---
 
 # Perl/Moo – Architecture & Implementation Patterns
 
 ## Core Principle
 Use **inheritance sparingly** (stable "is-a" contracts), **roles heavily** (horizontal reuse). When in doubt: role, not subclass.
+
+---
+
+## House conventions
+
+- **`with '...'` goes directly under `use Moo;`**, before the remaining `use` lines. Role composition is a runtime action, not an import — placing it with the class declaration says so. Same in Moose.
+- **`is => 'lazy'` + a separate `sub _build_x`** for anything non-trivial; never move construction into `default => sub {...}`.
+- **A builder that ignores `$self` is one line:** `sub _build_readonly { 0 }`.
+- **`is => 'ro'` is the default**; `rw` needs a reason.
+- **Type attributes.** `Types::Standard` is the house choice and typed attributes are wanted — reach for a type before leaving one off. See Type Constraints below.
+- **`init_arg => undef`** for attributes the constructor must not set; `init_arg => 'other'` to rename or free up a method name.
 
 ---
 
@@ -69,11 +80,11 @@ Use when there's no meaningful "is-a" relationship. Prefer over deep hierarchies
 package My::Mooish;
 use Import::Into;
 sub import {
-    my $target = caller;
-    strict->import::into($target);
-    warnings->import::into($target);
-    Moo->import::into($target);
-    namespace::clean->import::into($target);   # after Moo, cleans stray imports
+  my $target = caller;
+  strict->import::into($target);
+  warnings->import::into($target);
+  Moo->import::into($target);
+  namespace::clean->import::into($target);   # after Moo, cleans stray imports
 }
 
 package App::Thing;
@@ -91,9 +102,9 @@ has x => (is => 'ro', default => sub { 1 });
 package App::UsesCounter;
 use Moo;
 has counter => (
-    is      => 'ro',
-    required => 1,
-    handles => 'App::Role::CounterAPI',   # role defines the interface (inc/reset/value)
+  is      => 'ro',
+  required => 1,
+  handles => 'App::Role::CounterAPI',   # role defines the interface (inc/reset/value)
 );
 ```
 
@@ -109,11 +120,11 @@ use Moo;
 use Sub::HandlesVia;
 use Types::Standard qw(ArrayRef Str);
 has food => (
-    is          => 'ro',
-    isa         => ArrayRef[Str],
-    handles_via => 'Array',
-    default     => sub { [] },
-    handles     => { add => 'push', find => 'grep' },
+  is          => 'ro',
+  isa         => ArrayRef[Str],
+  handles_via => 'Array',
+  default     => sub { [] },
+  handles     => { add => 'push', find => 'grep' },
 );
 ```
 
@@ -127,8 +138,8 @@ has food => (
 before calc => sub { die "x<0" if $_[1] < 0 };         # validate, can't change return
 
 around calc => sub {
-    my ($orig, $self, $x) = @_;
-    return $self->$orig($x) + 1;                        # can change return value
+  my ($orig, $self, $x) = @_;
+  return $self->$orig($x) + 1;                        # can change return value
 };
 
 after calc => sub { ... };                               # side-effects, logging
@@ -147,8 +158,8 @@ has id     => (is => 'lazy');                             # built on first acces
 sub _build_id { "id:" . $_[0]->name }
 
 has status => (
-    is      => 'rw',
-    trigger => 1,                                        # calls _trigger_status on set
+  is      => 'rw',
+  trigger => 1,                                        # calls _trigger_status on set
 );
 sub _trigger_status { die "bad" unless $_[1] =~ /\A(new|ok)\z/ }
 
@@ -163,19 +174,19 @@ has _secret => (is => 'ro', init_arg => 'secret');       # constructor param ali
 
 ```perl
 around BUILDARGS => sub {
-    my ($orig, $class, @args) = @_;
-    return { source => $args[0] } if @args == 1 && !ref $args[0];  # normalize
-    $class->$orig(@args);
+  my ($orig, $class, @args) = @_;
+  return { source => $args[0] } if @args == 1 && !ref $args[0];  # normalize
+  $class->$orig(@args);
 };
 
 sub FOREIGNBUILDARGS {          # maps args to non-Moo parent's constructor
-    my ($class, $args) = @_;
-    return ($args->{source});
+  my ($class, $args) = @_;
+  return ($args->{source});
 }
 
 sub BUILD {                     # runs AFTER all attributes are set; parent→child order
-    my ($self, $args) = @_;
-    die "invalid" unless length $args->{source};
+  my ($self, $args) = @_;
+  die "invalid" unless length $args->{source};
 }
 # DEMOLISH: child→parent order. Never override DESTROY directly.
 ```
@@ -222,10 +233,10 @@ use Moo::Role;
 use MooX::Role::Parameterized;
 parameter name => (is => 'ro', required => 1);
 role {
-    my ($p, $mop) = @_;
-    my $n = $p->name;
-    $mop->has($n => (is => 'rw', default => sub { 0 }));
-    $mop->method("inc_$n" => sub { $_[0]->$n($_[0]->$n + 1) });
+  my ($p, $mop) = @_;
+  my $n = $p->name;
+  $mop->has($n => (is => 'rw', default => sub { 0 }));
+  $mop->method("inc_$n" => sub { $_[0]->$n($_[0]->$n + 1) });
 };
 
 package Thing;
@@ -260,15 +271,17 @@ For Moose-style syntax in Moo (`isa => 'Str'`, `lazy_build`), use `MooX::late`. 
 
 ## Type Constraints
 
-Moo has no built-in type system. `isa` takes a coderef:
+Moo has no built-in type system — `isa` takes a coderef, and `Type::Tiny` objects
+are coderefs, so `Types::Standard` plugs straight in:
 
 ```perl
-use Types::Standard qw(Str Int ArrayRef);
-has name => (is => 'ro', isa => Str);
-has tags => (is => 'ro', isa => ArrayRef[Str], default => sub { [] });
+use Types::Standard qw( Str ArrayRef );
+has name => ( is => 'ro', isa => Str );
+has tags => ( is => 'ro', isa => ArrayRef[Str], default => sub { [] } );
 ```
 
-`Type::Tiny` / `Types::Standard` is the official recommendation in Moo docs (replaces `MooseX::Types`).
+Where to type and where not, own type libraries, parameter signatures:
+**`getty-perl-typing`**.
 
 ---
 
