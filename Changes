@@ -1,5 +1,46 @@
 {{$NEXT}}
 
+    - A pass over the documentation against the code it describes
+      (#218), and the example sandbox got the tests it never had
+      (#216).
+
+      The README said the distribution was under the same terms as
+      Perl 5 itself; it has been Artistic 2.0 since the licence
+      changed. It advertised a bundled skill called `karr`, renamed
+      breakingly to `kanban-issues-karr-cli`. It said mutating
+      commands materialize a board view -- they do not, and never
+      did: `materialize_to` and `serialize_from` have exactly one
+      caller each, the two bridge commands. The same false sentence
+      stood in App::karr's own DESCRIPTION and in `karr`'s, which is
+      where the README had inherited it from; all three are corrected.
+
+      A whole block of the "How it works" section was written in POD
+      inside a Markdown file, so readers on GitHub saw `C<refs/karr/
+      config>` and `refs/karr/tasks/E<lt>idE<gt>/data` verbatim. The
+      quick start filtered `karr pick` for a status the card it had
+      just created never has, so the example found nothing. `karr
+      delete` was listed without `--yes`, which is an exit 1 for the
+      agents this tool is written for. That `list` and `board` hide
+      finished work unless asked, that `--json` and `--compact` exist
+      at all, that dependencies never block anything -- none of it
+      was stated where a reader of the board half would look. The
+      stored-card example showed a key order karr does not write.
+
+      On the karr-foundation side the drain was described as ending
+      on its iteration cap where it actually ends after one iteration
+      as `idle`, the assignment example routed two boards that can
+      never reach the assignment because earlier cases had given them
+      an agent of their own, and one transcript showed the
+      no-coordinator branch in a fleet that had marked a coordinator
+      two cases earlier.
+
+      `ex/setup.sh` offered `cd ex && ../README.md` as the next step
+      -- not a command, and the wrong file either way. The sandbox now
+      has a test that builds it end to end in a throwaway directory
+      and checks that every line the script offers as a command is one.
+
+      The repository banner is in the README.
+
     - karr-foundation has a judgement layer: the coordination agent
       (#210, the tenth work package of the fleet epic #194). The chain
       executed written plans and the modes ran boards, but nothing
@@ -84,6 +125,23 @@
       six methods that follow them. It now sits where the same
       heading sits in App::karr::SyncGuard, immediately before the
       first method.
+
+    - BREAKING: the bundled agent skill installs as
+      `kanban-issues-karr-cli`, not as `karr`. `karr skill install` and
+      `karr init --claude-skill` now write
+      `.claude/skills/kanban-issues-karr-cli/SKILL.md`. The dist shipped
+      the skill under one name while this repository briefed its own
+      agents under the other, and the sync test held the two bodies
+      identical while letting the names drift apart on purpose; one name
+      is less to explain, and the longer one is the more findable of the
+      two. A project still holding the old `.claude/skills/karr/` keeps
+      it untouched -- nothing removes it for you, so delete it after
+      updating or the agent reads a skill nothing maintains any more.
+
+    - The distribution is licensed under the Artistic License 2.0
+      instead of the same terms as Perl 5 itself. The dual grant
+      carried a copyleft option this project does not want. The LICENSE
+      file ships in the repository.
 
     - A chain step can wait for a card in ANOTHER repository (#209,
       the open half of #192). Cross-board links existed as a tag on a

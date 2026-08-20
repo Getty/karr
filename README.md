@@ -1,3 +1,5 @@
+[![karr — a llama signalman at a lever frame, routing kanban cards across tracks](https://raw.githubusercontent.com/Getty/karr/main/assets/github.png)](https://github.com/Getty/karr)
+
 # App::karr
 
 Git-native kanban for shared helper agents, human operators, and downstream
@@ -6,7 +8,7 @@ and `karr-foundation`, the coordinator that keeps agents working across many of
 those boards unattended.
 
 `karr` keeps canonical state in `refs/karr/*`, not in commits, branches, or a
-persistent `karr/` folder. Tasks, config, logs, snapshots, and helper refs move
+checked-in board directory. Tasks, config, logs, snapshots, and helper refs move
 through normal Git transport, which makes the tool fit naturally into AI-heavy
 and multi-machine workflows.
 
@@ -16,7 +18,7 @@ Most task tools assume a central web service or a checked-in file tree.
 `karr` takes a different route:
 
 - board state lives in Git refs
-- mutating commands pull, materialize, write back, and push
+- mutating commands pull the refs, write the change back into them, and push
 - tasks stay separate from branches and commits
 - downstream projects can vendor the CLI through Docker and keep the exact same UX
 - `karr-foundation` runs the boards: it scans repositories, decides where there
@@ -41,7 +43,7 @@ Claim and progress work:
 
 ```bash
 NAME=$(karr agentname)
-karr pick --claim "$NAME" --status todo --move in-progress
+karr pick --claim "$NAME" --move in-progress
 karr handoff 1 --claim "$NAME" --note "Ready for review" --timestamp
 ```
 
@@ -70,7 +72,7 @@ Agent execution is **opt-in**, and both halves are useful on their own:
 | You want | You run | You get |
 |---|---|---|
 | a picture of every board | `karr-foundation --status` | status counts, in-progress/blocked ids, lock, cooldown, agent state, open questions — read-only, no agent is ever started |
-| agents to work the boards | `karr-foundation` | one agent per repository, per the `.karr` file in it. With no `.karr` anywhere, this prints the overview instead |
+| agents to work the boards | `karr-foundation` | one agent per repository, per the `.karr` file in it or a fleet-wide `default_command` / `default_agent`. When no board resolves an agent command, this prints the overview instead |
 
 Where the pieces live, and which of them travel:
 
@@ -203,7 +205,7 @@ code, the board's ref movement and the captured output:
 |---|---|---|
 | **progress** | the board moved (in `mode: ticket`: *this* card moved) | keep draining |
 | **stall** | a card the agent engaged did not move | bump that card's attempt counter; at `max_attempts` auto-block it |
-| **common-error** | non-zero exit, timeout, or an error pattern in a run that moved nothing | no card is penalized; the repo goes into exponential cooldown |
+| **common-error** | the run's own report saying so, a non-zero exit, a timeout, or an error pattern in a run that moved nothing | no card is penalized; the repo goes into exponential cooldown |
 | **idle** | the agent did nothing and grabbed nothing | stop |
 
 A stall that repeats ends the loop rather than spinning on it. Here the same
@@ -229,7 +231,9 @@ The auto-block is a fallback, not a verdict: the agent may always set a better
 reason itself with `karr edit --block`, and a card somebody else holds is never
 blocked on foundation's say-so. Where there is no evidence that the agent
 engaged a card at all — an agent that does not write through `karr` — nothing
-is auto-blocked and the drain ends on its iteration cap instead.
+is auto-blocked: a run that moved nothing and grabbed nothing ends the drain as
+`idle` after one iteration, and a run that keeps moving the board while
+foundation cannot attribute a card to it ends on the iteration cap.
 
 `mode:` says what one pass over a repository is: `drain` (the default: run
 again until the board stops moving), `single` (exactly one run, the agent picks
@@ -422,6 +426,7 @@ docs-site
 
 Agents
   cheap  failing since 2026-08-18T05:36:04, next attempt at 2026-08-18T05:41:04 (exit=1)
+  main   ok
 ```
 
 and the next tick simply says so and moves on:
@@ -472,9 +477,25 @@ a language model, so there are no classes and no enums here either.
 
 What that agent writes is `assignment.yml`, beside `config.yml` — repository
 path to an ordered list of agents, with an explicit `WAIT` for "rather wait than
-use anything further down":
+use anything further down". It is asked only for a board that has not already
+said what it wants, so the two boards it routes have to stop saying it:
+`/srv/webapp` gives up the literal `command:` from case 1 and `/srv/docs-site`
+the `agent:` line above, and both keep their `mode:`.
 
 ```yaml
+# /srv/webapp/.karr
+mode: ticket
+max_runtime: 1800
+max_attempts: 2
+```
+
+```yaml
+# /srv/docs-site/.karr
+mode: drain
+```
+
+```yaml
+# ~/.config/karr-foundation/assignment.yml
 repos:
   /srv/docs-site:
     - cheap
@@ -489,7 +510,9 @@ takes the first entry that currently works. A board whose chain reaches `WAIT`,
 or whose agents are all failing, runs nothing this tick and says so —
 `agent-waiting` in the overview with the reason under it, because an agent board
 whose agents are down and a board nobody configured an agent for are fixed by
-different things:
+different things. Let `main` go the way `cheap` went — a second rate limit, a
+second dead key — and `/srv/webapp` waits instead of falling through to
+something the operator ruled out:
 
 ```console
 $ karr-foundation --status
@@ -499,11 +522,12 @@ webapp
   waiting:     the assignment says WAIT for this board (after main, which is failing)
 ```
 
-The assignment sits below a board's own `agent:` — a board that names one has
-said the most specific thing there is to say about itself — and above
-`default_agent`, which is per fleet where this is per repository. Like the
-definitions it names, it is local and never in refs, and you can write it by
-hand: it is a plain routing table, not a cache.
+The assignment sits below anything a board says about itself — its own
+`command:` or its own `agent:`, which is why both boards had to give theirs up:
+a board that names one has said the most specific thing there is to say about
+itself. It sits above `default_agent`, which is per fleet where this is per
+repository. Like the definitions it names, it is local and never in refs, and
+you can write it by hand: it is a plain routing table, not a cache.
 
 ### Case 5: the chain — write a plan, run it, read the run log
 
@@ -654,7 +678,9 @@ step docs (shell) in /srv/docs-site: done — exit=0
 step smoke (shell) in /srv/webapp: done — exit=0
 step registry (question): stale — no question in the mailbox names step registry — a question step is asked by the planner ('karr-foundation ask ... --step registry'), it does not ask itself
 chain 20260818T052941Z-acdde8: 2 done, 1 stale
-the planner is wanted for step(s) registry (no question was ever asked about it) — no planner runs from here yet; re-plan the chain
+the planner is wanted for step(s) registry (no question was ever asked about it) — the coordination agent is called at the end of this tick
+calling the coordination agent 'planner' for 1 deviation(s): step registry: no question was ever asked about it
+the coordination agent 'planner' finished (success); the next tick runs what it wrote
 ```
 
 A step waits until **every** question naming it is settled; a question whose
@@ -783,8 +809,8 @@ at once; and **judgement** — an agent that plans and routes, invoked only when
 written plan is missing or has broken. karr owns the first two outright and
 calls the third: a fleet that marks one of its agents `role: coordinator` gets
 one call per tick carrying every deviation that tick met, and a fleet that marks
-none gets what this always was — "the planner is wanted" as a line of output,
-with the operator as the planner.
+none gets what this always was — for the chain's own deviations, "the planner is
+wanted" as a line of output, with the operator as the planner.
 
 | Piece | State |
 |---|---|
@@ -1023,14 +1049,20 @@ The write path:
 pull refs -> change task/config -> push refs
 ```
 
-Commands work directly against refs via C<BoardStore>. A materialized F<tasks/> view is generated on demand (see C<karr materialize>) and is never committed — it is always in F<.gitignore>.
+Commands work directly against refs via `BoardStore`. A materialized `tasks/`
+view is generated on demand (see `karr materialize`) and is never committed —
+it is always in `.gitignore`.
 
 Important refs:
 
-- C<refs/karr/config> holds sparse YAML config overrides
-- C<refs/karr/meta/next-id> holds the next numeric task id
-- C<refs/karr/tasks/E<lt>idE<gt>/data> holds task Markdown plus frontmatter
-- C<refs/karr/log/E<lt>roleE<gt>/E<lt>emailE<gt>> holds append-style JSON log lines, keyed by a role-qualified identity (role C<user> or C<agent>) so a human and an AI sharing one Git config stay distinct
+- `refs/karr/config` — sparse YAML config overrides
+- `refs/karr/meta/next-id` — the next numeric task id
+- `refs/karr/meta/board-id` and `refs/karr/meta/encoding` — board identity, and
+  the encoding marker `karr repair` reads
+- `refs/karr/tasks/<id>/data` — task Markdown plus frontmatter
+- `refs/karr/log/<role>/<url-encoded-email>` — append-style JSON log lines, keyed
+  by a role-qualified identity (role `user` or `agent`) so a human and an AI
+  sharing one Git config stay distinct
 
 ## Command map
 
@@ -1054,18 +1086,18 @@ Important refs:
 | Command | Use it for |
 |---------|------------|
 | `karr create` | create a task |
-| `karr list` | filter and search tasks |
+| `karr list` | filter, search and sort tasks — finished work (the board's last status plus `archived`) is hidden unless you ask for it with `--status` or `--archived` |
 | `karr show` | inspect one task in full (or `--me` / `--last N` / `--agent NAME` for recent) |
 | `karr edit` | update body, metadata, claim, or blocked state |
 | `karr move` | change status explicitly or with `--next` / `--prev` |
 | `karr archive` | soft-delete into `archived` |
-| `karr delete` | permanently remove the task ref |
+| `karr delete --yes` | permanently remove the task ref (prompts without `--yes`, and refuses with exit 1 when stdin is not a terminal) |
 
 ### Flow and coordination
 
 | Command | Use it for |
 |---------|------------|
-| `karr board` | grouped board view |
+| `karr board` | grouped board view (Done is hidden unless `--done`; bare `karr --done` does the same for the default view) |
 | `karr pick` | atomic next-task selection with claim |
 | `karr unlock` | show or break pick locks left behind by a crashed agent |
 | `karr handoff` | move into review and append a note |
@@ -1082,8 +1114,28 @@ Important refs:
 | `karr skill install` | install bundled skills for Claude Code, Codex, or Cursor |
 | `karr skill check` | detect outdated installed skills |
 | `karr skill update` | refresh installed skills |
+| `karr skill show` | print the bundled skill to stdout |
 | `karr set-refs` | store shared non-task payloads in allowed refs |
 | `karr get-refs` | fetch helper payloads back out |
+
+### Output and exit codes
+
+Every board command takes `--json` for machine-readable output and `--compact`
+for terse one-line output. `karr list --json` emits the full card payload —
+frontmatter plus body — so reading a whole set of tickets is one call rather
+than one `karr show` per id.
+
+The exit code is a stable contract, because karr's primary callers are agents
+scripting the CLI (`docs/adr/0002-exit-code-contract.md`):
+
+| Code | Meaning |
+|---|---|
+| `0` | success, including no-op successes such as re-archiving an archived task |
+| `1` | runtime failure — task id not found, board missing, Git or sync failed, a destructive command refused for want of `--yes`, or a batch that committed partial work with at least one item failing |
+| `2` | usage error — unknown command or option, invalid option value, surplus or missing positional argument |
+
+Per-command options are not listed here; `karr --help`, `karr <cmd> --help` and
+`perldoc karr` carry them in full.
 
 ## Multi-agent workflow
 
@@ -1113,6 +1165,13 @@ karr show --me
 - `fixed-date`
 - `standard`
 - `intangible`
+
+Dependencies do not block. `depends_on` (same board) and `needs:BOARD#ID`
+(another repository) are recorded and warned about — `pick` and `move` hand the
+card over and say what is still outstanding. The one flag that keeps a card out
+of `pick` is `blocked`, set deliberately with `karr edit --block`; `karr needs
+--resolve` drops links whose far card reached a terminal status, and lifts the
+block when the last one settles.
 
 ## Helper refs
 
@@ -1146,8 +1205,11 @@ at a step, a run log or a question.
 
 ## Skills
 
-The distribution ships a bundled `karr` skill that can be installed locally in
-a repo or globally in the current home directory.
+The distribution ships a bundled agent skill, `kanban-issues-karr-cli`, that
+can be installed locally in a repo (as
+`.claude/skills/kanban-issues-karr-cli/SKILL.md`) or globally in the current
+home directory. A project still holding the older `.claude/skills/karr/` keeps
+it untouched — nothing removes it for you, so delete it after updating.
 
 ```bash
 karr skill install
@@ -1155,6 +1217,7 @@ karr skill install --agent claude-code
 karr skill install --agent codex --global --force
 karr skill check --global
 karr skill update
+karr skill show
 ```
 
 Supported targets:
@@ -1201,18 +1264,24 @@ Markdown with YAML frontmatter:
 
 ```markdown
 ---
-id: 1
-title: Fix login bug
-status: in-progress
-priority: high
-class: standard
+claimed_at: 2026-03-12T10:05:00Z
 claimed_by: agent-fox
+class: standard
 created: 2026-03-12T10:00:00Z
-updated: 2026-03-12T10:00:00Z
+id: 1
+priority: high
+started: 2026-03-12T10:05:00Z
+status: in-progress
+title: Fix login bug
+updated: 2026-03-12T10:05:00Z
 ---
 
 Task description here.
 ```
+
+Keys are written in alphabetical order, and the lifecycle stamps (`started`,
+`claimed_at`, `completed`) appear once the card reaches that point — so a card
+still sitting in `backlog` carries fewer keys than the one above.
 
 That makes the format easy to inspect, script, and reuse from Perl code.
 
@@ -1259,5 +1328,5 @@ dependency. That keeps the command surface identical across:
 
 ## License
 
-This is free software; you can redistribute it and/or modify it under the same
-terms as the Perl 5 programming language system itself.
+This is free software, licensed under the Artistic License 2.0. See the
+`LICENSE` file for the full text.

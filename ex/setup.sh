@@ -127,7 +127,6 @@ echo "ex/config.yml: written"
 # --- the chain ---------------------------------------------------------------
 perl -I"$REPO_ROOT/lib" "$EX/scripts/write-chain.pl" "$EX/fleet-hub"
 echo
-echo "Sandbox ready. Next:"
-echo "  cd $EX && ../README.md  (or see ex/README.md)"
+echo "Sandbox ready. The walkthrough is $EX/README.md. Try:"
 echo "  perl -I$REPO_ROOT/lib $REPO_ROOT/bin/karr --dir $EX/webapp board"
 echo "  perl -I$REPO_ROOT/lib $REPO_ROOT/bin/karr-foundation --config $EX/config.yml --status"

@@ -93,10 +93,11 @@ Git-native kanban board whose canonical state lives in C<refs/karr/*>, plus
 optional helper payloads in non-protected refs outside that namespace.
 
 Run it from inside a Git repository. Commands discover the repository root,
-pull the current board refs, materialize a temporary board view for the command
-run, and then write changes back to Git refs. In normal use this means you can
-interact with shared task state without checking a persistent F<karr/>
-directory into the work tree.
+pull the current board refs, and read and write task cards directly against
+those refs -- no board files ever touch the work tree for an ordinary
+command. C<karr materialize> and C<karr import> are the two bridge commands
+that write and read a disposable, gitignored F<tasks/> plus F<config.yml>
+view instead, for kanban-md interop and for grepping the board as files.
 
 The script is the best starting point when you want to understand the CLI as a
 user. For architecture notes, Docker background, and Perl-facing examples, see

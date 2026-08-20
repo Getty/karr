@@ -28,10 +28,14 @@ task cards are Markdown payloads and board configuration is sparse YAML kept in
 refs rather than in checked-in work tree files.
 
 The distribution is intended for repositories that want Git to remain the
-transport and source of truth. Commands materialize a temporary board view only
-for the lifetime of a command, then serialize changes back into refs and push
-them onward. This keeps the repository free of a persistent F<karr/> board tree
-and avoids ordinary file-level merge conflicts for shared task state.
+transport and source of truth. Ordinary commands read and write task cards
+directly against refs through L<App::karr::BoardStore>; no board file is ever
+written to the work tree for the lifetime of a command. C<karr materialize>
+and C<karr import> are the two dedicated bridge commands that write and read
+a disposable, gitignored F<tasks/> plus F<config.yml> view instead, for
+kanban-md interop and for grepping the board as files. This keeps the
+repository free of ordinary file-level merge conflicts for shared task
+state.
 
 This module gives the architectural overview. If you want day-to-day command
 usage, command groups, and command-by-command navigation, start with L<karr>.
