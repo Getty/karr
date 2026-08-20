@@ -380,7 +380,7 @@ sub _run_command {
     my $log_err;
     eval {
       $self->foundation->_append_log( $repo,
-        "TIMEOUT after ${elapsed}s \x{2014} sending SIGTERM to $pid (group -$pid)" );
+        "TIMEOUT after ${elapsed}s -- sending SIGTERM to $pid (group -$pid)" );
       1;
     } or $log_err = clean_error($@);
     # Negative pid = process group (kill(2) group semantics, #148). The shell,

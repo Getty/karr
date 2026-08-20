@@ -367,7 +367,7 @@ sub run {
   my $header = $store->header;
   my $chain  = $header->{id};
   unless ( defined $chain ) {
-    $self->_say( 'No chain in ' . $self->_hub . " \x{2014} nothing to execute "
+    $self->_say( 'No chain in ' . $self->_hub . " -- nothing to execute "
       . '(a planner writes one into refs/karr-foundation/chain/)' );
     return 0;
   }
@@ -437,8 +437,8 @@ sub _report {
   $self->_say( 'the planner is wanted for step(s) '
     . join( ', ', map { "$_->[0] ($_->[1])" } @$planner )
     . ( $self->foundation->_coordinator->configured
-        ? " \x{2014} the coordination agent is called at the end of this tick"
-        : " \x{2014} no planner runs from here yet; re-plan the chain" ) );
+        ? " -- the coordination agent is called at the end of this tick"
+        : " -- no planner runs from here yet; re-plan the chain" ) );
   return;
 }
 
@@ -450,7 +450,7 @@ sub _preview {
   my $store  = $self->store;
   my $chain  = $store->header->{id};
   unless ( defined $chain ) {
-    $self->_say( 'No chain in ' . $self->_hub . " \x{2014} nothing to execute" );
+    $self->_say( 'No chain in ' . $self->_hub . " -- nothing to execute" );
     return 0;
   }
   my @ready = $store->ready_steps;
@@ -475,13 +475,13 @@ sub _would_do {
   my ( $self, $step, $facts ) = @_;
   return 'would run' unless ( $step->{kind} // '' ) eq 'question';
   my $state = $facts->{question_state};
-  return "no question in the mailbox names it \x{2014} would go stale"
+  return "no question in the mailbox names it -- would go stale"
     unless defined $state;
-  return "its question is answered \x{2014} would finish the step"
+  return "its question is answered -- would finish the step"
     if $state eq 'answered';
-  return "its question is overdue \x{2014} the policy on it decides"
+  return "its question is overdue -- the policy on it decides"
     if $state eq 'overdue';
-  return "its question is unanswered \x{2014} would wait";
+  return "its question is unanswered -- would wait";
 }
 
 sub _describe {
@@ -520,7 +520,7 @@ sub _do_step {
   # reached something nothing here can do.
   unless ( $kind eq 'ticket' || $kind eq 'shell' ) {
     $self->_say( $self->_describe($step)
-      . ": left pending \x{2014} this foundation runs kind: ticket, "
+      . ": left pending -- this foundation runs kind: ticket, "
       . 'kind: shell and kind: question' );
     $store->log_run( $run, event => 'step', step => "$id", kind => $kind,
       state => 'pending', detail => 'kind not executed here' );
@@ -540,7 +540,7 @@ sub _do_step {
   my $repo = defined $step->{repo} ? path( $step->{repo} ) : undef;
   unless ( $repo && $repo->is_dir ) {
     $self->foundation->_say_verbose( $self->_describe($step)
-      . ": not on this machine \x{2014} left for one that has it" );
+      . ": not on this machine -- left for one that has it" );
     return { state => 'skipped' };
   }
 
@@ -626,7 +626,7 @@ sub _claim {
     return $current;
   } );
   $self->_say( $self->_describe($step)
-    . ": claim could not be published \x{2014} left for the next tick" );
+    . ": claim could not be published -- left for the next tick" );
   return 0;
 }
 
@@ -739,7 +739,7 @@ sub _do_question_step {
   my $mailbox = $self->_mailbox;
   my @asked   = $self->_questions_for( $step );
   return $self->_stale( $run, $step,
-    "no question in the mailbox names step $id \x{2014} a question step is "
+    "no question in the mailbox names step $id -- a question step is "
     . "asked by the planner ('karr-foundation ask ... --step $id'), it does "
     . 'not ask itself',
     'no question was ever asked about it' )
@@ -768,7 +768,7 @@ sub _do_question_step {
       if $planner;
 
     $self->_push;
-    $self->_say( $self->_describe($step) . ": left pending \x{2014} $detail" );
+    $self->_say( $self->_describe($step) . ": left pending -- $detail" );
     return { state => 'pending',
       ( $planner ? ( planner => $planner->{planner} ) : () ) };
   }
@@ -896,7 +896,7 @@ sub _finish {
     ( defined $verdict->{detail} ? ( detail => $verdict->{detail} ) : () ) );
   $self->_push;
 
-  $self->_say( $self->_describe($step) . ": $state \x{2014} "
+  $self->_say( $self->_describe($step) . ": $state -- "
     . ( $verdict->{detail} // '' ) );
 
   return { state => $state } unless $state eq 'failed';
@@ -932,7 +932,7 @@ sub _requeue {
   $store->log_run( $run, event => 'step', step => "$id", state => 'pending',
     detail => $detail );
   $self->_push;
-  $self->_say( $self->_describe($step) . ": requeued \x{2014} $detail" );
+  $self->_say( $self->_describe($step) . ": requeued -- $detail" );
   return { state => 'pending' };
 }
 
@@ -949,7 +949,7 @@ sub _stale {
   $store->log_run( $run, event => 'planner', step => "$step->{id}",
     policy => 'plan', reason => $reason );
   $self->_push;
-  $self->_say( $self->_describe($step) . ": stale \x{2014} $reason" );
+  $self->_say( $self->_describe($step) . ": stale -- $reason" );
   return { state => 'stale',
     planner => ( $summary // 'the precheck no longer holds' ) };
 }
@@ -1125,7 +1125,7 @@ sub _pull {
     0;
   };
   warn "karr-foundation: refusing to execute the chain without a fresh view "
-     . "of refs/karr-foundation/ \x{2014} two machines would run the same step\n"
+     . "of refs/karr-foundation/ -- two machines would run the same step\n"
     unless $ok;
   return $ok ? 1 : 0;
 }

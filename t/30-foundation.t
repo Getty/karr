@@ -71,10 +71,11 @@ subtest 'missing config warns and returns empty' => sub {
   local $ENV{HOME} = tempdir( CLEANUP => 1 );
   my $f = new_foundation();
   # The warning is the subject of this subtest, so catch it rather than let it
-  # through to the harness's STDERR. That handle has no :encoding(UTF-8) layer
-  # here -- bin/karr-foundation installs it via enable_std_utf8, an in-process
-  # caller does not -- so the em dash in the message (ticket #108) would print
-  # wide and warn about it on the way out.
+  # through to the harness's STDERR. The message is plain ASCII since ticket
+  # #214: an in-process caller leaves STDERR without the :encoding(UTF-8) layer
+  # bin/karr-foundation installs via enable_std_utf8, so a special character in
+  # it would warn "Wide character in warn" over every run that provoked one.
+  # t/214-foundation-ascii-messages.t is what keeps it that way.
   my @warnings;
   my $cfg = do {
     local $SIG{__WARN__} = sub { push @warnings, $_[0] };

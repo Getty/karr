@@ -450,7 +450,7 @@ sub dispatch {
   my $git = $f->_hub_git;
   unless ( $git ) {
     warn "karr-foundation: the coordination agent '$name' is wanted ($why) but "
-       . "this machine has no hub \x{2014} name one with 'hub: /path/to/repo' in "
+       . "this machine has no hub -- name one with 'hub: /path/to/repo' in "
        . $f->_config_path . "\n";
     return 0;
   }
@@ -465,13 +465,13 @@ sub dispatch {
     my $wait = ( $av->{next_attempt} // 0 ) - time;
     print "the coordination agent '$name' is failing"
         . ( defined $av->{last_error} ? " ($av->{last_error})" : '' )
-        . ", next attempt in ${wait}s \x{2014} the plan waits\n";
+        . ", next attempt in ${wait}s -- the plan waits\n";
     return 0;
   }
 
   unless ( $f->_acquire_lock( $hub ) ) {
     print "the coordination agent '$name' is wanted, but the hub $hub is busy "
-        . "\x{2014} the plan waits for the next tick\n";
+        . "-- the plan waits for the next tick\n";
     return 0;
   }
 

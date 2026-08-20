@@ -154,7 +154,7 @@ sub _build_per_agent {
   my $chain = $self->chain_limits->{per_agent};
   if ( defined $chain && ref $chain ne 'HASH' ) {
     warn "karr-foundation: the chain header's 'per_agent' is not a mapping "
-       . "of agent name => count \x{2014} ignored\n";
+       . "of agent name => count -- ignored\n";
     $chain = undef;
   }
   for my $name ( sort keys %{ $chain // {} } ) {
@@ -163,7 +163,7 @@ sub _build_per_agent {
     # the chain is shared, the agent list is not.
     unless ( $defs->{$name} ) {
       $self->foundation->_say_verbose(
-        "chain limit for agent '$name' ignored \x{2014} not defined on this machine" );
+        "chain limit for agent '$name' ignored -- not defined on this machine" );
       next;
     }
     my $n = $self->_soft_count( "The chain header's limit for agent '$name'",
@@ -200,7 +200,7 @@ sub _soft_count {
   return try {
     _count( $what, $value );
   } catch {
-    warn "karr-foundation: " . clean_error($_) . " \x{2014} ignored\n";
+    warn "karr-foundation: " . clean_error($_) . " -- ignored\n";
     undef;
   };
 }

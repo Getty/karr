@@ -368,7 +368,7 @@ subtest 'a ticket-mode stall says which stall it was' => sub {
   my $first = $f->_drain_repo( $repo, $karr );
   is $first->{outcome}, 'stall', 'the card did not move';
   like log_of( $repo ),
-    qr/STALL task#1 \x{2014} the agent reported success but the card did not move/,
+    qr/STALL task#1 -- the agent reported success but the card did not move/,
     'an agent that thinks it is finished is one kind of stall';
 
   path( $repo )->child('.karr.log')->remove;
@@ -378,7 +378,7 @@ subtest 'a ticket-mode stall says which stall it was' => sub {
   local $ENV{KARR_FAKE_EXIT} = 1;
   my $second = $f->_drain_repo( $repo, $karr );
   is $second->{outcome}, 'stall', 'so is an agent that ran out of room';
-  like log_of( $repo ), qr/STALL task#1 \x{2014} the agent ran out of turns/,
+  like log_of( $repo ), qr/STALL task#1 -- the agent ran out of turns/,
     'but the coordinator can tell the two apart';
 
   path( $repo )->child('.karr.log')->remove;
@@ -386,7 +386,7 @@ subtest 'a ticket-mode stall says which stall it was' => sub {
   local $ENV{KARR_FAKE_EXIT}   = 0;
   my $third = $f->_drain_repo( $repo, $karr );
   is $third->{outcome}, 'stall', 'and an agent that reported nothing still stalls';
-  like log_of( $repo ), qr/STALL task#1 \x{2014} no report from the agent/,
+  like log_of( $repo ), qr/STALL task#1 -- no report from the agent/,
     'said as the absence it is, not guessed at';
 };
 

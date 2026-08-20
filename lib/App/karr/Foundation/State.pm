@@ -276,7 +276,7 @@ sub _set_cooldown {
     cooldown_level => $level + 1,
     cooldown_until => time + $minutes * 60,
   );
-  $self->foundation->_say_verbose( "cooldown $repo \x{2014} ${minutes}m (level " . ( $level + 1 ) . ")" );
+  $self->foundation->_say_verbose( "cooldown $repo -- ${minutes}m (level " . ( $level + 1 ) . ")" );
   return $minutes;
 }
 

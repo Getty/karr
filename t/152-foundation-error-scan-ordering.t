@@ -295,7 +295,7 @@ subtest 'a real rate limit with nothing moved is still a common error' => sub {
   is $res->{outcome}, 'common-error', 'outcome common-error';
   is $res->{exit}, 0, 'even though the agent exited 0';
   is state_data( $repo )->{last_error}, 'rate limit', 'last_error recorded';
-  like log_of( $repo ), qr/COMMON-ERROR rate limit \x{2014} agent exited 0, run discarded/,
+  like log_of( $repo ), qr/COMMON-ERROR rate limit -- agent exited 0, run discarded/,
     'the log says why an exit-0 run did not count';
   ok ! ( grep { $_->has_blocked } tasks_of( $repo ) ), 'no task penalized for it';
 };

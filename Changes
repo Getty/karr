@@ -1,5 +1,19 @@
 {{$NEXT}}
 
+    - `karr-foundation`'s own messages are plain ASCII (#214). Loaded as a
+      module rather than run through `bin/karr-foundation` -- which puts the
+      `:encoding(UTF-8)` layer on the standard handles -- every warning
+      carrying an em dash printed `Wide character in warn` first, so a test
+      run or a library caller got that line over each one. The em dash said
+      nothing a `--` does not; the library still does not touch the caller's
+      STDOUT/STDERR layers, which stay the two scripts' business.
+
+    - `karr-foundation`'s usage lines separate the synopsis from the
+      explanation with a colon instead of a `--`. Straight after an option
+      list or an invocation example, `[--verbose] -- the chain takes no
+      arguments` reads as if the `--` were the shell's end-of-options marker
+      and had to be typed. Affects `ask`, `answer`, `chain` and `plan`.
+
     - `karr-foundation`'s EXIT CODES POD no longer lumps every invalid
       option value under exit 2 (#217). Only a value MooX::Options itself
       rejects by type does -- `--wait abc` -- and that already worked; a

@@ -185,7 +185,7 @@ sub _build_config_data {
   my $cfg_path = $self->_config_path;
 
   unless ( $cfg_path->exists ) {
-    warn "karr-foundation: config not found at $cfg_path \x{2014} nothing to do\n";
+    warn "karr-foundation: config not found at $cfg_path -- nothing to do\n";
     return {};
   }
 
@@ -1047,7 +1047,7 @@ sub run {
 
   my @repos = $self->_discover_repos;
   unless ( @repos ) {
-    warn "karr-foundation: no repos found \x{2014} check config\n";
+    warn "karr-foundation: no repos found -- check config\n";
     return 1;
   }
 
@@ -1175,7 +1175,7 @@ sub _run_ask {
   my ( $self, @argv ) = @_;
   user_error( 'Usage: karr-foundation ask QUESTION [--context PROSE] '
     . '[--options a,b] [--default a] [--policy block|use_default|escalate_to_ai] '
-    . '[--wait SECONDS] [--step ID] -- quote a question that contains spaces' )
+    . '[--wait SECONDS] [--step ID]: quote a question that contains spaces' )
     unless @argv == 1 && defined $argv[0] && length $argv[0];
 
   my $mailbox = $self->_mailbox;
@@ -1212,8 +1212,8 @@ sub _run_ask {
 # follows here, and the chain is a bigger opt-in, not a smaller one.
 sub _run_chain {
   my ( $self, @argv ) = @_;
-  user_error( 'Usage: karr-foundation chain [--dry-run] [--verbose] '
-    . "\x{2014} the chain takes no arguments; what runs is what the plan in "
+  user_error( 'Usage: karr-foundation chain [--dry-run] [--verbose]'
+    . ': the chain takes no arguments; what runs is what the plan in '
     . 'the hub says is ready' ) if @argv;
   my $exit = $self->_executor->run;
   # The three chain-side deviations -- a kind: plan step, an escalate_to_ai
@@ -1254,7 +1254,7 @@ sub _run_chain {
 sub _run_plan {
   my ( $self, @argv ) = @_;
   user_error( 'Usage: karr-foundation plan [--input PATH] [--force] '
-    . '[--dry-run] -- the chain itself arrives as YAML or JSON on stdin, or '
+    . '[--dry-run]: the chain itself arrives as YAML or JSON on stdin, or '
     . 'from the file --input names' ) if @argv;
 
   # The chain is fleet state, so a machine without a hub has nowhere to put
@@ -1336,7 +1336,7 @@ sub _chain_document {
     # A terminal has nothing queued and would sit there with no prompt, so the
     # invocation that forgot its input stays a usage error instead of becoming
     # a hang -- the reading App::karr::Cmd::SetRefs makes of the same edge.
-    user_error( 'Usage: karr-foundation plan < chain.yml -- the chain '
+    user_error( 'Usage: karr-foundation plan < chain.yml: the chain '
       . 'document arrives on stdin, or from the file --input names' )
       if -t STDIN;
 
@@ -1370,7 +1370,7 @@ sub _chain_document {
 sub _run_answer {
   my ( $self, @argv ) = @_;
   user_error( 'Usage: karr-foundation answer ID ANSWER [--note TEXT] '
-    . '[--force] -- quote an answer that contains spaces' )
+    . '[--force]: quote an answer that contains spaces' )
     unless @argv == 2 && defined $argv[1] && length $argv[1];
 
   my $mailbox = $self->_mailbox;
@@ -1503,7 +1503,7 @@ sub _run_concurrent {
       # is the guard for a zero that got past validation, and it says so
       # instead of spinning.
       warn 'karr-foundation: ' . scalar(@queue)
-         . " board(s) left unrun \x{2014} no concurrency slot can free up\n";
+         . " board(s) left unrun -- no concurrency slot can free up\n";
       last;
     }
 
@@ -1792,7 +1792,7 @@ sub _process_repo {
   my $has_karr = $repo->child('.karr')->exists
               || App::karr::Git->new( dir => "$repo" )->ref_exists('refs/karr/config');
   unless ( $has_karr ) {
-    $self->_say_verbose("skip $repo \x{2014} no karr board");
+    $self->_say_verbose("skip $repo -- no karr board");
     return { outcome => 'skipped', reason => 'no karr board' };
   }
 
@@ -1818,25 +1818,25 @@ sub _process_repo {
   # is bounded and ends by itself -- and NOT reported as "no agent configured",
   # which is a different board and a different fix.
   if ( defined $wait ) {
-    $self->_say_verbose("skip $repo \x{2014} $wait");
+    $self->_say_verbose("skip $repo -- $wait");
     return { outcome => 'skipped', reason => $wait };
   }
 
   unless ( defined $cmd ) {
-    $self->_say_verbose("skip $repo \x{2014} no agent configured (see --status)");
+    $self->_say_verbose("skip $repo -- no agent configured (see --status)");
     return { outcome => 'skipped', reason => 'no agent configured' };
   }
 
   # Check lock — skip if another instance is running
   if ( $self->_lock_held( $repo ) ) {
-    $self->_say_verbose("skip $repo \x{2014} locked by running agent");
+    $self->_say_verbose("skip $repo -- locked by running agent");
     return { outcome => 'skipped', reason => 'the board lock is held' };
   }
 
   # Respect exponential cooldown left by a previous common-error run
   if ( $self->_cooldown_active( $repo ) ) {
     my $until = $self->_state_get( $repo, 'cooldown_until' ) // 0;
-    $self->_say_verbose( "skip $repo \x{2014} in cooldown for " . ( $until - time ) . "s" );
+    $self->_say_verbose( "skip $repo -- in cooldown for " . ( $until - time ) . "s" );
     return { outcome => 'skipped',
       reason => 'the board is in cooldown for ' . ( $until - time ) . 's' };
   }
@@ -1851,7 +1851,7 @@ sub _process_repo {
   if ( $agent && !$self->_agents->available( $agent->{name} ) ) {
     my $av   = $self->_agents->availability( $agent->{name} );
     my $wait = ( $av->{next_attempt} // 0 ) - time;
-    $self->_say_verbose( "skip $repo \x{2014} agent '$agent->{name}' failing"
+    $self->_say_verbose( "skip $repo -- agent '$agent->{name}' failing"
       . ( defined $av->{last_error} ? " ($av->{last_error})" : '' )
       . ", next attempt in ${wait}s" );
     return { outcome => 'skipped',
@@ -1900,7 +1900,7 @@ sub _process_repo {
   }
 
   unless ( $should_run ) {
-    $self->_say_verbose("skip $repo \x{2014} no board change and no actionable tasks");
+    $self->_say_verbose("skip $repo -- no board change and no actionable tasks");
     return { outcome => 'skipped',
       reason => 'no board change and no actionable tasks' };
   }
@@ -1910,7 +1910,7 @@ sub _process_repo {
   # here means another foundation instance holds the board; we skip and move
   # on instead of spewing over the existing lock.
   unless ( $self->_acquire_lock( $repo ) ) {
-    $self->_say_verbose("skip $repo \x{2014} lock contended (another tick holds it)");
+    $self->_say_verbose("skip $repo -- lock contended (another tick holds it)");
     return { outcome => 'skipped', reason => 'the board lock is contended' };
   }
   my $result = try {
@@ -2074,11 +2074,11 @@ sub _run_on_drained {
     my $last = $self->_state_get( $repo, 'on_drained_hash' );
     if ( defined $last && $hash eq $last ) {
       $self->_say_verbose(
-        "skip on_drained in $repo \x{2014} the board has not moved since the last one" );
+        "skip on_drained in $repo -- the board has not moved since the last one" );
       return;
     }
     if ( $max > 0 && $rounds >= $max ) {
-      $self->_append_log( $repo, "ON-DRAINED suppressed \x{2014} $rounds consecutive "
+      $self->_append_log( $repo, "ON-DRAINED suppressed -- $rounds consecutive "
         . "run(s) put work back on the board without settling "
         . "(on_drained_max_rounds: $max); --force runs it again" );
       return;
@@ -2094,7 +2094,7 @@ sub _run_on_drained {
   # not obliged to say, and karr is not entitled to know.
   my $made_work = ( ( $self->_ref_hash( $repo ) // '' ) ne $hash ) ? 1 : 0;
   $self->_append_log( $repo, "ON-DRAINED exit=$exit"
-    . ( $made_work ? " \x{2014} the board moved, so it is no longer drained" : '' ) );
+    . ( $made_work ? " -- the board moved, so it is no longer drained" : '' ) );
 
   # on_drained_hash is the state that *triggered* the run, not the one the run
   # left behind: the invariant is "the hook is not asked twice about the same
@@ -2191,7 +2191,7 @@ sub _skip_disabled {
   my $off = $self->_board_disabled( $repo ) or return 0;
   my $reason = $off->{reason};
   $self->_say_verbose(
-    "skip $repo \x{2014} board disabled" . ( defined $reason ? ": $reason" : '' ) );
+    "skip $repo -- board disabled" . ( defined $reason ? ": $reason" : '' ) );
   return 1;
 }
 
@@ -2363,7 +2363,7 @@ sub _drain_repo {
   if ( $mode eq 'ticket' ) {
     $ticket = defined $opt{ticket} ? $opt{ticket} : $self->_select_ticket( $repo );
     unless ( defined $ticket ) {
-      $self->_append_log( $repo, "TICKET none assignable \x{2014} no agent run" );
+      $self->_append_log( $repo, "TICKET none assignable -- no agent run" );
       return { outcome => 'idle', exit => 0, ticket => undef };
     }
     $self->_append_log( $repo, "TICKET task#$ticket" );
@@ -2474,7 +2474,7 @@ sub _drain_repo {
         # a card moved is on its last legs, and the operator should hear it
         # from the log rather than from the next run's cooldown.
         $self->_append_log( $repo,
-          "NOTE '$seen' in output, but the board moved \x{2014} not treated as an error" );
+          "NOTE '$seen' in output, but the board moved -- not treated as an error" );
       }
       else {
         $err = $seen;
@@ -2485,7 +2485,7 @@ sub _drain_repo {
       # An exit-0 run that is thrown away is the surprising one; .karr.state
       # would otherwise carry last_exit: 0 next to last_error with nothing
       # anywhere saying why the run did not count.
-      my $why = $exit == 0 ? " \x{2014} agent exited 0, run discarded" : '';
+      my $why = $exit == 0 ? " -- agent exited 0, run discarded" : '';
       $self->_append_log( $repo, "COMMON-ERROR $err$why" );
       $self->_state_set( $repo, last_error => $err );
       $outcome = 'common-error';
@@ -2514,7 +2514,7 @@ sub _drain_repo {
         # is the one place foundation already knows what the run was supposed
         # to be about, so the only thing missing was what the agent made of it.
         $self->_append_log( $repo,
-          "STALL task#$ticket \x{2014} " . $self->_stall_reason( $report, $ended ) );
+          "STALL task#$ticket -- " . $self->_stall_reason( $report, $ended ) );
         # foundation assigned this card, so it needs no activity-log evidence
         # that the agent engaged it -- the assignment is the evidence, and the
         # counter it bumps is foundation's own .karr.state. The auto-block a
