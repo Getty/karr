@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-08-20T04:44:04Z
+created: 2026-08-20T04:42:07Z
+id: 219
+priority: low
+started: 2026-08-20T04:44:04Z
+status: done
+tags:
+- release
+- dist
+title: assets/github.png liegt im CPAN-Tarball, obwohl es nur GitHub schmueckt
+updated: 2026-08-20T04:44:04Z
+---
+
+Sichtbar geworden, als dzil build nach dem Entfernen von gather_exclude_filename wieder bis zum Schreiben des Dist kam (2026-08-20).
+
+Das Repo-Banner assets/github.png ist 1 MB gross und steht im MANIFEST des gebauten Dist -- es wird also mit jeder CPAN-Veroeffentlichung ausgeliefert. Gebraucht wird es nur von der README auf GitHub, und die bindet es ohnehin ueber eine absolute raw.githubusercontent.com-URL ein, nicht ueber den relativen Pfad. Im Tarball tut es damit nichts ausser ihn um 1 MB zu vergroessern.
+
+Zu entscheiden: ob assets/ vom Gather ausgenommen wird. Technisch waere das gather_exclude_match = ^assets/ im [@Author::GETTY]-Block -- also genau der Mechanismus, den der Maintainer fuer LICENSE ausdruecklich NICHT wollte. Der Fall liegt hier aber anders herum: bei LICENSE verlangt [LicenseFile] die Datei IM Dist, das Banner braucht dort niemand. Wenn der Ausschluss unerwuenscht bleibt, ist die Alternative, das Bild aus dem Repo in eine andere Quelle zu verlagern (eigener Branch, Release-Asset, externes Hosting) -- dann verliert man aber die Selbstverstaendlichkeit, dass das Banner mit dem Repo versioniert ist.
+
+Nebenbei beim selben Build aufgefallen, KEIN Code-Problem: dzil build endet jetzt mit Exit 2 im Schritt [runtime-root/Docker::API] -- "Cannot connect to Unix socket /var/run/docker.sock". Auf dieser Maschine laeuft rke2/containerd statt eines Docker-Daemons. Das Dist selbst wird davor vollstaendig geschrieben; betroffen ist nur der Image-Bau. Umgebungsfrage, kein Ticket wert, hier nur vermerkt damit der naechste, der dzil build laufen laesst, nicht die LICENSE-Sache dahinter vermutet.
