@@ -1,5 +1,10 @@
 {{$NEXT}}
 
+    - The repository banner no longer ships inside the tarball
+      (#219). `assets/github.png` is a megabyte of decoration for the
+      GitHub page, which links it by absolute URL anyway, so it never
+      needed to be in the distribution.
+
     - A pass over the documentation against the code it describes
       (#218), and the example sandbox got the tests it never had
       (#216).
