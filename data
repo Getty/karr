@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-08-20T16:03:15Z
+claimed_by: wine-hunt
+class: standard
+completed: 2026-08-20T16:03:08Z
+created: 2026-08-20T01:21:47Z
+id: 213
+priority: medium
+started: 2026-08-20T15:26:02Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+- chain
+title: 'karr-foundation plan: ein CLI, um eine Chain zu schreiben'
+updated: 2026-08-20T16:03:15Z
+---
+
+Befund aus #210 (Koordinationsagent), bewusst dort NICHT gebaut: es gibt keine CLI-Oberflaeche, um eine Chain zu schreiben. ChainStore->write_chain ist reine Perl-API, und das README sagt das auch so ("Today that means writing it from Perl").
+
+Folge heute: der Koordinationsagent bekommt in seinem Prompt den Perl-Einzeiler ausgeschrieben, mit dem er seine Chain schreibt. Das funktioniert, ist aber die einzige Stelle, an der karr einem Agenten Perl-Code zum Abtippen gibt, statt ihm ein Kommando zu geben -- und jede Aenderung an der Perl-API bricht damit still einen Prompt statt einen Aufruf.
+
+#210 hat das nach der eigenen Regel des Tickets ("stellt sich beim Bauen heraus, dass der Agent eine Oberflaeche braucht, ist das ein NEUES Ticket, keine Aenderung an #188") als Befund stehen lassen. Dies ist dieses Ticket.
+
+Zu klaeren beim Bauen: ob das Kommando eine Chain aus YAML/JSON auf STDIN nimmt (naheliegend, weil der Agent sie ohnehin strukturiert erzeugt), wie es sich zum bestehenden Schritt-Schema verhaelt (id/kind/repo/ticket/needs/timeout/precheck/command/note), und ob es die Chain ersetzt oder anhaengt. Der Prompt in Coordinator.pm ist danach auf das Kommando umzustellen.
+
+Nicht Teil davon: eine CLI-Oberflaeche fuer agents.state oder das Assignment -- #194 haelt ausdruecklich fest, dass beide bewusst ohne CLI leben.
+karr-foundation plan gebaut: Chain-Dokument (YAML, JSON durch denselben Parser) auf stdin oder --input, validiert und ERSETZT die Chain im Hub. Entscheidungen: (1) Dokument auf stdin, wie karr restore/set-refs -- ein DAG ist verschachtelt, Optionen waeren YAML mit schlechterer Syntax; (2) Schema bleibt ChainStore's: write_chain wurde in validate_chain (alle Pruefungen, nichts geschrieben) + Schreiben zerlegt, neu ist nur parse_chain_document fuer den Umschlag (steps/limits/note/planner, alles andere Fehler; force ist CLI-Option, kein Dokumentschluessel); (3) ersetzen, nicht anhaengen -- nur Steps mit der Chain-Id des Headers werden je ready, Append waere ein Merge mit eigenen Regeln. Guard: laufender Step -> Refusal ausser --force. Exit-Codes nach ADR 0002: Aufruf falsch = 2, Dokument falsch = 1. Coordinator-Prompt gibt jetzt das Kommando statt des perl -e Einzeilers (und traegt --config, wenn die Fleet mit einem gestartet wurde). Neu: t/213-foundation-plan-cli.t (10 Subtests, mutationsgeprueft). prove -l t/: 190 Dateien, 1398 Tests, alle gruen. Nicht committet.
+Reviewed und committet als e51abf9. Diff geprueft: keine einzige neu hinzugefuegte Zeile enthaelt Non-ASCII (neue Maintainer-Regel eingehalten), write_chain/validate_chain-Split laeuft ueber einen Pfad statt zwei, Tests selbst nachgefahren (t/213 + t/3*.t, 11 Dateien, 76 Tests, PASS). Die --config-Ergaenzung im Prompt bleibt: ohne sie bekommt der Agent ein Kommando genannt, das die Fleet nicht findet, fuer die es gerufen wurde.
