@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-08-18T17:54:00Z
+claimed_by: core-idea
+class: standard
+completed: 2026-08-20T01:03:44Z
+created: 2026-08-18T17:53:46Z
+id: 211
+priority: medium
+started: 2026-08-18T17:54:00Z
+status: done
+tags:
+- docs
+title: 'Doku-Drift-Pass 2026-08-18: README, CLAUDE.md, Skill-Dokus, ein POD-Befund'
+updated: 2026-08-20T01:04:05Z
+---
+
+Vier parallele Doku-gegen-Code-Pruefungen (README, CLAUDE.md/Rules/Agents, Skill-Dokus, POD). Befunde:
+
+README.md: (1) Zeile ~736 'cross-board links in a chain | not built' widerspricht #209/e2a4bce und README:489-510. (2) Command map: metrics, import, repair, materialize fehlen. (3) ~781: '.karr keys (each wins over the config-wide value)' -- fuer on_idle/max_runtime/max_attempts/max_iterations/cooldown_*/error_patterns gibt es keinen config-weiten Wert. (4) ~793 max_runtime 'per-command SIGKILL' -- tatsaechlich TERM, nach 2s KILL (Runner.pm:368-380).
+
+CLAUDE.md: Architektur nennt weder Foundation-Subsystem (10 Module + bin/karr-foundation) noch CrossBoard.pm/ActivityLog.pm/Error.pm; Befehlstabelle ohne needs; ../kanban-md existiert lokal nicht; Skill-Inventarzeile unvollstaendig (7 Verzeichnisse, Hardlink-Aussage gilt nur fuer getty-perl-*); CONTEXT.md und docs/adr/ nirgends erwaehnt; CrossBoard/needs in keiner Delegationstabelle.
+
+karr-rules.md: Versions-Bump-Satz nennt nur lib/App/karr.pm, tatsaechlich tragen alle Dateien unter lib/ und bin/ $VERSION. karr-board-worker.md: 'future ... such as metrics' veraltet.
+
+Skill-Dokus: share/claude-skill.md:419+423 (und die Kopie in .claude/skills/kanban-issues-karr-cli) enthalten doppelt kodiertes UTF-8 (C3 A2 C2 80 C2 94 statt E2 80 94) -- genau der Defekt, den karr repair behebt, in der Datei, die karr skill install ausliefert. Ausserdem: Auto-Fetch-Liste ohne metrics/needs, Kontext-Sektionen 4 statt 5 (activity fehlt). karr-foundation-cli/SKILL.md:51 behauptet Opt-in nur ueber command/claude:true -- falsch seit #188 (Reihenfolge --command > default_command > .karr command > .karr agent > default_agent > claude: true); ask/answer/chain, agents:-Sektion, on_drained*-Keys, KARR_ROLE=hook, Exit-Code-Kontrakt fehlen.
+
+POD (einziger Befund): lib/App/karr/ActivityLog.pm:78 -- =head1 METHODS steht vor drei =attr-Bloecken (git/role/segment_max_bytes), die damit gewoben unter METHODS erscheinen; erster echter =method erst Zeile 183.
+Abgeschlossen 2026-08-20, Commit 93f77b7. Die vier README-Befunde waren bei Aufnahme der Arbeit bereits behoben (Zeile 736 nennt ticket_links als gebaut, die Command-Map fuehrt metrics/import/repair/materialize, die .karr-Key-Sektion trennt fleet-weite von rein per-Repo-Keys, max_runtime nennt TERM+KILL) -- nur nachgeprueft, nicht angefasst. Alles Uebrige war offen und ist erledigt: CLAUDE.md (Foundation-Subsystem, CrossBoard/ActivityLog/Error, needs, kanban-md-Pfad, Skill-Inventar, CONTEXT.md/docs/adr), karr-rules.md (VERSION in 65 Dateien statt einer), karr-board-worker.md (metrics/needs/CrossBoard), karr-foundation-cli/SKILL.md (Aufloesungsreihenfolge + vier neue Abschnitte), share/claude-skill.md samt Hardlink-Kopie (zwei Mojibake-Stellen: Em-Dash UND Pfeil, letzterer im Ticket nicht erkannt; Auto-Fetch-Liste; Kontext-Sektionen 4->5 plus --activity-limit), ActivityLog-POD. Neu: t/211-skill-doc-double-encoding.t prueft alles unter share/ generisch auf doppelt kodiertes UTF-8 (Wirksamkeit gegen eine korrumpierte Kopie nachgewiesen).
