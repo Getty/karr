@@ -1,0 +1,28 @@
+---
+class: standard
+completed: 2026-08-20T02:43:37Z
+created: 2026-08-20T02:31:00Z
+id: 218
+priority: medium
+started: 2026-08-20T02:43:37Z
+status: done
+tags:
+- docs
+title: 'Doku-Pass 2026-08-20: README gegen Code, POD, Banner'
+updated: 2026-08-20T02:43:37Z
+---
+
+Auftrag des Maintainers nach #210/#211: README nochmal pruefen, POD pruefen, das Repo-Banner einbinden.
+
+BANNER: assets/github.png war im Repo und nirgends eingebunden. Steht jetzt als erste Zeile der README, als Link aufs Repo, mit beschreibendem Alt-Text. Absolute raw.githubusercontent.com-URL statt relativem Pfad -- das Bild liegt bereits auf origin/main, und die absolute Form traegt auch dort, wo ein relativer Pfad bricht (MetaCPAN, gespiegelte Kopien).
+
+README, BOARD-HAELFTE -- 15 Befunde, alle am Code oder an einem echten Lauf belegt. Schwerwiegend: (1) Die Lizenzsektion nannte noch Perl_5, obwohl die Distribution seit 6042d9f Artistic 2.0 ist. (2) Der ganze Refs-Block der Sektion "How it works" war in POD-Markup geschrieben (C<...>, F<...>, E<lt>) und rendert auf GitHub woertlich. (3) "mutating commands pull, materialize, write back, and push" -- falsch, materialize_to und serialize_from haben je genau einen Aufrufer, die beiden Brueckenkommandos. (4) Die README bewarb noch "a bundled karr skill", obwohl 1cf96bc den Pfad breaking auf kanban-issues-karr-cli umgestellt hat. Ausserdem: der Quick start rief karr pick --status todo auf eine Karte, die in backlog liegt (fand nichts, wurde nachgespielt); karr delete stand ohne --yes in der Tabelle und faellt fuer einen Agenten mit Exit 1; list und board verbergen Erledigtes per Vorgabe, ohne dass es dastand; --json/--compact kamen in der ganzen Board-Haelfte nicht vor; dass Dependencies NIE blocken, stand nur in der Foundation-Haelfte; die gezeigte Frontmatter-Reihenfolge war nicht die geschriebene (karr schreibt alphabetisch, mit claimed_at/started). Neu: ein Abschnitt zu --json/--compact und dem Exit-Code-Kontrakt (0/1/2, gegen bin/karr und ADR 0002 geprueft).
+
+README, FOUNDATION-HAELFTE -- 9 Befunde. Der #210-Nachtrag selbst war sauber (Aufloesungsreihenfolge, Koordinator-Aussagen und beide neuen Transkripte wurden reproduziert und byte-verglichen). Die Befunde lagen in aelteren Teilen: "the drain ends on its iteration cap" ist falsch -- ein Lauf, der nichts bewegt, endet nach EINER Iteration als idle; das Assignment-Beispiel routete zwei Boards, die das Assignment nie erreichen, weil frueher Cases ihnen ein eigenes command:/agent: gegeben hatten; ein Wartegrund nannte einen Agenten, den die Erzaehlung nie ausfallen laesst; ein Transkript zeigte den "kein Koordinator"-Zweig in einer Flotte, die seit Case 4 einen markiert; der Agents-Block verschwieg einen definierten Agenten; die common-error-Zeile liess das staerkste Signal aus (den eigenen Report des Laufs) und widersprach damit ihrem eigenen Vorspann.
+
+POD -- Durchgang ueber 66 Module: keine strukturellen Defekte. Jedes ABSTRACT vorhanden und zutreffend, die =head1-METHODS-Fehlstellung aus #211 existiert nirgends sonst, die gesamte #210-Oberflaeche ist dokumentiert, keine veraltete "not built"-Behauptung. Ein inhaltlicher Fehler kam erst beim Abgleich mit der README ans Licht: dieselbe falsche materialize-Aussage stand in lib/App/karr.pm UND in bin/karr, beide behoben.
+
+CHANGES: zwei fehlende Eintraege nachgetragen -- der Lizenzwechsel und der breaking Skill-Rename, dessen Commit einen ausdruecklichen BREAKING-CHANGE-Trailer traegt und trotzdem nirgends unter {{$NEXT}} stand.
+
+Abgespalten als eigene Tickets: #214 (Wide-character-Warnung), #215 (=encoding), #216 (ex/-Sandbox), #217 (Exit-2-Ungenauigkeit im foundation-POD).
+Committet als 2fab22e. Volle Suite danach zentral: Files=188, Tests=1374, PASS, 0 Skips (vorher 187/1313 -- die 61 neuen Zusicherungen aus #216).
