@@ -1,6 +1,6 @@
 ---
 name: karr-foundation-cli
-description: Use when running karr-foundation — periodic agent execution across several karr boards, drain loops, ticket mode, auto-block logic.
+description: Use when running karr-foundation — periodic agent execution across several karr boards, drain loops, ticket mode, named agents, the hub chain and question mailbox, auto-block logic.
 ---
 
 # karr-foundation — Periodic Agent Executor for karr Boards
@@ -48,8 +48,19 @@ hub: /path/to/hub-repo    # the repo carrying refs/karr-foundation/* (the chain)
 ## Per-repo .karr file
 
 Place in repo root. All keys optional. Agent execution is opt-in: a board runs
-an agent only if it has `command` **or** `claude: true`. With no agent on any
-board, `karr-foundation` prints a read-only overview instead of running
+an agent only if one of six sources names a command, and the first one that
+does wins:
+
+```
+--command  >  config default_command  >  .karr command
+           >  .karr agent  >  config default_agent  >  claude: true
+```
+
+A literal command string is the most specific thing that can be said, a named
+agent (see "Named agents") sits below it, and `claude: true` is the oldest and
+least specific. A board naming an agent the config does not define is an error
+that skips **that board**, not one that silently stops running. With no agent
+on any board, `karr-foundation` prints a read-only overview instead of running
 anything (see "Overview").
 
 ```yaml
@@ -60,21 +71,82 @@ claude_permission_mode: bypassPermissions   # (default: bypassPermissions)
 prompt: >-                # agent instruction, exposed to the command as $PROMPT
   Use the karr-coordinator skill: pick the next actionable task and move it.
 # command: claude -p "$PROMPT"   # explicit command; wins over claude: true
+# agent: minimax          # a named agent from the config's 'agents:' section
 on_idle: skip             # 'skip' (default) | 'always-run'
 mode: drain               # drain (default) | single | ticket
 drain: true               # older spelling of mode: true=drain, false=single
-max_runtime: 1800         # seconds: per-command SIGKILL (0 = no timeout)
+max_runtime: 1800         # seconds: per-run TERM, then KILL 2s later (0 = off)
 max_attempts: 2           # stalls on one task before auto-block (default: 2)
 max_iterations: 50        # hard cap on drain iterations / drain budget (default: 50)
 cooldown_base: 1          # cooldown minutes at level 0 (default: 1)
 cooldown_max: 64          # cooldown ceiling in minutes (default: 64)
 error_patterns:           # extra case-insensitive substrings → common-error
   - my custom api error
+on_drained: ./release-gate.sh   # run when the board has no work left
+on_drained_max_runtime: 1800    # seconds for that command (0 = no limit)
+on_drained_max_rounds: 3        # see "The domain hook" (0 = no cap)
 ```
 
-`claude`, `claude_bin`, the `claude_*` knobs, `command`, `mode` and `prompt` may also be
-set globally in `config.yml` (`default_command` / `default_prompt`); the per-repo
-`.karr` value wins.
+`claude`, `claude_bin`, the other `claude_*` knobs, `mode` and the three
+`on_drained*` keys may also be set in `config.yml` under the same name;
+`command`, `prompt` and `agent` have config-wide spellings of their own
+(`default_command`, `default_prompt`, `default_agent`). The per-repo `.karr`
+value wins in every case — including `on_drained: ""`, which is how one board
+opts out of a fleet-wide hook.
+
+## Named agents
+
+A board has one command; a fleet has several agent commands with different
+strengths and different failure modes. `config.yml` names them, a `.karr` picks
+one with `agent:`:
+
+```yaml
+agents:
+  minimax:
+    command: claude_with_minimax
+    kind: claude-code       # the invocation contract; default: shell
+    probe_every: 15m        # retry interval once it stops working
+    permission_mode: bypassPermissions    # kind: claude-code only
+    max_turns: 30                         #   "     "        "
+    allowed_tools: [ Bash, Edit ]         #   "     "        "
+    concurrent: 2           # runs of THIS agent at once — see "Concurrency"
+    description: >-
+      Prose. What this agent is good at, where it is weak, what it costs.
+
+default_agent: minimax    # for boards whose .karr names none
+probe_every: 10m          # fleet-wide default for agents that name none
+```
+
+`kind` says what karr may append to `command`. `shell` (the default) is a
+complete template karr appends **nothing** to — it cannot know what the thing
+at the other end understands. `claude-code` gets `-p "$PROMPT"`,
+`--output-format stream-json --verbose --include-partial-messages`, and
+`--permission-mode` / `--max-turns` / `--allowed-tools` from the definition;
+stream-json rather than plain `json` because karr needs the run's own result
+object *and* the live output, and plain `json` prints nothing until the run
+ends. The ticket of a `mode: ticket` run is never appended — it travels as
+`$PROMPT`'s closing sentence and as `$KARR_TASK`.
+
+`description` is never read by karr. It is carried for the agent that routes
+work across the fleet: the thing choosing is a language model and reads prose,
+so there are no classes and no enums. `--status --verbose` prints it.
+
+**Availability.** karr keeps the least it can per agent: `ok`, or `failing`
+since a moment with the next attempt due at another. No cost, no tokens, no
+quotas — a rate limit and a spent budget look identical from the outside. A
+drain ending in `common-error` marks its agent failing; any other outcome says
+it works. While an agent is failing, **every** board on it is skipped, and
+`--force` does not override that either — the wait is bounded by `probe_every`
+and ends by itself. When the next attempt comes round the agent is simply run
+again on the work that was waiting: the probe **is** the run, and every
+recovery is recorded so a rhythm can be read out later.
+
+Agent definitions are **local and only local** — never board state, never
+synced: a command that exists on one machine does not exist on the next, and an
+account limit belongs to a person, not to a project. The availability record
+lives beside the config that defines them (`agents.state` next to
+`config.yml`, so `--config` relocates it), flock'd because every board on the
+machine shares it.
 
 ## Run mode
 
@@ -157,6 +229,56 @@ before the chain header is read, so a tick applies the fleet's current limits
 and not whatever this machine last happened to fetch. Nothing is pushed back —
 this run reads the header and writes no step state.
 
+## The hub: chain and questions
+
+Two commands work out of the hub, and both are an error without one rather than
+a quiet local no-op — chain and mailbox are fleet state.
+
+**`karr-foundation chain`** executes what the plan in the hub says is ready. It
+pulls the namespace first and refuses the tick when that fails (everywhere else
+a failed fetch is a warning; here the fallback would be running a step another
+machine is already running), measures each step's precheck against facts it
+reads off the boards, runs it, and pushes the step state and the run log back.
+
+```bash
+karr-foundation chain              # execute what is ready
+karr-foundation chain --dry-run    # list the ready set and its verdicts
+```
+
+Step kinds: `ticket` goes through the target repo's **ticket mode**, `shell`
+runs a command in the target repo under that repo's own lock, `question`
+resolves a mailbox question under its policy, `plan` is recognised and left
+pending. The chain is a layer **above** the run modes and not a fourth `mode:`
+— a step inherits the board lock, the claim discipline, the ownership guard and
+the run's own report from the mode it calls. A `failed` step stops its own
+branch by construction (a step is released only when everything it `needs` is
+`done`); a common error and a skipped board (disabled, locked, in cooldown, on
+a failing agent) requeue it as `pending` instead, and a step naming a
+repository this machine does not have is left untouched and unclaimed. With a hub but no chain written, this says so and returns 0.
+
+**The question mailbox.** A question is a file with an answer field, not a
+dialogue — which is what removes the special case for "a human happens to be
+present". The chain writes one and carries on with everything that does not
+depend on it; whoever answers needs to know nothing about the chain.
+
+```bash
+karr-foundation ask "Which registry do we publish to?" \
+    --context "the release gate is waiting" \
+    --options cpan,darkpan --default cpan --policy use_default \
+    --wait 3600 --step 4
+
+karr-foundation answer 7 darkpan --note "this release is a private one"
+```
+
+`--policy` is what happens when nobody answers: `block` (the default: wait),
+`use_default` (`--default` becomes the answer once `--wait` seconds have
+passed) or `escalate_to_ai` (recorded for the coordination agent, which is not
+built yet). `--step` names the chain step waiting on the answer. Both commands
+sync the fleet namespace around what they write. `answer` refuses an id that
+already has an answer and an answer outside `--options`; `--force` overrides
+both. `--status` lists the open mailbox with the id each one is answered by;
+answered questions age out, open ones never do.
+
 ## Board-level disable
 
 A board can opt out of automated agent runs in **its own karr state**, not in the
@@ -175,9 +297,11 @@ board is parked" for the whole fleet.
 
 **Precedence — absolute.** A disabled board is skipped **whole**: the flag is
 checked before the agent command is resolved and before the drain decision, so
-there is no drain, no auto-block and no agent run. It wins over `--command`, the
-config's `default_command`, the `.karr` `command` and `claude: true`, and
-`--force` does **not** override it. Disabled means disabled.
+there is no drain, no auto-block and no agent run. It wins over every source in
+the resolution order above — `--command`, the config's `default_command`, the
+`.karr` `command`, a named `agent` or `default_agent`, and `claude: true` — and
+`--force` does **not** override it. A `kind: shell` chain step aimed at a
+disabled repo is left `pending` for the same reason. Disabled means disabled.
 
 This closes the gap where a global `default_command` in `config.yml` turned
 every discovered board into an agent board with no way for a repo to opt out.
@@ -212,7 +336,11 @@ dbio-informix
 
 `disabled` leads the flag list and the `disabled:` line carries the reason
 (`no reason given` when none was stored). The `agent` flag is suppressed for a
-disabled board, because that agent will never run there.
+disabled board, because that agent will never run there; otherwise it names
+which agent (`agent:minimax`, plus ` failing` when that one is unavailable).
+The boards are followed by an `Agents` block where the local config defines any
+(`ok`, or `failing since … next attempt at …`; `--verbose` adds each one's kind
+and description) and by the hub's open questions where there are any.
 
 ## Options
 
@@ -225,6 +353,24 @@ karr-foundation --status            # read-only overview of every board, no runs
 
 Agent output streams to the terminal when run interactively (TTY) or with
 `--verbose`, and is always appended to `.karr.log`.
+
+## Exit codes
+
+The same contract as `karr` (ADR 0002), because `ask`, `answer` and `chain` are
+typed by people and scripted by agents, not only run by cron:
+
+- **0** — the tick finished: boards drained, an overview printed, a question
+  asked or answered, the chain worked through. A chain step that **failed**
+  does not change this — that is a statement about the plan, not about this
+  binary.
+- **1** — runtime failure: no repository discovered, a config that does not
+  parse, a hub command with no hub, an answer to a question that already had
+  one, or `chain` unable to fetch `refs/karr-foundation/*`.
+- **2** — usage error: an unknown command, an unknown option, an invalid option
+  value, a missing or surplus positional argument.
+
+A run killed by `SIGTERM`, `SIGINT` or `SIGHUP` exits `128 + signal` after
+taking its agents down with it.
 
 ## Drain loop semantics
 
@@ -274,24 +420,68 @@ On common-error: repo waits `cooldown_base × 2^level` minutes (capped at `coold
 Level resets on next clean (non-error) run, which also drops `last_error` from
 `.karr.state` — it describes the last run, not a past one.
 
+## The domain hook (`on_drained`)
+
+When a board has **drained** — no actionable task left on it, everything done,
+archived or blocked — `on_drained` runs a configured command in it. karr does
+not know what that command does and must not: the exit code goes to `.karr.log`
+and `.karr.state` and is interpreted by nobody. A hook that fails does not park
+the board, does not mark the board's agent failing and is never the run's
+`last_error`; it is not an agent run and is not classified as one, so no report
+is read out of it, no error pattern is matched against it, no ticket is
+assigned to it.
+
+It is told where it is and nothing else: `KARR_REPO`, and `KARR_ROLE=hook` so
+its own `karr` writes land in their own activity log instead of counting as the
+agent's engagement with a card. `PROMPT` and `KARR_TASK` are empty. It runs in
+the board's directory, under the board's own `.karr.lock`, with the same
+process-group kill and the same tee to `.karr.log` an agent gets — but on its
+own budget, `on_drained_max_runtime` (default 1800), because how long an agent
+may take says nothing about how long a release gate may.
+
+A drain that ended in `common-error` does not count as drained: a rate-limited
+agent leaves a board that looks exactly like one it worked through, and
+foundation does not believe that run. Two guards bound the hook, and `--force`
+overrides both:
+
+- **The same board is not asked twice.** The board fingerprint the hook last
+  ran at is kept in `.karr.state`; a board that has not moved since gets no
+  second run — otherwise a repository nobody touches starts a gate on every
+  tick for ever, because a drained board stays drained.
+- **A chain that never settles is capped.** Consecutive rounds in which the
+  hook itself put work back on the board are counted; a run that leaves the
+  board alone — the gate that finally passed — clears the count, and at
+  `on_drained_max_rounds` (default 3, `0` disables) the hook is suppressed with
+  a line in `.karr.log`.
+
+A hook that files tickets is the point, not a failure mode: the board is no
+longer drained, the next tick works them, the board drains again and the hook
+is asked again.
+
 ## State files (gitignored)
 
 ```
-.karr.state    # board hash, per-task attempts, cooldown, last error
+.karr.state   # board hash, per-task attempts, cooldown, last error, last
+              # report, and the hook's fingerprint / rounds / last exit
 .karr.lock    # flock'd lock: one agent per repo, however many ticks knock
 .karr.log     # run log
 ```
+
+Agent availability is not among them — it is not per board and does not live in
+the repository at all (see "Named agents").
 
 ## Environment
 
 During agent execution foundation sets:
 
 - `KARR_REPO` — the repo path
-- `KARR_ROLE=agent` — so nested `karr` calls log under the `agent` identity
-  (`refs/karr/log/agent/<email>`); a human defaults to `user`
+- `KARR_ROLE` — the identity nested `karr` calls write under: `agent` for an
+  agent run (`refs/karr/log/agent/<email>`), `hook` for `on_drained`, `chain`
+  for a `kind: shell` chain step; a human defaults to `user`
 - `PROMPT` — the resolved agent instruction (`prompt` / `default_prompt` /
   built-in default), referenced as `$PROMPT` in the command template; in ticket
-  mode it ends with the sentence naming the assigned task
+  mode it ends with the sentence naming the assigned task, and for a hook it is
+  empty
 - `KARR_TASK` — the id of the task a `mode: ticket` run was given, empty in
   every other mode
 

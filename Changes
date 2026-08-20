@@ -1,5 +1,34 @@
 {{$NEXT}}
 
+    - The skill documentation karr hands to agents said several
+      things that were no longer true, and one thing it said was
+      broken in a way karr itself has a command against (#211).
+
+      `share/claude-skill.md` -- the file `karr skill install` and
+      `karr init --claude-skill` write into a user's repository --
+      carried doubly-encoded UTF-8 in two places: `C3 A2 C2 80 C2 94`
+      where an em dash belonged and `C3 A2 C2 86 C2 92` where an arrow
+      did. That is precisely the corruption `karr repair` migrates a
+      board off, shipped in the document that teaches agents how to
+      use the board. Both are fixed, the file is verified to hold no
+      other doubly-encoded sequence, and a test now scans the shipped
+      skill so this cannot return unnoticed.
+
+      Two factual drifts in the same document: the list of read
+      commands that fetch the board on their own omitted `metrics` and
+      `needs`, though both go through `require_local_board` like the
+      seven already named; and `karr context` was described with four
+      sections when it renders five -- Recent Activity, which shows
+      OTHER identities' log entries newest-first, was missing, and
+      with it the only knob it has, `--activity-limit`.
+
+      Separately, App::karr::ActivityLog's `=head1 METHODS` sat above
+      the `git`, `role` and `segment_max_bytes` attributes, so the
+      woven POD filed three attributes under a heading meant for the
+      six methods that follow them. It now sits where the same
+      heading sits in App::karr::SyncGuard, immediately before the
+      first method.
+
     - A chain step can wait for a card in ANOTHER repository (#209,
       the open half of #192). Cross-board links existed as a tag on a
       card and as `karr needs` for a person to run, and nothing in

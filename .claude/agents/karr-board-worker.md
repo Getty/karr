@@ -15,13 +15,12 @@ and activity history. Apply the loaded conventions silently.
 
 ## Territory
 
-- `lib/App/karr/Task.pm`, `Config.pm`, and `ActivityLog.pm`
-- `Role/TaskMutation.pm`, `DependencyCheck.pm`, `ClaimTimeout.pm`, `Output.pm`,
-  `CliArgs.pm`, and `ExitCodes.pm`
+- `lib/App/karr/Task.pm`, `Config.pm`, `ActivityLog.pm`, and `CrossBoard.pm`
+- `Role/TaskMutation.pm`, `DependencyCheck.pm`, `DependencyArgs.pm`, `ClaimTimeout.pm`,
+  `Output.pm`, `CliArgs.pm`, and `ExitCodes.pm`
 - the root CLI and ordinary board commands: `create`, `edit`, `move`, `pick`, `handoff`,
-  `archive`, `delete`, `list`, `show`, `board`, `context`, `log`, `config`, and
-  `agent-name`
-- future domain-facing commands such as `metrics`
+  `archive`, `delete`, `list`, `show`, `board`, `context`, `log`, `config`,
+  `agent-name`, `metrics`, and `needs`
 
 Own a vertical behavior slice, including its command wiring and a focused regression test.
 Read the immediate callers and the store contract before changing semantics.

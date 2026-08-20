@@ -75,7 +75,9 @@ set-refs / multi-agent): skill `kanban-issues-karr-cli`.
 `dzil build` / `dzil test` / `prove -l t/` are fine anytime. `dzil release` and any CPAN upload
 are STRICTLY forbidden without the maintainer's explicit go-ahead — even if a plan or roadmap
 lists "release" as the next step. For anything heading toward release: stop and ask. After a
-release the `$VERSION` bump in `lib/App/karr.pm` is a separate, deliberate commit.
+release the `$VERSION` bump is a separate, deliberate commit, and it touches every file
+under `lib/` and `bin/` — each one carries its own `our $VERSION`, not just
+`lib/App/karr.pm`.
 
 ## Perl specifics — reference, don't restate
 

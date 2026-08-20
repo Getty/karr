@@ -75,10 +75,6 @@ context>, which excludes the invoking identity's own entries, uses
 L</owns_ref> rather than an equality test so a rotated segment does not read as
 another agent.
 
-=head1 METHODS
-
-=cut
-
 =attr git
 
 The L<App::karr::Git> instance this log reads and writes refs through.
@@ -179,6 +175,10 @@ sub _role {
     my $role = $self->role;
     return defined $role && length $role ? $role : 'user';
 }
+
+=head1 METHODS
+
+=cut
 
 =method identity
 

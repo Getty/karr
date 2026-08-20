@@ -237,10 +237,11 @@ karr context                                 # print markdown summary
 karr context --write-to AGENTS.md            # create/update file with sentinels
 karr context --sections blocked,overdue      # filter sections
 karr context --days 14                       # lookback for recently-completed
+karr context --activity-limit 10             # other agents' log entries in Recent Activity
 karr context --json                          # JSON output
 ```
 
-Generates a markdown summary with sections: In Progress, Blocked, Overdue, Recently Completed. Uses `<!-- BEGIN kanban-md context -->` / `<!-- END kanban-md context -->` sentinels for in-place updates.
+Generates a markdown summary with sections: In Progress, Blocked, Overdue, Recently Completed, Recent Activity (other agents' log entries, newest first, bounded by `--activity-limit`, default 5). `--sections` takes the slugs `in-progress,blocked,overdue,recently-completed,activity`. Uses `<!-- BEGIN kanban-md context -->` / `<!-- END kanban-md context -->` sentinels for in-place updates.
 
 ### Skill management
 
@@ -285,17 +286,17 @@ do, so a pruned run log does not come back on the next pull.
 
 **A fresh clone fetches the board by itself.** `git clone` does not carry
 `refs/karr/*`, so a new checkout holds no board while the whole board sits on
-its remote. The read commands (`board`, `list`, `show`, `log`, `context`, and
-`config show`/`config get`) do not pull as a rule — only mutating commands do —
-but where there is nothing under `refs/karr/` at all and the remote has a
-board, they fetch it once and answer, with one line on STDERR (never STDOUT)
-saying where it came from. Where there is no remote, or the remote has no
-board, they still refuse with exit 1 rather than rendering an empty board:
-that is the only place `karr init` is the answer. In a clone whose board is on
-the remote, `karr init` refuses as well and points at `karr sync`, so it can no
-longer start a second, empty board beside the real one; `karr init --new-board`
-is the documented way through when an independent board there really is what
-you want.
+its remote. The read commands (`board`, `list`, `show`, `log`, `context`,
+`metrics`, `needs`, and `config show`/`config get`) do not pull as a rule —
+only mutating commands do — but where there is nothing under `refs/karr/` at
+all and the remote has a board, they fetch it once and answer, with one line
+on STDERR (never STDOUT) saying where it came from. Where there is no remote,
+or the remote has no board, they still refuse with exit 1 rather than
+rendering an empty board: that is the only place `karr init` is the answer. In
+a clone whose board is on the remote, `karr init` refuses as well and points
+at `karr sync`, so it can no longer start a second, empty board beside the
+real one; `karr init --new-board` is the documented way through when an
+independent board there really is what you want.
 `KARR_NO_AUTO_FETCH=1` switches the fetch off where karr must not touch the
 network.
 
@@ -416,11 +417,11 @@ karr handoff ID --claim "$NAME" --note "Implementation complete"
 
 Every `karr agent-name` call mints a **new** name and remembers it nowhere, so
 `--claim "$(karr agent-name)"` written a second time claims under one name and
-hands off under another â while the first claim is live the handoff is refused,
+hands off under another — while the first claim is live the handoff is refused,
 and once it has expired it silently re-stamps the card with a name nobody holds.
 Capture the name once into a shell variable and pass that same variable to every
 later `--claim`, `--claimed-by` and `log --agent`. If it was never captured, read
-it back off the board (`karr show ID` â `Claimed:`, or `karr pick`'s own
+it back off the board (`karr show ID` → `Claimed:`, or `karr pick`'s own
 `(claimed by NAME)`) rather than minting a fresh one.
 
 ## Stored task format

@@ -6,7 +6,7 @@ This file provides project guidance for Claude Code and similar coding agents.
 
 `App::karr` — **Kanban Assignment & Responsibility Registry**
 
-A Perl reimplementation of [kanban-md](https://github.com/antopolskiy/kanban-md), a file-based kanban board designed for multi-agent workflows. The reference implementation is in Go and lives at `../kanban-md/` relative to this workspace.
+A Perl reimplementation of [kanban-md](https://github.com/antopolskiy/kanban-md), a file-based kanban board designed for multi-agent workflows. The reference implementation is in Go and is not part of this workspace.
 
 This is a Dist::Zilla distribution using `[@Author::GETTY]`.
 
@@ -20,7 +20,7 @@ the rules file). Agents in this repo (skills force-loaded via `briefing.skills`)
 
 | Task | Agent |
 |---|---|
-| Task/config semantics, lifecycle, activity log, ordinary board commands, filtering, rendering | `karr-board-worker` |
+| Task/config semantics, lifecycle, claims, dependencies (`needs`/`CrossBoard`), activity log, ordinary board commands, filtering, rendering | `karr-board-worker` |
 | Git transport, refs-backed storage, CAS, locks, sync, encoding, materialize/import/backup/restore | `karr-ref-worker` |
 | karr-foundation: discovery, drain loops, per-repo lock/state, cooldown, auto-blocking, `disable`/`enable` | `karr-foundation-worker` |
 | Behavior-relevant code spanning those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
@@ -37,14 +37,17 @@ and hands a misrouted task back rather than solving it from the wrong context.
 
 ## Reference: kanban-md
 
-The Go implementation at `../kanban-md/` is the feature reference. Key docs:
-- `../kanban-md/README.md` — Full command reference and design principles
-- `../kanban-md/cmd/` — CLI command implementations
-- `../kanban-md/internal/task/` — Task file parsing, validation, consistency
-- `../kanban-md/internal/board/` — Board operations, filtering, sorting, picking
-- `../kanban-md/internal/config/` — Config schema, migration, defaults
+The Go implementation is the feature reference for the board commands. It is not
+checked out here — clone it to `../kanban-md/` when you need to compare
+behaviour, then read `README.md` (command reference and design principles),
+`cmd/` (CLI commands), `internal/task/` (file parsing, validation, consistency),
+`internal/board/` (filtering, sorting, picking) and `internal/config/` (schema,
+migration, defaults).
 
-**Goal**: Feature parity with kanban-md, but idiomatic Perl with Moo, MooX::Cmd, MooX::Options.
+**Goal**: Feature parity with kanban-md for the board itself, but idiomatic Perl
+with Moo, MooX::Cmd, MooX::Options. What karr has beyond it — refs-first
+storage, cross-board dependencies, `karr-foundation` — has no kanban-md
+counterpart and no parity obligation.
 
 ## Architecture
 
@@ -62,6 +65,24 @@ The Go implementation at `../kanban-md/` is the feature reference. Key docs:
 - `lib/App/karr/Git.pm` — Low-level Git operations; local ops native via Git::Native (libgit2), with a git-CLI fallback for remote transport (ssh-config/ProxyCommand)
 - `lib/App/karr/BoardStore.pm` — Ref-backed board storage (load_tasks, save_task, effective_config)
 - `lib/App/karr/Lock.pm` — Advisory task locking via refs
+- `lib/App/karr/ActivityLog.pm` — Activity log writer; role-qualified identities under `refs/karr/log/*`
+- `lib/App/karr/CrossBoard.pm` — Cross-board dependencies: a link from a card here to a card on another board (`BOARD#ID`)
+- `lib/App/karr/Error.pm` — Turns internal errors into one clean user-facing line
+
+### karr-foundation (the second entry point)
+
+`bin/karr-foundation` drives agent runs across several boards; `App::karr::Foundation`
+is the single-shot daemon, and the subsystem beside it splits as follows:
+
+- `Foundation/Overview.pm` — read-only multi-board status dashboard
+- `Foundation/Picker.pm` — ticket selection: the one card a ticket-mode run is about
+- `Foundation/Runner.pm` — command execution: fork/pipe/select tee plus run classification
+- `Foundation/Agents.pm` — agent definitions, invocation contract, per-agent availability
+- `Foundation/State.pm` — per-repo state: lock file, JSON state, cooldown backoff
+- `Foundation/Limits.pm` — concurrency limits: machine ceiling, per-agent estimates, chain header
+- `Foundation/ChainStore.pm` — chain and run-log storage under `refs/karr-foundation/*`
+- `Foundation/Executor.pm` — chain executor: picks a ready step, runs it, writes its state back
+- `Foundation/Questions.pm` — question mailbox under `refs/karr-foundation/questions/*`
 
 ### Board state (refs-first)
 
@@ -88,6 +109,7 @@ storage backend.
 | `unlock` | implemented | — (show and break pick locks) |
 | `archive` | implemented | `archive` |
 | `handoff` | implemented | `handoff` |
+| `needs` | implemented | — (report/resolve cross-board dependencies) |
 | `metrics` | implemented | `metrics` |
 | `log` | implemented | `log` |
 | `config` | implemented | `config` |
@@ -151,6 +173,22 @@ ticket while it claimed the board held the live status.
 Agent/skill/rule material lives under `.claude/`:
 - `rules/karr-rules.md` — house rules, auto-loaded (discipline, delegation, coordination, release)
 - `agents/karr-*.md` — the project agent fleet (briefing-aware; skills force-loaded at spawn)
-- `skills/` — `kanban-issues-karr-cli` + shared Getty Perl skills (hardlinked via manage-skills; don't rename, and edit via `cat > .claude/skills/<skill>/SKILL.md` — **not** the `Edit`/`Write` tools, which mint a new inode and break the shared hardlink; see skill `manage-skills`)
+- `skills/` — seven skills. Five are shared across repositories via manage-skills
+  hardlinks (`kanban-issues-karr-cli`, `getty-perl-core`, `getty-perl-moo`,
+  `getty-perl-release-author-getty`, `perl-release-dist-ini`); two are local to
+  this repository (`karr-foundation-cli`, `perl-file-sharedir`). `ls -li
+  .claude/skills/*/SKILL.md` tells them apart by link count. Don't rename them,
+  and edit a shared one via `cat > .claude/skills/<skill>/SKILL.md` — **not** the
+  `Edit`/`Write` tools or `sed -i`, which mint a new inode and break the shared
+  hardlink; see skill `manage-skills`. `kanban-issues-karr-cli` is a copy of
+  `share/claude-skill.md` (what `karr skill install` ships) — change both, keep
+  them identical.
+
+Two more documents carry decisions rather than instructions:
+- `CONTEXT.md` — the domain vocabulary (Claim vs. Assignee vs. Lock, Activity
+  log, …), including the words to avoid. Read it before naming anything new.
+- `docs/adr/` — architecture decision records: refs-first storage, the exit-code
+  contract, role-qualified log identity, foundation as a coordinator, board-level
+  disable. Read the relevant one before changing the shape it describes.
 
 Keep this file focused on the repository; behavioral rules belong in `rules/`, not here.
