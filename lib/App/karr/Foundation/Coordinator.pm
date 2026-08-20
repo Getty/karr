@@ -587,7 +587,7 @@ INTRO
         : "  Nothing written. The operator can put prose in the config's "
           . "'routing:' key.\n" );
 
-  push @out, $self->_writes_block( $hub );
+  push @out, $self->_writes_block;
 
   push @out, <<'LIMITS';
 WHAT YOU MUST NOT DO
@@ -641,13 +641,17 @@ sub _availability {
     . ( defined $av->{last_error} ? " ($av->{last_error})" : '' );
 }
 
-# The three things it may write, each with the exact shape karr reads back.
-# The chain has no CLI of its own yet, so the one-liner is spelled out rather
-# than alluded to: an agent that has to guess at a storage API writes a chain
-# nobody can execute.
+# The three things it may write, each with the exact shape karr reads back. Two
+# of them are commands and are spelled out as commands: an agent that has to
+# guess at an interface writes something nobody can execute. Until #213 the
+# chain was the exception -- there was no command for it, so this block carried
+# a perl -e one-liner against ChainStore, which made a storage API an agent's
+# interface and left every rename in that class breaking a prompt instead of a
+# call.
 sub _writes_block {
-  my ( $self, $hub ) = @_;
+  my ( $self ) = @_;
   my $file = $self->assignment_file;
+  my $karr = $self->_foundation_command;
   return <<"WRITES";
 WHAT YOU MAY WRITE
 
@@ -671,27 +675,53 @@ WHAT YOU MAY WRITE
    precheck, command and note. A precheck is '<fact> == <value>' or '!=' over
    board_actionable, ticket_status, ticket_blocked, ticket_claimed,
    ticket_links and question_state; a step whose precheck no longer holds is
-   not executed -- it goes stale and calls you again. There is no CLI for
-   writing one yet, so write it with:
+   not executed -- it goes stale and calls you again. Write the whole chain as
+   one YAML (or JSON) document on stdin; it REPLACES the chain that is there,
+   so it is the plan as you now think it should be, not an addition to it:
 
-     perl -MApp::karr::Foundation::ChainStore -MApp::karr::Git -e '
-       App::karr::Foundation::ChainStore->new(
-         git => App::karr::Git->new( dir => "$hub" ) )->write_chain( [
-           { id => 1, kind => "ticket", repo => "/path/to/repo", ticket => 7,
-             precheck => "ticket_status == todo" },
-           { id => 2, kind => "shell", repo => "/path/to/repo", needs => [ 1 ],
-             command => "./gate.sh" },
-         ] )'
+     $karr plan <<'CHAIN'
+     steps:
+       - id: 1
+         kind: ticket
+         repo: /path/to/repo
+         ticket: 7
+         precheck: ticket_status == todo
+       - id: 2
+         kind: shell
+         repo: /path/to/repo
+         needs: [ 1 ]
+         command: ./gate.sh
+     limits:
+       concurrent: 2
+     note: what this plan is for
+     CHAIN
+
+   Add --dry-run to have a chain checked and told back to you without writing
+   it. A chain that still has a step running is refused rather than replaced;
+   --force replaces it anyway, and is not what you want unless you know what
+   that step was doing.
 
 3. A QUESTION, always in advance and never from inside a step:
 
-     karr-foundation ask "which registry do we publish to?" \\
+     $karr ask "which registry do we publish to?" \\
        --context "the release gate is waiting" \\
        --options cpan,darkpan --default cpan --policy use_default \\
        --wait 3600 --step 2
 
    A kind: question step waits until every question naming it is settled.
 WRITES
+}
+
+# How this agent has to spell karr-foundation for it to find the fleet it was
+# called for. Without --config the binary reads ~/.config/karr-foundation, and
+# a fleet started with one somewhere else would have its plan written into a
+# config that does not exist -- the agent would be told a command that cannot
+# work and would have no way of knowing.
+sub _foundation_command {
+  my ( $self ) = @_;
+  my $config = $self->foundation->config;
+  return 'karr-foundation' unless defined $config && length $config;
+  return "karr-foundation --config '$config'";
 }
 
 sub _indent {

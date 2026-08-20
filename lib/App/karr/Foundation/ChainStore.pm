@@ -44,6 +44,12 @@ no agent> and why passing one is refused rather than ignored: a chain is shared
 state, an agent is a property of a machine, and a chain that named one would
 plan work that cannot run anywhere else.
 
+A chain gets in through C<karr-foundation plan>, which reads one YAML or JSON
+document and hands it to L</parse_chain_document> and L</write_chain> -- the
+same path a Perl caller takes, and the only way in: C<karr set-refs> refuses
+this namespace outright, because a schema, a cycle check and compare-and-swap
+updates are not things a generic ref writer can honour.
+
 =head2 The chain is a DAG
 
 A step lists the step ids it C<needs>. Steps with no edge between them may run
@@ -249,10 +255,8 @@ Replaces the chain with C<@steps> and returns the new chain id. Options are
 C<limits> (passed through to the header untouched -- what a limit means is the
 runner's business), C<note>, C<planner>, and C<force>.
 
-Every step is validated first (L</DESCRIPTION>), ids must be unique, every
-C<needs> entry must name a step in the same chain, and the graph must be
-acyclic; anything else raises a user error and B<nothing is written>. A chain
-that still has a step in state C<running> is refused unless C<force> is given.
+Every step is validated first (L</validate_chain>): anything wrong with the
+chain raises a user error and B<nothing is written>.
 
 The header ref is written B<last> and is the commit point: L</ready_steps> only
 considers steps whose C<chain> matches the header, so a reader that arrives
@@ -264,6 +268,46 @@ not one where the wrong thing runs.
 =cut
 
 sub write_chain {
+  my ( $self, $steps, %opt ) = @_;
+  my @validated = @{ $self->validate_chain( $steps, %opt ) };
+
+  my $chain_id = _new_chain_id();
+  $self->_clear_steps;
+  for my $step ( @validated ) {
+    $step->{chain} = $chain_id;
+    $self->git->write_ref( $self->_step_ref( $step->{id} ), yaml_dump($step) );
+  }
+
+  my %header = (
+    id      => $chain_id,
+    created => _now(),
+    ( defined $opt{limits}  ? ( limits  => $opt{limits} )  : () ),
+    ( defined $opt{note}    ? ( note    => $opt{note} )    : () ),
+    ( defined $opt{planner} ? ( planner => $opt{planner} ) : () ),
+  );
+  $self->git->write_ref( CHAIN_META, yaml_dump( \%header ) );
+  return $chain_id;
+}
+
+=method validate_chain
+
+    my $steps = $store->validate_chain( \@steps, %opt );
+
+Everything L</write_chain> checks before it writes a ref, and no ref written:
+every step against the step schema, ids unique, every C<needs> entry naming a
+step of the same chain, the graph acyclic, and -- unless C<force> is passed --
+no step of the chain still in state C<running>. Returns the validated steps,
+which are normalised copies rather than the caller's own hashes; anything else
+raises a user error.
+
+Split out of L</write_chain> because C<karr-foundation plan --dry-run> has to
+be able to say "this chain is good" without writing it, and a dry run checking
+a chain from its own copy of the rules would be a second opinion rather than
+the same one.
+
+=cut
+
+sub validate_chain {
   my ( $self, $steps, %opt ) = @_;
   user_error('A chain needs at least one step')
     unless ref $steps eq 'ARRAY' && @$steps;
@@ -289,22 +333,76 @@ sub write_chain {
       . '); pass force to replace it anyway' ) if @running;
   }
 
-  my $chain_id = _new_chain_id();
-  $self->_clear_steps;
-  for my $step ( @validated ) {
-    $step->{chain} = $chain_id;
-    $self->git->write_ref( $self->_step_ref( $step->{id} ), yaml_dump($step) );
+  return \@validated;
+}
+
+# What a chain document may say beside its steps. Closed, where the per-step
+# key list is not: a step's on_* policies are the runner's open vocabulary,
+# while a document header has exactly these, and an agent that misspells one is
+# better told than warned -- a chain written with a 'limit:' typo would run at
+# the wrong concurrency and look perfectly healthy doing it.
+my %DOCUMENT_KEY = map { $_ => 1 } qw( steps limits note planner );
+
+=method parse_chain_document
+
+    my ( $steps, %header ) = $store->parse_chain_document( $document );
+
+Takes the decoded document C<karr-foundation plan> reads -- YAML or JSON, and
+JSON only because a YAML parser reads it -- and returns the two arguments
+L</write_chain> takes: the step list, and the header options C<limits>, C<note>
+and C<planner>.
+
+Two spellings are accepted, because both say the same thing: a mapping with a
+C<steps:> list and the header keys beside it, or a bare list, which B<is> the
+step list. The second is what L</write_chain>'s own first argument looks like,
+so a planner writing only steps has written a whole document.
+
+No step is looked at here -- that is L</validate_chain>, which the write path
+runs whatever route the steps arrived by. What this checks is the envelope:
+the document is one of the two shapes, C<steps:> is there and is a list,
+C<limits:> is a mapping, C<note:> and C<planner:> are plain values, and no
+other key is present. C<force> is deliberately not among them: replacing a
+chain that still has a running step is a decision the caller makes on the
+command line, not one the plan grants itself.
+
+=cut
+
+sub parse_chain_document {
+  my ( $self, $doc ) = @_;
+  user_error( 'A chain document is a list of steps, or a mapping with a '
+    . "'steps:' list in it" )
+    unless ref $doc eq 'ARRAY' || ref $doc eq 'HASH';
+
+  return ( $doc ) if ref $doc eq 'ARRAY';
+
+  for my $key ( sort keys %$doc ) {
+    next if $DOCUMENT_KEY{$key};
+    user_error( "A chain document has no '$key' key (it takes: "
+      . join( ', ', sort keys %DOCUMENT_KEY ) . ')'
+      . ( $key eq 'force'
+          ? '; replacing a chain that is still running is --force on the '
+            . 'command line, not something the plan grants itself'
+          : '' ) );
   }
 
-  my %header = (
-    id      => $chain_id,
-    created => _now(),
-    ( defined $opt{limits}  ? ( limits  => $opt{limits} )  : () ),
-    ( defined $opt{note}    ? ( note    => $opt{note} )    : () ),
-    ( defined $opt{planner} ? ( planner => $opt{planner} ) : () ),
-  );
-  $self->git->write_ref( CHAIN_META, yaml_dump( \%header ) );
-  return $chain_id;
+  my $steps = $doc->{steps};
+  user_error("A chain document needs a 'steps:' list") unless defined $steps;
+  user_error("A chain document's 'steps:' must be a list of steps")
+    unless ref $steps eq 'ARRAY';
+
+  my %opt;
+  if ( defined $doc->{limits} ) {
+    user_error( "A chain document's 'limits:' must be a mapping, for example "
+      . "'concurrent: 4'" ) unless ref $doc->{limits} eq 'HASH';
+    $opt{limits} = $doc->{limits};
+  }
+  for my $key ( qw( note planner ) ) {
+    next unless defined $doc->{$key};
+    user_error("A chain document's '$key:' must be a plain value")
+      if ref $doc->{$key};
+    $opt{$key} = $doc->{$key};
+  }
+  return ( $steps, %opt );
 }
 
 # Kahn's algorithm, run for its refusal rather than for its order: a chain

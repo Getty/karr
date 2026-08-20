@@ -538,25 +538,46 @@ the boards, runs it, and writes the state and the run log back.
 
 A chain is written into `refs/karr-foundation/chain/*` — with a schema, a cycle
 check and compare-and-swap updates, which is why `karr set-refs` refuses that
-namespace outright. Today that means writing it from Perl:
+namespace outright. `karr-foundation plan` is the way in: one YAML document on
+stdin (JSON goes through the same parser), and it replaces the chain that is
+there.
 
-```perl
-use App::karr::Git;
-use App::karr::Foundation::ChainStore;
-
-my $chain = App::karr::Foundation::ChainStore->new(
-    git => App::karr::Git->new( dir => '/srv/fleet-hub' ) );
-
-$chain->write_chain( [
-    { id => 'docs',     kind => 'shell', repo => '/srv/docs-site',
-      command => './build-docs.sh', precheck => 'board_actionable == yes' },
-    { id => 'smoke',    kind => 'shell', repo => '/srv/webapp',
-      command => './smoke-test.sh' },
-    { id => 'registry', kind => 'question', needs => [ 'docs', 'smoke' ] },
-    { id => 'publish',  kind => 'shell', repo => '/srv/webapp',
-      needs => [ 'registry' ], command => './publish.sh' },
-], limits => { concurrent => 4 }, note => 'release 0.6' );
+```bash
+karr-foundation plan <<'CHAIN'
+steps:
+  - id: docs
+    kind: shell
+    repo: /srv/docs-site
+    command: ./build-docs.sh
+    precheck: board_actionable == yes
+  - id: smoke
+    kind: shell
+    repo: /srv/webapp
+    command: ./smoke-test.sh
+  - id: registry
+    kind: question
+    needs: [ docs, smoke ]
+  - id: publish
+    kind: shell
+    repo: /srv/webapp
+    needs: [ registry ]
+    command: ./publish.sh
+limits:
+  concurrent: 4
+note: release 0.6
+CHAIN
 ```
+
+`--dry-run` checks a chain and writes nothing; `--input PATH` reads it from a
+file instead of stdin. The whole document is validated before the first ref is
+written, so a chain karr will not take leaves the one in the hub untouched, and
+a chain that still has a step *running* is refused unless you pass `--force`.
+It replaces rather than appends because that is what the header means: only
+steps whose chain id matches it are ever ready. The Perl API underneath
+(`App::karr::Foundation::ChainStore->write_chain`) is the same path and is
+still there — it just is no longer the only one, which used to mean the
+coordination agent got a `perl -e` one-liner in its prompt where everything
+else it does is a command.
 
 A step names an id, a `kind`, and the steps it `needs`; steps with no edge
 between them may run at once. It may **not** name an agent: the chain is shared

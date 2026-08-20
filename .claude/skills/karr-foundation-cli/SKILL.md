@@ -246,8 +246,46 @@ this run reads the header and writes no step state.
 
 ## The hub: chain and questions
 
-Two commands work out of the hub, and both are an error without one rather than
-a quiet local no-op — chain and mailbox are fleet state.
+Every command here works out of the hub, and each is an error without one
+rather than a quiet local no-op — chain and mailbox are fleet state.
+
+**`karr-foundation plan`** writes the chain. It takes the whole chain as one
+YAML document on stdin (JSON reads through the same parser), or from the file
+`--input` names, and **replaces** what the hub holds:
+
+```bash
+karr-foundation plan <<'CHAIN'
+steps:
+  - id: 1
+    kind: ticket
+    repo: /srv/karr
+    ticket: 41
+    precheck: ticket_status == todo
+  - id: 2
+    kind: shell
+    repo: /srv/karr
+    needs: [ 1 ]
+    command: ./release-gate.sh
+limits:
+  concurrent: 2
+note: what this plan is for
+CHAIN
+
+karr-foundation plan --dry-run < chain.yml   # check it, write nothing
+```
+
+A document rather than options, because a DAG is nested and the writer that
+matters most — the coordination agent — already produces structure; a bare list
+of steps is a document too. It replaces rather than appends because only steps
+whose chain id matches the header are ever ready, so an append would be a new
+chain over old steps and new ones with a merge policy of its own. The step keys
+are the ones under "Step kinds" below (`id`, `kind`, `repo`, `ticket`, `needs`,
+`timeout`, `precheck`, `command`, `note`, plus `on_*` policies) and beside
+`steps:` the document takes `limits:`, `note:` and `planner:` — nothing else,
+so a misspelled key is refused instead of silently doing nothing. The whole
+document is validated before the first ref is written: a chain karr will not
+take leaves the one in the hub untouched, and a chain that still has a step
+`running` is refused unless `--force`.
 
 **`karr-foundation chain`** executes what the plan in the hub says is ready. It
 pulls the namespace first and refuses the tick when that fails (everywhere else

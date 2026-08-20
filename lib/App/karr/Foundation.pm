@@ -4,7 +4,7 @@ package App::karr::Foundation;
 our $VERSION = '0.501';
 use Moo;
 use MooX::Options (
-  usage_string => 'USAGE: karr-foundation [ask QUESTION | answer ID ANSWER | chain] [options]',
+  usage_string => 'USAGE: karr-foundation [ask QUESTION | answer ID ANSWER | chain | plan] [options]',
   # The mailbox commands (#191) are positional, and MooX::Options hands the
   # leftovers back in @ARGV only when it is allowed to consume the options out
   # of it. Nothing else in this class reads @ARGV, and F<bin/karr-foundation>
@@ -12,6 +12,7 @@ use MooX::Options (
   protect_argv => 0,
 );
 use App::karr::Error qw( user_error clean_error );
+use App::karr::Encoding qw( from_octets yaml_load );
 use App::karr::Role::ExitCodes;
 use Path::Tiny;
 use IO::Handle;
@@ -80,12 +81,14 @@ option command => (
 option force => (
   is  => 'ro',
   doc => 'Run agent even if no board change detected and no open tasks; '
-       . 'answer: replace an answer that is already there',
+       . 'answer: replace an answer that is already there; plan: replace a '
+       . 'chain that still has a step running',
 );
 
 option dry_run => (
   is  => 'ro',
-  doc => 'Print what would run without executing',
+  doc => 'Print what would run without executing; plan: check a chain and '
+       . 'write nothing',
 );
 
 option verbose => (
@@ -143,6 +146,12 @@ option note => (
   is     => 'ro',
   format => 's',
   doc    => 'answer: a note to record beside the answer',
+);
+
+option input => (
+  is     => 'ro',
+  format => 's',
+  doc    => 'plan: read the chain document from a file instead of stdin',
 );
 
 has _stream_to_terminal => (
@@ -395,7 +404,8 @@ sub _take_lock_fh {
     # Read-only overview of every board (no agent runs)
     karr-foundation --status
 
-    # Execute the fleet's planned chain out of the hub
+    # Write the fleet's plan into the hub, and execute it out of there
+    karr-foundation plan < chain.yml
     karr-foundation chain
 
 =description
@@ -632,6 +642,53 @@ but no chain written, it says so and returns C<0> -- a fleet nobody has planned
 for yet is a normal state, not a failure. The full argument, the fact vocabulary
 a precheck may use and what a failed step does to the DAG are in
 L<App::karr::Foundation::Executor>.
+
+B<Writing the chain.> C<karr-foundation plan> is the other half of that
+command: it reads a chain as one YAML document on stdin -- or out of the file
+C<--input> names -- and replaces what the hub holds with it.
+
+  karr-foundation plan < chain.yml            # replace the chain
+  karr-foundation plan --dry-run < chain.yml  # check it, write nothing
+
+  steps:
+    - id: 1
+      kind: ticket
+      repo: /srv/karr
+      ticket: 41
+      precheck: ticket_status == todo
+    - id: 2
+      kind: shell
+      repo: /srv/karr
+      needs: [ 1 ]
+      command: ./release-gate.sh
+  limits:
+    concurrent: 2
+  note: what this plan is for
+
+A document rather than options, because a chain is a DAG and a DAG is nested:
+options that described one would be YAML with a worse syntax and a parser of
+its own, and the writer that matters most -- the coordination agent -- already
+produces structure. JSON is read by the same parser and needs no flag of its
+own. A bare list of steps is a document too: that is what
+L<App::karr::Foundation::ChainStore/write_chain>'s own first argument looks
+like, so a planner that wrote only steps wrote a whole document.
+
+It B<replaces> the chain rather than adding to it, which is what the header
+already means: only steps whose chain id matches the header are ever ready, so
+appending would be a new chain over the old steps plus the new ones, with a
+merge policy of its own for an id that is already there and a state that has
+already been reached. The plan is what the planner currently thinks. What makes
+replacing safe is the guard: a chain that still has a step in state C<running>
+is refused unless C<--force>, and the whole document -- every step, the ids,
+the edges, the cycle check -- is validated before the first ref is written, so
+a chain karr will not take leaves the one in the hub exactly as it was
+(L<App::karr::Foundation::ChainStore/validate_chain>).
+
+The command is what an agent gets because everything else karr asks an agent to
+do is a command. Before it, writing a chain was C<write_chain> from Perl and
+the coordination agent was handed that one-liner in its prompt to type out --
+the one place karr gave an agent Perl instead of a call, where a rename in a
+storage class broke a prompt and nothing said so (#213).
 
 B<The question mailbox.> A question is a file with an answer field, not a
 dialogue, which is what removes the special case for "a human happens to be
@@ -982,9 +1039,10 @@ sub run {
     return $self->_run_ask(@argv)    if $command eq 'ask';
     return $self->_run_answer(@argv) if $command eq 'answer';
     return $self->_run_chain(@argv)  if $command eq 'chain';
+    return $self->_run_plan(@argv)   if $command eq 'plan';
     # "Unknown command:" is the marker App::karr::Error::is_usage_error keys on,
     # so a typo here exits 2 (you called this wrong) and not 1 (ADR 0002).
-    user_error("Unknown command: '$command' (expected: answer, ask, chain)");
+    user_error("Unknown command: '$command' (expected: answer, ask, chain, plan)");
   }
 
   my @repos = $self->_discover_repos;
@@ -1079,13 +1137,17 @@ sub _mailbox {
     . "'hub: /path/to/repo' in " . $self->_config_path );
 }
 
-# A mailbox that does not travel is a notepad. `ask` pulls before it mints an
-# id -- ids are minted from what this clone can see, so the pull is what keeps
-# two machines from picking the same one -- and both commands push what they
-# wrote. A transport failure is a warning: the ref is written locally either
-# way and the next `karr sync` in the hub publishes it, which is a better
-# answer than refusing to record a question because the network is down.
-sub _mailbox_sync {
+# A mailbox that does not travel is a notepad, and neither does a plan. `ask`
+# pulls before it mints an id -- ids are minted from what this clone can see,
+# so the pull is what keeps two machines from picking the same one -- `plan`
+# pulls before it measures whether the chain it replaces still has a step
+# running, and all three push what they wrote. A transport failure is a
+# warning: the ref is written locally either way and the next `karr sync` in
+# the hub publishes it, which is a better answer than refusing to record a
+# question because the network is down. `chain` is the one command that
+# refuses instead, because the fallback there is running a step another
+# machine is already running.
+sub _namespace_sync {
   my ( $self, $verb ) = @_;
   my $git = $self->_hub_git or return;
   my $method = "${verb}_foundation";
@@ -1117,7 +1179,7 @@ sub _run_ask {
     unless @argv == 1 && defined $argv[0] && length $argv[0];
 
   my $mailbox = $self->_mailbox;
-  $self->_mailbox_sync('pull');
+  $self->_namespace_sync('pull');
 
   my $id = $mailbox->ask(
     question => $argv[0],
@@ -1128,7 +1190,7 @@ sub _run_ask {
     ( defined $self->wait    ? ( wait    => $self->wait )    : () ),
     ( defined $self->step    ? ( step    => $self->step )    : () ),
   );
-  $self->_mailbox_sync('push');
+  $self->_namespace_sync('push');
 
   # The id and the command that settles it, because the next thing whoever
   # reads this does is answer it -- from a terminal that has none of the
@@ -1163,6 +1225,148 @@ sub _run_chain {
   return $exit;
 }
 
+# ---------------------------------------------------------------------------
+# Writing the chain (#213)
+# ---------------------------------------------------------------------------
+
+# The chain had no command of its own: App::karr::Foundation::ChainStore's
+# write_chain was Perl API, so the one writer that is not a person -- the
+# coordination agent -- was handed a `perl -MApp::karr::Foundation::ChainStore
+# -e ...` one-liner in its prompt and asked to type it out. That made a storage
+# API somebody's interface, where everything else karr asks an agent to do is a
+# command, and it meant a rename inside that class broke a prompt rather than a
+# call: silently, and only on the tick where a plan was wanted.
+#
+# It takes a document rather than options because a chain is a DAG and a DAG is
+# nested: `--step id=1,kind=ticket,needs=2,3` would be YAML with a worse syntax
+# and a parser of its own, and the writer that matters most already produces
+# structure. Stdin (or --input) is where `karr restore` takes a snapshot from,
+# for the same reason, and the document is read as YAML -- which reads JSON
+# too, so an agent that emits JSON has emitted a chain document.
+#
+# It replaces the chain rather than adding to it, because that is what
+# write_chain does and what the header means: ready_steps only considers steps
+# whose chain id matches the header, so "append" would be a new chain id over
+# the old steps plus the new ones -- a merge with its own rules about ids that
+# already exist and states that were already reached. The plan is what the
+# planner currently thinks; a chain that still has a running step is refused
+# unless --force, which is the guard that makes replacing safe.
+sub _run_plan {
+  my ( $self, @argv ) = @_;
+  user_error( 'Usage: karr-foundation plan [--input PATH] [--force] '
+    . '[--dry-run] -- the chain itself arrives as YAML or JSON on stdin, or '
+    . 'from the file --input names' ) if @argv;
+
+  # The chain is fleet state, so a machine without a hub has nowhere to put
+  # one. The same error the mailbox commands raise, for the same reason:
+  # writing a plan only this clone can see is not a smaller version of writing
+  # the fleet's plan.
+  my $store = $self->_chain_store // user_error(
+      'No usable hub repository: the chain lives in '
+    . 'refs/karr-foundation/chain/* in the fleet hub, so name one with '
+    . "'hub: /path/to/repo' in " . $self->_config_path );
+
+  # Parsed before the network is touched, so a document that is not one costs
+  # nothing; the steps themselves are checked by the store, which is where the
+  # step schema lives and where the write path checks them anyway.
+  my ( $steps, %header ) = $store->parse_chain_document( $self->_chain_document );
+  my $force = $self->force ? 1 : 0;
+
+  # Before either path: the guard against replacing a chain that still has a
+  # running step is only as good as this machine's copy of that chain.
+  $self->_namespace_sync('pull');
+
+  if ( $self->dry_run ) {
+    my $validated = $store->validate_chain( $steps, force => $force );
+    print 'The chain is valid: ' . scalar(@$validated)
+        . " step(s), nothing written (--dry-run)\n";
+    print _plan_step_lines(@$validated);
+    return 0;
+  }
+
+  my $chain_id = $store->write_chain( $steps, %header, force => $force );
+  $self->_namespace_sync('push');
+
+  # Read back rather than echoed: what is printed is what is in the hub, in
+  # the order every other reader of the chain sees it.
+  my @written = $store->steps;
+  print "Wrote chain $chain_id: " . scalar(@written) . " step(s)\n";
+  print _plan_step_lines(@written);
+  print "  execute it with: karr-foundation chain\n";
+  return 0;
+}
+
+# The steps as lines: what each one is, where it happens, and what it waits
+# for -- the three things somebody reading back a chain they have just written
+# checks it against. The ids share a column so the kinds line up under each
+# other, which is what makes a mistyped kind visible at a glance.
+sub _plan_step_lines {
+  my ( @steps ) = @_;
+  my $width = 0;
+  for my $step ( @steps ) {
+    my $len = length "$step->{id}";
+    $width = $len if $len > $width;
+  }
+  my @lines;
+  for my $step ( @steps ) {
+    my @what = ( defined $step->{ticket}
+      ? "$step->{kind} #$step->{ticket}" : $step->{kind} );
+    push @what, "in $step->{repo}" if defined $step->{repo};
+    push @what, 'needs ' . join( ', ', @{ $step->{needs} } )
+      if $step->{needs} && @{ $step->{needs} };
+    push @lines, sprintf "  %-*s  %s\n", $width, $step->{id}, join( ', ', @what );
+  }
+  return @lines;
+}
+
+# The document as characters, from --input or from stdin.
+sub _chain_document {
+  my ( $self ) = @_;
+  my $payload;
+
+  if ( defined $self->input ) {
+    # An unreadable --input is the caller's path, not karr's: Path::Tiny's own
+    # error would hand them this file and line instead (#77).
+    $payload = try { path( $self->input )->slurp_utf8 }
+    catch {
+      user_error( 'Could not read ' . $self->input . ': ' . clean_error($_) );
+    };
+  }
+  else {
+    # A terminal has nothing queued and would sit there with no prompt, so the
+    # invocation that forgot its input stays a usage error instead of becoming
+    # a hang -- the reading App::karr::Cmd::SetRefs makes of the same edge.
+    user_error( 'Usage: karr-foundation plan < chain.yml -- the chain '
+      . 'document arrives on stdin, or from the file --input names' )
+      if -t STDIN;
+
+    # STDIN is the one input edge App::karr::Encoding leaves without a PerlIO
+    # layer, precisely so this decode is explicit and happens exactly once.
+    binmode STDIN, ':raw';
+    my $octets = do { local $/; <STDIN> };
+
+    # An empty stdin is not an empty chain: a generator upstream that produced
+    # nothing is a mistake, and a chain needs at least one step anyway. A
+    # runtime failure and not a usage error -- the invocation was right, what
+    # arrived on the pipe was not.
+    user_error('No chain document received on stdin')
+      unless defined $octets && length $octets;
+    $payload = from_octets($octets);
+  }
+
+  my $doc = try { yaml_load($payload) }
+  catch {
+    # Through whole rather than through clean_error, the same way the config
+    # loader above takes YAML::XS's errors: it names the document, the line and
+    # the column and carries no call site of its own, and clean_error would
+    # keep only its "YAML::XS::Load Error: The problem:" header -- which tells
+    # the writer of a broken chain nothing at all.
+    user_error("The chain document is not valid YAML or JSON: $_");
+  };
+  user_error('The chain document is empty') unless defined $doc;
+  return $doc;
+}
+
 sub _run_answer {
   my ( $self, @argv ) = @_;
   user_error( 'Usage: karr-foundation answer ID ANSWER [--note TEXT] '
@@ -1170,13 +1374,13 @@ sub _run_answer {
     unless @argv == 2 && defined $argv[1] && length $argv[1];
 
   my $mailbox = $self->_mailbox;
-  $self->_mailbox_sync('pull');
+  $self->_namespace_sync('pull');
 
   my $a = $mailbox->settle( $argv[0], $argv[1],
     ( defined $self->note ? ( note => $self->note ) : () ),
     force => ( $self->force ? 1 : 0 ),
   );
-  $self->_mailbox_sync('push');
+  $self->_namespace_sync('push');
 
   printf "Answered question #%s: %s\n", $a->{id}, $a->{answer};
   printf "  %s\n", $a->{question};

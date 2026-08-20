@@ -1,5 +1,27 @@
 {{$NEXT}}
 
+    - New `karr-foundation plan` command (#213): a chain is written
+      by a command now, not from Perl. It reads the whole chain as
+      one YAML document on stdin (JSON goes through the same
+      parser), or out of the file `--input` names, validates it and
+      replaces the chain in the fleet hub -- ids, edges, kinds,
+      prechecks and the cycle check all before the first ref is
+      written, so a chain karr will not take leaves the one in the
+      hub untouched. `--dry-run` checks a chain and writes nothing,
+      and a chain that still has a step `running` is refused unless
+      `--force`. A document names its steps under `steps:` with
+      `limits:`, `note:` and `planner:` beside them; a bare list of
+      steps is a document too.
+
+      The coordination agent's prompt is on that command now. It
+      used to carry a `perl -e` one-liner against
+      `App::karr::Foundation::ChainStore` for the agent to type out
+      -- the one place karr handed an agent Perl instead of a
+      command, and a rename in that class would have broken a prompt
+      rather than a call. The examples in that prompt also carry
+      `--config` when the fleet was started with one, so the command
+      an agent is told finds the fleet it was called for.
+
     - New `karr dashboard` command (#220): a configuration-free,
       multi-column overview of every karr board found by recursively
       searching a directory tree for Git repositories. One entry per
