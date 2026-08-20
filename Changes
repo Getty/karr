@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - New `karr dashboard` command (#220): a configuration-free,
+      multi-column overview of every karr board found by recursively
+      searching a directory tree for Git repositories. One entry per
+      repository, a block per open task coloured by status (the same
+      colours `karr board` uses), several repositories side by side
+      per terminal row rather than a stacked list. Status names and
+      which one is terminal are read from each board's own config
+      (#67), never assumed, so two boards side by side may use
+      entirely different status lists. `--depth` bounds the search
+      (default 4), `--hide-no-board` drops the list of repositories
+      with no board, `--show-no-board` always lists them by name,
+      and `--json`/`--compact` follow the same conventions as the
+      rest of the CLI. Read-only and offline: it never fetches,
+      pushes, or writes to any board.
+
+      No rendered line ever exceeds the terminal width: an entry
+      too wide for a narrow terminal has its name and bar capped
+      rather than soft-wrapping the row, and a board-less list too
+      long for one line collapses to a count instead of wrapping
+      over several lines and burying the summary.
+
     - The repository banner no longer ships inside the tarball
       (#219). `assets/github.png` is a megabyte of decoration for the
       GitHub page, which links it by absolute URL anyway, so it never

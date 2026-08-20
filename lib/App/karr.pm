@@ -212,6 +212,7 @@ my @COMMANDS = (
   [ list      => 'List and filter tasks' ],
   [ show      => 'Show full task details' ],
   [ board     => 'Show board summary' ],
+  [ dashboard => 'Multi-board overview of boards under a directory' ],
   [ move      => 'Change task status' ],
   [ edit      => 'Modify task fields' ],
   [ delete    => 'Delete a task' ],

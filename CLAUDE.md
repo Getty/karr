@@ -105,6 +105,7 @@ storage backend.
 | `edit` | implemented | `edit` |
 | `delete` | implemented | `delete` / `rm` |
 | `board` | implemented | `board` / `summary` |
+| `dashboard` | implemented | — (configuration-free multi-board overview under a directory) |
 | `pick` | implemented | `pick` |
 | `unlock` | implemented | — (show and break pick locks) |
 | `archive` | implemented | `archive` |

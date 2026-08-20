@@ -1098,6 +1098,7 @@ Important refs:
 | Command | Use it for |
 |---------|------------|
 | `karr board` | grouped board view (Done is hidden unless `--done`; bare `karr --done` does the same for the default view) |
+| `karr dashboard` | multi-column, colour-coded overview of every karr board found by recursively searching a directory tree — configuration-free, unlike `karr-foundation --status` (`--depth`, `--hide-no-board` / `--show-no-board`) |
 | `karr pick` | atomic next-task selection with claim |
 | `karr unlock` | show or break pick locks left behind by a crashed agent |
 | `karr handoff` | move into review and append a note |
