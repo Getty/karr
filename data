@@ -1,0 +1,30 @@
+---
+claimed_at: 2026-08-20T16:09:24Z
+claimed_by: path-debt
+class: standard
+completed: 2026-08-20T16:09:17Z
+created: 2026-08-20T02:22:42Z
+id: 217
+priority: low
+started: 2026-08-20T16:02:51Z
+status: done
+tags:
+- docs
+- pod
+- foundation
+title: 'karr-foundation POD: ''invalid option value'' steht unter Exit 2, gilt aber
+  nur fuer Typfehler'
+updated: 2026-08-20T16:09:24Z
+---
+
+Bei der README-Pruefung nach #210 aufgefallen, aelter als das Ticket.
+
+Das POD von bin/karr-foundation fuehrt unter Exit-Code 2 (usage error) auch "an invalid option value" auf. Tatsaechlich trennt sich das:
+
+- Typfehler auf MooX::Options-Ebene geben 2, z.B. --wait abc (verifiziert).
+- Ein semantisch ungueltiger Wert gibt 1, z.B. --policy nonsense -> "A question has unknown policy nonsense ..." mit Exit 1 (verifiziert).
+
+Das ist relevant, weil der Exit-Code-Kontrakt laut docs/adr/0002-exit-code-contract.md ausdruecklich ein stabiler Vertrag fuer Agenten ist, die die CLI skripten: wer nach 2 verzweigt, um Bedienfehler von Laufzeitfehlern zu trennen, bekommt bei einer falsch geschriebenen Policy die falsche Schublade.
+
+Die README ist NICHT betroffen -- sie sagt nur "2 = usage error" und liegt damit richtig. Zu klaeren beim Bauen: ob das POD praezisiert wird (Typfehler vs. semantische Pruefung) oder ob der Code die semantische Pruefung auf 2 heben soll. Ersteres ist die kleinere Aenderung, Letzteres waere eine Vertragsaenderung und braucht einen Blick in den ADR.
+Committet. Der Worker hat beide Behauptungen des Tickets selbst nachgefahren statt sie zu uebernehmen, und dabei drei weitere Werte gefunden, die denselben Weg nehmen (--default ausserhalb --options, fehlendes --deadline, use_default ohne --default) -- die stehen jetzt als Beispiele in Punkt 1. plan (#213) geprueft: keine eigene Typpruefung, also nichts zu praezisieren. POD-Variante gewaehlt, die Vertragsaenderung waere ein ADR-Beschluss gewesen.
