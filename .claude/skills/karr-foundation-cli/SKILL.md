@@ -1,6 +1,6 @@
 ---
 name: karr-foundation-cli
-description: Use when running karr-foundation — periodic agent execution across several karr boards, drain loops, ticket mode, named agents, the hub chain and question mailbox, auto-block logic.
+description: Use when running karr-foundation — periodic agent execution across several karr boards, drain loops, ticket mode, named agents, the coordination agent and its assignment, the hub chain and question mailbox, auto-block logic.
 ---
 
 # karr-foundation — Periodic Agent Executor for karr Boards
@@ -43,25 +43,30 @@ scan:
 
 concurrent: 4             # boards that may have an agent at once (default: 1)
 hub: /path/to/hub-repo    # the repo carrying refs/karr-foundation/* (the chain)
+routing: >-               # prose for the coordination agent; karr never parses it
+  minimax is cheap and does the routine work. Never hand it a release.
 ```
 
 ## Per-repo .karr file
 
 Place in repo root. All keys optional. Agent execution is opt-in: a board runs
-an agent only if one of six sources names a command, and the first one that
+an agent only if one of seven sources names a command, and the first one that
 does wins:
 
 ```
---command  >  config default_command  >  .karr command
-           >  .karr agent  >  config default_agent  >  claude: true
+--command  >  config default_command  >  .karr command  >  .karr agent
+           >  the assignment  >  config default_agent  >  claude: true
 ```
 
 A literal command string is the most specific thing that can be said, a named
 agent (see "Named agents") sits below it, and `claude: true` is the oldest and
-least specific. A board naming an agent the config does not define is an error
-that skips **that board**, not one that silently stops running. With no agent
-on any board, `karr-foundation` prints a read-only overview instead of running
-anything (see "Overview").
+least specific. The assignment (see "The coordination agent") is the routing
+table written for this machine: it is asked only for a board that names no
+agent of its own, and it beats `default_agent` because it is per repository
+where that is per fleet. A board naming an agent the config does not define is
+an error that skips **that board**, not one that silently stops running. With
+no agent on any board, `karr-foundation` prints a read-only overview instead of
+running anything (see "Overview").
 
 ```yaml
 claude: true              # synthesize the canonical claude command (opt-in)
@@ -112,6 +117,10 @@ agents:
     concurrent: 2           # runs of THIS agent at once — see "Concurrency"
     description: >-
       Prose. What this agent is good at, where it is weak, what it costs.
+  planner:
+    command: claude
+    kind: claude-code
+    role: coordinator       # the fleet's judgement layer — see below
 
 default_agent: minimax    # for boards whose .karr names none
 probe_every: 10m          # fleet-wide default for agents that name none
@@ -130,6 +139,12 @@ ends. The ticket of a `mode: ticket` run is never appended — it travels as
 `description` is never read by karr. It is carried for the agent that routes
 work across the fleet: the thing choosing is a language model and reads prose,
 so there are no classes and no enums. `--status --verbose` prints it.
+
+`role` marks the one agent that is the fleet's judgement layer (see "The
+coordination agent"). `coordinator` is the only value; anything else is a config
+error, and two marked definitions are refused rather than guessed between —
+"which of these is the judgement layer" has no safe default. `--status` prints
+`(coordinator)` beside it.
 
 **Availability.** karr keeps the least it can per agent: `ok`, or `failing`
 since a moment with the next attempt due at another. No cost, no tokens, no
@@ -248,7 +263,8 @@ karr-foundation chain --dry-run    # list the ready set and its verdicts
 Step kinds: `ticket` goes through the target repo's **ticket mode**, `shell`
 runs a command in the target repo under that repo's own lock, `question`
 resolves a mailbox question under its policy, `plan` is recognised and left
-pending. The chain is a layer **above** the run modes and not a fourth `mode:`
+pending — and where the fleet marks a coordination agent, a plan step is one of
+the four deviations that call it once at the end of the tick. The chain is a layer **above** the run modes and not a fourth `mode:`
 — a step inherits the board lock, the claim discipline, the ownership guard and
 the run's own report from the mode it calls. A `failed` step stops its own
 branch by construction (a step is released only when everything it `needs` is
@@ -272,12 +288,92 @@ karr-foundation answer 7 darkpan --note "this release is a private one"
 
 `--policy` is what happens when nobody answers: `block` (the default: wait),
 `use_default` (`--default` becomes the answer once `--wait` seconds have
-passed) or `escalate_to_ai` (recorded for the coordination agent, which is not
-built yet). `--step` names the chain step waiting on the answer. Both commands
+passed) or `escalate_to_ai` (the question is handed to the coordination agent
+at the end of the tick where the fleet marks one, and recorded and left waiting
+where it does not — the step is never answered on that agent's behalf). `--step` names the chain step waiting on the answer. Both commands
 sync the fleet namespace around what they write. `answer` refuses an id that
 already has an answer and an answer outside `--options`; `--force` overrides
 both. `--status` lists the open mailbox with the id each one is answered by;
 answered questions age out, open ones never do.
+
+## The coordination agent
+
+The third layer of the design, and the only one that is an AI: coordination is
+shared state in refs, execution is local, and **judgement** — planning, routing,
+reacting to what nobody planned for — is an agent. It is an agent like every
+other one: an entry in `agents:`, invoked through its own `command` under its
+own `kind` contract, classified from its own result object, and marked
+`failing` by the same availability record. What sets it apart is **when** it
+runs, which is never in the hot path. `karr-foundation` works through written
+plans by itself and calls this one only where a plan is missing or has broken;
+between two of those, no AI runs at all.
+
+Which agent it is, is the `role: coordinator` marker on its definition (see
+"Named agents") — not a second config key naming an agent that is already
+named. A fleet that marks none behaves exactly as it did before: the deviations
+are printed, and the operator is the planner.
+
+**Four deviations, one call per tick.** Every one of them was already a place
+that recorded "the planner is wanted" and nothing else:
+
+- a `kind: plan` step
+- a question past its deadline whose policy is `escalate_to_ai`
+- a step whose precheck no longer holds (`stale`)
+- a repository the assignment cannot route
+
+A tick collects them and makes **one** call at the end of itself, carrying all
+of them: five deviations in one tick are one thing learned — the plan is out of
+date — and five calls would pay five times to hear it. The call is last because
+a planner called half way through would plan against a board the tick was still
+moving, and nothing is re-read afterwards: what it wrote is what the **next**
+tick runs.
+
+The run happens in the hub, under the hub's own `.karr.lock` (one agent per
+repository holds there too), with `KARR_ROLE=coordinator`, and with its
+instruction in `$PROMPT`: the deviations, where the fleet's files are, every
+agent with its availability and its prose, and the operator's own `routing:`
+prose from `config.yml`. Without a hub it is not called and says so once — a
+chain and a question live in `refs/karr-foundation/*`, so there would be nowhere
+to put the answer. While the coordination agent itself is failing it is not
+called either, and the place that wanted it simply waits.
+
+```console
+$ karr-foundation
+calling the coordination agent 'planner' for 2 deviation(s): step replan: kind: plan is not executed here; /srv/docs-site: no assignment names this repository
+the coordination agent 'planner' finished (success); the next tick runs what it wrote
+```
+
+**The assignment** is what it writes so that routing needs no AI afterwards —
+`assignment.yml`, beside `config.yml` and `agents.state`, so `--config`
+relocates it with them:
+
+```yaml
+repos:
+  /srv/docs-site:
+    - minimax
+    - claude
+    - WAIT
+```
+
+Repository path to an ordered list of agents. `karr-foundation` looks the
+repository up and takes the **first entry that currently works**; `WAIT` means
+"rather wait than use anything further down" and ends the search, and so does a
+chain whose agents are all failing. Such a board runs nothing this tick and says
+so (`agent-waiting` in the overview) instead of reading as a board nobody
+configured an agent for; `--force` does not override that, exactly as it does
+not override a cooldown or an agent's availability. An agent name this machine
+does not define is skipped with a `--verbose` note and the next one is tried —
+definitions are local, so a table written where more of them exist is a normal
+thing to meet.
+
+Like the definitions it names, the assignment is **local and never in refs**: a
+command that exists on one machine does not exist on the next, so a table naming
+agents cannot be shared any more than they can.
+
+What it is **not**: nothing domain-specific reaches karr through it (that is
+`on_drained` and the operator's prose), it is no learning algorithm (the
+recovery records are read by the agent, not by karr), it lifts no block, and it
+does not touch one-agent-per-repository.
 
 ## Board-level disable
 
@@ -299,7 +395,8 @@ board is parked" for the whole fleet.
 checked before the agent command is resolved and before the drain decision, so
 there is no drain, no auto-block and no agent run. It wins over every source in
 the resolution order above — `--command`, the config's `default_command`, the
-`.karr` `command`, a named `agent` or `default_agent`, and `claude: true` — and
+`.karr` `command`, a named `agent`, the assignment, `default_agent`, and
+`claude: true` — and
 `--force` does **not** override it. A `kind: shell` chain step aimed at a
 disabled repo is left `pending` for the same reason. Disabled means disabled.
 
@@ -337,10 +434,14 @@ dbio-informix
 `disabled` leads the flag list and the `disabled:` line carries the reason
 (`no reason given` when none was stored). The `agent` flag is suppressed for a
 disabled board, because that agent will never run there; otherwise it names
-which agent (`agent:minimax`, plus ` failing` when that one is unavailable).
+which agent (`agent:minimax`, plus ` failing` when that one is unavailable). A
+board the assignment routes to nothing runnable right now gets `agent-waiting`
+and a `waiting:` line with the reason — it is an agent board whose agents are
+down, not a board nobody configured, and the two are fixed by different things.
 The boards are followed by an `Agents` block where the local config defines any
-(`ok`, or `failing since … next attempt at …`; `--verbose` adds each one's kind
-and description) and by the hub's open questions where there are any.
+(`ok`, or `failing since … next attempt at …`, with `(coordinator)` beside the
+one marked as such; `--verbose` adds each one's kind and description) and by the
+hub's open questions where there are any.
 
 ## Options
 
@@ -468,7 +569,8 @@ is asked again.
 ```
 
 Agent availability is not among them — it is not per board and does not live in
-the repository at all (see "Named agents").
+the repository at all (see "Named agents"), and neither is the assignment (see
+"The coordination agent"). Both sit beside `config.yml`.
 
 ## Environment
 
@@ -477,11 +579,13 @@ During agent execution foundation sets:
 - `KARR_REPO` — the repo path
 - `KARR_ROLE` — the identity nested `karr` calls write under: `agent` for an
   agent run (`refs/karr/log/agent/<email>`), `hook` for `on_drained`, `chain`
-  for a `kind: shell` chain step; a human defaults to `user`
+  for a `kind: shell` chain step, `coordinator` for the coordination agent; a
+  human defaults to `user`
 - `PROMPT` — the resolved agent instruction (`prompt` / `default_prompt` /
   built-in default), referenced as `$PROMPT` in the command template; in ticket
-  mode it ends with the sentence naming the assigned task, and for a hook it is
-  empty
+  mode it ends with the sentence naming the assigned task, for a hook it is
+  empty, and for the coordination agent it is that agent's own instruction
+  rather than the board's
 - `KARR_TASK` — the id of the task a `mode: ticket` run was given, empty in
   every other mode
 

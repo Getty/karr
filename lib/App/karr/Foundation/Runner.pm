@@ -71,6 +71,12 @@ operator hung on C<on_drained> may take. Nothing else in this method asks who
 the caller is: the run is classified by the drain, which simply does not
 classify a hook.
 
+The coordination agent (L<App::karr::Foundation::Coordinator>) is the third,
+and the one that needed a third option: it B<is> an agent and needs an
+instruction, but not a board's -- so it passes C<< prompt => ... >> beside
+C<< role => 'coordinator' >> and gets its own text in C<$PROMPT> instead of
+the board's or the hook's silence.
+
 =cut
 
 =attr foundation
@@ -124,14 +130,23 @@ sub _run_command {
   local $ENV{KARR_REPO} = to_octets_for_env("$repo");
   local $ENV{KARR_ROLE} = to_octets_for_env($role);
 
-  # The prompt is the agent's instruction, so only the agent gets one. A hook
-  # handed a prompt telling it to pick the next actionable task would be told
-  # to do the one thing it is not there for, and every karr write it made
-  # would land in the agent's activity log -- which is the evidence the
-  # auto-block reads. KARR_ROLE keeps those apart, and this keeps the
-  # instruction with the identity it belongs to.
+  # The prompt is the board agent's instruction, so only the board agent gets
+  # the board's one. A hook handed a prompt telling it to pick the next
+  # actionable task would be told to do the one thing it is not there for, and
+  # every karr write it made would land in the agent's activity log -- which is
+  # the evidence the auto-block reads. KARR_ROLE keeps those apart, and this
+  # keeps the instruction with the identity it belongs to.
+  #
+  # A caller that brings its OWN instruction passes it, and the coordination
+  # agent (#210) is the one that does: it is an agent and needs a prompt, but
+  # not the board's -- it is not there to work a card, and it is not even run
+  # in a board's own repository in the sense the drain means. `prompt => ...`
+  # is therefore the exception the two identities above make necessary, not a
+  # third way for a board agent to be told what to do.
   local $ENV{PROMPT}    = to_octets_for_env(
-    $role eq 'agent' ? $self->foundation->_prompt_for( $karr, $ticket ) : '' );
+      defined $opt{prompt} ? $opt{prompt}
+    : $role eq 'agent'     ? $self->foundation->_prompt_for( $karr, $ticket )
+    :                        '' );
 
   # The id of the task this run is about, in ticket mode, and empty in every
   # other mode -- localised either way so a run never inherits the previous

@@ -178,11 +178,15 @@ its dependents never become ready, no cascade has to be computed, and every
 branch that does not run through it carries on. The chain then cannot finish,
 and that unreachability is exactly the signal C<on_stall: plan> names.
 
-The planner itself is not built here. Where the spec says "call the planner"
+The planner itself does not run in here. Where the spec says "call the planner"
 this executor B<records that the planner is wanted> -- a C<planner> entry in the
 run log naming the step and why, and a line of output at the end of the tick --
-and does nothing else. Nothing is written that a future planner would have to
-undo.
+and writes nothing about the plan that a planner would have to undo. What has
+changed with #210 is only who hears it: the recorded entries are handed to
+L<App::karr::Foundation::Coordinator> when the tick is over, and where the fleet
+marks an agent C<< role: coordinator >> F<karr-foundation> calls it B<once> for
+all of them. Where it marks none, this is exactly what it was -- a line of
+output for the operator, who is then the planner.
 
 Three outcomes are deliberately B<not> failures, because none of them is a
 statement about the plan:
@@ -236,12 +240,12 @@ loud and left, every other branch of the chain runs, and the dependents of the
 question wait by construction because C<ready_steps> releases a step only when
 everything it C<needs> is C<done>.
 
-C<escalate_to_ai> can only be B<recorded>, and that is deliberate rather than
-unfinished. The coordination agent that policy names is the judgement layer of
-the spec: it is not built, it is not callable from here, and it is not even a
-ticket yet (#194). So that policy does exactly what a C<kind: plan> step does --
-records that the planner is wanted, leaves the step alone, prints a line saying
-so -- and nothing is written that a coordination agent would later have to undo.
+C<escalate_to_ai> is B<recorded> here and answered outside, which is the same
+shape a C<kind: plan> step has: the step is left alone, a line says so, and the
+recorded want reaches the coordination agent at the end of the tick (#210). The
+step is not resolved on the agent's behalf -- whatever it decides arrives as an
+answer in the mailbox or as a new chain, through the same doors a person uses,
+and until then the question is still open and the step still waits.
 
 A step waits until B<every> question naming it is settled. More than one
 question on one step is not what a planner normally writes; what decides it is
@@ -263,11 +267,12 @@ are for.
 =head2 What this executor does not do yet
 
 C<kind: plan> steps are recognised and B<left pending>, with the planner
-recorded as wanted and a line saying so -- the planner they want is the same
-coordination agent C<escalate_to_ai> asks for, and the note above about it not
-existing yet is the whole of the answer here too. It hangs off the dispatch on
-C<kind> at the top of one step, which is why it is one place rather than a
-thread through this class.
+recorded as wanted and a line saying so. That is not a hole: a plan step is a
+request for a new plan, and this class executes plans rather than making them.
+The request reaches the coordination agent at the end of the tick (#210), which
+writes the next chain -- and the next tick executes it. It hangs off the
+dispatch on C<kind> at the top of one step, which is why it is one place rather
+than a thread through this class.
 
 Cross-board links are B<measured and not resolved>, and that is a decision
 rather than the seam it used to be: C<ticket_links> tells a precheck what the
@@ -391,6 +396,17 @@ sub run {
     map { ( $_ => $tally{$_} ) } sort keys %tally );
   $self->_push;
 
+  # The one place the three chain-side deviations meet (#210). A kind: plan
+  # step, an escalate_to_ai question and a step gone stale each record that the
+  # planner is wanted where they meet it, and each has always ended up here --
+  # so this is where the coordination agent is told, and it is told once for
+  # the whole tick rather than once per entry. F<karr-foundation> makes the
+  # call itself (App::karr::Foundation::_run_chain), after this method has
+  # finished: a planner called from inside the loop would be planning against a
+  # chain this tick was still working through.
+  $self->foundation->_coordinator->want( step => $_->[0], reason => $_->[1] )
+    for @planner;
+
   $self->_report( $chain, \%tally, \@planner );
   return 0;
 }
@@ -415,12 +431,14 @@ sub _report {
   $self->_say( "chain $chain: " . ( @parts ? join( ', ', @parts ) : 'nothing ready' ) );
   return unless @$planner;
 
-  # The seam the planner ticket lands on. Said out loud rather than only
-  # written into the run log, because the operator running this by hand is the
-  # planner until there is one.
+  # Said out loud rather than only written into the run log: whoever reads a
+  # tick has to see that the chain stopped short of something, and where this
+  # fleet has no coordination agent the operator IS the planner.
   $self->_say( 'the planner is wanted for step(s) '
     . join( ', ', map { "$_->[0] ($_->[1])" } @$planner )
-    . " \x{2014} no planner runs from here yet; re-plan the chain" );
+    . ( $self->foundation->_coordinator->configured
+        ? " \x{2014} the coordination agent is called at the end of this tick"
+        : " \x{2014} no planner runs from here yet; re-plan the chain" ) );
   return;
 }
 
@@ -496,8 +514,8 @@ sub _do_step {
 
   # A kind this executor does not run: `kind: plan`, and whatever a later
   # planner invents. Left pending and unclaimed on purpose -- a plan step waits
-  # for the coordination agent, which is not built, not callable from here and
-  # not a ticket yet (#194), so this is a deliberate stop and not an omission.
+  # for the coordination agent, which is called once at the end of the tick and
+  # not from in here (#210), so this is a deliberate stop and not an omission.
   # Its dependents wait with it, which is the honest state of a chain that has
   # reached something nothing here can do.
   unless ( $kind eq 'ticket' || $kind eq 'shell' ) {
@@ -830,17 +848,17 @@ sub _question_verdict {
     };
   }
 
-  # escalate_to_ai can only be recorded. The coordination agent it names is the
-  # judgement layer of the spec: not built, not callable from here, and not a
-  # ticket yet (#194). So this policy does what a `kind: plan` step does --
-  # planner wanted, step untouched, a line that says so -- and that is a
-  # deliberate stop rather than a hole somebody forgot to fill. Anything else
-  # would mean inventing the agent here.
+  # escalate_to_ai is recorded, not resolved. The coordination agent it names is
+  # the judgement layer, and it is called once at the end of the tick (#210) --
+  # never from in here, where it would run inside the resolution of one
+  # question and be called again for the next one. So this policy does what a
+  # `kind: plan` step does: planner wanted, step untouched, a line that says
+  # so. Whatever the agent then decides arrives as an answer in the mailbox,
+  # through the same door a person uses.
   return {
     wait    => "question #$id is past its deadline and its escalate_to_ai "
-             . 'policy wants the coordination agent, which is not built',
-    planner => "escalate_to_ai on question #$id, and no coordination agent "
-             . 'runs from here',
+             . 'policy wants the coordination agent',
+    planner => "escalate_to_ai on question #$id",
     policy  => 'escalate_to_ai',
   } if $policy eq 'escalate_to_ai';
 

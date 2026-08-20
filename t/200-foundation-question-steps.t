@@ -35,10 +35,10 @@ use App::karr::Git;
 #      into a field on the step: the step schema is the planner's vocabulary.
 #   5. `overdue` does what the ASKER wrote down. block keeps waiting (that is
 #      what block means), use_default takes the default resolve() hands over,
-#      and escalate_to_ai can only be RECORDED -- the coordination agent that
-#      policy names is the judgement layer of the spec, which is not built, not
-#      callable from here and not even a ticket (see the activity log of #194).
-#      Anything else would mean inventing the agent here.
+#      and escalate_to_ai can only be RECORDED here -- the coordination agent
+#      that policy names is the judgement layer, and it is called once at the
+#      end of a tick (#210), never from inside the resolution of one question.
+#      Resolving the question on that agent's behalf would mean inventing it.
 #   6. `question_state` is a fact like the board facts, measured by the
 #      executor, absent when it cannot be measured -- and measured only for the
 #      kind that can have a question, so no other step pays a mailbox read.
@@ -301,8 +301,9 @@ subtest 'overdue + escalate_to_ai can only be recorded' => sub {
   my ( $out ) = tick($hub);
   my $step = step_of( $hub, 1 );
   is $step->{state}, 'pending',
-    'the coordination agent this policy names is not built, is not callable '
-    . 'from here and is not even a ticket (#194), so the step waits';
+    'the coordination agent this policy names is not callable from inside the '
+    . 'resolution of one question (#210 calls it once per tick), so the step '
+    . 'waits';
   ok !defined $step->{attempts}, 'unclaimed, with nothing written to undo';
   ok !$next->exists, 'and nothing downstream was released on an invented answer';
 
@@ -312,9 +313,8 @@ subtest 'overdue + escalate_to_ai can only be recorded' => sub {
   is $planner->{policy}, 'escalate_to_ai',
     'under the policy that asked for it, not under a generic one';
   like $planner->{reason}, qr/question #\Q$qid\E/, 'naming the question';
-  like $out, qr/coordination agent, which is not built/,
-    'and the operator is told, since the operator is that agent until there '
-    . 'is one';
+  like $out, qr/policy wants the coordination agent/,
+    'and the tick says out loud which policy left the step where it is';
 };
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,61 @@
 {{$NEXT}}
 
+    - karr-foundation has a judgement layer: the coordination agent
+      (#210, the tenth work package of the fleet epic #194). The chain
+      executed written plans and the modes ran boards, but nothing
+      ever WROTE a plan: a `kind: plan` step, an `escalate_to_ai`
+      question past its deadline and a step whose precheck had stopped
+      holding each recorded "the planner is wanted" into the run log
+      and stopped there, and routing work to one of several agents was
+      a `default_agent` for the whole fleet or a name written into
+      each board by hand. All four are now answered by an agent -- and
+      by an agent that runs almost never.
+
+      It is an agent like every other one: an entry in `agents:`,
+      invoked through its own `command` under the `kind: claude-code`
+      contract (#188), classified from its own result object (#187),
+      and marked `failing` by the same availability record every board
+      agent uses. Which agent it is, is a marker on the definition
+      (`role: coordinator`) rather than a second config key naming an
+      agent that is already named; two marked definitions are refused
+      rather than guessed between, and a typo in the marker is a hard
+      error instead of a fleet that quietly has no judgement layer.
+
+      What is new is WHEN it runs, which is never in the hot path.
+      A tick collects the deviations it meets and makes exactly ONE
+      call at the end of itself, carrying all of them: a tick that met
+      five deviations has learned one thing -- the plan is out of date
+      -- and five calls would pay five times to hear it. It runs in
+      the hub, under the hub's own `.karr.lock`, as
+      `KARR_ROLE=coordinator`, and nothing is re-read afterwards:
+      whatever it wrote is what the NEXT tick runs.
+
+      Its prompt carries the deviations, where the fleet's files are,
+      every agent with its availability and its prose, and the
+      operator's own prose from the new config key `routing:` -- which
+      karr never parses, because the thing choosing is a language
+      model and prose is what it reads.
+
+      Routing itself needs no AI, and that is the point of what the
+      agent writes: an assignment, repository path to an ordered list
+      of agents with an explicit `WAIT` for "rather wait than use
+      anything further down". karr-foundation looks the repository up
+      and takes the first entry that currently works. A board whose
+      chain reaches `WAIT`, or whose agents are all failing, runs
+      nothing this tick and says so (`agent-waiting` in the overview)
+      instead of reading as a board nobody configured an agent for.
+      The assignment sits below a board's own `agent:` and above
+      `default_agent`, and -- like the definitions it names -- is
+      local and never in refs: an agent command that exists on one
+      machine does not exist on the next. It lives beside
+      `agents.state` as `assignment.yml` and follows `--config` with
+      it.
+
+      A fleet that marks no coordinator is unchanged in every
+      particular: nothing is recorded, nothing is called, and a chain
+      tick says exactly what it said before -- the operator is the
+      planner until somebody marks one.
+
     - The skill documentation karr hands to agents said several
       things that were no longer true, and one thing it said was
       broken in a way karr itself has a command against (#211).

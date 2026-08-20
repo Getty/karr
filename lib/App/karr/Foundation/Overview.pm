@@ -85,13 +85,22 @@ sub _print_overview {
     # least interesting question about a board. A named agent that is not
     # currently available says so here too, because from the outside that board
     # and a board in cooldown are doing the same nothing.
-    my $agent_error;
+    my ( $agent_error, $waiting );
     unless ( $disabled ) {
-      my ( $cmd, $agent );
-      try { ( $cmd, $agent ) = $self->foundation->_resolve_agent( $repo, $karr ) }
+      my ( $cmd, $agent, $wait );
+      try { ( $cmd, $agent, $wait ) = $self->foundation->_resolve_agent( $repo, $karr ) }
       catch { $agent_error = "$_"; chomp $agent_error };
       if ( defined $agent_error ) {
         push @flags, 'agent-error';
+      }
+      elsif ( defined $wait ) {
+        # Routed by the assignment, and told to wait (#210): every agent in
+        # this board's fallback chain is failing, or the chain says WAIT. Its
+        # own flag rather than no flag at all, because a board waiting for an
+        # agent to come back and a board nobody configured an agent for look
+        # identical from here and are fixed by different things.
+        push @flags, 'agent-waiting';
+        $waiting = $wait;
       }
       elsif ( defined $cmd ) {
         my $flag = 'agent';
@@ -115,6 +124,7 @@ sub _print_overview {
     printf "  disabled:    %s\n", $disabled->{reason} // 'no reason given'
       if $disabled;
     printf "  agent-error: %s\n", $agent_error if defined $agent_error;
+    printf "  waiting:     %s\n", $waiting          if defined $waiting;
     printf "  in-progress: %s\n", join( ', ', map { "#$_" } @in_progress ) if @in_progress;
     printf "  blocked:     %s\n", join( ', ', map { "#$_" } @blocked )     if @blocked;
     print "\n";
@@ -143,7 +153,11 @@ sub _print_agents {
   print "Agents\n";
   for my $name ( @names ) {
     my $def = $agents->definitions->{$name};
-    printf "  %-*s  %s\n", $width, $name, _availability_line( $agents, $name );
+    # Which one is the fleet's judgement layer, said here because this is the
+    # block that answers "what can run on this machine" -- and a coordination
+    # agent that is failing is why no new plan has appeared (#210).
+    printf "  %-*s  %s%s\n", $width, $name, _availability_line( $agents, $name ),
+      ( ( $def->{role} // '' ) eq 'coordinator' ? '  (coordinator)' : '' );
     next unless $self->foundation->verbose;
     printf "  %-*s  kind: %s\n", $width, '', $def->{kind};
     # The description is prose and is printed as written -- it is the selection

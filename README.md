@@ -80,6 +80,7 @@ Where the pieces live, and which of them travel:
 | `<repo>/.karr` | this machine, this repo | you |
 | `<repo>/.karr.state`, `.karr.lock`, `.karr.log` | this machine, this repo | foundation |
 | `agents.state`, beside `config.yml` | this machine | foundation |
+| `assignment.yml`, beside `config.yml` — which agents may work which repository, in order | this machine | the coordination agent (or you) |
 | `refs/karr/config` → `foundation.enabled` | **the board — syncs** | `karr disable` / `karr enable` |
 | `refs/karr-foundation/*` in the hub — the chain, its run logs, the question mailbox | **the fleet — syncs** | `karr-foundation chain` / `ask` / `answer` |
 
@@ -444,6 +445,66 @@ inside karr.
 command that exists on one machine does not exist on the next, and a spent
 account limit is a property of a person, not of a project.
 
+Which agent works which board is the other half of a fleet with several of them,
+and it is not something to write into every `.karr` by hand. Two config keys and
+one file cover it. First, mark the agent that does the routing — the fleet's
+**judgement layer**, an ordinary definition with a `role`:
+
+```yaml
+# ~/.config/karr-foundation/config.yml (same file as above)
+agents:
+  planner:
+    command: claude
+    kind: claude-code
+    role: coordinator       # exactly one agent may carry this
+    description: >-
+      Plans and routes. Called only when a plan is missing or has broken.
+
+routing: >-                 # prose, never parsed by karr
+  cheap does the routine work and the docs. main is for refactors and
+  anything touching a release. If main is down, wait rather than hand a
+  release to cheap.
+```
+
+`routing:` is the operator's own prose about how they want their agents used,
+and it goes into the coordination agent's prompt verbatim: the thing choosing is
+a language model, so there are no classes and no enums here either.
+
+What that agent writes is `assignment.yml`, beside `config.yml` — repository
+path to an ordered list of agents, with an explicit `WAIT` for "rather wait than
+use anything further down":
+
+```yaml
+repos:
+  /srv/docs-site:
+    - cheap
+    - main
+  /srv/webapp:
+    - main
+    - WAIT
+```
+
+From there routing needs no AI at all: foundation looks the repository up and
+takes the first entry that currently works. A board whose chain reaches `WAIT`,
+or whose agents are all failing, runs nothing this tick and says so —
+`agent-waiting` in the overview with the reason under it, because an agent board
+whose agents are down and a board nobody configured an agent for are fixed by
+different things:
+
+```console
+$ karr-foundation --status
+webapp
+  3 tasks  [agent-waiting]
+  backlog:1  todo:2
+  waiting:     the assignment says WAIT for this board (after main, which is failing)
+```
+
+The assignment sits below a board's own `agent:` — a board that names one has
+said the most specific thing there is to say about itself — and above
+`default_agent`, which is per fleet where this is per repository. Like the
+definitions it names, it is local and never in refs, and you can write it by
+hand: it is a plain routing table, not a cache.
+
 ### Case 5: the chain — write a plan, run it, read the run log
 
 `karr-foundation chain` is the VM of "the AI is the compiler, the chain is the
@@ -568,7 +629,7 @@ down for the case where nobody answers:
 | `open` | **pending and unclaimed** — dependents wait, every other branch runs |
 | `overdue` + `block` | keeps waiting: waiting *is* what `block` means |
 | `overdue` + `use_default` | **done**, with the `--default` as the answer |
-| `overdue` + `escalate_to_ai` | pending, and the planner recorded as wanted — **no agent is called**, because there is none |
+| `overdue` + `escalate_to_ai` | pending, and handed to the coordination agent at the end of the tick where the fleet marks one — the step is never answered on that agent's behalf |
 | nothing in the mailbox names the step | **`stale`** — a planning error, reported as one |
 
 Asked with `--policy use_default` and a `--default`, a deadline that passes
@@ -605,7 +666,8 @@ unanswered under it. Answer or delete a question the fleet has stopped caring
 about.
 
 A step whose precheck no longer holds is **not** executed: it is marked `stale`
-and the planner is recorded as wanted. A step that fails stops its own branch
+and the planner is recorded as wanted — and called, where the fleet marks a
+coordination agent (see below). A step that fails stops its own branch
 and nothing else. A rate-limited agent, a locked or disabled board and a
 repository this machine does not have are requeues, not failures — none of them
 is a statement about the plan.
@@ -674,7 +736,7 @@ Answered question #1: darkpan
 |---|---|
 | `block` (default) | keep waiting — that is what blocking means |
 | `use_default` | `--default` becomes the answer |
-| `escalate_to_ai` | recorded, and the planner noted as wanted — no agent is called, because there is none |
+| `escalate_to_ai` | handed to the coordination agent at the end of the tick, where the fleet marks one; recorded and left waiting where it does not |
 
 An answer is create-only and is validated against the options it was offered, so
 two answers cannot silently become one; `--force` on `answer` is what replaces
@@ -707,19 +769,22 @@ so it syncs and every foundation instance on every machine honours it. A
 disabled board is skipped **whole**: the flag is checked before the agent
 command is resolved and before the drain decision, so there is no drain, no
 auto-block and no agent run. It wins over `--command`, `default_command`, the
-`.karr` `command` and `claude: true`, and `--force` does *not* override it. The
+`.karr` `command`, a named `agent`, the assignment, `default_agent` and
+`claude: true`, and `--force` does *not* override it. The
 same state is readable and settable through `karr config get` / `karr config
 set` (`foundation.enabled`, `foundation.reason`).
 
 ### What is built, and what is not
 
-The design has three layers and karr owns two of them: **coordination** —
-shared and synced, the tickets, the chain, the questions, the run log;
-**execution** — local and never in a repository, which agent commands exist
-here, whether they work, how many may run at once; and **judgement** — an agent
-that plans and routes, invoked only when a written plan is missing or has
-broken. The third layer is the one that was never built, which is why "the
-planner is wanted" is a line of output rather than a call.
+The design has three layers: **coordination** — shared and synced, the tickets,
+the chain, the questions, the run log; **execution** — local and never in a
+repository, which agent commands exist here, whether they work, how many may run
+at once; and **judgement** — an agent that plans and routes, invoked only when a
+written plan is missing or has broken. karr owns the first two outright and
+calls the third: a fleet that marks one of its agents `role: coordinator` gets
+one call per tick carrying every deviation that tick met, and a fleet that marks
+none gets what this always was — "the planner is wanted" as a line of output,
+with the operator as the planner.
 
 | Piece | State |
 |---|---|
@@ -729,15 +794,17 @@ planner is wanted" is a line of output rather than a call.
 | the question mailbox: `ask`, `answer`, `--status` listing, policies | built |
 | `chain` with `kind: ticket`, `kind: shell` and `kind: question` steps, prechecks, run logs | built |
 | `kind: question` resolving the mailbox | built — pending and unclaimed while the answer is `open`, done once it is there, the default taken on `use_default`, `stale` when nothing in the mailbox names the step |
-| `kind: plan` steps | **not executed.** Recognised, left pending, with the planner recorded as wanted |
-| the coordination agent / planner | **not built.** It is the one layer of the design that was never written; ticket #210 on the karr board carries the build instructions |
-| writing a chain from the CLI | not built — a chain is written through `App::karr::Foundation::ChainStore` |
-| `escalate_to_ai` | recorded only, for the same reason: there is no agent to escalate to |
+| `kind: plan` steps | **still not executed** — recognised and left pending, because a plan step asks for a new plan and the executor executes plans. It is one of the four deviations that call the coordination agent |
+| the coordination agent / planner | built — `role: coordinator` on an agent definition, called once at the end of a tick for the deviations it met, writing the assignment, chains and questions |
+| routing: the assignment (`assignment.yml`) | built — repository to an ordered agent list with `WAIT`; looked up in the hot path, no AI in it |
+| writing a chain from the CLI | not built — a chain is written through `App::karr::Foundation::ChainStore`, which is also how the coordination agent is told to write one |
+| `escalate_to_ai` | handed to the coordination agent where one is marked; recorded and left waiting where none is |
 | cross-board links in a chain | built — the `ticket_links` fact measures the far cards for a precheck (`settled` / `open` / `missing`); resolving stays with `karr needs --resolve` |
 
 Where the design says "call the planner", foundation records that the planner is
-wanted and says so at the end of the tick — nothing is written that a future
-planner would have to undo, and no agent is invented to fill the gap:
+wanted and says so at the end of the tick. With no `role: coordinator` in the
+config that is the whole of it — nothing is written that a planner would have to
+undo, and no agent is invented to fill the gap:
 
 ```console
 $ karr-foundation chain
@@ -747,13 +814,33 @@ chain 20260818T053131Z-c075f7: 1 done, 1 skipped
 the planner is wanted for step(s) replan (kind: plan is not executed here) — no planner runs from here yet; re-plan the chain
 ```
 
+With one marked, the same tick ends by calling it — once, after everything else
+it could do, and with every deviation it met:
+
+```console
+$ karr-foundation chain
+step smoke (shell) in /srv/webapp: done — exit=0
+step replan (plan): left pending — this foundation runs kind: ticket, kind: shell and kind: question
+chain 20260818T053131Z-c075f7: 1 done, 1 skipped
+the planner is wanted for step(s) replan (kind: plan is not executed here) — the coordination agent is called at the end of this tick
+calling the coordination agent 'planner' for 1 deviation(s): step replan: kind: plan is not executed here
+the coordination agent 'planner' finished (success); the next tick runs what it wrote
+```
+
+The four deviations are a `kind: plan` step, an `escalate_to_ai` question past
+its deadline, a step gone `stale`, and a repository the assignment cannot route.
+The run happens in the hub, under the hub's own `.karr.lock`, with
+`KARR_ROLE=coordinator`; while that agent is itself failing it is not called and
+the deviation waits, exactly as a board waits for its own agent. Nothing is
+re-read afterwards — what it wrote is what the **next** tick runs.
+
 ### Reference
 
 `karr-foundation` options:
 
 | Option | Effect |
 |---|---|
-| `--config PATH` | config file (default `~/.config/karr-foundation/config.yml`); also relocates `agents.state` |
+| `--config PATH` | config file (default `~/.config/karr-foundation/config.yml`); also relocates `agents.state` and `assignment.yml` |
 | `--status` | read-only overview of every board, then exit |
 | `--dry-run` | decide everything, execute nothing (serial, and silent without `--verbose`) |
 | `--verbose` | log lines and agent output on the terminal, agent descriptions in `--status` |
@@ -775,6 +862,8 @@ a statement about the plan, not about the binary.
 | `concurrent:` | machine ceiling of boards with an agent at once (default 1) |
 | `hub:` | the repository carrying `refs/karr-foundation/*` |
 | `agents:` / `default_agent:` / `probe_every:` | named agent definitions, the fallback board agent, the default retry interval |
+| `role: coordinator` on one definition | marks the fleet's judgement layer; exactly one may carry it |
+| `routing:` | the operator's prose about how their agents should be used, handed to the coordination agent verbatim |
 | `default_command:` / `default_prompt:` | fleet-wide command and prompt |
 | `mode:`, `claude:`, `claude_bin:`, `claude_max_turns:`, `claude_permission_mode:`, `on_drained:`, `on_drained_max_runtime:`, `on_drained_max_rounds:` | fleet-wide defaults for the `.karr` keys of the same name |
 
@@ -797,14 +886,18 @@ exists, the `.karr` value wins; the rest exist only per repository):
 | `on_drained:` / `on_drained_max_runtime:` / `on_drained_max_rounds:` | the domain hook, its budget and its round cap |
 
 Command resolution order, highest first: `--command`, `default_command`, the
-`.karr` `command`, the `.karr` `agent`, `default_agent`, `claude: true`. A board
-disabled with `karr disable` runs none of them.
+`.karr` `command`, the `.karr` `agent`, the **assignment** (`assignment.yml`,
+asked only for a board that names no agent of its own), `default_agent`,
+`claude: true`. A board disabled with `karr disable` runs none of them, and a
+board whose assignment entry says `WAIT` — or whose agents are all failing —
+runs nothing this tick either.
 
 Full detail: `perldoc App::karr::Foundation`, and for the chain
 `perldoc App::karr::Foundation::Executor`,
 `perldoc App::karr::Foundation::ChainStore`,
 `perldoc App::karr::Foundation::Questions`,
-`perldoc App::karr::Foundation::Agents`.
+`perldoc App::karr::Foundation::Agents`,
+`perldoc App::karr::Foundation::Coordinator`.
 
 ## Run the examples yourself: the `ex/` sandbox
 

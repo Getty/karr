@@ -73,13 +73,22 @@ our $MAX_RECOVERIES = 20;
 # contract it does know.
 my %KIND = map { $_ => 1 } qw( shell claude-code );
 
+# The roles a definition may carry, which is how karr-foundation finds the one
+# agent that is its judgement layer (App::karr::Foundation::Coordinator). A
+# marker on a definition rather than a second config key naming an agent that
+# is already named: two names for one thing are two things to keep in step.
+# An unknown role is a hard error for the same reason an unknown kind is --
+# `role: coordinater` would leave a fleet with no judgement layer at all and
+# say nothing about it, on every tick, quietly.
+my %ROLE = map { $_ => 1 } qw( coordinator );
+
 # Keys a definition may carry. Not a schema for its own sake: a typo in
 # 'description' silently drops the one thing that decides where work goes, and
 # there is no other feedback loop -- an agent definition is never "run" until
 # something goes wrong. Unknown keys warn rather than die, so a config written
 # for a newer karr still starts.
 my %KNOWN_KEY = map { $_ => 1 } qw(
-  command kind probe_every description concurrent
+  command kind probe_every description concurrent role
   permission_mode max_turns allowed_tools
 );
 
@@ -93,7 +102,9 @@ Every configured agent definition, keyed by name, lazily parsed and
 validated from L</foundation>'s C<agents:> config section. Each value is a
 hashref carrying at least C<command> and C<kind> (defaulted to C<shell>),
 plus whatever else the config gave it -- C<probe_seconds> is added during
-parsing from C<probe_every> (see L</probe_seconds>). An empty hashref when
+parsing from C<probe_every> (see L</probe_seconds>), and C<role> (only
+C<coordinator> today) marks the one agent that is the fleet's judgement layer
+(L<App::karr::Foundation::Coordinator>). An empty hashref when
 the config has no C<agents:> section at all; a malformed section or
 definition (not a mapping, no C<command>, an unknown C<kind>) dies rather
 than starting with a fleet that silently cannot run.
@@ -127,6 +138,13 @@ sub _build_definitions {
       . '(expected: ' . join( ' or ', sort keys %KIND ) . ')' )
       unless $KIND{$kind};
     $d{kind} = $kind;
+
+    if ( defined( my $role = $d{role} ) ) {
+      user_error(
+        "Agent '$name' has unknown role '$role' "
+        . '(expected: ' . join( ' or ', sort keys %ROLE ) . ')' )
+        unless $ROLE{$role};
+    }
 
     $d{probe_seconds} = defined $d{probe_every}
       ? _duration( "Agent '$name' probe_every", $d{probe_every} )

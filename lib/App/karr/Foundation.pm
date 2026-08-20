@@ -31,6 +31,7 @@ use App::karr::Foundation::Agents;
 use App::karr::Foundation::ChainStore;
 use App::karr::Foundation::Executor;
 use App::karr::Foundation::Questions;
+use App::karr::Foundation::Coordinator;
 use App::karr::Foundation::Limits;
 
 # An unknown option or an option value that does not parse exits 2, not 1
@@ -236,6 +237,19 @@ sub _build__agents {
   return App::karr::Foundation::Agents->new( foundation => $self );
 }
 
+# The judgement layer (#210): the coordination agent, the deviations that want
+# it, and the assignment it writes so that routing needs no AI in the hot path.
+# Lazy and mostly a no-op -- a fleet whose config marks no agent
+# `role: coordinator` records nothing here and calls nothing.
+has _coordinator => (
+  is => 'lazy',
+);
+
+sub _build__coordinator {
+  my ( $self ) = @_;
+  return App::karr::Foundation::Coordinator->new( foundation => $self );
+}
+
 has _overview => (
   is      => 'lazy',
   handles => [qw( _print_overview )],
@@ -402,6 +416,8 @@ B<Config file:> C<~/.config/karr-foundation/config.yml> (or C<--config>).
 
   concurrent: 4             # boards that may have an agent at once (default: 1)
   hub: /path/to/hub-repo    # the repository carrying refs/karr-foundation/*
+  routing: >-               # prose for the coordination agent, never parsed
+    minimax is cheap; never hand it a release.
 
 B<Per-repo .karr file:>
 
@@ -448,6 +464,10 @@ them and a board can pick one:
       concurrent: 2           # runs of THIS agent at once -- see "Concurrency"
       description: >-
         Prose. What this agent is good at, where it is weak, what it costs.
+    planner:
+      command: claude
+      kind: claude-code
+      role: coordinator     # the fleet's judgement layer -- see below
 
   default_agent: minimax    # for boards whose .karr names none
   probe_every: 10m          # fleet-wide default for agents that name none
@@ -463,9 +483,10 @@ next, and an account limit is a property of a person, not of a project.
 
 C<agent:> resolves below the literal command strings and above C<< claude:
 true >> -- the full order is C<--command>, C<default_command>, the F<.karr>
-C<command>, the F<.karr> C<agent>, C<default_agent>, C<< claude: true >>. A
-board that names an agent the config does not define is an error that skips
-B<that board>, not one that silently stops running.
+C<command>, the F<.karr> C<agent>, the B<assignment> (see "The coordination
+agent" below), C<default_agent>, C<< claude: true >>. A board that names an
+agent the config does not define is an error that skips B<that board>, not one
+that silently stops running.
 
 B<Invocation contracts.> C<kind> says what karr may append to a definition's
 C<command>:
@@ -633,6 +654,78 @@ namespace around what they write, and C<--status> lists the open mailbox with
 the id each one is answered by. The storage, the retention and the argument for
 why an answer is its own ref rather than a field in the question are in
 L<App::karr::Foundation::Questions>.
+
+B<The coordination agent.> The third layer of the design and the only one that
+is an AI: coordination is shared state in refs, execution is local, and
+B<judgement> -- planning, routing, reacting to what nobody planned for -- is an
+agent. It is an agent like every other one: an entry in C<agents:>, invoked
+through its own C<command> under its own C<kind> contract, classified from its
+own result object, and marked C<failing> by the same availability record. What
+sets it apart is B<when> it runs, which is never in the hot path.
+F<karr-foundation> works through written plans by itself and calls this one only
+where a plan is missing or has broken. Between two of those, no AI runs at all,
+and that is what makes the arrangement affordable.
+
+Which agent it is, is a marker on the definition:
+
+  agents:
+    planner:
+      command: claude
+      kind: claude-code
+      role: coordinator
+
+and not a second config key naming an agent that is already named. Two marked
+definitions are refused rather than guessed between; C<< role: >> with anything
+else in it is a config error, because a typo there would leave a fleet with no
+judgement layer at all and say nothing about it.
+
+There are four deviations, and every one of them was already a place that
+recorded "the planner is wanted" and nothing else: a C<kind: plan> step, a
+question past its deadline whose policy is C<escalate_to_ai>, a step whose
+precheck no longer holds (stale), and a repository the assignment cannot route.
+The first three come out of the chain executor, the fourth out of agent
+resolution. A tick collects them and makes B<one> call at the end of itself,
+carrying all of them: a tick that met five deviations has learned one thing --
+the plan is out of date -- and five calls would pay five times to hear it. The
+call is last because a planner called half way through would be planning
+against a board the tick was still moving, and nothing is re-read afterwards:
+what it wrote is what the B<next> tick runs.
+
+The run happens in the hub, under the hub's own F<.karr.lock> (one agent per
+repository holds there as everywhere), with C<KARR_ROLE=coordinator> so its own
+C<karr> writes stay out of a board agent's activity log, and with its
+instruction in C<$PROMPT>: the deviations, where the fleet's files are, the
+agent list with each one's availability and prose, and the operator's own prose
+from the config's C<routing:> key. That prose is the routing criterion and karr
+never parses it -- the thing choosing is a language model, and it reads better
+than it matches taxonomies.
+
+B<The assignment> is what it writes so that routing needs no AI afterwards:
+
+  repos:
+    /path/to/repo:
+      - minimax
+      - claude
+      - WAIT
+
+Repository path to an ordered list of agents, with an explicit C<WAIT> for
+"rather wait than use anything further down". F<karr-foundation> looks the
+repository up and takes the first entry that currently works; a chain that
+reaches C<WAIT>, or whose agents are all failing, means the board runs nothing
+this tick and says so (C<agent-waiting> in the overview) rather than reading as
+a board nobody configured. C<--force> does not override that, for the same
+reason it overrides neither the cooldown nor an agent's availability: the wait
+is bounded and ends by itself. It sits below a board's own C<agent:> -- a board
+that names one has said the most specific thing there is to say about itself --
+and above C<default_agent>, which is per fleet where this is per repository.
+
+Like the agent definitions it names, the assignment is B<local and never in
+refs>: an agent command that exists on one machine does not exist on the next,
+so a table naming agents cannot be shared any more than they can. It lives
+beside F<agents.state> and the config, as F<assignment.yml>, and follows
+C<--config> with them. A fleet that marks no coordinator behaves exactly as it
+did before any of this existed -- the deviations are printed, and the operator
+is the planner. The details are in L<App::karr::Foundation::Coordinator>.
 
 B<Run mode.> C<mode> says what one pass over a repo is:
 
@@ -921,6 +1014,11 @@ sub run {
         . "enable agents; a board disabled with 'karr disable' never runs "
         . "one).\n\n";
     $self->_print_overview( \@repos );
+    # And still the one call the tick may make (#210): a fleet whose boards
+    # are routed by an assignment that does not exist yet reaches exactly this
+    # branch -- no board resolves an agent, because nothing has said which one
+    # -- and it is the branch that most needs the coordination agent.
+    $self->_coordinator->dispatch;
     return 0;
   }
 
@@ -952,6 +1050,14 @@ sub run {
   else {
     $self->_run_serially( map { $_->{repo} } @plan );
   }
+
+  # The judgement layer, last and once (#210). Last, because a planner called
+  # half way through would plan against a board this tick's own agents were
+  # still moving; once, because a tick that met five deviations has learned one
+  # thing and five calls would pay five times to hear it. Before the handlers
+  # go back to default: the coordination agent is a forked agent like any
+  # other, and a signal arriving during it has to take it down with us.
+  $self->_coordinator->dispatch;
 
   $self->_restore_default_signal_handlers;
   return 0;
@@ -1047,7 +1153,14 @@ sub _run_chain {
   user_error( 'Usage: karr-foundation chain [--dry-run] [--verbose] '
     . "\x{2014} the chain takes no arguments; what runs is what the plan in "
     . 'the hub says is ready' ) if @argv;
-  return $self->_executor->run;
+  my $exit = $self->_executor->run;
+  # The three chain-side deviations -- a kind: plan step, an escalate_to_ai
+  # question, a step gone stale -- are recorded by the executor as it meets
+  # them and answered here, once, after the tick has worked through everything
+  # it could (#210). The exit code is the executor's either way: whether a
+  # planner was called says nothing about whether this binary did its job.
+  $self->_coordinator->dispatch;
+  return $exit;
 }
 
 sub _run_answer {
@@ -1084,8 +1197,16 @@ sub _plan_repos {
     my %p = ( repo => $repo );
     push( @plan, \%p ), next if $self->_board_disabled( $repo );
     try {
-      my ( $cmd, $inv ) = $self->_resolve_agent( $repo, $self->_load_karr( $repo ) );
-      if ( defined $cmd ) {
+      my ( $cmd, $inv, $wait ) = $self->_resolve_agent( $repo, $self->_load_karr( $repo ) );
+      if ( defined $wait ) {
+        # An agent board whose assignment says wait (#210). It counts as an
+        # agent board -- it is one, and the overview fallback is for a config
+        # with no agents at all, not for one whose agents are down -- and it
+        # gets no fork: _process_repo says the skip and there is nothing to
+        # spend a concurrency slot on. Exactly what a board in cooldown does.
+        $p{runs_agent} = 1;
+      }
+      elsif ( defined $cmd ) {
         $p{runs_agent} = 1;
         $p{fork}       = 1;
         $p{agent}      = $inv->{name} if $inv;
@@ -1482,9 +1603,21 @@ sub _process_repo {
   my $karr = $self->_load_karr( $repo );
 
   # Resolve the agent command (CLI > default_command > .karr command > a named
-  # agent definition > claude: true synthesis). Agent execution is opt-in: a
-  # board with no agent is shown in the overview, not run.
-  my ( $cmd, $agent ) = $self->_resolve_agent( $repo, $karr );
+  # agent definition > the assignment > claude: true synthesis). Agent
+  # execution is opt-in: a board with no agent is shown in the overview, not
+  # run.
+  my ( $cmd, $agent, $wait ) = $self->_resolve_agent( $repo, $karr );
+
+  # The assignment routes this board and says nothing may run on it right now
+  # (#210): every agent in its fallback chain is failing, or the chain says
+  # WAIT. Skipped like a board in cooldown and for the same reason -- the wait
+  # is bounded and ends by itself -- and NOT reported as "no agent configured",
+  # which is a different board and a different fix.
+  if ( defined $wait ) {
+    $self->_say_verbose("skip $repo \x{2014} $wait");
+    return { outcome => 'skipped', reason => $wait };
+  }
+
   unless ( defined $cmd ) {
     $self->_say_verbose("skip $repo \x{2014} no agent configured (see --status)");
     return { outcome => 'skipped', reason => 'no agent configured' };
@@ -2379,7 +2512,14 @@ sub _load_karr {
 # availability is recorded against it, and nothing is appended to its command.
 #
 # Priority: CLI --command > config default_command > .karr command >
-# .karr agent > config default_agent > 'claude: true' shorthand.
+# .karr agent > the assignment (#210) > config default_agent >
+# 'claude: true' shorthand.
+#
+# The third return value is a reason to WAIT: the assignment routes this board
+# and every agent it names is currently failing, or it says WAIT outright. That
+# is not "no agent configured" and must not read as one -- the board runs
+# nothing this tick and runs again when an agent it is allowed to use comes
+# back.
 #
 # A named agent sits below the literal command strings and above the claude
 # shorthand: `command:` is the most specific thing a board can say (it is a
@@ -2394,7 +2534,24 @@ sub _resolve_agent {
     return ( $candidate, undef ) if defined $candidate && length $candidate;
   }
 
-  my $named = $karr->{agent} // $cfg->{default_agent};
+  # The assignment (#210), between the board's own `agent:` and the fleet-wide
+  # `default_agent`. A board that names an agent has said the most specific
+  # thing there is to say about itself and is not routed; a board that has not
+  # is exactly what the coordination agent's routing table is for, and that
+  # table is per repository, so it beats a default that is per fleet.
+  #
+  # Three answers, and only the first two are this method's business: an agent
+  # to run, a reason to wait (returned as the third value -- a board whose
+  # chain is exhausted or says WAIT runs nothing this tick and is NOT the same
+  # as a board with no agent configured), or nothing, in which case resolution
+  # carries on exactly as it did before there was an assignment at all.
+  my $named = $karr->{agent};
+  unless ( defined $named && length $named ) {
+    my $routed = $self->_coordinator->route( $repo );
+    return ( undef, undef, $routed->{wait} ) if $routed && defined $routed->{wait};
+    $named = $routed->{agent} if $routed && defined $routed->{agent};
+    $named //= $cfg->{default_agent};
+  }
   if ( defined $named && length $named ) {
     # An unknown name raises: a typo here is not a small mistake. Silently
     # falling back to no agent would park the board for good and say nothing,
