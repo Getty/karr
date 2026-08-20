@@ -1,0 +1,24 @@
+---
+class: standard
+completed: 2026-08-20T02:43:49Z
+created: 2026-08-20T02:15:39Z
+id: 216
+priority: medium
+started: 2026-08-20T02:43:49Z
+status: done
+tags:
+- docs
+- example
+- tests
+title: 'ex/-Sandbox: Testabdeckung und ein kaputter Hinweis in setup.sh'
+updated: 2026-08-20T02:43:49Z
+---
+
+Die Beispiel-Sandbox aus #212 (ex/) hatte keinerlei Testabdeckung -- kein einziger Test unter t/ hat sie je angefasst, obwohl sie getrackten Code enthaelt (setup.sh, vier Demo-Agenten unter ex/bin, vier Skripte unter ex/scripts) und die Konsolen-Beispiele der Doku gegen sie laufen sollen.
+
+Ausserdem gab die Schlusszeile von ex/setup.sh als naechsten Schritt "cd <ex> && ../README.md" aus. Das ist kein ausfuehrbarer Befehl, sondern eine Datei -- und der Pfad ist doppelt falsch: nach dem cd nach ex/ benennt ../README.md die Repo-README, nicht ex/README.md. Behoben: die Zeile nennt jetzt die Walkthrough-Datei im Satz, und die drei Folgezeilen sind ausschliesslich echte Befehle.
+
+Abdeckung neu: bash -n und das Executable-Bit fuer alle Shell-Skripte, perl -c fuer write-chain.pl, der getrackte Dateisatz gegen git ls-files, die gitignore-Zusage fuer den erzeugten Zustand, ein echter Ende-zu-Ende-Lauf von setup.sh in einem Wegwerf-Verzeichnis (lib/ und bin/ als Symlinks, damit REPO_ROOT und das FindBin von write-chain.pl greifen), die exakten Kartenformen beider Boards, die Chain im Hub ueber git for-each-ref, foundation --status, Idempotenz ohne --reset und der Wiederaufbau mit --reset. Dazu eine stehende Wache, dass der Lauf das echte ex/ nicht anfasst.
+
+Bewusst NICHT abgedeckt: dass karr-foundation die Demo-Agenten wirklich treibt (Drain-Schleife, Ticket-Modus, Cooldown, Fragen-Postfach). Diese Mechanik hat eigene Tests gegen synthetische Fixtures (t/185, t/186, t/191, t/193); hier wird nur bewiesen, dass die Sandbox den Zustand baut, auf dem das aufsetzt.
+Committet als 2fab22e zusammen mit #218. t/216-ex-sandbox.t: 61 Zusicherungen, PASS. Der Lauf laesst das echte ex/ nachweislich unangetastet (Snapshot-Vergleich vorher/nachher als stehende Wache im Test selbst).
