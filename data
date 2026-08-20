@@ -1,0 +1,110 @@
+---
+claimed_at: 2026-08-20T01:34:39Z
+claimed_by: walk-clip
+class: standard
+completed: 2026-08-20T01:34:03Z
+created: 2026-08-18T17:40:19Z
+id: 210
+priority: high
+started: 2026-08-20T00:48:44Z
+status: done
+tags:
+- fleet-coordination
+- foundation
+- chain
+title: 'karr-foundation: der Koordinationsagent (Judgement-Schicht, Arbeitspaket 10)'
+updated: 2026-08-20T01:34:39Z
+---
+
+ENTSCHEIDUNG DES MAINTAINERS 2026-08-18 (schliesst die offene Frage aus #194): Der Koordinationsagent WIRD als zehntes Arbeitspaket in karr gebaut. Dieses Ticket ist die Anweisung dafuer; es ist bewusst noch nicht zur Umsetzung freigegeben — erst nach Priorisierung. Wer es baut, folgt dem hier Geschriebenen und erfindet nichts dazu.
+
+WAS ER IST (Spec: karr get-refs refs/karr-foundation/spec/fleet-execution.md, Abschnitte 'The shape', 'The chain', 'Routing without a taxonomy'): die Judgement-Schicht — Planung, Routing, Reaktion auf Abweichungen. Er ist ein Agent wie jeder andere: ein Eintrag in der agents:-Konfiguration, aufgerufen ueber dessen command nach dem kind: claude-code Vertrag (#188), Ergebnis aus dem Result-JSON klassifiziert (#187), NIE im Hot Path. Zwischen zwei Abweichungen laeuft kein AI. Die AI ist der Compiler, die Chain das Programm, karr-foundation die VM.
+
+WANN ER GERUFEN WIRD — genau die vier Stellen, die heute 'Planer als gewuenscht' nur protokollieren. Alle vier existieren schon als Naht, keine neue erfinden:
+1. kind: plan — Executor::_do_step laesst den Schritt pending und protokolliert (Executor.pm, Dispatch oben in _do_step; POD 'What this executor does not do yet').
+2. escalate_to_ai — ueberfaellige Frage mit dieser Policy (_do_question_step; #200 hat bewusst nur protokolliert, weil der Agent nicht existierte).
+3. stale — ein Schritt, dessen precheck nicht mehr haelt, ruft laut Spec den Planer ('it is marked stale and calls the planner').
+4. Assignment fehlt/gebrochen — das Routing (s.u.) muss neu geschrieben werden.
+
+WAS ER LIEST (alles vorhanden, nichts Neues bauen):
+- agents:-Sektion der Konfiguration: command, kind, probe_every, prose description — die Prosa IST das Auswahlkriterium, keine Taxonomie, kein Enum (Spec 'Agents and availability').
+- agents.state daneben: pro Agent ok bzw. failing_since/next_attempt/last_error plus die begrenzte Liste aufgezeichneter Recoveries (#188). Beides sind bewusst einfache lokale Dateien OHNE CLI-Oberflaeche; stellt sich beim Bauen heraus, dass der Agent eine braucht, ist das ein NEUES Ticket, keine Aenderung an #188 (#194 haelt das explizit fest).
+- Die Prosa des Operators, wie seine Agenten einzusetzen sind (welche billig, welchen man Heikles anvertraut, was bei Ausfall, ungefaehre Parallelitaet — Schaetzungen, keine Limits).
+- Chain, Run-Log, Fragen-Postfach, Boards — ueber die vorhandenen Stores (ChainStore, Questions, BoardStore), nichts direkt aus refs parsen.
+
+WAS ER SCHREIBT:
+- Chains nach dem bestehenden Schritt-Schema (ChainStore.pm: id/kind/repo/ticket/needs/timeout/precheck/command/note). Kurze Chains — eine lange veraltet schneller, als sie abgearbeitet wird. Ein Schritt benennt NIE einen Agenten (die Chain ist geteilter Zustand, der Agent ist lokal).
+- Fragen IMMER vorab per karr-foundation ask --step ID — ein kind: question Schritt stellt seine Frage nicht selbst (#200 Entscheidung 1, Schema-Argument; bindend).
+- Das Assignment: Repo-Pfad -> geordnete Agentenliste mit Fallback-Kette, inkl. explizitem WAIT fuer 'lieber warten als das Falsche'. karr-foundation schlaegt nur nach und nimmt den ersten gerade funktionierenden Agenten; ist das Assignment da, wird der Koordinationsagent NICHT gerufen.
+
+ZU ENTSCHEIDEN BEIM BAUEN (Entscheidungen, keine Luecken — im Ticket dokumentieren wie bei #209):
+- Wie karr-foundation 'seinen' Koordinationsagenten erkennt (naheliegend: eine Rollen-Markierung in der agents:-Sektion; KEINE zweite Konfigquelle erfinden — #189s Argument).
+- Wo das Assignment liegt. Es ist Execution-Schicht (lokal, maschinenspezifisch — ein Agent existiert auf einer Maschine und nicht auf der anderen), also NICHT in refs; naheliegend neben agents.state.
+- Entprellung: mehrere 'Planer gewuenscht'-Protokolle in einem Tick ergeben EINEN Aufruf pro Zyklus, nicht einen pro Eintrag.
+- Was passiert, wenn der Koordinationsagent selbst failing ist: er ist ein Agent wie jeder andere, also greift dieselbe Verfuegbarkeitsmechanik — dann wartet die Stelle, die ihn wollte, weiter (heutiges Verhalten bleibt der Fallback).
+
+WAS ER NICHT IST (Grenzen, bindend):
+- Nichts Domaenenspezifisches wandert in karr: was 'done' fuer ein Projekt heisst, wie ein Release verifiziert wird, welche Projekte voneinander abhaengen — erreicht karr ausschliesslich ueber on_drained (#193) und die Prosa des Operators.
+- Kein Lernalgorithmus: Muster aus den Recovery-Aufzeichnungen liest der Agent, nicht karr.
+- Er hebt keine Blocks: Cross-Board-Links werden gemessen (ticket_links, #209), das Entblocken bleibt bei Mensch oder karr needs --resolve (#192 Entscheidung 4).
+- Eine-Agent-pro-Repository-Regel bleibt; Parallelitaet ist ueber Repos, nie in einem.
+
+Abgrenzung: #200s escalate_to_ai-Protokollierung und der kind: plan-Zweig sind die Landepunkte und werden hier ERWEITERT, nicht ersetzt; nichts davon muss rueckgebaut werden (so wurden sie gebaut). Epic #194 bleibt offen, bis dieses Ticket done ist.
+Umgesetzt, nicht committet. Der Koordinationsagent ist App::karr::Foundation::Coordinator; die vier benannten Aufrufstellen wurden erweitert, keine neue Naht gebaut.
+
+ENTSCHEIDUNGEN
+
+- ERKENNUNG: eine Rollen-Markierung auf der Agentendefinition, `role: coordinator` in der agents:-Sektion. Keine zweite Konfigquelle und kein `coordinator: name` auf oberster Ebene -- das waere ein zweiter Name fuer einen Agenten, der schon einen hat, und zwei Namen fuer eine Sache sind zwei Sachen, die man synchron halten muss (#189s Argument). Validiert wird in Agents.pm, wo die Definitionsschema-Pruefung schon sitzt: ein unbekannter Rollenwert ist ein harter Fehler wie ein unbekanntes `kind`, weil `role: coordinater` sonst eine Flotte ganz ohne Judgement-Schicht hinterlaesst und still darueber ist. Zwei markierte Definitionen werden verweigert statt geraten: "welcher von beiden ist die Judgement-Schicht" hat keine sichere Default-Antwort.
+
+- ORT DES ASSIGNMENTS: `assignment.yml` neben `config.yml` und `agents.state`, also lokal, maschinenspezifisch, folgt `--config`, nie in refs. Begruendung ist die von #188 fuer agents.state: eine Tabelle, die AGENTEN benennt, kann nicht geteilter sein als die Agenten selbst -- ein Kommando, das auf einer Maschine existiert, existiert auf der naechsten nicht. Format YAML (nicht JSON wie agents.state), weil diese Datei von einem Agenten GESCHRIEBEN und von karr gelesen wird, wie Chain und Fragen auch; agents.state ist umgekehrt. Schema: `repos: { PFAD: [ AGENT, ..., WAIT ] }`, Pfade ueber realpath normalisiert, ein Skalar statt Liste wird akzeptiert (dieselbe Nachsicht wie `needs:` im Chain-Schritt).
+
+- ENTPRELLUNG: `want()` sammelt nur und dedupliziert, `dispatch()` ruft genau einmal am ENDE des Ticks. Angehaengt wurde das an die EINE Stelle, an der der Executor die Planer-Eintraege ohnehin schon einsammelt (`@planner` in Executor::run), nicht an die drei Chain-Stellen einzeln -- damit bleiben `kind: plan`, `escalate_to_ai` und `stale` genau die Landepunkte, die sie waren, und es gibt keine dritte Buchhaltung. Der Aufruf selbst steht in Foundation::_run_chain bzw. am Ende von Foundation::run: ein Planer, der mitten im Tick liefe, plante gegen ein Board, das derselbe Tick noch bewegt. Nach dem Aufruf wird NICHTS neu gelesen -- was er geschrieben hat, faehrt der naechste Tick.
+
+- KOORDINATIONSAGENT SELBST FAILING: dieselbe Verfuegbarkeitsmechanik wie jeder andere Agent. `dispatch` fragt `available()`, sagt "is failing ... the plan waits" und laeuft nicht; die Stelle, die ihn wollte, wartet weiter -- das ist exakt das Verhalten von vor #210 und damit der Fallback. Ein Lauf mit Fehler (Exit ungleich 0 oder is_error im Result-JSON) schreibt record_failure, ein sauberer record_success; die Erholung landet im selben recovered-Trail wie bei Board-Agenten.
+WEITERE ENTSCHEIDUNGEN, die beim Bauen aufgetaucht sind
+
+- PLATZ DES ASSIGNMENTS IN DER AUFLOESUNGSREIHENFOLGE: unter dem `agent:` des Boards, ueber `default_agent`. Ein Board, das selbst einen Agenten nennt, hat das Spezifischste gesagt, was es ueber sich sagen kann; das Assignment ist pro Repository und schlaegt damit einen Default, der pro Flotte ist. Folge: eine Flotte ohne Assignment-Datei verhaelt sich in jedem Punkt wie vorher, und ein Board mit `command:`/`agent:` ruft den Koordinationsagenten NIE -- sonst zahlte jede bestehende Flotte AI-Kosten fuer eine Abweichung, die es nicht gibt.
+- DRITTER RUECKGABEWERT statt drittem Zustand in $cmd: `_resolve_agent` gibt jetzt ( $cmd, $inv, $wait ) zurueck. "Warten, weil jeder Agent der Fallback-Kette gerade faellt (oder die Kette WAIT sagt)" ist NICHT dasselbe wie "kein Agent konfiguriert" -- die beiden Boards sehen von aussen gleich aus und werden von verschiedenen Dingen repariert. Im Overview gibt es dafuer die Flagge `agent-waiting` plus eine `waiting:`-Zeile; im Plan zaehlt so ein Board als Agenten-Board (kein Fork, kein Overview-Fallback) -- genau wie ein Board in Cooldown.
+- ERSCHOEPFTE KETTE OHNE WAIT = ebenfalls warten, nicht weiterreichen an default_agent. Die Kette hat der Koordinationsagent geschrieben; ueber ihr Ende hinauszugehen waere karr, das selbst routet.
+- WO ER LAEUFT: im Hub, unter dessen eigenem .karr.lock (eine-Agent-pro-Repository gilt auch fuer den Hub), mit KARR_ROLE=coordinator. Ohne Hub wird er NICHT gerufen, sondern einmal gewarnt: Chain und Fragen leben in refs/karr-foundation/*, es gaebe also keinen Ort fuer sein Ergebnis. Budget: die `.karr` des Hubs (max_runtime), damit kein weiterer Knopf erfunden wird.
+- PROMPT: Runner::_run_command bekam eine Option `prompt =>`. Die alte Regel ("nur die Rolle agent bekommt einen Prompt, hook bekommt einen leeren") stimmte fuer zwei Rollen; der Koordinationsagent IST ein Agent, braucht eine Anweisung, aber nicht die des Boards. Kein Konfigschluessel, um den Prompt zu ersetzen -- was der Operator zu sagen hat, ist Prosa und steht in `routing:`, und ein zweiter Prompt-Schluessel waere die Stelle, an der man versehentlich den Teil ueberschreibt, der beschreibt, was karr zurueckliest.
+- NEUER KONFIGSCHLUESSEL `routing:` (oberste Ebene, dieselbe Datei): die Prosa des Operators, wie seine Agenten einzusetzen sind. Die Spec nennt sie ausdruecklich als Eingabe ("The operator writes prose describing how they want their agents used"), und die per-Agent-`description` kann "lieber warten als X" nicht ausdruecken. Karr parst sie nie, sie geht wortwoertlich in den Prompt. Keine zweite Quelle: derselbe config.yml, der die Agenten definiert.
+- KLASSIFIKATION: Result-JSON (#187) und Exit-Code, NIE der Textscan (#160). Der Scan ist fuer einen Board-Lauf gedacht, der nichts bewegt hat; dieser Lauf bewegt per Definition kein Board, und ein Planer, der ein Backlog ausgibt, wuerde ueber dessen eigene Woerter stolpern.
+
+BEFUND, KEIN EIGENMAECHTIGER BAU: es gibt kein CLI, um eine Chain zu schreiben (ChainStore->write_chain ist nur Perl-API; das README sagt "Today that means writing it from Perl"). Der Prompt gibt dem Agenten deshalb den Perl-Einzeiler ausgeschrieben. Nach der Regel dieses Tickets ("stellt sich heraus, dass der Agent eine Oberflaeche braucht, ist das ein NEUES Ticket") habe ich hier nichts erfunden -- ein `karr-foundation plan`-Kommando waere ein eigenes Ticket.
+DATEIEN
+- NEU lib/App/karr/Foundation/Coordinator.pm (Erkennung, Assignment lesen/routen, want/dispatch, Prompt-Bau, Klassifikation) mit vollem POD.
+- NEU t/210-foundation-coordinator.t (12 Subtests, 80 Assertions).
+- lib/App/karr/Foundation.pm: _coordinator-Attribut; _resolve_agent konsultiert das Assignment und gibt einen dritten Wert (wait) zurueck; _process_repo und _plan_repos behandeln diesen Zustand; dispatch am Ende von run() und in _run_chain; POD-Abschnitt "The coordination agent" plus Konfigbeispiele und Aufloesungsreihenfolge.
+- lib/App/karr/Foundation/Agents.pm: %ROLE, `role` als bekannter Definitionsschluessel, harter Fehler bei unbekanntem Wert; POD.
+- lib/App/karr/Foundation/Executor.pm: run() uebergibt die ohnehin gesammelten @planner-Eintraege an want(); _report sagt jetzt, ob ein Koordinationsagent existiert; POD-Absaetze, die "nicht gebaut, nicht aufrufbar, noch kein Ticket" sagten, auf den Stand gebracht (Verhalten unveraendert: der Executor plant weiterhin nichts und schreibt nichts, was ein Planer zuruecknehmen muesste).
+- lib/App/karr/Foundation/Runner.pm: Option `prompt =>` fuer _run_command (Rolle agent/hook unveraendert).
+- lib/App/karr/Foundation/Overview.pm: Flagge agent-waiting + waiting:-Zeile, "(coordinator)" im Agents-Block.
+- t/200-foundation-question-steps.t: eine Zusicherung und der Kopfkommentar auf den neuen Wortlaut der escalate_to_ai-Zeile gezogen (die alte behauptete "which is not built"). Kein Verhalten zurueckgebaut: Schritt bleibt pending, unclaimed, Planer-Eintrag mit policy escalate_to_ai unveraendert.
+- Changes: Eintrag unter {{$NEXT}}.
+
+ROTBEWEIS, acht getrennte Mutationen gegen eine Kopie von lib (prove -I<kopie> t/210-..., ohne -l, weil -l lib davor haengen wuerde):
+1) _resolve_agent konsultiert das Assignment nicht -> Subtests 2,3,4,5,6 fallen.
+2) Executor ruft dispatch pro Planer-Eintrag statt einmal -> Subtest 7 faellt ("ONE call at the end of the tick").
+3) dispatch fragt die Verfuegbarkeit des Koordinators nicht -> Subtest 9 faellt (er wird waehrend seines Ausfalls erneut gerufen).
+4) Klassifikation ohne Result-JSON (nur Exit) -> Subtest 10 faellt ("api 429" wird nicht geschrieben).
+5) want() ohne die configured-Sperre -> Subtest 11 faellt (eine Flotte ohne Koordinator wuerde Abweichungen sammeln).
+6) Zwei Koordinatoren: den ersten nehmen statt verweigern -> Subtest 1 faellt.
+7) prompt =>-Option ignoriert (Koordinator bekommt keinen Prompt) -> Subtests 6 und 7 fallen.
+8) dispatch nimmt das .karr.lock des Hubs nicht -> Subtest 12 faellt (zweiter Agent im selben Working Tree).
+
+TESTS (einzeln gefahren, kein -j, keine volle Suite -- der eine volle Lauf ist zentral):
+- prove -l t/210-foundation-coordinator.t -> PASS, 12 Subtests, 80 Assertions.
+- prove -l t/210-... t/00-load.t t/30-foundation.t t/31-foundation-drain.t t/33-foundation-run.t t/34-foundation-command.t t/63-foundation-disable-config.t t/185-foundation-ticket-mode.t t/186-foundation-concurrency.t t/187-foundation-result-json.t t/188-foundation-agents.t t/193-foundation-on-drained.t t/200-foundation-question-steps.t t/201-foundation-exit-codes.t t/202-foundation-chain-executor.t t/209-foundation-cross-board-facts.t -> Files=16, Tests=200, PASS, 0 Skips.
+- Zusaetzlich ein Rauchtest von Hand in Wegwerf-Verzeichnissen mit /bin/echo als Koordinationsagent: --status zeigt "(coordinator)", ein Tick ohne Assignment ruft ihn genau einmal, der Prompt steht vollstaendig in der .karr.log des Hubs. Kein echter Agent wurde je gestartet.
+
+NICHT GEBAUT (bewusst): kein CLI zum Schreiben einer Chain (s.o., waere ein eigenes Ticket); keine CLI-Oberflaeche fuer agents.state oder das Assignment (#194 haelt das fest); README und Skill-Doku nicht angefasst, weil #211 parallel genau daran arbeitet -- die zwei Stellen, die dort fehlen, sind die Dateitabelle (assignment.yml) und Case 4 (role: coordinator, routing:).
+Umgesetzt und getestet, NICHT committet -- der Maintainer sieht den Diff durch und committet zentral. Neu: lib/App/karr/Foundation/Coordinator.pm + t/210-foundation-coordinator.t; erweitert: Foundation.pm, Agents.pm, Executor.pm, Runner.pm, Overview.pm, t/200; Changes-Eintrag steht. Entscheidungen und Rotbeweis sind oben im Ticket dokumentiert. Offen und bewusst nicht gebaut: README/Skill-Doku (#211 arbeitet parallel daran) und ein CLI zum Schreiben einer Chain (eigenes Ticket).
+NACHTRAG (Doku nachgezogen, nachdem #211 committet war -- 93f77b7): README.md und .claude/skills/karr-foundation-cli/SKILL.md sind jetzt doch angefasst, auf dem neuen Stand gelesen und darauf aufgebaut. Damit ist die Zeile "README und Skill-Doku nicht angefasst" oben ueberholt.
+
+SKILL.md: Aufloesungsreihenfolge von sechs auf sieben Quellen (Assignment zwischen `.karr agent` und `default_agent`); `routing:` im config.yml-Beispiel; `role: coordinator` im agents:-Beispiel plus Absatz; neuer Abschnitt "The coordination agent" (vier Abweichungen, ein Aufruf pro Tick, Hub + .karr.lock + KARR_ROLE=coordinator, Assignment-Format mit WAIT, die Grenzen); `plan`-Schrittart und die escalate_to_ai-Politik im Postfach-Abschnitt korrigiert (sie sagten "not built yet"); Disable-Praezedenz um Assignment ergaenzt; Overview um agent-waiting und "(coordinator)"; Environment um KARR_ROLE=coordinator und den eigenen PROMPT; State-files-Notiz um das Assignment; Frontmatter-description um den Koordinationsagenten.
+
+README.md: Dateitabelle um assignment.yml (was, wer schreibt, wer liest, lokal); Case 4 um role: coordinator, routing:, das Assignment-Format und einen echten --status-Ausschnitt mit [agent-waiting]; die Drei-Schichten-Absaetze und die "What is built"-Tabelle korrigiert (der Koordinationsagent stand dort als "not built" mit Verweis auf dieses Ticket); die beiden escalate_to_ai-Tabellenzeilen; der stale-Absatz; Disable-Praezedenz; Reference (--config relocates assignment.yml, role:/routing: in der Schluesseltabelle, Aufloesungsreihenfolge, perldoc-Liste); dazu die Variante des Chain-Transkripts, in der ein markierter Koordinator gerufen wird. Das alte Transkript ohne Koordinator bleibt unveraendert stehen -- es ist fuer eine Flotte ohne Markierung weiterhin woertlich richtig.
+
+Keine Tests gefahren (reine Doku; der volle Lauf laeuft zentral). Die zwei Transkripte, die ich neu eingesetzt habe, sind gegen die echten Formatstrings geprueft: das --status-Beispiel mit [agent-waiting] habe ich in einer Wegwerf-Flotte einmal wirklich erzeugt und woertlich uebernommen, die "calling the coordination agent"-Zeilen stammen aus dem Rauchtest von gestern. SKILL.md wurde in-place geschrieben (Inode 11412954 unveraendert), nicht ueber Edit/Write.
+Committet als 8a433a9. Volle Suite danach zentral gefahren: Files=187, Tests=1313, PASS, 0 Skips (vorher 185/1298 -- die beiden neuen Testdateien aus #210 und #211). README und karr-foundation-cli/SKILL.md sind nachgezogen (der Nachtrag korrigierte auch die README-Stellen, die den Koordinationsagenten noch als 'not built' fuehrten). Der Befund zum fehlenden Chain-CLI ist als #213 erfasst. Beim Testlauf ausserdem aufgefallen und als #214 erfasst, aelter als dieses Ticket: App::karr::Foundation warnt 'Wide character in warn', wenn es als Modul ohne bin/karr-foundation geladen wird.
