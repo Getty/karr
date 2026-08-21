@@ -1,0 +1,54 @@
+---
+claimed_at: 2026-08-21T06:15:51Z
+claimed_by: will-deep
+class: standard
+completed: 2026-08-21T06:15:51Z
+created: 2026-08-21T05:47:44Z
+id: 223
+priority: medium
+started: 2026-08-21T05:48:06Z
+status: done
+tags:
+- claims
+- lifecycle
+title: Claim auf done/archived blockiert weiter edit und move, obwohl CONTEXT.md ihn
+  fuer freigegeben erklaert
+updated: 2026-08-21T06:15:51Z
+---
+
+Beim Abschliessen von #221/#222 aufgefallen, reproduziert auf einem Scratch-Board.
+
+## Befund
+
+    karr move 1 in-progress --claim alpha-one
+    karr move 1 done        --claim alpha-one
+    karr edit 1 -a "eine spaete Notiz"
+    -> Task 1 is claimed by alpha-one
+       1 of 1 ids failed
+    karr move 1 todo
+    -> Task 1 is claimed by alpha-one
+
+Eine Karte in einem terminalen Status wird also weiter von dem Agenten bewacht, der sie fertiggemacht hat und laengst weg ist. App::karr::Role::ClaimTimeout::check_claim (Zeile ~224-236) kennt vier Faelle -- kein Claim, Claimant passt, Claim abgelaufen, sonst sterben -- und keiner davon ist "die Karte ist done/archived". Der Status der Karte geht in die Entscheidung gar nicht ein.
+
+## Warum das ein Widerspruch ist, nicht nur eine Unbequemlichkeit
+
+CONTEXT.md, Abschnitt Language, sagt zum Claim woertlich: er ist "conceptually released when the Task reaches a terminal status", und unter Flagged ambiguities: "Provenance of who finished a Task comes from the Activity log, not from a retained claim. Display hides terminal claims; the data field is intentionally kept for interop/provenance."
+
+Das Vokabular erklaert den Claim auf einer done-Karte also fuer erledigt und das Feld fuer reine Provenienz. Der Code behandelt dasselbe Feld weiter als aktives Lease. Genau eine der beiden Seiten hat recht.
+
+Praktische Folge: wer einer fertigen Karte noch etwas anhaengen oder sie wieder aufmachen will, braucht den Claim-Namen eines Agenten, den `karr list` und `karr board` auf terminalen Karten bewusst verbergen. Ich musste ihn beim Abschluss von #221 selbst von `karr show` ablesen, um meine eigene Abschlussnotiz anzuhaengen.
+
+Begrenzt ist der Schaden durch claim_timeout (Default 1h): danach greift der expired-Pfad und die Karte ist wieder frei. Das Fenster ist also eine Stunde, nicht ewig -- aber es ist genau die Stunde direkt nach dem Abschluss, in der jemand noch etwas nachtraegt.
+
+## Der vorhandene Ausweg, und warum er die Sache nicht erledigt
+
+`karr edit 1 --release` funktioniert OHNE den Claim-Namen und macht die Karte frei. Der Guard ist damit ohnehin kein Schutz, sondern eine Bremsschwelle: zwei Kommandos statt einem. Wer den Umweg kennt, kommt durch; wer ihn nicht kennt, bleibt an einer Meldung haengen, die keinen Ausweg nennt.
+
+## Zu entscheiden beim Bauen
+
+1. Soll check_claim einen fuenften Fall bekommen ("Task ist in einem terminalen Status -> Claim bewacht nichts mehr")? Vorher pruefen, welche der vier Aufrufer (edit, move, delete, handoff) das trifft und ob eine done-Karte einen Schutz gegen gleichzeitige Mutation braucht, den sie dann verliert. Der Kommentarblock ueber check_claim begruendet jede der drei Abweichungen von kanban-md ausfuehrlich -- eine fuenfte Regel gehoert dort mitbegruendet, nicht nur eingebaut.
+2. Alternative, falls 1 abgelehnt wird: die Meldung nennt den Ausweg. `Task N is claimed by X` sagt heute den Zustand und nicht, was zu tun ist. Der Kommentar an Ort und Stelle erklaert, warum der kanban-md-Hinweis "add --claim X" nicht uebernommen wurde (karr delete hat kein --claim) -- das schliesst einen anderen, passenden Hinweis nicht aus.
+3. Kleiner Nebenbefund, gleiche Wurzel: `karr show` zeigt `Claimed: alpha-one` auf einer done-Karte, waehrend `karr list` und `karr board` den Claim dort verbergen. Ob das ein Fehler ist oder ob show als Detail-/Provenienzansicht das Feld absichtlich zeigt, entscheidet dieselbe Frage -- und CONTEXT.mds Satz "Display hides terminal claims" sollte danach entweder stimmen oder praeziser stehen.
+
+Was auch immer entschieden wird: CONTEXT.md und der Code muessen danach dasselbe sagen.
+Erledigt in 475a554. Punkt 1 gebaut: fuenfter Fall in check_claim, hinter dem Expiry-Test, damit die #177-Spur erhalten bleibt. Alle fuenf Aufrufer einzeln geprueft (das Ticket zaehlte vier -- archive ruft check_claim ebenfalls und konnte bisher nicht einmal vom Halter selbst auf dessen eigener fertiger Karte benutzt werden, weil es undef als Claimant uebergibt). Punkt 3 entschieden: karr show zeigt Claimed weiter, absichtlich -- show --agent NAME selektiert ueber claimed_by ueber alle Karten, ein Verbergen wuerde Karten ohne sichtbaren Claim listen, und to_json_hash traegt das Feld ohnehin. Stattdessen ist CONTEXT.mds zu grober Satz praezisiert. Volle Suite: 193 Dateien, 1414 Tests, pass. Der Nebenbefund ist als #224 eingetragen.
