@@ -1,0 +1,51 @@
+---
+claimed_at: 2026-08-21T11:47:55Z
+claimed_by: post-boss
+class: standard
+completed: 2026-08-21T11:47:55Z
+created: 2026-08-21T09:24:27Z
+id: 242
+priority: low
+started: 2026-08-21T11:16:06Z
+status: done
+tags:
+- crossboard
+- delete
+- parity
+title: delete sagt der anderen Boardseite nichts, obwohl die Karte den Verweis dorthin
+  traegt
+updated: 2026-08-21T11:47:55Z
+---
+
+Nebenbefund aus #236, dort ausdruecklich ausgeklammert. Vom Worker mit zwei Wegwerf-Boards nachgestellt.
+
+## Befund
+
+Board B hat eine Karte mit `needs: boardA#1`. Auf Board A:
+
+    karr delete 1 --yes     -> sagt nichts
+
+Danach auf Board B:
+
+    karr needs
+    -> needs boardA#1 -- task 1 does not exist on board boardA
+
+Also genau die Form von `2 (unknown)`, die #236 fuer das lokale Board geschlossen hat -- nur ein Repository weiter, und wieder erst hinterher. `CrossBoard::link_state` meldet es als `state => "missing"`.
+
+## Warum #236 es nicht mit erledigt hat
+
+Die Rueckwaertssuche dort geht ueber `load_tasks` des eigenen Boards. Die andere Boardseite ist von hier aus nicht sichtbar, und sie zu befragen hiesse, `karr delete` ein fremdes Repository oeffnen zu lassen -- eine andere Groessenordnung als eine Schleife ueber die eigenen Karten.
+
+## Was trotzdem lokal moeglich ist -- der eigentliche Umfang dieses Tickets
+
+Die zu loeschende Karte traegt den Verweis oft **selbst**: `escalated-from: <board>#<id>`, gesetzt ueber `karr create --escalated-from`, die andere Haelfte des Eskalationsprotokolls. `CrossBoard->escalated_from_of($task)` liest das direkt von der Karte, die gerade geloescht werden soll.
+
+Ein `delete` kann also sagen "Board B, Karte 5 hat das hier ausgeloest -- schau dort nach", ohne das fremde Board anzufassen. Das ist die ehrliche Reichweite: **die ferne Karte aus dem eigenen Tag benennen, nicht sie aufloesen.**
+
+## Zu entscheiden
+
+1. Reicht das, oder soll `delete` optional doch die bekannten Fleet-Boards befragen? Letzteres braucht die Fleet-Konfiguration und damit eine Abhaengigkeit, die `karr delete` heute nicht hat -- und `karr needs` ist das Kommando, das diese Frage schon beantworten kann. Meine Einschaetzung: die lokale Variante bauen, die andere nicht.
+2. Die Meldung sollte in Form und Kanal zu der aus #236 passen (STDERR, `--quiet` schweigt, `--json` traegt sie im Ergebnisobjekt), aber unterscheidbar bleiben -- sie sagt etwas anderes: nicht "diese Karte hier verliert ihren Verweis", sondern "dort drueben wartet jemand auf das Ergebnis".
+3. Gilt dasselbe fuer `karr archive`? Dort bleibt die Referenz aufloesbar, die Dringlichkeit ist also geringer -- pruefen, nicht annehmen.
+
+Erledigt in 01ea1a6. Reichweite bewusst schmal: die Warnung liest den Verweis vom eigenen Tag der zu loeschenden Karte und loest nichts auf -- ein Subtest loescht eine Karte mit 'escalated-from:nowhere-at-all#42' und bekommt den Satz trotzdem, ohne 'unknown board' irgendwo. Ein aufloesender Blick haette einem destruktiven Board-Kommando eine Abhaengigkeit von der Fleet-Konfiguration und von fremden Arbeitskopien gegeben, fuer eine Antwort, die karr needs schon gibt. Zwei Richtungen, zwei Saetze, weil es verschiedene Tatsachen sind: bei einer Eskalation wartet dort drueben womoeglich jemand, und archive haelt den Verweis aufloesbar -- dieser Satz traegt die Tuer; ein needs:-Link lebt auf der Karte und geht mit ihr, dort bricht nichts, und Behalten repariert nichts, also ohne Archive-Hinweis (per Test gepinnt). Eigenes Feld cross_board_warnings statt dependent_warnings, weil ein Konsument darauf anders reagieren muss und die Saetze nicht per Regex auseinandernehmen koennen soll. archive braucht das nicht -- Ende zu Ende geprueft, der Verweis bleibt aufloesbar und settelt. Genau daraus entstand #250. Dazu #248 und #249 eingetragen. Volle Suite: 208 Dateien, 1530 Tests, pass.
