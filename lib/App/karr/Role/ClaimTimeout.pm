@@ -181,7 +181,7 @@ has _expired_claims => (
 # else belongs to an agent who is still working on it, and the mutation is
 # refused rather than silently taking the claim over (ticket #56).
 #
-# Three deliberate differences from kanban-md:
+# Four deliberate differences from kanban-md:
 #
 #   * an expired claim is not cleared here. kanban-md's CheckClaim blanks
 #     ClaimedBy as a side effect of asking the question; in karr that would
@@ -204,6 +204,38 @@ has _expired_claims => (
 #     re-stamp claimed_by on the way through, so the previous holder is gone
 #     from the card too, and karr-foundation, which attributes stalls per claim
 #     name, is left attributing to a name nobody ever held.
+#
+#   * a task in a terminal status is not guarded at all, whoever holds the
+#     claim on it. kanban-md's CheckClaim never looks at the status, so this
+#     one is karr's rule rather than parity, and it comes from karr's own
+#     vocabulary: CONTEXT.md defines a Claim as the lease an agent holds
+#     *while working* a task, calls it released once the task reaches a
+#     terminal status, and keeps claimed_by there for provenance and interop
+#     only. That is not a private reading either -- `karr board` already prints
+#     no claimant on a finished card and leaves it out of its "N claimed"
+#     footer, both keyed on the very
+#     L<App::karr::Config/is_terminal_status> asked here, and `karr pick`
+#     refuses to hand a terminal card out again
+#     (L<App::karr::Role::PickRules>), so nothing can route a second agent onto
+#     finished work through this door. The code was the one place still
+#     treating the field as a live lease: the agent that finished a card went
+#     on guarding it for the rest of claim_timeout -- an hour by default, and
+#     precisely the hour in which the closing note gets appended, the card gets
+#     archived, or someone reopens it. Worse, the refusal demanded a name the
+#     board deliberately hides on exactly those cards, so the way through was
+#     to read it off `karr show`. And it never was a lock: `karr edit ID
+#     --release` takes any claim off without knowing whose it is, which made
+#     the rule two commands instead of one for whoever knew the way round and a
+#     dead end for everybody else (ticket #223). What still protects a finished
+#     card is what protects every card here: update_task_guarded's
+#     compare-and-swap, which is about concurrent writes and not about
+#     ownership.
+#
+# That last case is checked last, after the expiry test rather than before it,
+# although either order allows the same calls. The difference is the record: a
+# terminal card whose claim had *also* expired keeps reporting the takeover it
+# reported before (see expired_claim_report and #177), instead of losing that
+# line to a case that answers earlier and says nothing.
 #
 # Recorded, not printed, and for the same reason as
 # App::karr::Role::DependencyCheck: check_claim runs inside
@@ -232,6 +264,7 @@ sub check_claim {
         };
         return 1;
     }
+    return 1 if $self->store->is_terminal_status( $task->status );
     die sprintf "Task %d is claimed by %s\n", $task->id, $task->claimed_by;
 }
 
@@ -241,7 +274,7 @@ sub check_claim {
 
 In a command class that composes this role, decides whether C<$task>'s
 existing claim blocks the caller and either returns true or dies with
-C<"Task N is claimed by X\n">. Four cases, checked in order:
+C<"Task N is claimed by X\n">. Five cases, checked in order:
 
 =over 4
 
@@ -255,6 +288,13 @@ longer blocks anyone, but it is B<recorded> for L</expired_claim_report> so the
 override does not go unsaid, and it is not cleared as a side effect of asking
 (that stays kanban-md's behaviour, not karr's -- see the comment above this
 method for why);
+
+=item * the task sits in a status this board calls terminal
+(L<App::karr::Config/is_terminal_status>) -- a finished card is not being
+worked on, so the claim on it guards nothing: C<claimed_by> is kept there as
+provenance, which is the same reading C<karr board> applies when it prints no
+claimant on a finished card. Checked after the expiry case above so that a
+terminal card whose claim had also expired still reports the takeover;
 
 =item * otherwise -- the task belongs to someone still working on it, and the
 call dies rather than silently taking the claim over.

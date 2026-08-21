@@ -1,5 +1,26 @@
 {{$NEXT}}
 
+    - A claim on a task in a terminal status no longer blocks anything
+      (#223). `check_claim` knew four cases -- unclaimed, the claimant
+      matches, the claim expired, otherwise refuse -- and not one of them
+      asked what status the card was in, so the agent that finished a card
+      went on guarding it for the rest of `claim_timeout`, an hour by
+      default. That is exactly the hour in which the closing note gets
+      appended, the card gets archived, or someone reopens it, and the
+      refusal demanded a name `karr board` deliberately hides on finished
+      cards. CONTEXT.md had defined the claim as released on a terminal
+      status all along; the code was the one place still reading the field
+      as a live lease. All five commands that apply the rule -- `edit`,
+      `move`, `delete`, `archive`, `handoff` -- now go through on a card the
+      board calls terminal (`App::karr::Config/is_terminal_status`, so a
+      board ending in `shipped` releases there and nowhere else). Nothing
+      that actually protected a finished card changes: `update_task_guarded`
+      still compare-and-swaps, `karr pick` still refuses to hand a terminal
+      card out again. The new case is checked after the expiry test, so a
+      terminal card whose claim had also expired still reports the takeover
+      (#177). `karr show` and `--json` keep printing `claimed_by` as
+      provenance; `t/223-terminal-claim-released.t` pins both directions.
+
     - Five foundation tests no longer read the real
       `~/.config/karr-foundation/config.yml` of whoever runs the suite
       (#222). `App::karr::Foundation` falls back to that path whenever no

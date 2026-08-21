@@ -8,9 +8,12 @@ state lives in `refs/karr/*`; the `tasks/` directory is a materialized view.
 **Claim**:
 An active, expiring lease an agent holds on a **Task** while working it —
 recorded as `claimed_by` (+ `claimed_at`). It is *not* authorship: it expires
-(see Pick claim-timeout) and is conceptually released when the Task reaches a
-terminal status. The board hides claims on `done`/`archived` Tasks because the
-board shows live work-in-progress, not history.
+(see Pick claim-timeout) and is released when the Task reaches a terminal
+status — on a `done`/`archived` Task the claim guards nothing, and `edit`,
+`move`, `delete`, `archive` and `handoff` all go through whoever the field
+names. `karr board` shows no claimant on such a Task and leaves it out of its
+claimed count, because the board shows live work-in-progress, not history;
+`karr show` and `--json` still carry the field, as provenance.
 _Avoid_: owner, lock (the advisory ref lock is a separate mechanism).
 
 **Assignee**:
@@ -94,7 +97,9 @@ Claim names over time.
 
 - `claimed_by` read as "authorship/who-finished-it" vs. "active lease" —
   resolved: it is an **active lease**. Provenance of who finished a Task comes
-  from the **Activity log**, not from a retained claim. Display hides terminal
-  claims; the data field is intentionally kept for interop/provenance.
+  from the **Activity log**, not from a retained claim. A terminal claim is
+  released: it blocks no command, and `karr board` neither shows nor counts it.
+  The data field is intentionally kept for interop/provenance, so the detail
+  views — `karr show` and every `--json` payload — do still print it.
 - "owner" used loosely for both **Assignee** and **Claim** — resolved: these
   are distinct; avoid "owner".
