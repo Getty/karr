@@ -1,0 +1,51 @@
+---
+claimed_at: 2026-08-21T07:19:37Z
+claimed_by: hold-lord
+class: standard
+completed: 2026-08-21T07:19:37Z
+created: 2026-08-21T07:15:47Z
+id: 228
+priority: low
+started: 2026-08-21T07:15:56Z
+status: done
+tags:
+- context
+- docs
+- parity
+title: 'context: die Ueberschrift ''In Progress'' ist breiter als ihr Name, und nichts
+  sagt warum'
+updated: 2026-08-21T07:19:37Z
+---
+
+Abgespalten von #227, wo es als Nebenbefund steht. Ausdruecklich KEIN Verhaltensfehler -- zu aendern ist nur der Kommentar.
+
+## Befund
+
+`karr context` fuehrt eine Karte in `todo` unter "### In Progress" auf und zaehlt sie in der Kopfzeile als "active". Nachgestellt auf einem Scratch-Board: Karte 5 steht auf todo, ist von niemandem beansprucht, und erscheint
+
+    **3 tasks** | 3 active | 0 blocked | 0 overdue
+
+    ### In Progress
+
+    - **#1** Karte 1 (medium)      <- review
+    - **#2** Karte 2 (medium)      <- in-progress
+    - **#5** Karte 5 (medium)      <- todo
+
+Die Regel in Cmd/Context.pm (um Zeile 141-145) ist: nicht erster Status, nicht terminal, nicht blockiert. Auf dem Standardboard faellt darunter todo, in-progress und review.
+
+## Warum das so bleiben muss
+
+Exakte Paritaet mit der Referenz. kanban-mds buildInProgressSection (internal/board/context.go:161-170) benutzt dieselben drei Bedingungen, und computeSummary (:107-120) dieselbe Regel fuer "active" -- dort sogar mit einem eigenen Kommentar: "Active = not in first status (backlog) and not in terminal status (done)."
+
+Dazu ist der Kontextblock ein Interop-Vertrag: die Sentinels `<!-- BEGIN kanban-md context -->` sind laut Kommentar in Cmd/Context.pm absichtlich kanban-mds, damit beide Werkzeuge denselben Block in einer gemeinsamen Wirtsdatei pflegen. Wer die Sektion enger fasst, bricht den Vertrag.
+
+## Was fehlt
+
+Genau der Kommentar, den kanban-md an seiner Stelle hat und karr nicht. In Cmd/Context.pm steht ueber dem `in-progress`-Zweig nichts -- waehrend der `recently-completed`-Zweig direkt darunter ausfuehrlich begruendet ist (Ticket #99, mit Verweis auf kanban-mds buildRecentlyCompletedSection). Wer den Zweig heute liest, sieht eine Ueberschrift, die mehr verspricht als sie haelt, und keinen Hinweis, dass das Absicht ist.
+
+## Zu tun
+
+Ein Kommentar am `in-progress`-Zweig in `lib/App/karr/Cmd/Context.pm`, im Ton der Nachbarn: was die Sektion tatsaechlich umfasst (alles zwischen erstem Status und terminal, ausser blockiert), dass die Ueberschrift trotzdem "In Progress" heisst, dass beides von kanban-md kommt (buildInProgressSection, computeSummary) und dass der Sentinel-Interop-Vertrag der Grund ist, es nicht enger zu fassen. Denselben Gedanken bei der `$active`-Zaehlung (um Zeile 123), falls er dort nicht mit abgedeckt ist.
+
+Kein Test noetig -- es aendert sich kein Verhalten. Wenn beim Schreiben auffaellt, dass karr an dieser Stelle doch von kanban-md abweicht, ist das ein Fund fuer ein eigenes Ticket, nicht hier zu reparieren.
+Erledigt in 3d1bd2f. Kommentar an beiden Stellen (in-progress-Zweig und active-Zaehlung), Verhalten unberuehrt, kein Test noetig. Paritaet fuer den kommentierten Zweig bestaetigt: Bedingungen, Sortierung und Ueberschrift decken sich eins zu eins mit buildInProgressSection und sectionTitle. Mitgenommen im Kommentar: computeSummarys active-Test hat keine blocked-Bedingung, die Sektion schon -- Kopfzeile und Liste duerfen sich also um die blockierten Karten unterscheiden, und karr bildet das genauso ab. Der Vergleich hat eine echte Abweichung eine Zeile darueber zutage gefoerdert, die als #229 eingetragen ist.
