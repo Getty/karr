@@ -6,6 +6,13 @@ use Path::Tiny qw( path );
 
 use App::karr::Foundation;
 
+# Isolate HOME so the default ~/.config/karr-foundation/config.yml path
+# cannot resolve to a real file on the machine running the tests. Every
+# _run_command call below reaches it through _prompt_for (no prompt/ticket
+# override is given), so this covers the whole file rather than one subtest
+# the way t/30-foundation.t does.
+local $ENV{HOME} = tempdir( CLEANUP => 1 );
+
 my $f = App::karr::Foundation->new;
 
 subtest 'captures output and exit code, appends to .karr.log' => sub {

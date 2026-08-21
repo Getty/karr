@@ -210,6 +210,9 @@ subtest '_process_repo: a failing pull is isolated, the rest of the function is 
         . "on_idle: always-run\n"
         . "max_runtime: 5\n" );
 
+    # Isolate HOME so the default ~/.config/karr-foundation/config.yml path
+    # cannot resolve to a real file on the machine running the tests.
+    local $ENV{HOME} = tempdir( CLEANUP => 1 );
     my $f = App::karr::Foundation->new();
     my @warnings;
     my $died = !do {

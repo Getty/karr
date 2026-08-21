@@ -8,6 +8,13 @@ use App::karr::Git;
 use App::karr::BoardStore;
 use App::karr::Task;
 
+# Isolate HOME so the default ~/.config/karr-foundation/config.yml path
+# cannot resolve to a real file on the machine running the tests. Every
+# subtest below constructs its own App::karr::Foundation with no --config,
+# and _drain_repo reaches that default path (via _run_mode), so this covers
+# the whole file rather than one subtest the way t/30-foundation.t does.
+local $ENV{HOME} = tempdir( CLEANUP => 1 );
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

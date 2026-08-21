@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - Five foundation tests no longer read the real
+      `~/.config/karr-foundation/config.yml` of whoever runs the suite
+      (#222). `App::karr::Foundation` falls back to that path whenever no
+      `--config` is given, so every test that says
+      `App::karr::Foundation->new` and then reaches `_config_data` -- through
+      `_run_mode`, `_prompt_for` or `_resolve_agent` -- was reading the
+      machine's own fleet configuration. On a machine without the file it
+      showed only as a `config not found` line in the test output; with the
+      file present, a `mode: ticket` in it makes `t/31`, `t/150` and `t/165`
+      fail outright, confirmed against a decoy config. `t/31`,
+      `t/33`, `t/150`, `t/165` and `t/168` now isolate `$ENV{HOME}` into a
+      tempdir, the way `t/30-foundation.t` already did.
+
     - The `enable_std_utf8()` contract for library callers is written down
       (#221). `App::karr::Foundation` deliberately does not touch the
       caller's standard handles -- stacking a second `:encoding(UTF-8)`
