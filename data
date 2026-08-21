@@ -1,0 +1,60 @@
+---
+claimed_at: 2026-08-21T08:23:03Z
+claimed_by: sole-wage
+class: standard
+completed: 2026-08-21T08:23:03Z
+created: 2026-08-21T07:52:03Z
+id: 232
+priority: high
+started: 2026-08-21T07:54:47Z
+status: done
+tags:
+- claims
+- pick
+- bug
+- parity
+title: 'claim_timeout: 0s laesst jeden Claim sofort verfallen, obwohl das POD ''claims
+  never expire'' sagt'
+updated: 2026-08-21T08:23:03Z
+---
+
+Beim systematischen Paritaetsvergleich gefunden, selbst nachgestellt. Der Code widerspricht dem eigenen POD.
+
+## Reproduktion
+
+    karr config set claim_timeout 0s
+    karr move 1 in-progress --claim agent-a
+    karr move 1 todo --claim agent-a
+    karr pick --claim agent-b
+    -> Picked task 1: A (claimed by agent-b)
+
+agent-b nimmt agent-a die Karte weg, wenige Sekunden nach dem Claim.
+
+## Was dastehen sollte
+
+Das POD von `claim_timeout_secs` in Role/ClaimTimeout.pm sagt woertlich: der Fallback greift, "except an explicit C<0s>, which is honoured verbatim and means \"claims never expire\"". Der Kommentar ueber `_parse_timeout` sagt dasselbe fuer Locks: "0s is how a board says locks never expire, and swapping it for the default would silently turn that off".
+
+kanban-md macht es so: internal/board/filter.go, IsUnclaimed prueft `timeout > 0 && t.ClaimedAt != nil` und faellt bei `timeout == 0` auf `return false` durch -- der Claim gilt, immer.
+
+## Was karr tatsaechlich tut
+
+`_parse_timeout` ist richtig: `0 >= 0`, also wird die Null verbatim zurueckgegeben, kein Fallback. Der Fehler sitzt beim Verbraucher. `_claim_expired` rechnet schlicht `(jetzt - claimed_at) > $timeout_secs`; bei `0` ist damit jeder Claim, der aelter als eine Sekunde ist, abgelaufen. PickRules macht die Karte daraufhin pickbar, und check_claim laesst jede Mutation durch.
+
+`0s` bedeutet in karr also das genaue Gegenteil dessen, was das POD verspricht: nicht "nie", sondern "sofort".
+
+## Warum das schwer wiegt
+
+Es ist die Einstellung, mit der ein Board sagt "Claims sind hier verbindlich" -- und genau sie macht sie wertlos. Wer sie setzt, glaubt die Karten geschuetzt und hat das Gegenteil. In einem Mehr-Agenten-Lauf greifen sich zwei Agenten dieselbe Karte, ohne dass irgendetwas warnt.
+
+Bei `lock_timeout` ist die 0s-Semantik korrekt umgesetzt (siehe t/83-pick-exclusivity-and-locks.t um Zeile 298) -- vermutlich die Quelle der Verwechslung: die Null wird an einer Stelle richtig behandelt und an der anderen nicht.
+
+## Zu tun
+
+`_claim_expired` (und alles, was den Wert sonst noch als Sekundenzahl vergleicht) muss `0` als "nie" behandeln, nicht als "immer". Vorher pruefen:
+
+1. Wer ausser `_claim_expired` `claim_timeout_secs` liest -- PickRules, check_claim, moeglicherweise karr-foundation.
+2. Ob die Lock-Seite dieselbe Struktur hat und ob sich beide auf einen gemeinsamen Helfer ziehen lassen, damit die Null nicht ein drittes Mal auseinanderlaeuft.
+3. Was ein negativer oder unparsbarer Wert tut (der Fallback greift dort schon, aber der Test sollte es festhalten).
+
+Regressionstest: mit `claim_timeout: 0s` darf ein fremder Agent weder picken noch mutieren, und `expired_claim_report` darf nichts melden. Dazu die Gegenprobe, dass ein normaler Timeout (1h, abgelaufen) weiter uebernommen werden kann -- der Fix darf die Uebernahme nicht generell abschalten.
+Erledigt in c3a44a5. Genau eine Vergleichsstelle war betroffen -- _claim_expired -- und check_claim, PickRules::pickable, karr pick und karr-foundations Ticket-Auswahl haben den Fehler von dort geerbt. Alle uebrigen Leser von claim_timeout_secs wurden rueckwaerts durchgegangen und lesen die Null korrekt. Die Lock-Seite wurde bewusst NICHT in einen gemeinsamen Helfer gezogen: die Ueberlappung ist ein Zwei-Term-Boolean, alles drumherum unterscheidet sich (andere Schicht, Git-Commit-Zeit statt RFC3339, eigener Fallback, Guard vor einem Ref-Read), und Lock.pm gehoert einer anderen Domaene. Stattdessen pinnt t/232 beide Antworten in einer Datei -- wer einen der Guards allein entfernt, macht sie rot. Der Vertrag fuer eine spaetere Extraktion steht im Kommentar. Mitgenommen: config set und das Config-POD sagen jetzt '0s to disable' fuer claim_timeout, so wie sie es fuer lock_timeout schon taten -- diese Asymmetrie hat die Verwechslung genaehrt. Volle Suite: 198 Dateien, 1445 Tests, pass.
