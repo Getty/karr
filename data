@@ -1,0 +1,57 @@
+---
+claimed_at: 2026-08-21T06:44:30Z
+claimed_by: holy-pink
+class: standard
+completed: 2026-08-21T06:44:30Z
+created: 2026-08-21T06:03:53Z
+id: 224
+priority: high
+started: 2026-08-21T06:16:08Z
+status: done
+tags:
+- claims
+- lifecycle
+- pick
+title: 'Reopen traegt den Claim des Fertigstellers mit: die Karte steht auf todo und
+  niemand kann sie picken'
+updated: 2026-08-21T06:44:30Z
+---
+
+Nebenbefund aus #223, dort bewusst nicht mitgebaut. Selbst reproduziert mit dem Arbeitsbaum-Stand (bin/karr aus lib/), nicht nur aus dem Report uebernommen.
+
+## Reproduktion
+
+    karr move 1 in-progress --claim alpha-one
+    karr move 1 done        --claim alpha-one
+    karr move 1 todo                            # Reopen, ohne --claim
+    karr show 1   -> Status: todo   Claimed: alpha-one
+    karr edit 1 -a "x"  -> Task 1 is claimed by alpha-one
+    karr pick --claim beta-two  -> No available tasks to pick.
+
+Die Karte steht auf todo, `karr list` zeigt sie als offen, `karr board` zaehlt sie unter "1 claimed" -- und der Picker gibt sie an niemanden aus. Auf dem Testboard war sie die einzige Karte, und `pick` sagte trotzdem "No available tasks to pick".
+
+## Was tatsaechlich passiert
+
+Ein Statuswechsel raeumt `claimed_by` nicht -- das war noch nie so, und `check_claim` raeumt aus dokumentiertem Grund grundsaetzlich nichts als Nebenwirkung (siehe den Kommentarblock in App::karr::Role::ClaimTimeout). Verlaesst eine Karte einen terminalen Status, wandert der Name des Fertigstellers also in einen Arbeitsstatus mit, und dort ist er wieder ein scharfes Lease.
+
+Zum `claimed_at`: der Reopen selbst stempelt es *nicht* neu (nachgemessen: gleicher Wert vor und nach dem Reopen). Frisch ist es trotzdem, weil `karr move ID done --claim NAME` es beim Abschluss neu stempelt. Die Uhr des Claims laeuft damit ab dem Moment der Fertigstellung -- die Karte bleibt also bis zu einer vollen Stunde (Default claim_timeout) unpickbar und fuer alle ausser alpha-one unbearbeitbar.
+
+## Wie alt das ist
+
+Aelter als #223. Auch vorher konnte der Halter selbst `karr move 1 todo --claim alpha-one` fahren und landete im selben Zustand; ebenso jeder andere nach Ablauf des claim_timeout. #223 hat den Weg nur verbreitert: der Reopen ohne --claim durch einen Dritten ist jetzt erlaubt und ist der wahrscheinlichste Weg dorthin, weil er der bequemste ist.
+
+## Warum das mehr ist als Kosmetik
+
+karr-foundation draint Boards, indem es dem Agenten Karten zuteilt. Eine Karte, die in todo steht, in jeder Uebersicht als offene Arbeit erscheint und vom Picker stumm uebersprungen wird, ist genau die Sorte Stillstand, die niemand als Fehler sieht -- der Drain-Lauf meldet "nichts zu tun", das Board zeigt offene Arbeit. Kein Kommando sagt, warum.
+
+## Vorschlag zum Bauen (zu pruefen, nicht als gesetzt zu nehmen)
+
+Der Ort waere `apply_status_change` in lib/App/karr/Role/TaskMutation.pm -- dort, wo `update_timestamps` beim Reopen schon `completed` loescht. Regel in der Art: verlaesst eine Karte einen terminalen Status und bringt der Aufrufer keinen neuen Claimant mit, wird `claimed_by`/`claimed_at` geraeumt. Vorher zu klaeren:
+
+1. Was passiert, wenn der Aufrufer einen Claimant mitbringt (`move ID todo --claim beta-two`)? Dann soll der neue Name gelten, nicht der alte -- pruefen, ob das heute schon so ist.
+2. Beruehrt das `handoff` (done -> review mit --claim)? Dort bringt der Aufrufer immer einen Namen mit, sollte also unberuehrt bleiben.
+3. Der Activity log ist laut CONTEXT.md die Provenienzquelle. Beim Raeumen geht der Name von der Karte, nicht aus dem Log -- pruefen, ob der Uebergang dort ueberhaupt als Eintrag landet, sonst geht die Spur verloren.
+4. Gibt es einen Fall, in dem das Mitschleppen des Claims gewollt ist -- eine Karte, die kurz nach done zurueckgeholt wird und beim selben Agenten bleiben soll? Falls ja, ist die Antwort vielleicht nicht Raeumen, sondern dass `pick` und `edit` den Grund nennen, statt stumm zu ueberspringen.
+
+Regressionstest muss beide Haelften pinnen: die geraeumte Karte ist wieder pickbar, und ein Reopen MIT --claim setzt den neuen Namen.
+Erledigt in b290285. Regel in apply_status_change, drei Bedingungen wie vorgegeben. Eine Entscheidung ueber die Vorgabe hinaus: die Freigabe laeuft VOR dem require_claim-Check, nicht danach -- sonst erfuellt ein Claim auf dem Weg von der Karte den Check noch und die Karte landet ohne Besitzer in einer Spalte, die laut Board einen braucht (das Loch aus #150). Folge: 'move ID in-progress' von einer fertigen Karte verlangt jetzt --claim, statt die Arbeitsspalte still an den Fertigsteller zu vererben. Zur Log-Frage: der Uebergang wird protokolliert und der Eintrag wird sogar genauer -- log_agent fiel bisher auf claimed_by der mutierten Karte zurueck und schrieb den Reopen dem Fertigsteller zu, der das Kommando nie ausgefuehrt hat; mit geraeumtem Feld faellt es auf die Git-Identitaet zurueck. Offen geblieben und bewusst nicht gebaut: Boards, deren Claims ueber import/restore/repair hereinkommen, haben dafuer gar keinen Log-Eintrag, dort bleibt die erste Freigabe spurlos. Ein released_claim-Detail waere eine ActivityLog-Schemaaenderung und Sache jedes karr-log-Lesers -- nicht auf Verdacht. Volle Suite: 195 Dateien, 1427 Tests, pass.
