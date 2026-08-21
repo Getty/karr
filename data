@@ -1,0 +1,35 @@
+---
+claimed_at: 2026-08-21T05:45:19Z
+claimed_by: hung-stay
+class: standard
+completed: 2026-08-21T05:45:19Z
+created: 2026-08-20T16:15:59Z
+id: 221
+priority: low
+started: 2026-08-21T05:17:25Z
+status: done
+tags:
+- foundation
+- encoding
+- docs
+title: 'App::karr::Foundation als Bibliothek: enable_std_utf8() ist ein ungeschriebener
+  Teil des Contracts'
+updated: 2026-08-21T05:45:19Z
+---
+
+Befund aus #214, dort bewusst NICHT geloest.
+
+#214 hat alle Non-ASCII-Zeichen aus den String-Literalen des Foundation-Subsystems entfernt (45 Stellen in 6 Dateien), womit die Warnung "Wide character in warn" fuer die festen Meldungen verschwindet. Punkt 2 des Tickets bleibt damit aber offen: die Annahme "jemand anders hat meine Handles schon konfiguriert" ist fuer eine CPAN-Distribution weiter da, nur ohne aktuellen Ausloeser.
+
+Der Worker hat ausdruecklich GEGEN das Absichern der Handles in der Bibliothek entschieden, mit drei Gruenden, die tragen:
+
+1. :encoding-Layer stapeln. Ein vorsorgliches binmode auf einem Handle, das die Schicht schon traegt, ist eine zweite Schicht -- also genau die Doppelkodierung, gegen die App::karr::Encoding existiert. Von innerhalb eines Moduls nicht billig feststellbar.
+2. Es veraendert die Globals des Aufrufers. Wer vorkodierte Oktetten nach STDOUT schreibt, bekaeme sie still ein zweites Mal kodiert. Diese Entscheidung gehoert dem Programm, nicht einer Klasse, die es laedt.
+3. CLAUDE.md gibt App::karr::Encoding das alleinige Eigentum an jedem Uebergang, und die beiden Std-Handle-Uebergaenge gehoeren bin/karr und bin/karr-foundation. Auch App::karr selbst bewaffnet sich nicht. Ein zweiter Eigentuemer in Foundation.pm wuerde die Regel fuer ein Subsystem aufspalten.
+
+Was offen bleibt: ASCII-Literale schliessen das Loch fuer feste Meldungen, nicht fuer datengetriebene. "skip $repo -- $wait" mit einem Non-ASCII-Pfad, oder ein clean_error(), das eine YAML-Meldung mit einem breiten Zeichen traegt, kann weiter warnen. Innerhalb der Bibliothek ist das aus Grund 1-3 nicht behebbar.
+
+Die haltbare Antwort ist Dokumentation: enable_std_utf8() als Teil des Contracts fuer Bibliotheksnutzer benennen, im POD von App::karr::Foundation und/oder App::karr::Encoding -- wer die Klasse laedt, statt bin/karr-foundation zu rufen, richtet die Handles selbst ein. Heute steht das nirgends, und der einzige Hinweis darauf ist, dass die beiden bin-Skripte es tun.
+
+Zu klaeren beim Bauen: ob es ins POD von Foundation.pm gehoert (wo der Nutzer ankommt) oder von Encoding.pm (wo die Regel wohnt) oder in beide, und ob t/31-foundation-drain.t und t/33-foundation-run.t die Handles kuenftig selbst einrichten sollen, damit der Testlauf zeigt, was ein Bibliotheksnutzer tun muss.
+Erledigt in ab3e6da. Reine Dokumentation, kein Verhalten geaendert: der =description-Block von App::karr::Foundation benennt jetzt das Setup, das ein direkter Bibliotheksnutzer selbst fahren muss -- enable_std_utf8() UND decode_argv(), weil new_with_options @ARGV liest -- samt der Kosten beider Auslassungen. Encoding.pm bekommt einen Verweissatz auf der bestehenden STDOUT/STDERR-Aufzaehlung statt einer zweiten Kopie. Die Code-Loesung bleibt abgelehnt (Gruende 1-3 aus #214). Der Test-Teil der Frage ist in #222 beantwortet: nein, und warum.
