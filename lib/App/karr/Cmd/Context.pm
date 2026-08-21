@@ -121,6 +121,10 @@ sub execute {
   # Build summary
   my $board_name = $ec->{board}{name} // 'Kanban Board';
   my $total = scalar @active_tasks;
+  # "Active" is kanban-md's computeSummary rule -- not the first status, not a
+  # terminal one -- so it counts the same span the "In Progress" section renders
+  # below, blocked cards included. See there for why that span is wider than the
+  # heading sounds.
   my $active = grep { $_->status ne $first_status && !$self->store->is_terminal_status($_->status) } @active_tasks;
   my $blocked = grep { $_->has_blocked } @active_tasks;
   my $overdue = $self->_count_overdue(\@active_tasks);
@@ -139,6 +143,17 @@ sub execute {
     my @items;
 
     if ($sec eq 'in-progress') {
+      # Wider than its heading: everything between the first status and the
+      # terminal ones, minus the blocked -- on the default board that is `todo`,
+      # `in-progress` and `review`, not the column of the same name alone. Both
+      # halves are kanban-md's: the three conditions from buildInProgressSection,
+      # the "In Progress" title from its sectionTitle, and computeSummary counts
+      # that same span as "active" in the header above.
+      #
+      # Narrowing the section to the literal `in-progress` column would break the
+      # sentinel interop contract explained in _render_markdown below: karr and
+      # kanban-md maintain one block in a shared host file, so they have to agree
+      # on what goes in it, heading included.
       @items = map { $self->_task_item($_) }
         sort { $self->_pri_order($a) <=> $self->_pri_order($b) }
         grep { $_->status ne $first_status && !$self->store->is_terminal_status($_->status) && !$_->has_blocked }
