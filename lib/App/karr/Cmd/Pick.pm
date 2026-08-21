@@ -66,6 +66,17 @@ so a board imported from kanban-md with a longer priorities list ranks
 according to its own list. Lower class index is more urgent; higher priority
 index is more urgent (matches kanban-md's pick.go).
 
+=item * C<fixed-date>
+
+Where both candidates carry the C<fixed-date> class, the due date is asked
+before priority: the card due sooner goes first, and a C<fixed-date> card with
+no due date sorts behind every dated one. Undated on both sides, or the same
+date on both, leaves priority to decide. Only that class, and only against
+itself -- a C<fixed-date> card meeting any other class is ranked by class index
+alone, whatever the dates say. This too is kanban-md's rule (its
+C<sortPickCandidates>), and it is where a class of service that exists for a
+deadline stops being ranked by urgency instead.
+
 =item * C<--move>
 
 Optionally updates the picked task to a new status such as C<in-progress>.

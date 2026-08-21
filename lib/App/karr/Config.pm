@@ -516,6 +516,13 @@ sub _has_duplicates {
 # hardcodes (internal/config/config.go, ArchivedStatus).
 use constant ARCHIVED_STATUS => 'archived';
 
+# The class of service that is ranked by its date rather than by its priority
+# (internal/board/pick.go, sortPickCandidates). Class names otherwise mean
+# nothing to karr beyond their position in the board's `classes` list -- this
+# is the single exception, so it gets a name here rather than a literal in
+# App::karr::Role::PickRules (ticket #233).
+use constant FIXED_DATE_CLASS => 'fixed-date';
+
 # What a class-method call answers with, i.e. when there is no board config to
 # derive from. It is the default board's own pair, so nothing that has always
 # asked App::karr::Config->is_terminal_status changes its answer.

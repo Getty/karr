@@ -102,7 +102,8 @@ the same call C<karr pick> makes, not a mirror of it: not in a terminal status
 blocked, and not held by a live claim, where a claim past the board's
 C<claim_timeout> no longer blocks anybody here either. Ranking is
 L<App::karr::Role::PickRules/pick_rank>: class of service, then priority, then
-id.
+id -- with kanban-md's one exception, where two C<fixed-date> cards are
+ranked by the sooner due date before priority is asked (#233).
 
 Unmet dependencies are not filtered out, which is C<karr pick>'s behaviour and
 comes from applying its rules: nothing about C<depends_on> blocks anything in

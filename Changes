@@ -1,5 +1,19 @@
 {{$NEXT}}
 
+    - `karr pick` ranks two `fixed-date` cards by the sooner due date before
+      it asks about priority (#233). karr sorted class, then priority, then
+      id, and `due` did not appear in the ranking at all -- so the one class
+      of service that exists because a date rather than an urgency rating
+      decides was the one place the date was ignored. Given a card due in
+      March at `high` and one due in February at `low`, karr handed out the
+      March card and kanban-md the February one. The exception is narrow, and
+      it is kanban-md's: only where B<both> candidates carry `fixed-date`,
+      and only between them -- a `fixed-date` card meeting any other class is
+      ranked by class index alone, however soon either is due. A
+      `fixed-date` card with no due date sorts behind every dated one;
+      undated on both sides, or the same date on both, leaves priority to
+      decide, which is what `compareDue` does in the reference.
+
     - A `move` to the status a card already has, and an `edit` that names no
       field at all, no longer write (#231). Both went through the whole
       mutation path: `save_task_cas` stamps `updated` on every write and the

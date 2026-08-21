@@ -124,6 +124,10 @@ sub pick_rank {
     # priority is `(max - priority_index)` -- most-urgent-last in the config
     # list comes out first. A priority the board does not list at all sorts
     # below every listed one; an unlisted class sorts with `standard`.
+    #
+    # Between class and priority sits kanban-md's one exception, and it is not
+    # a general due-date rule: only where both cards carry `fixed-date` does
+    # the date come first (ticket #233).
     my $cfg        = App::karr::Config->from_merged( $self->store->effective_config );
     my @priorities = $cfg->priorities;
     my @classes    = $cfg->classes;
@@ -134,6 +138,7 @@ sub pick_rank {
 
     return sort {
         ( ( $cls_idx{ $a->class } // $std_cls_idx ) <=> ( $cls_idx{ $b->class } // $std_cls_idx ) )
+          || $self->_fixed_date_due_cmp( $a, $b )
           || ( ( $max_pri - ( $pri_idx{ $a->priority } // -1 ) )
             <=> ( $max_pri - ( $pri_idx{ $b->priority } // -1 ) ) )
           || $a->id <=> $b->id
@@ -151,7 +156,52 @@ is more urgent, higher priority index is more urgent -- kanban-md's convention,
 from its F<pick.go>. The id tie-break makes the order total, so the first
 element is well defined however the sort was reached.
 
+One class breaks that order, and only against itself: where B<both> cards are
+C<fixed-date>, the due date decides before priority is asked (ticket #233).
+Earlier due first; a C<fixed-date> card with no due date sorts behind every
+dated one; where neither card is dated, or both are due on the same day,
+priority decides as usual. Against any other class -- and between two cards of
+any other class -- C<due> is not read at all: a C<fixed-date> card meeting an
+C<expedite> or a C<standard> one is ranked by class index alone, however soon
+either of them is due. This is kanban-md's exception in
+C<sortPickCandidates>/C<compareDue>, and it is the class of service that exists
+because a date, not an urgency rating, decides.
+
 =cut
+
+# kanban-md's sortPickCandidates asks the due date only when both candidates
+# are `fixed-date` -- the class of service whose whole point is that a date,
+# not an urgency rating, decides. Against any other class (and between two
+# cards of any other class) the class index and then priority decide exactly as
+# before, so this returns 0 and the chain above carries on.
+#
+# The ordering within the exception is kanban-md's compareDue
+# (internal/board/sort.go): earlier date first, a card with no due date last --
+# not first and not level -- and two cards it cannot separate (neither dated,
+# or both dated the same day) fall through to priority.
+#
+# `has_due` is the whole emptiness test: L<App::karr::Task/BUILD> normalizes a
+# `due:` that is present but empty back to unset on the parse path, so nothing
+# reaches here has_due-true-but-blank (ticket #98). Dates are the bare
+# `YYYY-MM-DD` kanban-md's date.Date accepts and karr validates
+# (L<App::karr::Config/validate_due>), so a string compare is chronological.
+sub _fixed_date_due_cmp {
+    my ( $self, $left, $right ) = @_;
+
+    # A card with no class at all is not fixed-date, the same way kanban-md's
+    # empty-string class is not.
+    my $fixed = App::karr::Config->FIXED_DATE_CLASS;
+    return 0
+      unless ( $left->class // '' ) eq $fixed
+      && ( $right->class // '' ) eq $fixed;
+
+    my $l = $left->has_due  ? $left->due  : undef;
+    my $r = $right->has_due ? $right->due : undef;
+    return 0 unless defined $l || defined $r;
+    return 1 unless defined $l;
+    return -1 unless defined $r;
+    return $l cmp $r;
+}
 
 sub pick_candidates {
     my ( $self, $tasks, %filter ) = @_;
