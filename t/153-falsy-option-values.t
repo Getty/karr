@@ -164,8 +164,10 @@ subtest 'edit --append-body 0 appends, never replaces (#153 self-contradicting g
     is( $rv->{exit}, 0, 'edit -a appended succeeds' )
         or diag $rv->{stdout} . $rv->{stderr};
 
-    # "appending to a body of "0" must not replace it" -- #78.
-    is( _task($repo)->body, "0\nappended",
+    # "appending to a body of "0" must not replace it" -- #78. The blank line
+    # between the two is #238's separator: a body of "0" is a body, so it takes
+    # the separator like any other.
+    is( _task($repo)->body, "0\n\nappended",
         'and the existing body of "0" was preserved and the new text appended' )
         or diag "got: " . _task($repo)->body;
 };

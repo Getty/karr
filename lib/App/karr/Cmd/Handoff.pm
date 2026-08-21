@@ -45,8 +45,10 @@ the current claim unless that claim has expired.
 
 =item * C<--note>, C<--timestamp>
 
-Append handoff text to the task body, optionally prefixed with the current UTC
-timestamp.
+Append handoff text to the task body as a paragraph of its own, separated from
+the existing body by a blank line -- an empty body gains no separator --
+optionally prefixed with the current UTC timestamp. C<karr edit --append-body>
+appends by the same rule, in the same form.
 
 =item * C<--block>, C<--release>
 
@@ -143,15 +145,12 @@ sub execute {
     }
 
     # Append note. length, not truth: --note 0 is a note (ticket #153, the
-    # same fix as --append_body in edit).
-    if (defined $self->note && length $self->note) {
-      my $note_text = $self->note;
-      if ($self->timestamp) {
-        $note_text = gmtime->strftime('%Y-%m-%d %H:%M') . ' ' . $note_text;
-      }
-      my $have = defined $task->body && length $task->body;
-      $task->body(($have ? $task->body . "\n" : '') . $note_text);
-    }
+    # same fix as --append_body in edit). The stamp and the blank-line
+    # separator come from App::karr::Task::append_body, which is also what
+    # edit's --append-body calls: this was a copy of that code, and the two
+    # had already drifted apart over the stamp (ticket #238).
+    $task->append_body( $self->note, $self->timestamp )
+      if defined $self->note && length $self->note;
 
     # Release claim if requested
     if ($self->release) {

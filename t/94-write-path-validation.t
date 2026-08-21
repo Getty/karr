@@ -280,16 +280,18 @@ subtest '#78 karr create --body 0 keeps the body' => sub {
     is( decode_json( _run_karr( $repo, 'show', '1', '--json' )->{stdout} )->{body},
         '0', '--json carries it' );
 
-    # And appending must not replace it.
+    # And appending must not replace it. The blank line between the two is
+    # #238's separator: a body of "0" is a body, so it is separated from what
+    # follows like any other.
     is( _run_karr( $repo, 'edit', '1', '-a', 'second line' )->{exit}, 0, 'append' );
-    like( _task_doc( $repo, 1 ), qr/\n0\nsecond line\n\z/,
+    like( _task_doc( $repo, 1 ), qr/\n0\n\nsecond line\n\z/,
         'the "0" line survives an append' );
 
     is( _run_karr( $repo, 'create', 'Handoff zero', '--body', '0' )->{exit},
         0, 'a second task with a zero body' );
     is( _run_karr( $repo, 'handoff', '2', '--claim', 'agent-fox',
             '--note', 'a note' )->{exit}, 0, 'handoff --note' );
-    like( _task_doc( $repo, 2 ), qr/\n0\na note\n\z/,
+    like( _task_doc( $repo, 2 ), qr/\n0\n\na note\n\z/,
         'and it survives a handoff note too' );
 };
 

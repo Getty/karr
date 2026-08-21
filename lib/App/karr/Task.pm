@@ -420,6 +420,57 @@ Clears the blocked flag and any reason with it.
 
 =cut
 
+# kanban-md's AppendBody (internal/board/mutate.go:571): the trailing newlines
+# come off the existing body and the two halves are joined with a blank line.
+# karr joined with a single "\n" until ticket #238, and Markdown folds a single
+# newline into a space -- so every note appended by `karr edit -a` or
+# `karr handoff --note` was rendered into the paragraph above it, and a card
+# that collected notes over a session ended up as one block.
+#
+# Emptiness is measured *after* the trim, which is where this parts company with
+# the reference: Go tests `existing != ""` first, so a body that is nothing but
+# newlines still gets the separator and comes back with a leading blank line.
+# That body cannot arrive from the board -- _parse_content strips trailing
+# newlines, the normal form ticket #78 settled -- but it can arrive from a
+# caller in process, and "an empty body gains no separator" is the whole point
+# of the branch. Only newlines are trimmed, never other whitespace: an indented
+# last line is content.
+#
+# length, not truth, on the trimmed body: appending to a body of "0" must
+# preserve it (ticket #78).
+sub append_body {
+  my ( $self, $text, $timestamp ) = @_;
+  # The handoff form, deliberately not kanban-md's: karr writes every stamp in
+  # UTC (App::karr::Role::ClaimTimeout says why), and `[[2006-01-02]]` is
+  # wiki-link syntax that means nothing here. Opt-in at both call sites -- an
+  # inline prefix would turn `-a "## Findings"` into a line that is no longer a
+  # heading, so it cannot be forced on every append.
+  $text = gmtime->strftime('%Y-%m-%d %H:%M') . ' ' . $text if $timestamp;
+  my $body = defined $self->body ? $self->body : '';
+  $body =~ s/\n+\z//;
+  $self->body( length $body ? $body . "\n\n" . $text : $text );
+  return $self;
+}
+
+=method append_body
+
+  $task->append_body('Waiting for review');
+  $task->append_body('Handed off', 1);   # prefixed with the current UTC time
+
+Appends C<$text> to the body as a paragraph of its own, separated from the
+existing text by one blank line, and returns the task. Trailing newlines on the
+existing body are trimmed first, so repeated appends never accumulate blank
+lines; a body that is empty (or nothing but newlines) gains no separator, so an
+appended note never starts with one. With a true second argument the text is
+prefixed inline with the current UTC time as C<YYYY-MM-DD HH:MM>, the form
+C<karr handoff --note --timestamp> writes.
+
+This is the one implementation behind C<karr edit --append-body> and
+C<karr handoff --note> (ticket #238); they had a copy each, joined with a
+single newline, which Markdown renders as a continuation of the previous line.
+
+=cut
+
 sub update_timestamps {
   my ( $self, $old_status, $new_status, $first_status, $config ) = @_;
   my $now = gmtime->datetime . 'Z';

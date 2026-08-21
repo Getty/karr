@@ -32,6 +32,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
     karr edit 5 --add-depends-on 2,3 --remove-depends-on 4
     karr edit 5 --add-needs other-repo#7 --block "needs other-repo#7: API change first"
     karr edit 5 -a "Waiting for review"
+    karr edit 5 -a "Handed the API question upstream" --timestamp
     karr edit 5 --claim agent-fox --block "waiting on API"
 
 =head1 DESCRIPTION
@@ -65,10 +66,17 @@ is exempt, since breaking a stale claim is what it is for.
 
 =item * Body updates
 
-C<--body> replaces the entire body; C<-a>/C<--append-body> appends a new line
-to the existing body text. They are alternatives, not a sequence: naming both
-is rejected as a usage error (exit 2) before any task is read, rather than
-writing the one concatenated body neither of them asked for.
+C<--body> replaces the entire body; C<-a>/C<--append-body> appends text to the
+existing body as a paragraph of its own, separated from it by a blank line, so
+a note reads as a note and not as a continuation of the line above it. An empty
+body gains no separator. C<-t>/C<--timestamp> prefixes the appended text with
+the current UTC time (C<YYYY-MM-DD HH:MM>), the same stamp
+L<App::karr::Cmd::Handoff> writes; without it the text is appended verbatim, so
+appending Markdown structure stays possible. C<--body> and C<--append-body> are
+alternatives, not a sequence: naming both is rejected as a usage error (exit 2)
+before any task is read, rather than writing the one concatenated body neither
+of them asked for. Existing cards are not rewritten: the separator rule applies
+to appends made from here on.
 
 =item * Claims and blocking
 
@@ -192,6 +200,18 @@ option append_body => (
   doc => 'Append text to body',
 );
 
+# Opt-in, exactly as on karr handoff, and for the same reason it is opt-in
+# there: --append-body appends arbitrary Markdown, not only notes, and the
+# stamp is an inline prefix -- forced on every append it would turn
+# `-a "## Findings"` into a line that is no longer a heading, with no way to
+# say no. kanban-md's edit has the same flag (cmd/edit.go:38); the format is
+# handoff's UTC one, not kanban-md's local-time wiki link (ticket #238).
+option timestamp => (
+  is => 'ro',
+  short => 't',
+  doc => 'Prefix the appended text with the current UTC timestamp',
+);
+
 option claim => (
   is => 'ro',
   format => 's',
@@ -218,9 +238,12 @@ option unblock => (
 # the ones that carry a value, and the two that are flags. --json, --compact and
 # --quiet are deliberately absent -- they decide how the result is printed, not
 # what it is, so `karr edit 5 --json` asks for a change just as little as
-# `karr edit 5` does. A new field option belongs on one of these lists; leaving
-# it off makes it invisible to the check below, which would then reject an
-# invocation that does have something to do.
+# `karr edit 5` does. --timestamp is absent for the same reason on the write
+# side: it decorates the text --append-body appends and appends nothing of its
+# own, so `karr edit 5 --timestamp` names no change either (ticket #238). A new
+# field option belongs on one of these lists; leaving it off makes it invisible
+# to the check below, which would then reject an invocation that does have
+# something to do.
 my @FIELD_OPTIONS = qw(
   title status priority assignee add_tag remove_tag add_depends_on
   remove_depends_on add_needs remove_needs due body append_body claim block
@@ -402,13 +425,14 @@ sub execute {
       $task->due($self->due)           if defined $self->due && length $self->due;
       $task->body($self->body)         if defined $self->body && length $self->body;
 
-      if (defined $self->append_body && length $self->append_body) {
-        # length, not truth: appending to a body of "0" must not replace it
-        # (ticket #78). The outer guard had drifted back to truth while the
-        # comment still read length-not-truth (ticket #153).
-        my $have = defined $task->body && length $task->body;
-        $task->body(($have ? $task->body . "\n" : '') . $self->append_body);
-      }
+      # length, not truth: appending to a body of "0" must not replace it
+      # (ticket #78). The outer guard had drifted back to truth while the
+      # comment still read length-not-truth (ticket #153). What the append
+      # itself does -- blank-line separator, no leading separator on an empty
+      # body, optional UTC stamp -- lives in App::karr::Task::append_body,
+      # shared with handoff, which held a copy of it (ticket #238).
+      $task->append_body( $self->append_body, $self->timestamp )
+        if defined $self->append_body && length $self->append_body;
 
       if (defined $self->add_tag && length $self->add_tag) {
         my @new = split /,/, $self->add_tag;

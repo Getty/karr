@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - An appended note is a paragraph of its own (#238). `karr edit ID -a`
+      and `karr handoff --note` joined the new text to the body with a
+      single newline, which Markdown folds away, so every note merged into
+      the line above it and a card that collected several over a working day
+      rendered as one block. They join with a blank line now, trimming any
+      trailing newlines off the existing body first, which is what
+      kanban-md's `AppendBody` does. An empty body still gets no leading
+      blank line. Both commands go through one `App::karr::Task/append_body`
+      instead of two copies of the same four lines. Existing cards are not
+      rewritten.
+
+    - `karr edit` takes `-t`/`--timestamp`, the flag `karr handoff` already
+      had (#238). It prefixes the appended text with the same UTC stamp in
+      the same format, so the two commands are one implementation rather
+      than two ideas about the same thing. Opt-in rather than always-on: `-a`
+      appends arbitrary Markdown, not only notes, and an inline stamp
+      forced onto `## Findings` would stop it being a heading. `--timestamp`
+      alone changes nothing and is refused as an empty request, like any
+      other `edit` naming no field.
+
     - `karr delete`'s confirmation question reaches the terminal before it
       waits for the answer (#241). The prompt is `printf`ed without a
       trailing newline, and nothing flushed it, so whether it appeared
