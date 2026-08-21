@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-08-21T05:45:26Z
+claimed_by: tuck-drug
+class: standard
+completed: 2026-08-21T05:45:26Z
+created: 2026-08-20T16:16:05Z
+id: 222
+priority: low
+started: 2026-08-21T05:17:31Z
+status: done
+tags:
+- tests
+- foundation
+title: t/31 und t/33 lesen die echte ~/.config/karr-foundation des Entwicklers
+updated: 2026-08-21T05:45:26Z
+---
+
+Beim Durchgang zu #214 aufgefallen, aelter als das Ticket.
+
+t/31-foundation-drain.t und t/33-foundation-run.t isolieren $ENV{HOME} nicht, anders als t/30-foundation.t. Folge: sie lesen die echte Konfiguration des Entwicklers unter ~/.config/karr-foundation/config.yml und drucken im Testlauf
+
+    karr-foundation: config not found at /home/<user>/.config/karr-foundation/config.yml -- nothing to do
+
+Auf dieser Maschine existiert die Datei nicht, deshalb faellt es nur als Rauschen auf. Auf einer Maschine, auf der sie existiert, laufen zwei Tests gegen eine echte Fleet-Konfiguration statt gegen eine Fixture -- das Ergebnis haengt dann davon ab, was zufaellig im Home des Ausfuehrenden steht, und im schlimmsten Fall zeigt der Testlauf auf echte Repositories.
+
+Nicht encoding-bezogen (die Meldung ist seit #214 sauberes ASCII) und nicht von #214 verursacht.
+
+Zu tun: beide Tests auf die Isolation umstellen, die t/30-foundation.t schon macht -- dort nachschauen, wie es dort geloest ist, und es uebernehmen. Danach pruefen, ob weitere Tests unter t/ dieselbe Luecke haben.
+Erledigt in c3e9261. Groesser als das Ticket dachte: nicht zwei, sondern fuenf Tests reichten an den Default-Config-Pfad -- t/31, t/33, t/150, t/165 und ein Subtest in t/168. Mit einer Koeder-Config (mode: ticket) im echten HOME fallen t/31, t/150 und t/165 vor dem Fix wirklich um, der Leak war also nicht kosmetisch. Alle fuenf nutzen jetzt das Muster aus t/30-foundation.t. Die uebrigen Foundation-Tests wurden gegen jede _config_data-Aufrufstelle geprueft und sind sauber.
