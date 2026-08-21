@@ -1,0 +1,46 @@
+---
+claimed_at: 2026-08-21T10:43:12Z
+claimed_by: logo-lose
+class: standard
+completed: 2026-08-21T10:43:12Z
+created: 2026-08-21T09:24:20Z
+id: 241
+priority: medium
+started: 2026-08-21T10:09:52Z
+status: done
+tags:
+- delete
+- cli
+- ux
+- bug
+title: 'delete fragt, ohne die Frage anzuzeigen: der Prompt haengt ungespuelt im Puffer'
+updated: 2026-08-21T10:43:12Z
+---
+
+Nebenbefund aus #236, dort korrekt nicht mitgebaut. Selbst auf einem Pseudoterminal nachgestellt.
+
+## Reproduktion
+
+    printf "n\\n" | script -qec "karr delete 4" /dev/null | cat -A
+
+    n^M$
+    Delete task 4: Prompt? [y/N] Skipped task 4: Prompt^M$
+
+Die getippte Antwort `n` erscheint **vor** der Frage. Cmd/Delete.pm druckt den Prompt mit `printf` nach STDOUT, ohne abschliessenden Zeilenumbruch und ohne Spuelung, und liest dann `<STDIN>`. Perls STDOUT ist zeilengepuffert -- ohne Umbruch bleibt die Zeile also im Puffer stehen, bis irgendwann etwas anderes sie hinausschiebt.
+
+## Was ein Mensch davon sieht
+
+Einen haengenden Cursor ohne Frage. Er tippt blind, und erst danach erfaehrt er, was er beantwortet hat. Bei einem Kommando, das Karten unwiderruflich loescht, ist das die unguenstigste Stelle im ganzen CLI fuer diesen Fehler.
+
+Unter `--yes` faellt es nicht auf (kein Prompt), und in einer Pipe auch nicht (dort ist STDOUT ohnehin blockgepuffert und alles kommt am Ende). Genau deshalb ist es nie jemandem aufgefallen: der interaktive Pfad ist der einzige, der es zeigt, und der wird am seltensten getestet.
+
+Aelter als #236 und von dort unberuehrt -- die neue Abhaengigkeitswarnung liegt auf STDERR und kommt in beiden Faellen zuerst.
+
+## Zu tun
+
+Vor dem `<STDIN>` spuelen. In Perl ueblich mit `STDOUT->flush` (IO::Handle) oder lokal `$| = 1`; welche Form zum Haus passt, entscheidet der Bauende -- schau nach, ob das Repo anderswo schon interaktiv fragt und wie es das dort loest.
+
+Vorher pruefen:
+1. Ob es weitere Stellen mit demselben Muster gibt. `grep` nach `<STDIN>` ueber `lib/` und `bin/` -- `karr restore --yes`, `karr destroy` und `karr import` haben Rueckfragen oder Bestaetigungen, und dieselbe Falle koennte dort stehen.
+2. Ob ein Test das ueberhaupt fangen kann: eine Pipe zeigt den Fehler **nicht**, es braucht ein Pseudoterminal (`script -qec ...`, so ist er gefunden worden) oder eine Pruefung auf Handle-Ebene. Wenn ein pty-Test zu schwer wiegt, ist die ehrliche Alternative, das Spuelen zu bauen und im Kommentar festzuhalten, warum kein Test daneben steht -- nicht, einen Test zu schreiben, der auch ohne den Fix gruen ist.
+Erledigt in 5c59351. WICHTIGE KORREKTUR AN DIESEM TICKET: meine Diagnose war zu stark. Der Nachweis mit 'printf n | script' bewies nichts -- die Antwort lag vor dem Start von karr in der Pty-Warteschlange und wurde vom Terminal sofort geechot, unabhaengig von karr. Bei stdin auf einem Terminal spuelt PerlIO die zeilengepufferten Handles beim Fuellen des Lesepuffers, die Frage kommt also ohnehin heraus (selbst nachgemessen: erster Chunk nach 0.00s, Antwort nach 2.00s). Der echte Fall ist stdout auf einem Terminal bei stdin aus Pipe oder Datei -- also genau die Agenten-Harness, die Antworten einspeist: dort erschienen Frage und Ergebnis erst zusammen, nachdem die Antwort schon verarbeitet war. Der Fix ist richtig, der Grund ist schmaler als hier stand. STDOUT->flush gewaehlt, weil App::karr::Foundation dieselbe Form schon benutzt. Die geforderte Suche: Cmd/Delete.pm ist die EINZIGE interaktive Rueckfrage im Baum -- restore/destroy/import verlangen --yes statt zu fragen, die uebrigen STDIN-Leser slurpen Payloads. Kein pty-Test, weil der auf dieser Plattform genau den Fall geprueft haette, der ohnehin schon ging; stattdessen open3+select auf einer Pipe, wo ohne den Fix kein Byte ankommt. Nebenbefund als #246 eingetragen. Volle Suite: 204 Dateien, 1487 Tests, pass.
