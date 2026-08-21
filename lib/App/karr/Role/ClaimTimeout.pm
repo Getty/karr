@@ -156,8 +156,39 @@ sub _parse_claim_stamp {
     return $parsed;
 }
 
+# Zero is not a very short window, it is the switch that turns expiry off --
+# the one number here that is not read as a duration at all (ticket #232). That
+# is the only reason this guard exists: every other value goes into the
+# subtraction below and means what it says, so "simplifying" the line away
+# looks harmless and restores the exact inversion it was written for. `0s` is
+# how a board says claims are binding here, and the plain comparison made it
+# say the opposite -- (now - claimed_at) > 0 is true of every claim older than
+# a second, so the setting meant to protect a card was the setting that handed
+# it to the next agent that asked, silently, seconds after the claim.
+#
+# kanban-md answers it the same way: internal/board/filter.go's IsUnclaimed
+# asks `timeout > 0 && t.ClaimedAt != nil` and falls through to "still
+# claimed" when the timeout is zero.
+#
+# Deliberately the same predicate, spelled the same way, as
+# L<App::karr::Lock/expired>: the lock side has always read its own zero
+# correctly (`lock_timeout: 0s`, see App::karr::Cmd::Unlock), and the two
+# stayed out of step for as long as they did because they look alike without
+# being the same code. They are not folded into one helper because a
+# two-term boolean is the whole of the overlap while everything around it
+# differs -- App::karr::Lock is a plain class in the storage layer, judges the
+# age of a Git commit rather than a parsed RFC3339 stamp, brings its own TTL
+# fallback, and puts the guard ahead of a ref read this role has no
+# counterpart for. t/232-claim-timeout-zero-never-expires.t pins both answers
+# in one file so a change to either side alone goes red.
+#
+# A negative timeout cannot arrive from a board -- _parse_timeout sends it to
+# the fallback -- but is answered the same way as zero for the same reason
+# App::karr::Lock/expired does: "not a positive window" is the whole question
+# here, and no caller should have to know which side of zero it landed on.
 sub _claim_expired {
     my ($self, $task, $timeout_secs) = @_;
+    return 0 unless $timeout_secs && $timeout_secs > 0;
     return 0 unless $task->has_claimed_at;
     my $claimed = $self->_parse_claim_stamp( $task->claimed_at );
     return 0 unless defined $claimed;
@@ -287,7 +318,8 @@ C<"Task N is claimed by X\n">. Five cases, checked in order:
 longer blocks anyone, but it is B<recorded> for L</expired_claim_report> so the
 override does not go unsaid, and it is not cleared as a side effect of asking
 (that stays kanban-md's behaviour, not karr's -- see the comment above this
-method for why);
+method for why). A C<claim_timeout> of C<0s> means claims never expire, so on
+such a board this case never fires at all and nothing is ever recorded;
 
 =item * the task sits in a status this board calls terminal
 (L<App::karr::Config/is_terminal_status>) -- a finished card is not being

@@ -91,7 +91,9 @@ Default values applied by L<App::karr::Cmd::Create>.
 
 =item * C<claim_timeout>
 
-Claim expiry duration in C<Nh> or C<Nm> format.
+Claim expiry duration in C<Nh> or C<Nm> format. Defaults to C<1h>; C<0s>
+disables expiry, so a claim binds until it is released and no other agent can
+pick or mutate the card in the meantime.
 
 =item * C<lock_timeout>
 
@@ -276,7 +278,8 @@ sub _set_key {
     # minutes here and in kanban-md (ticket #78). usage_error rather than a bare
     # die: an option value that parses but is not a duration is misuse, and the
     # exit-code contract says 2.
-    $self->usage_error(qq{invalid claim_timeout "$val" (use e.g. 1h, 30m, 1h30m)})
+    $self->usage_error(
+      qq{invalid claim_timeout "$val" (use e.g. 1h, 30m, 1h30m, 0s to disable)})
       unless defined App::karr::Config->parse_duration($val);
   } elsif ($key eq 'lock_timeout') {
     $self->usage_error(qq{invalid lock_timeout "$val" (use e.g. 5m, 30s, 0s to disable)})

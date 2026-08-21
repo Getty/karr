@@ -217,8 +217,10 @@ the config (C<'1h'> when unset), in kanban-md's C<time.ParseDuration> grammar
 -- not seconds. Pass it to L</parse_duration> to get a number. Governs how
 long C<karr pick> and the C<move>/C<edit>/C<handoff> claim check
 (L<App::karr::Role::ClaimTimeout>) honour an existing C<claimed_by> before
-treating it as expired; distinct from C<lock_timeout>, which bounds a single
-C<karr pick> transaction rather than a whole work session.
+treating it as expired; C<'0s'> disables expiry, exactly as it does for
+C<lock_timeout>, and means a claim is honoured until it is released. Distinct
+from C<lock_timeout>, which bounds a single C<karr pick> transaction rather
+than a whole work session.
 
 =cut
 
@@ -694,6 +696,9 @@ sub default_config {
       { name => 'standard' },
       { name => 'intangible' },
     ],
+    # Accepts the whole Go duration grammar kanban-md writes (`1h30m`); an
+    # explicit zero (`0s`) disables claim expiry, the same way it does for
+    # lock_timeout below (#232).
     claim_timeout => '1h',
     # Deliberately not claim_timeout. A claim says "an agent owns this work"
     # and has to outlive a whole session; a lock only covers the few

@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - `claim_timeout: 0s` means claims never expire, which is what it always
+      said it meant (#232). The POD of `claim_timeout_secs` promised that an
+      explicit zero is honoured verbatim, and `_parse_timeout` did return it
+      unchanged -- but the one place that compared it, `_claim_expired`, read
+      it as a duration like any other, and `(now - claimed_at) > 0` is true
+      of every claim older than a second. So the setting a board uses to say
+      claims are binding here was the setting that handed a card to the next
+      agent that asked, silently, seconds after it was claimed: `karr pick`
+      took it, and `edit`, `move` and `handoff` let anyone through. kanban-md
+      guards the same comparison with `timeout > 0` in `IsUnclaimed`, and
+      karr's own `App::karr::Lock/expired` has always guarded its
+      `lock_timeout` zero correctly -- the two looked alike without being the
+      same code, which is why they could stay out of step. A negative value
+      is answered like zero, and `karr config set` and the config POD now say
+      `0s to disable` for `claim_timeout` the way they already did for
+      `lock_timeout`. `t/232-claim-timeout-zero-never-expires.t` pins both
+      guards in one file, so dropping either one alone goes red.
+
     - `karr context` leaves out archived tasks and nothing else (#229). It
       had been filtering every terminal status, so on a default board
       finished work was missing from the header total and a card blocked

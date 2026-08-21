@@ -99,10 +99,13 @@ C<tags> if that filter was given.
 C<timeout> is the claim window in seconds and defaults to
 L<App::karr::Role::ClaimTimeout/claim_timeout_secs>. Pass it explicitly when
 asking about many cards in one command run, so one answer covers the whole
-run. C<statuses> and C<tags> are already-split lists, not the comma-separated
-option strings -- splitting belongs to the command that owns the option. An
-absent (or empty) filter is not the same as an empty list: no C<statuses> means
-"anything but terminal", C<< statuses => [] >> means nothing qualifies.
+run. C<0> is not the shortest window but no window at all: a board with
+C<claim_timeout: 0s> never expires a claim, so every claimed card stays
+unpickable until the claim is released. C<statuses> and C<tags> are
+already-split lists, not the comma-separated option strings -- splitting
+belongs to the command that owns the option. An absent (or empty) filter is
+not the same as an empty list: no C<statuses> means "anything but terminal",
+C<< statuses => [] >> means nothing qualifies.
 
 =cut
 
