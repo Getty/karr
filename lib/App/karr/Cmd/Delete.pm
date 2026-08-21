@@ -7,6 +7,7 @@ use MooX::Cmd;
 use MooX::Options (
   usage_string => 'USAGE: karr delete ID[,ID,...] [--yes] [--json]',
 );
+use IO::Handle;
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
@@ -139,6 +140,24 @@ sub execute {
 
     unless ($self->yes) {
       printf "Delete task %d: %s? [y/N] ", $task->id, $task->title;
+      # The question has to be out before the read that waits for its answer,
+      # and this printf alone does not put it there: it ends without a newline,
+      # so nothing in the buffering flushes it (#241).
+      #
+      # Whether that showed depended on where stdin came from, which is why it
+      # went unnoticed for so long. With stdin on a terminal PerlIO flushes the
+      # line-buffered handles when it fills its read buffer, so the prompt got
+      # out by somebody else's courtesy -- a detail of the implementation, not
+      # a promise. With stdin anywhere else -- a pipe, a file, an agent harness
+      # feeding answers -- nothing does it, and the question sits in the buffer
+      # until the next newline or process exit pushes it out, which is after
+      # karr has already acted on the answer. `karr delete 1 < answers` in a
+      # terminal printed the question and the outcome together at the end.
+      #
+      # STDOUT->flush is the form App::karr::Foundation already uses, and it
+      # does not care how the handle is buffered, so the question arrives
+      # before the wait whichever way stdout and stdin are connected.
+      STDOUT->flush;
       my $answer = <STDIN>;
 
       # <STDIN> returns undef at EOF, and karr used to run straight on into

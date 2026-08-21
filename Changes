@@ -1,5 +1,19 @@
 {{$NEXT}}
 
+    - `karr delete`'s confirmation question reaches the terminal before it
+      waits for the answer (#241). The prompt is `printf`ed without a
+      trailing newline, and nothing flushed it, so whether it appeared
+      depended on where stdin came from: on a terminal PerlIO flushes the
+      line-buffered handles when it fills its own read buffer and the
+      question got out by somebody else's courtesy, but with stdin on a pipe
+      or a file -- an agent harness feeding answers, `karr delete 1 <
+      answers` -- nothing did, and the question sat in the buffer until
+      after karr had already acted on it. `STDOUT->flush` before the read,
+      the form `App::karr::Foundation` already uses. It is the only
+      interactive prompt in the distribution: `restore`, `destroy` and
+      `import` require `--yes` rather than asking, and every other STDIN
+      reader slurps a payload.
+
     - Five contradicting invocations are refused instead of being resolved
       in silence (#235). `edit --block X --unblock`, `edit --body X
       --append-body Y`, `create TITLE --title OTHER`, `move ID STATUS
