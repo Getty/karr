@@ -1,0 +1,42 @@
+---
+claimed_at: 2026-08-21T11:15:29Z
+claimed_by: hero-bomb
+class: standard
+completed: 2026-08-21T11:15:29Z
+created: 2026-08-21T07:54:40Z
+id: 238
+priority: low
+started: 2026-08-21T10:43:41Z
+status: done
+tags:
+- parity
+- edit
+- handoff
+title: Body-Anhaengen trennt mit einem Zeilenumbruch statt mit einer Leerzeile
+updated: 2026-08-21T11:15:29Z
+---
+
+Letzter Fund aus derselben Vergleichsrunde, kleinstes Kaliber -- aber Karteninhalt, nicht Konsolenformatierung, deshalb nicht verschwiegen.
+
+## Befund
+
+kanban-mds AppendBody (internal/board/mutate.go um Zeile 571-583) schneidet die Zeilenumbrueche am Ende des vorhandenen Bodys ab und verbindet mit `"\n\n"`. karr verbindet mit einem einzelnen `"\n"` -- Cmd/Edit.pm um Zeile 316-317 und Cmd/Handoff.pm um Zeile 148-149.
+
+Beispiel: Body ist `a`, dann `karr edit 1 -a "b"`:
+
+    kanban-md:  "a\n\nb"    -> zwei Markdown-Absaetze
+    karr:       "a\nb"      -> ein Absatz, weil Markdown Einzelumbrueche zusammenzieht
+
+Jede angehaengte Notiz verschmilzt bei karr also mit der vorigen Zeile, sobald jemand den Body als Markdown rendert. Auf einer Karte, die im Laufe der Arbeit mehrere Notizen sammelt -- der Normalfall bei `handoff --note` und `edit -a` --, wird daraus ein Block.
+
+## Zweiter, kleinerer Punkt
+
+`karr handoff` setzt einen Zeitstempel vor die Notiz (Handoff.pm um Zeile 146, Format `%Y-%m-%d %H:%M ` als Inline-Praefix, UTC). `karr edit -a` setzt keinen und hat auch keine Option dafuer; kanban-mds `edit` hat `-t/--timestamp` (cmd/edit.go um Zeile 38) und schreibt den Stempel als eigene Zeile im Format `[[2006-01-02]] Mon 15:04` in Ortszeit.
+
+## Zu klaeren
+
+1. Das Trennzeichen auf `"\n\n"` ziehen ist ein Zweizeiler, aber es aendert bestehende Karten nicht -- nur kuenftige Anhaenge. Ob das reicht oder ob es dokumentiert gehoert, entscheidet der Bauende.
+2. Beim Zeitstempelformat **nicht** blind der Referenz folgen: karr schreibt Zeitstempel sonst durchgaengig in UTC (siehe die Begruendung in Role/ClaimTimeout.pm zum RFC3339-Unterschied), und `[[2006-01-02]]` ist eine Wiki-Link-Syntax, die zu karr nicht gehoert. Wenn `edit -a` einen Stempel bekommt, dann in derselben Form wie `handoff`, nicht in kanban-mds.
+3. Ob `edit -a` ueberhaupt eine `--timestamp`-Option braucht, oder ob der Stempel dort schlicht immer dazu gehoert wie bei `handoff`. Das ist die eigentliche Frage.
+
+Erledigt in 5b375d0. Eine Annahme im Auftrag war falsch und wurde korrigiert: handoff stempelt NICHT immer -- es hat dieselbe Opt-in-Flagge -t/--timestamp schon lange. Die Asymmetrie war 'handoff kann, edit kann nicht', nicht 'handoff immer, edit nie'. Der gemeinsame Helfer sitzt auf Task, nicht auf TaskMutation: jene Rolle verweigert 'use Time::Piece' ausdruecklich, weil #105 den Import entfernt hat (ein use in einer Moo::Role komponiert gmtime/localtime in move/edit/delete/archive/handoff). Bewusste Abweichung von AppendBody: Go prueft existing != '' VOR dem Trim, ein Body aus lauter Newlines bekommt dort also die fuehrende Leerzeile, die der Leer-Body-Fall gerade verhindern soll; karr misst nach dem Trim. Ueber die CLI unerreichbar (#78-Normalform), in-process schon, an der Methode vermerkt. --timestamp steht bewusst nicht auf FIELD_OPTIONS: es dekoriert nur, was -a anhaengt, 'edit ID --timestamp' allein bleibt die leere Anfrage aus #231. Nebenbefund als #247 eingetragen. Volle Suite: 206 Dateien, 1503 Tests, pass.
