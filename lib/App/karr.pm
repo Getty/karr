@@ -180,7 +180,7 @@ L<App::karr::Config>, L<App::karr::Cmd::Init>, L<App::karr::Cmd::Skill>
 # `karr board --done`.
 option done => (
   is => 'ro',
-  doc => 'Include the Done section in the default board view',
+  doc => 'Include the board\'s final column in the default board view',
 );
 
 # MooX::Cmd derives a command name from the class basename, so

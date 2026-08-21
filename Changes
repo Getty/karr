@@ -1,5 +1,30 @@
 {{$NEXT}}
 
+    - `karr board` leaves archived cards out entirely, in all three output
+      modes (#234). They were loaded unfiltered, counted in the footer total
+      and in `blocked`, and rendered as an `archived` column whenever it was
+      not empty -- so this repository's own board read `241 tasks` over ten
+      rendered cards, one of which had been deliberately taken off the
+      board, and the same number from kanban-md counted a different set with
+      nothing on the line to say which. Counting them but hiding the column
+      would have been worse than either whole answer: the existing `(N done
+      hidden)` contract is that what is withheld is still counted and the
+      footer says so, and a view that disagrees with its own total in two
+      directions at once cannot be read at all. `--compact` and `--json`
+      never hid the empty archived column anyway, so the rule only ever
+      existed in one of the three renderers. Filed cards are read with
+      `karr list --archived` and `karr show ID`, as before.
+
+    - `karr board` asks the board which status is terminal instead of
+      looking for `done` (#234). Two comparisons against the literal decided
+      what `--done` reveals and which column is hidden, and the hidden-count
+      hint counted the `done` column by name -- so on a board imported from
+      kanban-md whose last column is `shipped`, `karr board` hid nothing and
+      `--done` did nothing at all. The hint names the real column now:
+      `2 tasks (1 shipped hidden)`. Default boards print the same bytes as
+      before. The root `--done` help text, which promised "the Done
+      section", was equally wrong and says what it does.
+
     - The id `0` is a task that does not exist, not a usage error, in all
       six commands that take one (#239). `move`, `edit`, `delete`,
       `archive` and `handoff` guarded their positional with `my $id =
