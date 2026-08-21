@@ -161,8 +161,15 @@ sub execute {
   $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
-  my $title = $self->title // $pos[0]
-    or die "Title is required. Use --title or pass as argument.\n";
+  # length, not truth: "0" is one character long and a perfectly good title,
+  # but the assignment below yields it as a false value, so both `--title 0`
+  # and a bare positional `0` were rejected as "Title is required" -- the one
+  # guard in this file ticket #153 left on truth while converting the options
+  # below. kanban-md's resolveCreateTitle tests the flag against "" and the
+  # args against length, and takes "0" (ticket #230).
+  my $title = $self->title // $pos[0];
+  die "Title is required. Use --title or pass as argument.\n"
+    unless defined $title && length $title;
 
   my $ec = $self->store->effective_config;
   my $defaults = $ec->{defaults} // {};

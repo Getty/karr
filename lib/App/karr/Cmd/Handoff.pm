@@ -174,7 +174,12 @@ sub execute {
   }
 
   my $msg = sprintf "Handed off task %d -> %s", $task->id, $target;
-  $msg .= sprintf " (blocked: %s)", $self->block if $self->block;
+  # length, not truth on this side too: the guard above blocks the card for
+  # --block 0, so the line reporting the handoff has to say so -- it read
+  # `if $self->block` and denied a block that had just happened (ticket #230,
+  # the reporting half of ticket #153's --block fix).
+  $msg .= sprintf " (blocked: %s)", $self->block
+    if defined $self->block && length $self->block;
   $msg .= " (claim released)" if $self->release;
   print "$msg\n";
 }

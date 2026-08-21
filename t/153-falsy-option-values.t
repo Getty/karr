@@ -170,6 +170,51 @@ subtest 'edit --append-body 0 appends, never replaces (#153 self-contradicting g
         or diag "got: " . _task($repo)->body;
 };
 
+subtest 'create --title 0 and the bare positional 0 land the title "0" (#153)' => sub {
+    my $repo = _setup_repo();
+
+    # The one guard in Cmd::Create that #153 left deciding by truth:
+    #     my $title = $self->title // $pos[0]
+    #       or die "Title is required. Use --title or pass as argument.\n";
+    # The assignment yields "0", which is false in Perl, so BOTH call forms
+    # were rejected with "Title is required" while every other option in the
+    # very same file had already been converted to `defined && length`.
+    # kanban-md's resolveCreateTitle tests the flag against "" and the args
+    # against length, so it takes "0" as a title.
+    my $flag = _run_karr( $repo, undef, 'create', '--title', '0' );
+    is( $flag->{exit}, 0, 'create --title 0 succeeds' )
+        or diag $flag->{stdout} . $flag->{stderr};
+    like( $flag->{stdout}, qr/Created task 2: 0/,
+        '...and stdout reports the created title "0"' );
+    my $created = _task( $repo, 2 );
+    is( $created ? $created->title : undef, '0',
+        'and the literal "0" landed as the title in the ref' );
+
+    my $positional = _run_karr( $repo, undef, 'create', '0' );
+    is( $positional->{exit}, 0, 'create 0 (positional form) succeeds' )
+        or diag $positional->{stdout} . $positional->{stderr};
+    my $from_positional = _task( $repo, 3 );
+    is( $from_positional ? $from_positional->title : undef, '0',
+        'and the positional "0" landed as the title too' );
+
+    # Truthiness, not numeric validation: "00" (two characters) has always
+    # worked, and that difference is what identifies the bug rather than a
+    # rule about numbers.
+    my $two = _run_karr( $repo, undef, 'create', '--title', '00' );
+    is( $two->{exit}, 0, 'create --title 00 still succeeds' )
+        or diag $two->{stderr};
+    my $two_chars = _task( $repo, 4 );
+    is( $two_chars ? $two_chars->title : undef, '00',
+        '...with the title "00"' );
+
+    # And the guard is still a guard: length, not deleted. A create with no
+    # title at all stays a failure, exactly as before.
+    my $none = _run_karr( $repo, undef, 'create' );
+    isnt( $none->{exit}, 0, 'a create with no title at all is still rejected' );
+    like( $none->{stderr}, qr/Title is required/,
+        '...with the title-required message' );
+};
+
 subtest 'create with --tags 0 --assignee 0 --estimate 0 lands all three (#153)' => sub {
     my $repo = _setup_repo();
 
@@ -213,6 +258,27 @@ subtest 'handoff --block 0 records block reason "0" (#153)' => sub {
         'and the card is blocked' );
     is( $task->block_reason, '0',
         'and the literal "0" is the recorded block reason' );
+};
+
+subtest 'handoff --block 0 says so in its success line (#153 message half)' => sub {
+    my $repo = _setup_repo();
+
+    my $move = _run_karr( $repo, undef, 'move', 1, 'in-progress',
+        '--claim', 'alice' );
+    is( $move->{exit}, 0, 'seed task moved into in-progress' )
+        or diag $move->{stderr};
+
+    # The reporting half of the guard above. #153 converted the guard that
+    # blocks the card but not the one that composes the success line, which
+    # still read `if $self->block` -- so the card came back blocked while the
+    # output denied it. "00" always printed its "(blocked: 00)".
+    my $rv = _run_karr( $repo, undef, 'handoff', 1,
+        '--claim', 'alice', '--block', '0' );
+    is( $rv->{exit}, 0, 'handoff --block 0 succeeds' )
+        or diag $rv->{stdout} . $rv->{stderr};
+    ok( _task($repo)->has_blocked, 'and the card really is blocked' );
+    like( $rv->{stdout}, qr/\(blocked: 0\)/,
+        'and the success line reports the block it just recorded' );
 };
 
 subtest 'handoff --note 0 appends the literal "0" to the body (#153)' => sub {

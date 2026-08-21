@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - `karr create 0` and `karr create --title 0` make a card titled `0`
+      instead of refusing it (#230). The guard read `my $title = ... or die`,
+      and `"0"` is one character long and a perfectly good title but a false
+      value, so both forms came back as "Title is required". It is the one
+      guard in that file ticket #153 left on truth while converting the
+      others, and `t/153-falsy-option-values.t` -- which names `Cmd::Create`
+      in its own header -- covered `edit --title 0` but not this. The
+      regression test went there rather than into a file of its own, since
+      that is where the class lives. A sweep of the three files that header
+      names turned up one more of the same kind: `karr handoff ID --block 0`
+      did block the card but left `(blocked: 0)` off the success line, so the
+      output denied a block that had just happened.
+
     - `claim_timeout: 0s` means claims never expire, which is what it always
       said it meant (#232). The POD of `claim_timeout_secs` promised that an
       explicit zero is honoured verbatim, and `_parse_timeout` did return it
