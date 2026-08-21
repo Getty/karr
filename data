@@ -1,0 +1,59 @@
+---
+claimed_at: 2026-08-21T10:42:59Z
+claimed_by: tube-trap
+class: standard
+completed: 2026-08-21T10:42:59Z
+created: 2026-08-21T07:53:07Z
+id: 235
+priority: medium
+started: 2026-08-21T10:09:46Z
+status: done
+tags:
+- parity
+- cli
+- ux
+title: Widerspruechliche und mehrdeutige Eingaben werden still aufgeloest statt zurueckgewiesen
+updated: 2026-08-21T10:42:59Z
+---
+
+Beim systematischen Paritaetsvergleich gefunden, alle Faelle selbst nachgestellt. Vier Stellen, ein Muster: karr nimmt eine Eingabe an, in der sich der Aufrufer widerspricht, und entscheidet still fuer eine Seite.
+
+## 1. --block und --unblock zusammen
+
+    karr edit 4 --block "warte" --unblock
+    -> Updated task 4: K4      (Karte am Ende NICHT blockiert, updated gestempelt)
+
+kanban-md weist das Paar auf der Flag-Ebene ab (cmd/edit.go, StatusConflict), bevor irgendetwas geschrieben wird. karr laeuft in Cmd/Edit.pm beide Zweige nacheinander durch (um Zeile 355-361), der zweite gewinnt.
+
+## 2. --body und --append_body zusammen
+
+kanban-md: ebenfalls StatusConflict. karr: Zeile 310 setzt den Body, Zeile 312-318 haengt an -- Ergebnis ist "neu\nnote".
+
+## Warum 1 und 2 keine Geschmacksfrage sind
+
+karr **hat** diese Regel schon, fuer genau ein Paar. Cmd/Edit.pm um Zeile 228-231 weist `--claim` zusammen mit `--release` ab, mit dem Kommentar: "kanban-md rejects the pair at the flag layer too (cmd/edit.go:128-130); we match". Dieselbe Ebene, dieselbe Absicht, die anderen Paare nicht mitgenommen.
+
+(`--started`/`--clear-started`, `--completed`/`--clear-completed` und `--parent`/`--clear-parent` weist kanban-md ebenfalls ab; die Optionen gibt es in karr gar nicht, also faellt das weg.)
+
+## 3. create TITEL --title ANDERER
+
+kanban-md: InvalidInput, "title provided both as argument and --title flag" (cmd/create.go um Zeile 118-121).
+karr: `$self->title // $pos[0]` in Cmd/Create.pm Zeile 164 -- `--title` gewinnt, das positionale Argument wird stumm verworfen.
+
+## 4. move ID STATUS --next -- hier gewinnt bei beiden jemand, aber nicht derselbe
+
+Das ist der Fall, der aus der Reihe faellt: kanban-md weist ihn **nicht** zurueck, sondern loest ihn auch still auf -- nur andersherum.
+
+kanban-mds resolveTargetStatus (cmd/move.go um Zeile 134-159) hat `case len(args) == 2:` als ersten Zweig im switch; das positionale Ziel gewinnt, `--next` wird ignoriert.
+karr legt in Cmd/Move.pm (um Zeile 343-353) erst das positionale Ziel ab und laesst `--next`/`--prev` es dann bedingungslos ueberschreiben. Die Relativbewegung gewinnt.
+
+Nachgestellt auf dem Default-Board: Karte auf `backlog`, `karr move 7 archived --next` -> die Karte landet auf `todo`, nicht auf `archived`. Zwei verschiedene Spalten, beide Werkzeuge Exit 0, keine Meldung.
+
+## Zu entscheiden
+
+Fuer 1-3 ist die Richtung klar: zurueckweisen, wie es karr fuer `--claim`/`--release` schon tut, mit dem Exit-Code, den ADR 0002 fuer Usage-Fehler vorsieht.
+
+Fuer 4 ist zu entscheiden, ob karr kanban-mds Vorrang uebernimmt (positional schlaegt relativ) oder das Paar ebenfalls zurueckweist. Meine Einschaetzung: zurueckweisen ist besser als beide Varianten, weil ein Aufrufer, der beides angibt, sich schlicht vertan hat -- aber es ist eine Abweichung von der Referenz und gehoert begruendet. Wer es baut, entscheidet und schreibt die Begruendung an die Stelle.
+
+Regressionstest fuer jedes Paar, und fuer 4 zusaetzlich der Nachweis, dass `--next` allein weiterhin geht.
+Erledigt in 63f48e8. Fuenfter Fall dazugefunden, den dieses Ticket nicht kannte: 'karr move ID --next --prev' verschob still nach vorn und verwarf --prev. Zu Fall 4 hat der Worker das schaerfere Argument als meins geliefert: kanban-mds Vorrang zu uebernehmen waere die SCHLECHTERE der beiden Stillen, weil Karten dann in einer anderen Spalte landeten als beim heutigen karr, ohne dass die Ausgabe das sagt. Dazu die Rechtfertigung fuer die Abweichung: cobra beendet sich fuer alles mit 1, 'falsch aufgerufen' ist dort nicht ausdrueckbar; ADR 0002 reserviert exit 2 dafuer, und karrs Aufrufer sind Agenten, fuer die 0 API ist. Der create-Waechter steht vor allocate_next_id, ein abgelehnter create verbrennt also keine id, und vor der Titel-Pflichtpruefung, damit zwei Titel als zwei Titel gemeldet werden statt als fehlender. Vorher geprueft: kein Foundation-Code, kein Skill-Dokument und kein POD-Beispiel baut einen Aufruf mit beiden Formen. Volle Suite: 204 Dateien, 1487 Tests, pass.
