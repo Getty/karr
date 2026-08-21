@@ -1,0 +1,52 @@
+---
+claimed_at: 2026-08-21T11:15:42Z
+claimed_by: snow-bird
+class: standard
+completed: 2026-08-21T11:15:42Z
+created: 2026-08-21T09:51:17Z
+id: 243
+priority: medium
+started: 2026-08-21T10:43:35Z
+status: done
+tags:
+- cli
+- bug
+- scripting
+title: Ein leeres Positional wird verworfen, und das naechste Wort rutscht auf seinen
+  Platz
+updated: 2026-08-21T11:15:42Z
+---
+
+Nebenbefund aus #239, dort korrekt nicht mitgebaut -- eigene Wurzel, andere Schicht. Selbst nachgestellt.
+
+## Reproduktion
+
+    IDS=""
+    karr move "$IDS" todo
+    -> Task todo not found
+       1 of 1 ids failed          exit 1
+
+Das leere Argument wird von der MooX::Cmd/Getopt-Schicht verworfen, bevor `positional_args` es sieht -- in `execute` kommt `argv=[todo]` an. karr nimmt also `todo` als id und sucht eine Karte dieses Namens.
+
+## Warum das ein Problem ist
+
+karr ist ein CLI fuer Agenten; Kommandos werden aus Variablen zusammengesetzt. Ist die Variable leer -- weil ein `karr agentname` fehlschlug, ein Filter nichts fand, ein Parse danebenging --, dann bekommt der Aufrufer nicht "du hast keine id angegeben", sondern eine Fehlermeldung ueber eine Karte namens `todo`. Bei `karr move "$IDS" done` heisst sie "Task done not found".
+
+Nichts in der Ausgabe deutet darauf hin, dass ein Argument fehlte. Der Aufrufer sucht den Fehler bei der Karte statt bei seiner Variablen.
+
+Und es ist nicht auf `move` beschraenkt: jedes Kommando mit mehr als einem Positional hat dieselbe Verschiebung. `karr handoff "$ID" --claim x` verliert nur das Argument (die Option rutscht nicht nach), `karr move`/`karr config set` verschieben.
+
+## Was #239 daran geaendert hat: nichts
+
+#239 hat die fuenf Waechter auf `defined && length` umgestellt, damit die id `0` nicht mehr als "kein Argument" gilt. Der leere String kommt aber gar nicht erst bis dorthin -- er wird eine Schicht hoeher verworfen. Beide Fehler sehen von aussen aehnlich aus und sitzen an verschiedenen Stellen.
+
+## Zu klaeren
+
+1. **Wo genau wird verworfen?** MooX::Cmd, MooX::Options oder Getopt::Long -- erst herausfinden, dann entscheiden. Davon haengt ab, ob karr es ueberhaupt beeinflussen kann oder ob die Antwort eine andere sein muss.
+2. **Falls beeinflussbar:** ein leeres Positional sollte als vorhandenes, aber leeres Argument ankommen und dann am `defined && length`-Waechter aus #239 sauber als Usage-Fehler enden. Das waere die schluessige Fortsetzung.
+3. **Falls nicht beeinflussbar:** dann ist die ehrliche Antwort womoeglich eine Pruefung auf der anderen Seite -- wenn das zweite Positional (`STATUS` bei `move`) fehlt, obwohl das Kommando es erwartet, ist das ein Hinweis auf genau diese Verschiebung. `karr move todo` allein ist heute schon zweideutig: id `todo` ohne Status, oder verschobenes Argument?
+4. Und in jedem Fall pruefen, welche Kommandos betroffen sind -- `move`, `config set`, `config get`, und was sonst mehr als ein Positional nimmt.
+
+Regressionstest: `karr move "" todo` muss etwas sagen, an dem der Aufrufer die leere Variable erkennt, nicht etwas ueber eine Karte namens `todo`.
+
+Erledigt in 9119660. Ursache in der Abhaengigkeit gefunden, nicht in karr: MooX::Cmd::Role::_initialize_from_cmd faehrt argv durch shellwords(join ' ', map { quotemeta } @ARGV) -- ein Rundlauf, der ueber 21 Sonden nachweislich die Identitaet auf jedem nicht-leeren String ist und leere spurlos loescht. Was karr je sieht, ist exakt grep { length } @ARGV. Die in diesem Ticket bevorzugte Loesung ist damit beweisbar unmoeglich: keine Kodierung eines leeren Arguments ueberlebt eine Identitaet. Die Erhebung (gemessen, nicht vermutet) fand zwei Faelle, die schwerer wiegen als der gemeldete: 'karr show ""' druckte die zuletzt aktualisierte Karte mit exit 0, und 'karr skill ""' installierte SKILL.md in drei Verzeichnisse -- beides von mir gegen HEAD nachgeprueft. Waechter in bin/karr, der einzigen Stelle, an der der leere Slot noch existiert; er stellt eine Tatsache fest statt aus einem fehlenden zweiten Positional zu raten. shellwords zu ueberschreiben wurde verworfen, weil die Loeschung vor der Trennung von Optionen und Positionals passiert und damit leere Optionswerte ueber 30+ Optionen neu zuliesse. karr-foundation ist nicht betroffen (new_with_options, kein MooX::Cmd::Role) -- geprueft, nicht angenommen. Verhaltensaenderung: karr list/board/needs/unlock mit leerem Argument gehen von exit 0 auf 2. Volle Suite: 206 Dateien, 1503 Tests, pass.
