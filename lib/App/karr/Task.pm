@@ -146,11 +146,14 @@ the most urgent class being the first entry.
 =attr parent
 
 Optional parent-task id, round-tripped through the frontmatter like any
-other modelled field. Nothing in karr currently sets or reads it: no command
-offers a C<--parent> option, and no filtering, rendering, or dependency logic
-consults it. A document carrying a C<parent> key survives a karr write
-unchanged, but today it is inert data as far as karr's own commands are
-concerned.
+other modelled field. Nothing in karr sets it: no command offers a
+C<--parent> option, and no filtering, rendering or sorting consults it. One
+command reads it -- C<karr delete> names a card carrying the id it is about to
+remove as its parent, beside the cards that name it in C<depends_on>
+(L<App::karr::Cmd::Delete/DEPENDENTS>, ticket #236) -- because C<karr import>
+brings real values in from a kanban-md board, which does set the field. A
+document carrying a C<parent> key otherwise survives a karr write unchanged
+and stays inert as far as karr's own commands are concerned.
 
 =attr depends_on
 

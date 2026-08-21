@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - `karr delete` names the cards that point at the one being removed
+      (#236). The board is searched backwards first -- a `depends_on` entry
+      naming the id, or `parent` set to it -- and each dependent is reported
+      on STDERR as a `Warning:` that offers `karr archive ID` as the way to
+      keep the card instead. karr already showed that damage afterwards:
+      `karr show` renders a dangling dependency as `2 (unknown)`. The
+      information existed, it just arrived after the last moment anybody
+      could act on it. The warning comes before the confirmation prompt so it
+      can still change the answer, and it comes under `--yes` as well, which
+      is the mode agents delete in; `--json` carries the same sentences as
+      `dependent_warnings` and `--quiet` silences the STDERR copy. It warns
+      and deletes rather than refusing, the way kanban-md's `FindDependents`
+      does and the way karr answers the whole `depends_on` family (#123).
+      `parent` is included even though karr cannot set it -- `karr import`
+      brings real values in, and nothing else in karr ever renders `parent`,
+      so this warning is the only place an orphaned child would be named at
+      all. The search is board-local: a `needs:` link from another board
+      cannot be seen from here.
+
     - `karr pick` ranks two `fixed-date` cards by the sooner due date before
       it asks about priority (#233). karr sorted class, then priority, then
       id, and `due` did not appear in the ranking at all -- so the one class
