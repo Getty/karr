@@ -1,0 +1,62 @@
+---
+claimed_at: 2026-08-21T09:05:35Z
+claimed_by: word-pure
+class: standard
+completed: 2026-08-21T09:05:35Z
+created: 2026-08-21T07:50:27Z
+id: 231
+priority: medium
+started: 2026-08-21T08:23:16Z
+status: done
+tags:
+- parity
+- bug
+- mutation
+title: 'Schreibvorgaenge, die nichts aendern: move auf denselben Status und edit ohne
+  Feld-Flags'
+updated: 2026-08-21T09:05:35Z
+---
+
+Zwei Faelle derselben Sorte, beim Vergleich mit kanban-md gefunden und selbst nachgestellt.
+
+## Fall 1: move auf den Status, in dem die Karte schon steht
+
+    karr move 5 backlog          # Karte 5 steht auf backlog
+    -> Moved task 5: backlog -> backlog
+    updated: 2026-08-21T07:48:58Z -> 2026-08-21T07:49:03Z
+
+kanban-md kurzschliesst das in internal/board/mutate.go:101-104, und zwar vor require_claim, vor WIP und vor dem Schreiben:
+
+    if t.Status == params.NewStatus { return &MoveResult{Task: t}, nil }
+
+Kein Schreibvorgang, `updated` bleibt stehen, kein Log-Eintrag; das CLI meldet "already at X" und unter --json `changed: false`.
+
+karr hat diesen Kurzschluss weder in Cmd/Move.pm noch in Role/TaskMutation.pm::apply_status_change. Der Schreibpfad laeuft durch, BoardStore::save_task_cas stempelt `updated` bedingungslos, und BoardAccess haengt einen Activity-Log-Eintrag an.
+
+**karr kennt die Regel bereits:** Cmd/Archive.pm um Zeile 221-230 hat genau diesen Check, mit einem Kommentar, der ihn begruendet ("costs one idempotent re-archive"). Bei `move` wurde sie nur nicht gezogen.
+
+## Fall 2: edit ohne ein einziges Feld-Flag
+
+    karr edit 3
+    -> Updated task 3: K3
+    updated: 2026-08-21T07:48:57Z -> 2026-08-21T07:49:06Z
+
+kanban-md: internal/board/mutate.go:413-415 gibt `no changes specified` zurueck und schreibt nicht. karr hat kein Gegenstueck -- der Callback laeuft leer durch update_task_guarded, save_task_cas stempelt, der Log-Eintrag wird geschrieben, und die Meldung behauptet eine Aenderung.
+
+Dasselbe gilt fuer `edit 5 --block ""` oder `edit 5 --title ""`, wo die length-Waechter den Wert zwar verwerfen, der Schreibvorgang aber trotzdem stattfindet.
+
+**Auch das ist karr schon einmal aufgefallen:** t/153-falsy-option-values.t beschreibt um Zeile 94-97 genau diesen Effekt als *den Fehler* -- "a silent write that bumped updated ... reporting a change that never happened". Der Test deckt aber nur den Fall eines verschluckten Werts ab, nicht den ohne Flags.
+
+## Warum das mehr als Kosmetik ist
+
+`updated` ist nicht dekorativ. Der Foundation-Drain unterscheidet daran eine steckengebliebene von einer bearbeiteten Karte (siehe t/31-foundation-drain.t um Zeile 152), und `context` sowie `metrics` lesen es. Ein Kommando, das nichts aendert und trotzdem stempelt, faelscht dieses Signal -- und der Activity-Log bekommt einen Eintrag fuer ein Ereignis, das nicht stattfand.
+
+## Zu tun
+
+Beide Faelle kurzschliessen, bevor geschrieben wird. Vorher klaeren:
+
+1. Wo genau der move-Check hingehoert: kanban-md setzt ihn nach der Claim-Pruefung und vor require_claim. Bei karr ist die Reihenfolge in apply_status_change seit #224 begruendet -- den Check dort einzuhaengen, ohne diese Begruendung zu brechen, ist der eigentliche Teil der Arbeit.
+2. Was die Ausgabe sagen soll. kanban-md: "Task #N is already at X" und `changed: false` unter --json. Ob karr dasselbe Feld anbietet, entscheidet, ob JSON-Leser das mitbekommen.
+3. Ob `edit` ohne Flags Exit 0 oder Exit 1 sein soll. kanban-md macht daraus einen Fehler; ADR 0002 regelt karrs Exit-Codes und muss die Antwort hergeben.
+4. Ob bestehende Tests den heutigen Stempel-Effekt irgendwo voraussetzen -- vor der Aenderung suchen.
+Erledigt in 2870cdf. Der Kurzschluss steht vor der #224-Freigabe, und das ist kostenlos statt ein Kompromiss: die Freigabe feuert auf terminal->nicht-terminal, bei old eq new sind beide Seiten derselbe Status, die Bedingung also unerfuellbar. Nicht auf einem Vorab-Read wie Cmd/Archive.pm, weil der Verlust hier asymmetrisch ist -- verliert man das Rennen, wird ein echter Move still verworfen, waehrend stdout das Gegenteil sagt. Also im CAS-Callback, ueber einen paketlexikalischen Sentinel, verglichen mit Scalar::Util::refaddr (SyncGuards Idiom) und importiert als 'use Scalar::Util ()', weil ein importiertes refaddr in einer Moo::Role zur Methode auf allen sechs Konsumenten wuerde. Exit-Codes aus ADR 0002 hergeleitet: move 0 (no-op ist dort ausdruecklich Erfolg), edit ohne Feld 2 (kein no-op, sondern eine leere Anfrage -- der Fall, den usage_errors POD woertlich beschreibt). 'karr move --json' traegt jetzt 'changed', auf beiden Antworten. 'move ID SAME --claim NAME' bleibt bewusst ausgenommen: claimed_by zu schreiben ist eine Aenderung. Kein bestehender Test setzte den alten Stempel-Effekt voraus. Volle Suite: 199 Dateien, 1456 Tests, pass.
