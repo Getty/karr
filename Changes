@@ -1,5 +1,22 @@
 {{$NEXT}}
 
+    - `karr delete` names the far card of a cross-board link before the
+      card goes (#242). #236 closed the local half; this is the other one,
+      and it is deliberately narrow: the card being deleted usually carries
+      the reference itself, as `escalated-from: BOARD#ID` or as a `needs:`
+      link, so `delete` can name the far card out of its own tag without
+      opening a foreign repository or acquiring a dependency on the fleet
+      config -- which is what a resolving lookup would have cost, for an
+      answer `karr needs` already gives. The two directions get different
+      sentences: an escalation may be waiting over there for this work, and
+      `karr archive` keeps that link resolvable; a `needs:` link travels
+      with the card, so nothing over there breaks and no archive advice is
+      offered. Same channel as #236 -- STDERR, `--quiet` silences,
+      `--json` carries it -- but under its own `cross_board_warnings` key,
+      because a consumer cannot act on these the way it can on a local
+      dependent. `karr archive` needs none of this, checked end to end: the
+      link stays resolvable and settles.
+
     - An abbreviated option that takes a value keeps its value (#247).
       `karr edit 1 --prio high` answered `unexpected extra argument:
       "high"`, blaming the value for a problem in the abbreviation in front

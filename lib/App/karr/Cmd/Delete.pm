@@ -8,6 +8,7 @@ use MooX::Options (
   usage_string => 'USAGE: karr delete ID[,ID,...] [--yes] [--json]',
 );
 use IO::Handle;
+use App::karr::CrossBoard;
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
@@ -60,9 +61,40 @@ it comes under C<--yes> as well, which is the mode agents delete in. C<--json>
 carries the identical sentences as C<dependent_warnings> in the result object
 instead, and C<--quiet> silences the STDERR copy.
 
-The search is board-local. A card on another board waiting on this one through
-a C<needs:> link (L<App::karr::CrossBoard>) cannot be seen from here; C<karr
-needs> reports such a link as missing once the card is gone.
+The search is board-local: it reads the cards on this board. What the card
+being deleted says about I<other> boards is a second warning, below.
+
+=head1 CROSS-BOARD LINKS
+
+A card on another board waiting on this one through a C<needs:> link
+(L<App::karr::CrossBoard>) cannot be seen from here -- reading the far board
+needs a path this command does not have. The card being deleted usually names
+that far card itself, though: C<< escalated-from:<board>#<id> >>, the other half
+of the escalation protocol, is a tag on this card and is read without touching
+anything remote. Both directions are reported, in different words:
+
+=over 4
+
+=item * C<escalated-from:> -- the far card this one was raised for. Deleting
+this card leaves that link unresolvable: C<karr needs> over there calls it
+C<missing>, and C<< karr needs --resolve >> refuses on purpose to settle a link
+whose card cannot be read, so a card blocked on it stays blocked. C<karr
+archive> is the way out here too -- an archived card is still readable and
+C<archived> is terminal on every board, so the link settles instead of breaking.
+
+=item * C<needs:> -- a far card this one waits on. Nothing over there breaks
+when this card goes, because the link goes with it; what ends is anything on
+this board waiting for that far card, and no other command says so once the
+card is gone.
+
+=back
+
+The reference is named, never resolved. Placing a board name on this machine
+needs the fleet configuration C<karr needs> reads and C<karr delete> does not,
+and C<karr needs> is the command that already answers what state the far card
+is in. C<--json> carries these sentences as C<cross_board_warnings> -- a key of
+their own beside C<dependent_warnings>, because a consumer that can act on a
+dangling dependency on this board cannot act on a card in another repository.
 
 =head1 SEE ALSO
 
@@ -129,14 +161,21 @@ sub execute {
     # the mode agents delete in, so a warning only on the interactive path warns
     # exactly where nobody is left to read it.
     my @dependents = $self->_dependent_warnings($task);
+    # And what this card says about the boards it cannot see (#242): the far end
+    # of an escalation is a tag on the card being deleted, so naming it costs
+    # nothing remote.
+    my @cross = $self->_cross_board_warnings($task);
     # The channel App::karr::Role::DependencyCheck argues for one module over,
     # rather than a third convention: the human copy on STDERR so STDOUT stays
     # parseable, --quiet silencing that copy, and --json carrying the identical
     # sentence in the result object below because a JSON consumer never reads
     # STDERR.
-    print STDERR map { "$_\n" } @dependents
+    print STDERR map { "$_\n" } @dependents, @cross
       unless $self->json || $self->quiet;
-    my @dependent_report = @dependents ? ( dependent_warnings => \@dependents ) : ();
+    my @warning_report = (
+      ( @dependents ? ( dependent_warnings   => \@dependents ) : () ),
+      ( @cross      ? ( cross_board_warnings => \@cross )      : () ),
+    );
 
     unless ($self->yes) {
       printf "Delete task %d: %s? [y/N] ", $task->id, $task->title;
@@ -186,12 +225,12 @@ sub execute {
         # Answering "n" is an answer, not a failure: the batch carries on and
         # the command still exits 0 if nothing else went wrong.
         printf "Skipped task %d: %s\n", $task->id, $task->title unless $self->json;
-        # The dependents ride along on a card that was kept, too. Under --json
-        # the pair is the warning's only channel, and this is the case the
-        # warning was for: `deleted => false` sits beside it and says plainly
-        # that the delete it named did not happen.
+        # The warnings ride along on a card that was kept, too. Under --json
+        # the pair is their only channel, and this is the case they were for:
+        # `deleted => false` sits beside them and says plainly that the delete
+        # they named did not happen.
         return { id => $task->id, title => $task->title, deleted => \0,
-                 @dependent_report };
+                 @warning_report };
       }
     }
 
@@ -204,7 +243,7 @@ sub execute {
     # line (#177). Deleting the card is also the one case where nothing survives
     # to be read afterwards, which is what makes the trace matter most here.
     return { id => $task->id, title => $task->title, deleted => \1,
-             @dependent_report,
+             @warning_report,
              $self->expired_claim_report( $task->id ) };
   });
 
@@ -243,7 +282,8 @@ sub execute {
 # (App::karr::CrossBoard) is invisible from here, because reading the far board
 # needs a path this command does not have and must not invent -- the same line
 # App::karr::Role::DependencyCheck draws for the cross-board half of its own
-# warning. `karr needs` reports such a link as `missing` once the card is gone.
+# warning. What can still be said about that board without opening it is
+# _cross_board_warnings below.
 #
 # Re-read per id rather than once for the batch: `karr delete 6,2` should not
 # warn that 6 depends on 2 after 6 itself has been deleted, so each id is asked
@@ -277,6 +317,56 @@ sub _dependent_warnings {
       . '(use "karr archive %d" to keep the card)',
       $other->id, $other->title, $id, $id
       if $names_id->( $other->parent );
+  }
+  return @warnings;
+}
+
+# The same arrival-too-late, one repository over (#242). `karr delete 1` on the
+# board an escalation was raised on said nothing, and `karr needs` on the board
+# that raised it then reported `task 1 does not exist on board boardA` -- the
+# cross-board spelling of `2 (unknown)`, and a worse one: App::karr::CrossBoard/
+# link_state calls that state `missing`, and `karr needs --resolve` refuses on
+# purpose to settle a link whose card cannot be read, so a card blocked on it
+# stays blocked with nothing over there able to lift it.
+#
+# The far board is still not opened. What makes a warning possible anyway is
+# that the escalation protocol writes its far end onto *this* card:
+# `escalated-from:<board>#<id>`, set by `karr create --escalated-from`, is a tag
+# on the card being deleted. Naming the far card out of this board's own tag is
+# the honest reach -- resolving it would need the fleet configuration `karr
+# needs` reads and this command does not, and `karr needs` is the command that
+# already answers that question.
+#
+# `may be waiting on it` rather than `is`: the two halves of the protocol are a
+# convention that nothing enforced before this module existed, which is why
+# App::karr::CrossBoard/link_state has a `verified` field at all. The far card
+# usually carries the matching `needs:`; this side cannot know that it does.
+#
+# The `needs:` direction is reported too and says something else, so it reads as
+# a different sentence and carries no `karr archive` door: keeping the card
+# would repair nothing over there, because nothing over there is broken -- the
+# link is on the card being deleted and goes with it. What ends is anything on
+# this board waiting for the far card, and once the card is gone no command
+# mentions it again: `karr needs` reads links off the cards that carry them.
+sub _cross_board_warnings {
+  my ($self, $task) = @_;
+
+  my $id = $task->id;
+  my @warnings;
+  # Tag order, as App::karr::CrossBoard returns it. A tag that carries the
+  # prefix but not a well-formed reference is skipped there, and a delete must
+  # not invent a third state for it either.
+  for my $ref ( App::karr::CrossBoard->escalated_from_of($task) ) {
+    push @warnings, sprintf
+      'Warning: task %d (%s) was escalated from %s, which may be waiting on it '
+      . 'from another board (use "karr archive %d" to keep that link resolvable)',
+      $id, $task->title, App::karr::CrossBoard->format_ref($ref), $id;
+  }
+  for my $ref ( App::karr::CrossBoard->needs_of($task) ) {
+    push @warnings, sprintf
+      'Warning: task %d (%s) waits on %s on another board, and nothing here '
+      . 'will be waiting for it once this card is gone',
+      $id, $task->title, App::karr::CrossBoard->format_ref($ref);
   }
   return @warnings;
 }
