@@ -1,0 +1,57 @@
+---
+claimed_at: 2026-08-21T09:39:41Z
+claimed_by: drug-find
+class: standard
+completed: 2026-08-21T09:39:41Z
+created: 2026-08-21T07:52:10Z
+id: 233
+priority: medium
+started: 2026-08-21T09:05:51Z
+status: done
+tags:
+- pick
+- parity
+title: 'pick: bei fixed-date entscheidet in kanban-md das Faelligkeitsdatum, in karr
+  die Prioritaet'
+updated: 2026-08-21T09:39:41Z
+---
+
+Beim systematischen Paritaetsvergleich gefunden.
+
+## Die Abweichung
+
+kanban-mds sortPickCandidates (internal/board/pick.go, um Zeile 81-96) sortiert: erst Klassenindex -- und wenn **beide** Karten die Klasse `fixed-date` tragen, dann nach Faelligkeitsdatum (frueheres zuerst, Karte ohne `due` hinten), und erst wenn das keinen Ausschlag gibt, nach Prioritaet:
+
+    if candidates[i].Class == "fixed-date" && candidates[j].Class == "fixed-date" {
+        if compareDue(candidates[i], candidates[j]) { return true }
+        if compareDue(candidates[j], candidates[i]) { return false }
+    }
+    return cfg.PriorityIndex(...) > cfg.PriorityIndex(...)
+
+Eigens getestet dort in internal/board/pick_test.go (TestPickFixedDateByDueDate).
+
+karrs `pick_rank` in Role/PickRules.pm (um Zeile 131-137) sortiert Klasse -> Prioritaet -> id. `due` kommt im ganzen Modul nicht vor.
+
+## Beispiel
+
+Default-Board, beide haben `fixed-date` in `classes`:
+
+    #1  todo  class=fixed-date  priority=high  due=2026-03-15
+    #2  todo  class=fixed-date  priority=low   due=2026-02-15
+
+kanban-md pickt #2 (frueher faellig), karr pickt #1 (hoehere Prioritaet).
+
+## Warum das kein Geschmacksfall ist
+
+`fixed-date` ist die Klasse, deren ganzer Sinn das Datum ist -- eine Klasse von Service, bei der ein Termin und nicht die Dringlichkeitseinstufung zaehlt. Genau dort ignoriert karr das Datum.
+
+## Begruendung gesucht, keine gefunden
+
+Geprueft: der Kommentarblock ueber `pick_rank` und dessen POD, `Cmd/Pick.pm` Abschnitt SELECTION RULES (sagt "class of service, then by priority, then by task id" und beruft sich dabei ausdruecklich auf kanban-mds pick.go), `grep` nach `fixed-date` und `due` ueber `lib/`, `docs/adr/`, `CLAUDE.md`. Die POD beschreibt die dreistufige Ordnung als kanban-mds Konvention, ohne die Ausnahme zu erwaehnen -- das spricht dafuer, dass sie beim Nachbau uebersehen wurde.
+
+## Zu tun
+
+Die Ausnahme in `pick_rank` nachziehen, und die SELECTION-RULES-POD in Cmd/Pick.pm mitziehen, damit sie beschreibt, was gilt. Regressionstest mit zwei fixed-date-Karten, deren Datums- und Prioritaetsreihenfolge sich widersprechen, plus die Gegenprobe, dass die Ausnahme **nur** greift, wenn beide Karten fixed-date sind.
+
+Nebenbefund aus derselben Stelle, sehr eng, nur mitnehmen wenn es ohne Umweg geht: PickRules nimmt fuer eine unbekannte Klasse `$cls_idx{standard} // 0`, kanban-mds classOrder nimmt `cfg.ClassIndex("standard")`, also -1, wenn `standard` gar nicht konfiguriert ist. Auf einem Board ohne `standard`-Klasse landet eine Karte mit unbekannter Klasse dort vor allen anderen, in karr gleichauf mit der ersten konfigurierten.
+Erledigt in f168d28. compareDue Fall fuer Fall nachgebaut statt approximiert: frueheres Datum zuerst, undatiert hinter jeder datierten Karte, und die zwei nicht trennbaren Faelle (beide undatiert, gleiches Datum) fallen auf die Prioritaet durch. Das Gate verlangt ausdruecklich BEIDE Karten fixed-date -- der Kommentar sagt das noch einmal, weil 'nach Faelligkeit sortieren' die naheliegende falsche Verallgemeinerung davon ist. fixed-date heisst jetzt Config->FIXED_DATE_CLASS neben ARCHIVED_STATUS; kanban-md hatte dort selbst nur ein Literal, es gab also nichts zu kopieren. Die Platzierung der neuen Stufe ist nicht beobachtbar (das Gate verlangt ohnehin gleiche Klassen) und wird deshalb von keinem Test behauptet -- gepinnt ist das Gate selbst. Die POD-Zeile in Foundation/Picker.pm ist mitgezogen. Der zweite Nebenbefund ist #240. Volle Suite: 201 Dateien, 1472 Tests, pass.
