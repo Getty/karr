@@ -1,0 +1,54 @@
+---
+claimed_at: 2026-08-21T11:47:42Z
+claimed_by: claim-pick
+class: standard
+completed: 2026-08-21T11:47:42Z
+created: 2026-08-21T10:59:16Z
+id: 247
+priority: medium
+started: 2026-08-21T11:15:59Z
+status: done
+tags:
+- cli
+- bug
+- options
+title: Eine abgekuerzte Option mit Wert verliert ihren Wert an die Positionals
+updated: 2026-08-21T11:47:42Z
+---
+
+Nebenbefund aus #238, dort korrekt nicht angefasst (die Datei gehoerte gerade dem #243-Worker). Vorbestehend, auch auf dem HEAD-Export von damals. Selbst praezisiert.
+
+## Das genaue Muster
+
+    karr edit 1 --unbl              -> Updated task 1        (boolean, funktioniert)
+    karr edit 1 --prio=high         -> Updated task 1        (Wert mit =, funktioniert)
+    karr edit 1 --prio high         -> unexpected extra argument: "high"    exit 2
+    karr edit 1 --tit "Renamed"     -> unexpected extra argument: "Renamed" exit 2
+
+Betroffen ist genau eine Form: **abgekuerzte Option, die einen Wert nimmt, mit Leerzeichen getrennt.** Getopt::Long akzeptiert die Abkuerzung (sonst hiesse es "Unknown option"), aber `Role/CliArgs.pm` weiss nicht, dass sie einen Wert konsumiert, und schiebt das naechste Token zu den Positionals.
+
+## Warum die Meldung das Schlimmste daran ist
+
+Sie beschuldigt den Wert. `unexpected extra argument: "high"` schickt den Aufrufer zu seinem Wert, waehrend der Fehler in der Abkuerzung davor sitzt. Wer nicht weiss, dass `--prio` das Problem ist, probiert einen anderen Wert.
+
+## Die Ursache steht kommentiert da, und der Kommentar ist ueberholt
+
+`lib/App/karr/Role/CliArgs.pm` behandelt eine Abkuerzung, die nicht in `_options_data` steht, "defensiv als nicht-konsumierend", mit der Begruendung "karrs abbreviatable flags consume nothing anyway". Das stimmte vielleicht einmal; heute nehmen `--title`, `--priority`, `--body`, `--claim`, `--note` und weitere Werte.
+
+Genau die Sorte Stelle, an der eine Begruendung stehenbleibt, waehrend die Voraussetzung darunter weggewandert ist -- wie bei #229.
+
+## Zu tun
+
+`Role/CliArgs.pm` muss eine Abkuerzung aufloesen koennen, bevor es entscheidet, ob sie konsumiert. Vorher klaeren:
+
+1. Wie `_options_data` gefuellt wird und ob dort genug steht, um Praefixe eindeutig aufzuloesen (MooX::Options kennt die Optionsspezifikationen, die Information sollte erreichbar sein).
+2. Was bei Mehrdeutigkeit passiert. `karr edit 1 --ti X` sagt heute sauber `Option ti is ambiguous (timestamp, title)`, exit 2 -- das ist Getopt::Long und soll so bleiben. Der Fix darf diesen Pfad nicht abschneiden.
+3. Ob das die richtige Ebene ist, oder ob die Aufloesung ganz an Getopt::Long gehoert und `CliArgs` sie nur noch abfragt.
+
+Regressionstest: `--prio high` und `--tit "Text"` muessen wirken wie ihre ausgeschriebenen Formen. Dazu die Nicht-Regression: `--unbl` (boolean), `--prio=high` (mit Gleichheitszeichen) und die Mehrdeutigkeitsmeldung bleiben wie sie sind.
+
+## Hinweis fuer den Bauenden
+
+#238 hat `karr edit` eine Option `--timestamp` gegeben. `--ti` ist dadurch mehrdeutig geworden (timestamp, title) statt eine Abkuerzung fuer `--title`. Das ist korrektes Getopt::Long-Verhalten und kein Regressionsfall -- und praktisch folgenlos, weil `--ti Wert` wegen genau dieses Tickets ohnehin nicht funktionierte.
+
+Erledigt in 9349cab. Der Kern ist eine schwaechere Frage: eine Abkuerzung, die es bis in execute() schafft, wurde bereits eindeutig aufgeloest (mehrdeutige und unbekannte steigen vorher mit exit 2 aus), CliArgs muss also nur fragen, ob die Optionen, die das Token abkuerzen koennte, sich ueber den Wert einig sind -- nie, welche gewonnen hat. Damit kein Nachbau fremder Tie-Breaking-Regeln und kein Griff in MooX::Options private API. Aufgeloest wird uebrigens zweimal vorgelagert: MooX::Options schreibt ein eindeutiges Praefix vor describe_options um, Getopt::Long sieht nur den Rest -- daher kommt die Mehrdeutigkeitsmeldung. Schlimmerer Fall als der gemeldete gefunden: 'karr get-refs --dir . REF' lehnte nicht ab, sondern ANTWORTETE, weil GetRefs positional_args()[0] ohne Stellenpruefung liest. Gepinnt sind beide Richtungen, inklusive 'archive --jso 1' -- der Fall, den ein naiver 'Default auf konsumierend'-Fix kaputtgemacht haette. Volle Suite: 208 Dateien, 1530 Tests, pass.
