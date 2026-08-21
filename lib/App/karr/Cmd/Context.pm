@@ -33,6 +33,10 @@ Builds a concise board summary suitable for embedding into agent context files
 such as F<AGENTS.md>. The command can print Markdown directly, emit structured
 JSON, or update an existing file between sentinel comments.
 
+Only C<archived> tasks are left out of the summary. Finished work still counts
+towards the reported total and is still reported as blocked if it is, which is
+the rule kanban-md applies to the same block.
+
 =head1 SECTIONS
 
 The generated context can include C<in-progress>, C<blocked>, C<overdue>,
@@ -115,19 +119,37 @@ sub execute {
   # Determine terminal and first statuses
   my $first_status = $statuses[0];
 
-  # Exclude archived from all operations
-  my @active_tasks = grep { !$self->store->is_terminal_status($_->status) } @tasks;
+  # Archived, and nothing else. The boundary is kanban-md's IsArchivedStatus
+  # (cmd/context.go filters the list with it), and that is literally
+  # `s == "archived"` -- not "terminal". A finished card is still part of what
+  # the board reports about itself: it counts in the header total, and it is
+  # still listed as blocked if someone blocked it before it got there. Only
+  # filed-away work drops out of the briefing entirely.
+  #
+  # karr excluded every terminal status here between 85f6e9f (a sweep that
+  # replaced the original `ne 'archived'` while claiming only to centralize
+  # config knowledge) and ticket #229, so on the default board `done` was
+  # missing from both those numbers -- while this comment already described the
+  # narrower rule. Widening it again would also break the sentinel interop
+  # contract explained in _render_markdown below: karr and kanban-md maintain
+  # one block in a shared host file, so the same board has to put the same
+  # numbers in it.
+  #
+  # The values below that must NOT see terminal cards test the status
+  # themselves, as kanban-md's computeSummary does: `active`, `_is_overdue` and
+  # the in-progress section each carry their own is_terminal_status check.
+  my @context_tasks = grep { $_->status ne App::karr::Config->ARCHIVED_STATUS } @tasks;
 
   # Build summary
   my $board_name = $ec->{board}{name} // 'Kanban Board';
-  my $total = scalar @active_tasks;
+  my $total = scalar @context_tasks;
   # "Active" is kanban-md's computeSummary rule -- not the first status, not a
   # terminal one -- so it counts the same span the "In Progress" section renders
   # below, blocked cards included. See there for why that span is wider than the
   # heading sounds.
-  my $active = grep { $_->status ne $first_status && !$self->store->is_terminal_status($_->status) } @active_tasks;
-  my $blocked = grep { $_->has_blocked } @active_tasks;
-  my $overdue = $self->_count_overdue(\@active_tasks);
+  my $active = grep { $_->status ne $first_status && !$self->store->is_terminal_status($_->status) } @context_tasks;
+  my $blocked = grep { $_->has_blocked } @context_tasks;
+  my $overdue = $self->_count_overdue(\@context_tasks);
 
   # Build sections
   my %wanted_sections;
@@ -157,22 +179,25 @@ sub execute {
       @items = map { $self->_task_item($_) }
         sort { $self->_pri_order($a) <=> $self->_pri_order($b) }
         grep { $_->status ne $first_status && !$self->store->is_terminal_status($_->status) && !$_->has_blocked }
-        @active_tasks;
+        @context_tasks;
     } elsif ($sec eq 'blocked') {
       @items = map { $self->_task_item($_, 'blocked: ' . ($_->has_block_reason ? $_->block_reason : '')) }
         grep { $_->has_blocked }
-        @active_tasks;
+        @context_tasks;
     } elsif ($sec eq 'overdue') {
       my $now = gmtime->strftime('%Y-%m-%d');
       @items = map { $self->_task_item($_, 'due ' . $_->due) }
         grep { $self->_is_overdue($_, $now) }
-        @active_tasks;
+        @context_tasks;
     } elsif ($sec eq 'recently-completed') {
-      # Over every task, not @active_tasks: that list is by definition the
-      # non-terminal ones, so intersecting it with the terminal statuses was
-      # empty by construction and this section had never once had an entry on
-      # any board (ticket #99). kanban-md's buildRecentlyCompletedSection scans
-      # the whole task list too.
+      # Over every task, not @context_tasks. When ticket #99 was written that
+      # list was the non-terminal cards, so intersecting it with the terminal
+      # statuses was empty by construction and this section had never once had
+      # an entry on any board. It now holds everything but the archived (#229),
+      # which makes the two spans equal -- the `ne archived` test below is what
+      # keeps filed-away work out either way, and is why this branch did not
+      # move with that fix. kanban-md's buildRecentlyCompletedSection likewise
+      # scans the whole list it is handed.
       #
       # "Recently" is bounded by the completion stamp, as it is there, but to
       # the day rather than to the second: `completed` is a string here and an
@@ -182,7 +207,9 @@ sub execute {
       my $cutoff = (gmtime() - ($self->days * 86400))->strftime('%Y-%m-%d');
       @items = map { $self->_task_item($_, 'completed ' . ($_->completed // '')) }
         sort { ($b->completed // '') cmp ($a->completed // '') }
-        grep { $self->store->is_terminal_status($_->status) && $_->status ne 'archived' && $_->has_completed && $_->completed ge $cutoff }
+        grep { $self->store->is_terminal_status($_->status)
+                 && $_->status ne App::karr::Config->ARCHIVED_STATUS
+                 && $_->has_completed && $_->completed ge $cutoff }
         @tasks;
     } elsif ($sec eq 'activity') {
       @items = $self->_recent_activity;

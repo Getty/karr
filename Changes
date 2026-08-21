@@ -1,5 +1,20 @@
 {{$NEXT}}
 
+    - `karr context` leaves out archived tasks and nothing else (#229). It
+      had been filtering every terminal status, so on a default board
+      finished work was missing from the header total and a card blocked
+      before it reached `done` vanished from the `blocked` count and the
+      Blocked section. kanban-md filters the same list with
+      `IsArchivedStatus`, which is literally `s == "archived"`, and karr's
+      first release did the same -- `85f6e9f` widened it to
+      `is_terminal_status` as a side effect of a sweep that only meant to
+      centralize config knowledge, and the comment above the line went on
+      describing the narrower rule the whole time. Since the two tools
+      maintain one context block in a shared host file through the same
+      sentinels, the same board has to put the same numbers in it. `active`,
+      `overdue` and the In Progress section are unchanged: each carries its
+      own terminal check, as kanban-md's `computeSummary` does.
+
     - `karr --dir PATH skill install` is a usage error instead of a silent
       write into the wrong tree (#226). Same leak as #225 -- the root
       `--dir` is parsed onto the root instance and `skill`, which composes
