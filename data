@@ -1,0 +1,58 @@
+---
+claimed_at: 2026-08-21T07:12:20Z
+claimed_by: move-vice
+class: standard
+completed: 2026-08-21T07:12:20Z
+created: 2026-08-21T06:26:23Z
+id: 226
+priority: high
+started: 2026-08-21T06:44:58Z
+status: done
+tags:
+- skill
+- cli
+- ux
+title: skill ignoriert --dir stumm und installiert in den falschen Baum
+updated: 2026-08-21T07:12:20Z
+---
+
+Gefunden beim Bauen von #225, selbst nachgestellt und bestaetigt. Gleiche Wurzel wie #225, aber mit Schreibzugriff -- deshalb ein eigenes Ticket und hoehere Prioritaet.
+
+## Befund
+
+    cd /tmp/.../skA
+    karr --dir /tmp/.../skB skill install --agent claude-code
+    -> claude-code  installed to .claude/skills/kanban-issues-karr-cli/SKILL.md
+
+    find skA skB -type f
+    -> /tmp/.../skA/.claude/skills/kanban-issues-karr-cli/SKILL.md
+
+`--dir` zeigte auf skB. Geschrieben wurde nach skA, dem cwd. Die Erfolgsmeldung nennt einen relativen Pfad und verraet damit nicht, in welchem Baum die Datei gelandet ist.
+
+`skill check` verhaelt sich genauso stumm: mit und ohne `--dir` kommt zeichengleich dieselbe Antwort ueber den cwd.
+
+Ursache: `lib/App/karr/Cmd/Skill.pm` (um Zeile 293) loest das projektlokale Ziel als `path(".")->child($spec->{project})` auf, also ab cwd. `Skill` komponiert weder `BoardDiscovery` noch `BoardAccess`, sieht die Wurzeloption also nie -- MooX::Cmd laesst den geparsten Wert auf der Wurzelinstanz in der Kommandokette liegen, wo hier niemand hinschaut.
+
+Wie bei #225 ist die Form hinter dem Subkommando laut und richtig: `karr skill install --dir X` ist "Unknown option: dir". Die Falle ist wieder die Wurzelposition, die `karr --help` als die dokumentierte vorfuehrt.
+
+## Warum das schwerer wiegt als #225
+
+`dashboard` liest nur und beschreibt das falsche Verzeichnis. `skill install` **schreibt** -- eine Datei landet in einem Repository, das der Aufrufer nicht gemeint hat, und die Erfolgsmeldung liest sich, als sei alles richtig gelaufen. Wer den Fehler bemerkt, hat eine verwaiste `.claude/skills/...` im falschen Baum stehen und im gemeinten Baum nichts.
+
+## Zu tun
+
+#225 hat fuer `dashboard` den Weg entschieden: die Wurzeloption wird ausdruecklich zurueckgewiesen (Usage error, exit 2), weil `--dir` dort etwas anderes bedeutet als der positionale PATH -- aufwaerts zur Wurzel EINES Repositories statt abwaerts ueber einen Baum voller Repositories. Fuer `skill` liegt der Fall anders: hier gibt es keinen positionalen Pfad, und `--dir` in seiner eigentlichen Bedeutung (Startpunkt der Repository-Discovery) waere genau das Richtige, um den Zielbaum zu benennen. Erste Vermutung ist deshalb: `skill` soll `--dir` **annehmen**, nicht zurueckweisen -- so wie `get-refs`/`set-refs` es seit #71 tun, die die Option lokal deklarieren und sie aus der Kette uebernehmen.
+
+Vor dem Bauen zu klaeren:
+1. Ist das projektlokale Ziel wirklich "das Repository", oder ist es "das aktuelle Verzeichnis, egal ob Repository"? Davon haengt ab, ob `--dir` (das aufwaerts zur Repo-Wurzel sucht) die richtige Semantik hat oder ob `skill` einen eigenen Zielpfad braucht.
+2. Betrifft es alle Unterbefehle von `skill` gleich (install, check, ...)?
+3. Die Erfolgsmeldung sollte danach einen Pfad nennen, an dem man den Baum erkennt -- ein relatives `.claude/skills/...` tut das nicht.
+
+Regressionstest: aus Baum A heraus mit `--dir B` installieren und pinnen, dass die Datei in B landet (bzw. dass die Zurueckweisung kommt, falls die Klaerung anders ausgeht).
+
+## Nebenbefund, kosmetisch
+
+`karr --dir OTHER agent-name` verwirft `--dir` ebenfalls stumm. Da die Ausgabe von keinem Verzeichnis abhaengt, gibt es keine falsche Antwort, nur eine angenommene und weggeworfene Option. Nur mitfixen, wenn es ohne Umweg mitgeht.
+
+Vollstaendig: von allen Kommandos komponieren nur fuenf weder BoardDiscovery noch BoardAccess -- agent-name, dashboard, get-refs, set-refs, skill. get-refs/set-refs sind seit #71 versorgt, dashboard ist #225. Damit ist die Liste nach diesem Ticket abgearbeitet.
+Erledigt in ca9942f. Punkt 1 hat sich am Code entschieden, und zwar gegen die im Ticket geaeuszerte Vermutung: das projektlokale Ziel ist das aktuelle Verzeichnis, Repository oder nicht. Beleg lag in der Suite -- t/144-skill-write-in-place.t faehrt den echten CLI aus einem tempdir, das nie git init gesehen hat; ein Ziel ueber git_root haette diesen Subtest umgebracht. Also Zurueckweisung wie bei dashboard, aber aus dem umgekehrten Grund: dort passt --dir nicht, weil es die falsche Richtung sucht, hier, weil es ueberhaupt sucht und dieses Kommando nichts sucht. Punkt 2: alle vier Aktionen und --global gleichermaszen, einheitlich zurueckgewiesen statt halbseitig. Punkt 3: absolute Pfade in Klartext und --json, und die gleiche falsche Meldung in karr init --claude-skill mitgenommen -- dort wiegt sie schwerer, weil --dir dort honoriert wird und der feste String wirklich auf einen anderen Baum zeigen konnte. Der BOARD-DISCOVERY-Absatz in App/karr.pm benennt jetzt die beiden Ausnahmen. agent-name bleibt bewusst unangetastet: keine verzeichnisabhaengige Ausgabe, also keine falsche Antwort zu verhindern. Damit ist die Klasse abgeschlossen -- von den fuenf Kommandos ohne Discovery-Rolle nehmen get-refs/set-refs die Option an (#71), dashboard (#225) und skill weisen sie zurueck, agent-name ignoriert sie folgenlos. share/claude-skill.md und die Repo-Kopie sind byte-identisch, kein Drift. Volle Suite: 196 Dateien, 1432 Tests, pass.
