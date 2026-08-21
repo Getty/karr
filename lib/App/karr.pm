@@ -155,6 +155,11 @@ target repository, not necessarily its root. If no Git repository is found from
 the given path, the command fails loudly rather than falling back to the current
 directory.
 
+Two commands are the exception and B<refuse> C<--dir> in both positions, each
+exiting C<2>: C<dashboard> and C<skill>. Both are board-less, and neither one's
+target is the result of an upward search -- see
+L<App::karr::Cmd::Dashboard> and L<App::karr::Cmd::Skill> for the details.
+
 =head1 DEFAULT BEHAVIOUR
 
 Running C<karr> without a subcommand shows the board summary, which makes the

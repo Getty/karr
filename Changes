@@ -1,5 +1,29 @@
 {{$NEXT}}
 
+    - `karr --dir PATH skill install` is a usage error instead of a silent
+      write into the wrong tree (#226). Same leak as #225 -- the root
+      `--dir` is parsed onto the root instance and `skill`, which composes
+      neither discovery role, never looked -- but this command writes: the
+      file went into whatever directory the caller happened to stand in,
+      under a message that read as if the named one had been used. The
+      target here is the current directory itself, repository or not:
+      installing into a plain directory is a supported use and
+      `t/144-skill-write-in-place.t` already pinned it, so honouring `--dir`
+      would have meant either breaking those installs or giving one option a
+      second meaning that answers about a different directory. `cd PATH &&
+      karr skill install` is the way into another tree. The refusal covers
+      all four actions and `--global` too, since the target follows from the
+      working directory in every one of them. Both placements exit 2.
+
+    - `karr skill install` and `karr init --claude-skill` name the file they
+      wrote (#226). Both printed a fixed relative path --
+      `.claude/skills/kanban-issues-karr-cli/SKILL.md` -- which is true of
+      every tree at once and so said nothing about which one got the file.
+      The plain output and the `--json` `path` key are absolute now.
+      `init --claude-skill` needed it most: it installs into the root of the
+      repository it is initializing, and there `--dir` really can put that
+      somewhere else than where the caller stands.
+
     - `karr --dir PATH dashboard` is a usage error instead of a silent
       shrug (#225). `--dir` is declared on `App::karr::Role::BoardDiscovery`
       and the root command composes it, so MooX::Cmd parsed the value and

@@ -282,8 +282,14 @@ sub _install_claude_skill {
   # in `karr skill` as ticket #142 and left standing here until #145. The role
   # is also where the read-only fallback and its warning live, so there is one
   # description of how a skill file gets written rather than two that drift.
-  $self->_write_skill( $skill_dir->child('SKILL.md'), $skill_content );
-  print "Installed Claude Code skill to .claude/skills/kanban-issues-karr-cli/SKILL.md\n";
+  my $skill_file = $skill_dir->child('SKILL.md');
+  $self->_write_skill( $skill_file, $skill_content );
+  # The path it wrote, not the fixed relative string it used to print: this
+  # installs into the root of the repository being initialized, which --dir can
+  # put in a different tree than the one the caller stands in, and
+  # ".claude/skills/..." is true of every tree at once. `karr skill install`
+  # printed the same non-answer and was fixed with it (#226, point 3).
+  print "Installed Claude Code skill to $skill_file\n";
 }
 
 1;
