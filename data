@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-08-21T09:05:22Z
+claimed_by: hold-tank
+class: standard
+completed: 2026-08-21T09:05:22Z
+created: 2026-08-21T07:50:20Z
+id: 230
+priority: medium
+started: 2026-08-21T08:23:10Z
+status: done
+tags:
+- parity
+- create
+- bug
+title: 'create verweigert den Titel 0 -- der letzte Truthiness-Waechter aus #153'
+updated: 2026-08-21T09:05:22Z
+---
+
+Gefunden beim systematischen Vergleich mit kanban-md, selbst nachgestellt.
+
+    karr create --title 0   -> Title is required. Use --title or pass as argument.
+    karr create 0           -> dieselbe Meldung
+    (kanban-md legt in beiden Faellen eine Karte mit dem Titel 0 an)
+
+Cmd/Create.pm um Zeile 164-165:
+
+    my $title = $self->title // $pos[0]
+      or die "Title is required. Use --title or pass as argument.\n";
+
+`or` prueft Wahrheit, nicht Laenge. Der Zuweisungsausdruck ergibt "0", das ist in Perl falsch, also stirbt es. kanban-mds resolveCreateTitle (cmd/create.go:113-129) prueft `flagTitle != ""` bzw. `len(args) > 0` und nimmt "0" an.
+
+## Warum das kein neuer Befund ist, sondern ein uebersehener Rest
+
+Ticket #153 hat genau diese Fehlerklasse behandelt und nennt in seinem Kopf ausdruecklich Cmd::Create als eine der Dateien, deren Truthiness-Waechter "0" verschluckten (siehe t/153-falsy-option-values.t, Zeilen 15-24). In derselben Datei wurde Create.pm:213-222 auf `defined && length` umgestellt. Dieser eine Waechter blieb stehen, und t/153 deckt `edit --title 0` ab, aber nicht `create --title 0`.
+
+## Zu tun
+
+`defined && length` statt `or`, wie es #153 in derselben Datei schon getan hat. Der Regressionstest gehoert zu t/153 dazu, nicht in eine neue Datei -- dort steht die Klasse, dort fehlt der Fall. Beim Erweitern pruefen, ob es in Create.pm oder anderswo noch weitere Truthiness-Waechter auf benutzergesetzten Werten gibt, die #153 uebersehen hat.
+Erledigt in da5e4b3. Waechter auf 'defined && length' umgestellt, Regressionstest in t/153 statt in einer neuen Datei -- dort wohnt die Klasse, dort fehlte nur der Fall. Der geforderte Sweep ueber die drei im t/153-Kopf genannten Dateien hat einen zweiten Fall gefunden und mitgefixt: 'handoff ID --block 0' blockierte die Karte, liess aber '(blocked: 0)' aus der Erfolgsmeldung weg -- die Melde-Haelfte desselben #153-Fixes, zehn Zeilen tiefer. Cmd/Edit.pm ist sauber, #153 war dort vollstaendig. Das '//' im Titel-Ausdruck bleibt: ein leeres --title '' erreicht execute nie, Getopt::Long weist es vorher mit exit 2 ab, der Unterschied zu kanban-mds resolveCreateTitle ist vom CLI aus unerreichbar. Ein dritter Fall derselben Wurzel ist als #239 eingetragen (id 0 als Usage-Fehler statt Nicht-gefunden). Volle Suite: 199 Dateien, 1456 Tests, pass.
