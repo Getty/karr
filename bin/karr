@@ -41,7 +41,62 @@ END {
     App::karr::SyncGuard->flush_armed;
 }
 
-my $ran = eval { App::karr->new_with_cmd; 1 };
+# An empty argument never reaches a command, so it is refused here while it is
+# still visible (ticket #243).
+#
+# MooX::Cmd copies argv with `shellwords(join ' ', map { quotemeta } @ARGV)`
+# (MooX::Cmd::Role 1.000, line 132) before it even looks for the command name.
+# That round trip is the identity on every non-empty argument -- quotemeta
+# escapes, shellwords unescapes -- but the empty string contributes nothing to
+# the joined line and shellwords never returns an empty field, so the transform
+# is exactly `grep { length }`. No spelling of an empty argument survives it,
+# which is why this could not be fixed by letting the token through to the
+# `defined && length` guards of #239: by the time any karr code runs there is
+# nothing left to hand them.
+#
+# What the deletion leaves is a shorter argv, so every argument after the empty
+# one moves one place to the left. `karr move "$IDS" todo` with an unset $IDS
+# arrives as `karr move todo`, reads `todo` as the id, and reports "Task todo
+# not found" -- an error about a card, for a mistake in the caller's variable.
+# Elsewhere the loss was worse than misleading rather than merely wrong:
+# `karr show ""` printed whichever card was touched last and exited 0, and
+# `karr skill ""` fell through to its default action and installed skill files.
+#
+# Refusing takes nothing away that ever worked. An empty argument is dropped in
+# every position of every command, so no invocation that produced the result
+# its caller wanted changes meaning -- empty option values (`--claim ""`,
+# `--body ""`) included, which are dropped by the same rule and today either
+# eat the following token as the value or fail with "Option claim requires an
+# argument". Clearing a value by passing an empty one is a feature karr does
+# not have; if it ever gets one, this guard is where the exception belongs.
+sub _refuse_empty_argument {
+    my @at = grep { !length $ARGV[$_] } 0 .. $#ARGV;
+    return unless @at;
+
+    # Echo the command line back with the empty slots visible: that is the
+    # whole diagnosis, because the caller is looking for a variable and not for
+    # a card. Whitespace is folded and long values are cut so that a --body
+    # cannot bury the message underneath itself.
+    my $line = join ' ', 'karr', map {
+        my $arg = $_;
+        $arg =~ s/\s+/ /g;
+        $arg = substr( $arg, 0, 37 ) . '...' if length $arg > 40;
+        length $arg && $arg !~ /\s/ ? $arg : "'" . $arg . "'";
+    } @ARGV;
+
+    my $where = join ', ', map { $_ + 1 } @at;
+    die 'Usage error: '
+      . ( @at == 1 ? "argument $where is empty" : "arguments $where are empty" )
+      . ": $line\n"
+      . "An empty argument is dropped before any command sees it, and every\n"
+      . "argument after it moves one place to the left. Check the shell\n"
+      . "variable expanded there -- it is unset or empty.\n";
+}
+
+# Inside the eval on purpose: the "Usage error:" marker is what
+# App::karr::Error::is_usage_error keys on, so the handler below turns this
+# into exit 2 through the same path as every other usage error.
+my $ran = eval { _refuse_empty_argument(); App::karr->new_with_cmd; 1 };
 if ( !$ran ) {
     my $err = $@;
 

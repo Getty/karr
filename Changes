@@ -1,5 +1,20 @@
 {{$NEXT}}
 
+    - An empty command-line argument is refused instead of vanishing
+      (#243). `MooX::Cmd::Role` runs argv through
+      `shellwords(join ' ', map { quotemeta } @ARGV)` before anything else
+      sees it -- a round trip that is the identity on every non-empty string
+      and deletes empty ones, so every argument after an empty one moved one
+      place to the left. `karr move "$IDS" todo` with an unset variable
+      reported `Task todo not found`; worse, `karr show "$ID"` printed the
+      most recently updated card and exited 0, and `karr skill ""` fell
+      through to its default action and installed skill files. The guard
+      lives in `bin/karr`, the last place the empty slot is still visible,
+      and the message names its position, echoes the command line with the
+      slot shown, and points at the shell variable. `karr list ""`,
+      `board ""`, `needs ""` and `unlock ""` exited 0 before and exit 2 now:
+      they only ever "worked" because the token was thrown away.
+
     - An appended note is a paragraph of its own (#238). `karr edit ID -a`
       and `karr handoff --note` joined the new text to the body with a
       single newline, which Markdown folds away, so every note merged into
