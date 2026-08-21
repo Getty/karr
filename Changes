@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - A `move` to the status a card already has, and an `edit` that names no
+      field at all, no longer write (#231). Both went through the whole
+      mutation path: `save_task_cas` stamps `updated` on every write and the
+      activity log hangs off the same door, so `karr move 5 backlog` on a
+      card already in backlog moved the one field karr-foundation's drain
+      reads to tell a stuck card from a worked one, and logged a move that
+      never happened. `karr archive` already answered this one command over,
+      and kanban-md short-circuits both. The move check is made inside the
+      compare-and-swap callback rather than on a read taken beforehand:
+      losing that race would silently drop a real move while stdout claimed
+      the card had not gone anywhere. Exit codes follow ADR 0002 rather than
+      taste -- the move is a no-op and exits 0 with `Task N is already at X`,
+      while an `edit` naming no field is not a no-op but an empty request and
+      exits 2, the case `usage_error`'s own POD describes. `karr move --json`
+      now carries a `changed` key, on both answers, so a reader can test its
+      value instead of its existence. `move ID SAME --claim NAME` is
+      deliberately not short-circuited: writing `claimed_by` is a change, and
+      dropping it silently would be this same bug pointing the other way.
+
     - `karr create 0` and `karr create --title 0` make a card titled `0`
       instead of refusing it (#230). The guard read `my $title = ... or die`,
       and `"0"` is one character long and a perfectly good title but a false

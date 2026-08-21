@@ -40,6 +40,13 @@ Updates one or more existing tasks in place. Use it to adjust metadata, append
 notes, manage tags, claim or release ownership, and mark tasks as blocked or
 unblocked without changing the task id.
 
+At least one field option is required. C<karr edit 5> on its own, or with only
+output options such as C<--json>, names nothing to change and is rejected as a
+usage error (exit 2) before any task is read -- it used to report C<Updated
+task 5>, bump C<updated> and append an activity-log entry for a card nothing
+had touched. An option carrying an empty value counts as no option at all here,
+matching the write path, which discards such a value rather than storing it.
+
 =head1 COMMON OPERATIONS
 
 =over 4
@@ -202,6 +209,31 @@ option unblock => (
   doc => 'Clear blocked state',
 );
 
+# Every option above that can change a card, in the order they are declared:
+# the ones that carry a value, and the two that are flags. --json, --compact and
+# --quiet are deliberately absent -- they decide how the result is printed, not
+# what it is, so `karr edit 5 --json` asks for a change just as little as
+# `karr edit 5` does. A new field option belongs on one of these lists; leaving
+# it off makes it invisible to the check below, which would then reject an
+# invocation that does have something to do.
+my @FIELD_OPTIONS = qw(
+  title status priority assignee add_tag remove_tag add_depends_on
+  remove_depends_on add_needs remove_needs due body append_body claim block
+);
+my @FIELD_FLAGS = qw( release unblock );
+
+sub _has_field_change {
+  my ($self) = @_;
+  for my $option (@FIELD_OPTIONS) {
+    my $value = $self->$option;
+    return 1 if defined $value && length $value;
+  }
+  for my $flag (@FIELD_FLAGS) {
+    return 1 if $self->$flag;
+  }
+  return 0;
+}
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
@@ -216,6 +248,37 @@ sub execute {
   # splits to nothing, so the command used to exit 0 having done nothing.
   my @ids = $self->parse_ids($id_str);
   die "Usage: karr edit ID[,ID,...] [FLAGS]\n" unless @ids;
+
+  # An edit that names no field asks for nothing, so there is nothing to do and
+  # nothing to write. It used to run the whole path with an empty callback:
+  # `updated` was stamped (App::karr::BoardStore/save_task_cas), an `edit` entry
+  # was appended to the activity log, and stdout said "Updated task N" about a
+  # card nothing had touched -- the same false signal `karr move` gave on a
+  # same-status move, and the effect t/153-falsy-option-values.t already names
+  # as the bug for a value the length guards below discard (#231).
+  #
+  # A usage error (exit 2), where the same-status move is a success (exit 0),
+  # and the two answers come from opposite sides of ADR 0002. A move to the
+  # status a card already has is a request whose outcome already holds -- "a
+  # no-op like re-archiving an archived task", which the ADR files under 0.
+  # This is not a request at all: no field is named, so there is no state to
+  # reach and nothing that could have held. That is "an argument list that is
+  # syntactically fine but semantically empty", which is what
+  # App::karr::Role::ExitCodes/usage_error exists for, and the same answer
+  # `karr move , todo` gets one command over. kanban-md refuses it too
+  # (internal/board/mutate.go:413-415, "no changes specified"); it exits 1
+  # there only because cobra exits 1 for everything.
+  #
+  # length, not defined, so this asks the same question the write path answers:
+  # every guard inside the callback below is `defined && length` (tickets #78,
+  # #153), so an empty value sets nothing, and an option whose value the write
+  # path discards has not named a change. On the command line MooX::Options
+  # refuses an empty value first ("Option title requires an argument", exit 2
+  # through App::karr::Role::ExitCodes), so this half of the rule is for an
+  # in-process caller -- and for the two lists staying in step rather than
+  # drifting into disagreeing about what counts.
+  $self->usage_error('no changes specified -- karr edit needs at least one field option')
+      unless $self->_has_field_change;
 
   # Once, before any task is touched: these are plain option values, so a bad
   # one must not update the first half of a batch (ticket #54). --status is not

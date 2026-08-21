@@ -15,6 +15,9 @@ use App::karr::Config;
 # would quietly make user_error a method on move, edit, delete, archive and
 # handoff.
 use App::karr::Error ();
+# Same reason, one module over: `use Scalar::Util qw( refaddr );` here would put
+# a refaddr method on every command that composes this role.
+use Scalar::Util ();
 use App::karr::Role::ClaimTimeout;
 use App::karr::Role::DependencyCheck;
 
@@ -168,6 +171,39 @@ sub _task_data_ref {
     return "refs/karr/tasks/$id/data";
 }
 
+# The one way a callback can say "there is nothing here to write". A
+# package-lexical scalar ref, compared by address, because the callbacks on
+# this path return whatever their last statement happened to evaluate to -- a
+# title, a status, the result of a clearer -- and no value a caller can
+# construct by accident is this one.
+#
+# The address is read with Scalar::Util::refaddr, which is how identity is
+# asked in this distribution (App::karr::SyncGuard keys its registry of armed
+# guards the same way). It also settles the overloading question instead of
+# stepping around it: refaddr returns the address itself and never consults an
+# overloaded `==`, so a blessed return value cannot be asked a comparison it
+# would answer with an exception.
+my $NO_CHANGE = \do { my $sentinel = 'no change' };
+
+sub no_change { return $NO_CHANGE }
+
+=method no_change
+
+    return $self->no_change if $task->status eq $wanted;
+
+The value a L</update_task_guarded> callback returns to say that this revision
+of the task needs no write: the compare-and-swap write, the C<updated> bump
+that comes with it and the activity-log entry are all skipped, and the task is
+returned unwritten. Any other return value -- including none -- writes as
+before, so a callback that does not know about this method is unaffected.
+
+Deciding it inside the callback rather than on a read taken beforehand is the
+point (tickets #44, #46, #56): "nothing to change" is a statement about a
+revision, and the revision it is made about is the one that would have been
+written.
+
+=cut
+
 sub update_task_guarded {
     my ($self, $id, $mutate) = @_;
     my $git = $self->git;
@@ -180,7 +216,19 @@ sub update_task_guarded {
         my $task = App::karr::Task->from_string( $content,
             repair_frontmatter => $git->board_is_legacy_encoded );
 
-        $mutate->($task);
+        my $verdict = $mutate->($task);
+
+        # A callback that found nothing to change gets no write: `updated` is
+        # stamped by the write (App::karr::BoardStore/save_task_cas) and the
+        # activity log hangs off it, so a command that changed nothing and
+        # wrote anyway moved the one field the foundation drain reads to tell a
+        # stuck card from a worked one, and put an entry in the log for an
+        # event that did not happen (#231). Returning the task rather than ()
+        # ends the retry loop: () means "another agent got in first, read again",
+        # and nothing here lost a race.
+        return $task
+          if ref $verdict
+          && Scalar::Util::refaddr($verdict) == Scalar::Util::refaddr($NO_CHANGE);
 
         # Through the role's own door rather than straight at write_ref_cas:
         # BoardAccess::save_task is where the `updated` bump and the activity
@@ -294,6 +342,35 @@ sub apply_status_change {
 
     my $old_status = $task->status;
 
+    # A status change to the status the card already has changes nothing, so
+    # nothing below it runs and nothing is written. kanban-md answers the same
+    # way (internal/board/mutate.go:101-104), `karr archive` already answers it
+    # one command over for an archived card, and ADR 0002 files that shape --
+    # "no-ops like re-archiving an archived task" -- under exit 0. What made it
+    # worth fixing is what the write cost: `updated` is stamped by every write
+    # (App::karr::BoardStore/save_task_cas) and the activity log hangs off the
+    # same door, so `karr move 5 backlog` on a card already in backlog moved
+    # the field karr-foundation's drain reads to tell a stuck card from a
+    # worked one, and logged a move that never happened (#231).
+    #
+    # In front of the #224 release rather than behind it, and that is free
+    # rather than a compromise: the release fires on terminal -> non-terminal,
+    # and $old_status eq $new_status makes both sides of that pair the same
+    # status, so the condition is unsatisfiable here whatever the card carries.
+    # `move ID done` on a done card holding a claim released nothing before
+    # this line existed either -- done -> done is terminal to terminal, where
+    # #223 keeps the name as provenance.
+    #
+    # What it does skip is require_claim and the dependency check. Deliberately,
+    # and the same order kanban-md uses: a card that is already in a
+    # require_claim column with no owner was not put there by a command that
+    # declines to move it, and what a card waits for is worth saying to whoever
+    # takes it up, not to a command that leaves it exactly where it was. A
+    # caller that brings a claim of its own is not this case at all -- writing
+    # claimed_by/claimed_at is a change -- and App::karr::Cmd::Move decides that
+    # before it ever gets here.
+    return $old_status if $new_status eq $old_status;
+
     # Reopening releases the claim. A claim is the lease an agent holds *while
     # working* a card (CONTEXT.md, Language); reaching a terminal status
     # releases it and leaves claimed_by behind as provenance, which is why
@@ -380,6 +457,16 @@ emitted by the caller once the write has landed), and returns the status the
 task had before the change.
 
     my $old_status = $self->apply_status_change( $task, 'in-progress', $claimant );
+
+A change to the status the card already carries changes nothing: the status
+name is still checked, and then this returns that same status having touched
+neither the card nor its claim -- so C<require_claim>, the dependency check and
+the lifecycle stamps are all skipped along with it (ticket #231, the shape
+kanban-md's C<Move> uses). Callers that write only because of the status change
+-- L<App::karr::Cmd::Move> -- recognise it and skip the write, so C<updated> is
+not bumped and no activity-log entry is appended for an event that did not
+happen. A caller that changes something else in the same breath, C<edit
+--title> or C<move --claim>, still writes what it changed.
 
 Reopening releases the claim. A card leaving one of the board's terminal
 statuses (L<App::karr::Config/is_terminal_status>) for a non-terminal one, with
