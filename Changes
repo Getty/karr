@@ -1,5 +1,21 @@
 {{$NEXT}}
 
+    - `karr --dir PATH dashboard` is a usage error instead of a silent
+      shrug (#225). `--dir` is declared on `App::karr::Role::BoardDiscovery`
+      and the root command composes it, so MooX::Cmd parsed the value and
+      left it on the root instance -- where `dashboard`, which composes
+      neither `BoardDiscovery` nor `BoardAccess`, never looked. The option
+      was swallowed without a word and the scan ran on the current
+      directory, and a list of repositories with counts behind them looks
+      like a valid answer whichever tree it came from. It is refused rather
+      than adopted as a synonym because the two paths run in opposite
+      directions: `--dir` seeds a walk upward to one repository's root
+      (which is why it may name any directory inside it), while
+      `dashboard`'s positional `PATH` is the root of a walk downward across
+      a tree of repositories. Handed the same argument they answer about
+      different directories. `karr dashboard --dir PATH` was always an
+      unknown option and still is; both placements now exit 2.
+
     - Reopening a finished task releases the claim it still carried (#224).
       Nothing ever took `claimed_by` off a card, so the moment it left a
       terminal status the same bytes were a live lease again -- held by

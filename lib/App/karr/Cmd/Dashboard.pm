@@ -22,6 +22,9 @@ use App::karr::Role::Output;
 # App::karr::Role::BoardAccess -- there is no single board to discover here,
 # and no --dir either: the positional PATH below already names the search
 # root, and a second option with an unrelated meaning would only confuse.
+# _reject_root_dir in execute() is what makes that decision hold for the root
+# placement as well (#225); without it the option was accepted there and
+# silently dropped.
 with 'App::karr::Role::CliArgs', 'App::karr::Role::ExitCodes', 'App::karr::Role::Output';
 
 =head1 SYNOPSIS
@@ -68,6 +71,24 @@ descended into (default C<4>) -- unbounded would never finish under a home
 directory. Symlinked directories are never followed, to avoid loops; a
 directory that cannot be read (permissions) is skipped rather than aborting
 the whole scan.
+
+That positional C<PATH> is the only way to name the scan root. The root option
+C<--dir> -- which every board command accepts in either placement, C<karr
+--dir PATH list> as well as C<karr list --dir PATH> -- is B<refused> here in
+both placements, and both exit C<2>: C<karr dashboard --dir PATH> is an
+unknown option, printed with the usage line that names the positional
+C<PATH>, and C<karr --dir PATH dashboard> is refused with a message saying
+where the scan root goes. It is refused rather than accepted as a synonym
+because it does not mean the same
+thing: C<--dir> is the seed of a search B<upward> for the root of one
+repository (which is why it may name any directory inside that repository),
+while this command searches B<downward> for every board underneath a
+directory. Handed one and the same path, the two would answer about different
+directories. There is consequently no precedence rule for C<karr --dir A
+dashboard B>: it is a usage error (exit C<2>), not a contest the positional
+wins. Before ticket #225 the root placement was accepted and then discarded
+without a word, so the command described the current directory while looking
+like it had answered about the given one.
 
 =head1 OPTIONS
 
@@ -158,6 +179,7 @@ use constant COLUMN_GAP      => 2;
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  $self->_reject_root_dir($chain_ref);
   $self->check_positional_args($args_ref, 1);
   my ($pos) = $self->positional_args($args_ref);
 
@@ -303,6 +325,41 @@ sub execute {
       $width ),
     'bold'
   ), "\n";
+}
+
+# `karr dashboard --dir PATH` was always rejected by MooX::Options (this
+# command declares no such option) -- but `karr --dir PATH dashboard` was not:
+# --dir is declared on App::karr::Role::BoardDiscovery, the root command
+# composes it via BoardAccess, and MooX::Cmd leaves the parsed value on the
+# root instance in the command chain, where nothing here ever looked. So the
+# option was swallowed without a word and the scan ran on the current
+# directory instead -- and a list of repositories with counts behind them
+# looks like a valid answer no matter which tree it came from (#225).
+#
+# It is refused rather than adopted because the two paths are not the same
+# path: --dir seeds a walk UPWARD to one repository's root
+# (App::karr::Role::BoardDiscovery/_build_git_root, which is why it may name
+# any directory inside the target repository), while the positional PATH here
+# is the root of a walk DOWNWARD across a tree of repositories (_find_repos,
+# bounded by --depth, never entering a repository's own work tree). Handed the
+# same argument, the two would answer about different directories.
+#
+# The root is read from $chain_ref the way App::karr::Cmd::GetRefs reads it
+# for the opposite purpose; a directly constructed instance (no MooX::Cmd
+# dispatch, hence an empty chain) has no root option to reject.
+sub _reject_root_dir {
+  my ($self, $chain_ref) = @_;
+  return unless $chain_ref && @$chain_ref;
+  my $root = $chain_ref->[0];
+  return unless $root && $root->can('has_dir') && $root->has_dir;
+  # Wrapped to stay inside 80 columns with usage_error's own "Usage error: "
+  # prefix on the first line: what to type comes first, the reason after it.
+  $self->usage_error(
+      "dashboard does not take --dir; its scan root is an argument:\n"
+    . "karr dashboard PATH\n"
+    . "(--dir seeds the search upward for one repository's board, while dashboard\n"
+    . "searches downward for every board under a directory.)"
+  );
 }
 
 # ---------------------------------------------------------------------------
