@@ -53,6 +53,13 @@ detour through another column.
 =item * C<--next>, C<--prev>
 
 Advance or rewind relative to the status order defined in the board config.
+They are alternatives to a positional target status and to each other, so
+C<< karr move 7 done --next >> and C<< karr move 7 --next --prev >> name two
+destinations at once and are refused as usage errors (exit 2) before anything
+is read or written. kanban-md picks a winner silently for both -- the
+positional over C<--next>, and C<--next> over C<--prev>; karr refuses instead,
+because the exit-code contract (ADR 0002) can say "you called this wrong" and
+cobra's all-1 convention cannot.
 
 =item * C<--claim>
 
@@ -119,6 +126,41 @@ sub execute {
   my @ids = $self->parse_ids($id_str);
   die "Usage: karr move ID[,ID,...] [STATUS]\n" unless @ids;
   my $new_status = $pos[1];
+
+  # A target status and a relative move are two answers to the same question,
+  # and a caller who gives both has contradicted themselves -- so the invocation
+  # is refused before any card is read (ticket #235).
+  #
+  # This deviates from kanban-md, deliberately and on karr's own contract.
+  # kanban-md resolves the pair silently (resolveTargetStatus, cmd/move.go:135-159):
+  # its `case len(args) == 2:` is the first arm of the switch, so the positional
+  # wins and --next is dropped. karr resolved it silently the other way round --
+  # the block below overwrote the positional target unconditionally, so
+  # `move 7 archived --next` put a backlog card on todo. Two tools, one command
+  # line, two different columns, exit 0 and no message either way: that
+  # disagreement is the argument against picking a winner at all, because
+  # whichever side one picks, the caller who typed both has no way to learn that
+  # half of what they typed was thrown away.
+  #
+  # Adopting kanban-md's precedence would be the worse of the two silences here:
+  # it would move cards to a different column than this karr does today, with
+  # nothing in the output saying so. Refusing says it out loud, and karr can say
+  # it where kanban-md cannot -- cobra exits 1 for everything, so "you called
+  # this wrong" is not expressible there, while ADR 0002 reserves exit 2 for
+  # exactly this and karr's callers are agents for whom $? is API.
+  #
+  # length, not truth, on the positional, the same rule as the id guard above:
+  # an empty status names no target, so it is not a target for --next to
+  # contradict.
+  $self->usage_error('cannot use a target status and --next/--prev together')
+      if ( defined $new_status && length $new_status )
+      && ( $self->next || $self->prev );
+
+  # And the relative pair against itself, which was silent in the same way: the
+  # if/elsif below let --next win and dropped --prev, as kanban-md's switch does
+  # in the same order. Same contradiction, same answer.
+  $self->usage_error('cannot use --next and --prev together')
+      if $self->next && $self->prev;
 
   my @statuses = $self->store->all_status_names;
 

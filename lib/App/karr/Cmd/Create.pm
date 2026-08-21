@@ -40,6 +40,9 @@ class of service, due date, tags, and body text.
 =item * C<--title>
 
 Explicit task title. If omitted, the first positional argument is used.
+Giving the title both ways at once -- C<< karr create TITLE --title OTHER >> --
+is rejected as a usage error (exit 2): the two can hold different strings and
+nothing decides which one was meant.
 
 =item * C<--status>, C<--priority>, C<--class>
 
@@ -161,6 +164,23 @@ sub execute {
   $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
+
+  # A title given twice is a contradiction, not a preference: the two spellings
+  # can hold different strings, and `create TITLE --title OTHER` used to take
+  # --title and drop the positional without a word (ticket #235). kanban-md
+  # refuses that invocation (resolveCreateTitle, cmd/create.go:113-121,
+  # InvalidInput), and karr answers a self-contradicting invocation that way one
+  # command over already (the --claim/--release guard in App::karr::Cmd::Edit).
+  # Before the required-title guard below, so a caller who named two titles is
+  # told that, not that one is missing.
+  #
+  # length, not truth, on both halves: `--title 0` and a bare `0` are titles
+  # that were given, and an empty one is no title at all -- the same rule the
+  # guard below reads (ticket #230).
+  $self->usage_error('title provided both as an argument and with --title; use one or the other')
+      if ( defined $self->title && length $self->title )
+      && ( defined $pos[0] && length $pos[0] );
+
   # length, not truth: "0" is one character long and a perfectly good title,
   # but the assignment below yields it as a false value, so both `--title 0`
   # and a bare positional `0` were rejected as "Title is required" -- the one

@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - Five contradicting invocations are refused instead of being resolved
+      in silence (#235). `edit --block X --unblock`, `edit --body X
+      --append-body Y`, `create TITLE --title OTHER`, `move ID STATUS
+      --next` and `move ID --next --prev` all exited 0 with one half of what
+      was typed quietly discarded -- the card ended up unblocked, the body
+      concatenated, the positional title dropped, the relative move
+      overriding the named column. karr already refused exactly one such
+      pair, `--claim` with `--release`, under a comment saying it matched
+      kanban-md's flag layer; the other pairs were simply never taken along.
+      All five now exit 2 through `usage_error`, per ADR 0002. `move ID
+      STATUS --next` is the one place this steps away from the reference:
+      kanban-md resolves it silently too, only the other way round, so
+      adopting its precedence would have moved cards to a different column
+      than karr does today with nothing in the output to say so -- and
+      cobra exits 1 for everything, so "you called this wrong" is not a
+      thing kanban-md can say. The refused `create` is checked before an id
+      is allocated, so it burns none.
+
     - `karr board` leaves archived cards out entirely, in all three output
       modes (#234). They were loaded unfiltered, counted in the footer total
       and in `blocked`, and rendered as an `archived` column whenever it was

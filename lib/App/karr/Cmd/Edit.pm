@@ -66,12 +66,17 @@ is exempt, since breaking a stale claim is what it is for.
 =item * Body updates
 
 C<--body> replaces the entire body; C<-a>/C<--append-body> appends a new line
-to the existing body text.
+to the existing body text. They are alternatives, not a sequence: naming both
+is rejected as a usage error (exit 2) before any task is read, rather than
+writing the one concatenated body neither of them asked for.
 
 =item * Claims and blocking
 
 C<--claim> refreshes claim ownership and timestamp, C<--release> clears the
-claim, C<--block> records a blocking reason, and C<--unblock> removes it.
+claim, C<--block> records a blocking reason, and C<--unblock> removes it. Each
+of those two pairs contradicts itself, so C<--claim> with C<--release> and
+C<--block> with C<--unblock> are rejected as usage errors (exit 2) before any
+task is read.
 
 =item * Tag management
 
@@ -296,6 +301,27 @@ sub execute {
   # rejects the pair at the flag layer too (cmd/edit.go:128-130); we match.
   $self->usage_error('cannot use --claim and --release together')
       if (defined $self->claim && length $self->claim) && $self->release;
+
+  # The two pairs kanban-md rejects on the same layer for the same reason, which
+  # this command had left running instead (ticket #235). Both used to take the
+  # write callback below through both branches and let the second one win:
+  # `--block "waiting" --unblock` left the card unblocked, and
+  # `--body neu --append-body note` left it holding "neu\nnote" -- a body the
+  # caller asked for neither half of. A caller naming both halves of a pair has
+  # contradicted themselves, and the guard above already says what karr does
+  # about that. (cmd/edit.go:366-369 and cmd/edit.go:202-206, both
+  # StatusConflict; ADR 0002 makes it exit 2 here.)
+  #
+  # length, not truth, on every value-carrying half, exactly as above: an empty
+  # --block names no reason and sets nothing in the callback, so it is not a
+  # change for --unblock to contradict (tickets #78, #153) -- the same rule
+  # _has_field_change reads one guard up.
+  $self->usage_error('cannot use --block and --unblock together')
+      if (defined $self->block && length $self->block) && $self->unblock;
+
+  $self->usage_error('cannot use --body and --append-body together')
+      if (defined $self->body && length $self->body)
+      && (defined $self->append_body && length $self->append_body);
 
   my $config = App::karr::Config->from_merged( $self->store->effective_config );
   $config->validate_priority( $self->priority ) if defined $self->priority;
