@@ -29,6 +29,10 @@ Moves one or more tasks to a new status. The command understands explicit
 target statuses and relative movement via C<--next> or C<--prev>, and it
 enforces C<require_claim> when the destination status requires an owner.
 
+Moving a finished task back into a working column releases the claim the card
+still carried, unless C<--claim> names the agent taking it up
+(L<App::karr::Role::TaskMutation/apply_status_change>).
+
 =head1 OPTIONS
 
 =over 4

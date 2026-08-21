@@ -13,7 +13,12 @@ status — on a `done`/`archived` Task the claim guards nothing, and `edit`,
 `move`, `delete`, `archive` and `handoff` all go through whoever the field
 names. `karr board` shows no claimant on such a Task and leaves it out of its
 claimed count, because the board shows live work-in-progress, not history;
-`karr show` and `--json` still carry the field, as provenance.
+`karr show` and `--json` still carry the field, as provenance. That provenance
+ends where the work resumes: a Task leaving a terminal status for a working one
+has `claimed_by`/`claimed_at` cleared, unless the reopening command names a
+claimant itself (`move ID todo --claim NAME`, `handoff`), in which case that
+agent holds it. `done` → `archived` keeps the name — archiving does not resume
+anything.
 _Avoid_: owner, lock (the advisory ref lock is a separate mechanism).
 
 **Assignee**:
@@ -100,6 +105,9 @@ Claim names over time.
   from the **Activity log**, not from a retained claim. A terminal claim is
   released: it blocks no command, and `karr board` neither shows nor counts it.
   The data field is intentionally kept for interop/provenance, so the detail
-  views — `karr show` and every `--json` payload — do still print it.
+  views — `karr show` and every `--json` payload — do still print it. It is
+  kept on a *finished* Task only: a reopen that names no claimant clears it,
+  because a name carried into a working column is a lease again and made the
+  Task unpickable by anyone.
 - "owner" used loosely for both **Assignee** and **Claim** — resolved: these
   are distinct; avoid "owner".

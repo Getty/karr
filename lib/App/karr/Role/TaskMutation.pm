@@ -292,6 +292,55 @@ sub apply_status_change {
     my $config = App::karr::Config->from_merged( $self->store->effective_config );
     $config->validate_status($new_status);
 
+    my $old_status = $task->status;
+
+    # Reopening releases the claim. A claim is the lease an agent holds *while
+    # working* a card (CONTEXT.md, Language); reaching a terminal status
+    # releases it and leaves claimed_by behind as provenance, which is why
+    # `karr board` prints no claimant on a finished card and check_claim lets
+    # every command through one (ticket #223). Nothing ever took the field off
+    # again, so the moment the card left that status the same bytes were a live
+    # lease once more, held by whoever had finished the work rather than by
+    # anyone doing it: the card sat in todo, `karr list` called it open work,
+    # `karr board` counted it as claimed, and `karr pick` skipped it without a
+    # word -- on a board whose only card that was, a drain run was told "no
+    # available tasks" while the board showed work waiting (ticket #224).
+    #
+    # Three conditions, none of them decoration:
+    #
+    #   * out of a terminal status, into a non-terminal one. `done` ->
+    #     `archived` is terminal to terminal and keeps the name, because
+    #     archiving does not resume the work -- the provenance #223 kept is
+    #     exactly what would be thrown away here.
+    #
+    #   * no claimant from the caller. `move ID todo --claim beta-two` and
+    #     every `handoff` (where --claim is required) hand the card to a named
+    #     agent, and that name wins; only a reopen that names nobody leaves the
+    #     card unheld.
+    #
+    #   * terminal is this board's word, from App::karr::Config, never the
+    #     literal `done` -- the same config object update_timestamps is handed
+    #     below, so a board that ends in `shipped` releases there and nowhere
+    #     else (tickets #67, #223).
+    #
+    # Before the require_claim check below rather than after it, for the reason
+    # ticket #150 spelled out for `edit --release`: a released claim that still
+    # satisfies require_claim on its way out would land the card in a column
+    # the board says needs an owner with no owner on it. So `move ID
+    # in-progress` off a finished card now asks for --claim instead of quietly
+    # handing the column to the agent that had finished the work.
+    #
+    # claimed_at goes with claimed_by: on its own it is the age of a lease
+    # nobody holds, and it is the timestamp `karr pick` and check_claim measure
+    # expiry against.
+    if ( $config->is_terminal_status($old_status)
+        && !$config->is_terminal_status($new_status)
+        && !( defined $claimant && length $claimant ) )
+    {
+        $task->clear_claimed_by;
+        $task->clear_claimed_at;
+    }
+
     die "Status '$new_status' requires --claim\n"
         if $self->store->status_requires_claim($new_status)
         && !( defined $claimant && length $claimant )
@@ -305,7 +354,6 @@ sub apply_status_change {
     # emitting is left to dependency_report after the write has landed.
     $self->check_dependencies( $task, $new_status );
 
-    my $old_status = $task->status;
     $task->status($new_status);
     # The lifecycle rules themselves live on the task, mirroring kanban-md's
     # internal/task/lifecycle.go: `started` on the first move out of the first
@@ -325,12 +373,32 @@ sub apply_status_change {
 =method apply_status_change
 
 The only place a task's status is assigned. Rejects a status the board does not
-configure, applies C<require_claim> and the lifecycle stamps, records any
-unsatisfied dependencies (L<App::karr::Role::DependencyCheck/check_dependencies>
--- recorded here, emitted by the caller once the write has landed), and returns
-the status the task had before the change.
+configure, releases the claim on a reopen, applies C<require_claim> and the
+lifecycle stamps, records any unsatisfied dependencies
+(L<App::karr::Role::DependencyCheck/check_dependencies> -- recorded here,
+emitted by the caller once the write has landed), and returns the status the
+task had before the change.
 
     my $old_status = $self->apply_status_change( $task, 'in-progress', $claimant );
+
+Reopening releases the claim. A card leaving one of the board's terminal
+statuses (L<App::karr::Config/is_terminal_status>) for a non-terminal one, with
+no C<$claimant> passed in, has C<claimed_by> and C<claimed_at> cleared: a claim
+is the lease an agent holds while working a card, and the name kept on a
+finished one is provenance, not a lease to carry back into a working column.
+Left there, it blocked every other agent and made C<karr pick> skip the card in
+silence (ticket #224).
+
+Three things it deliberately does not do. C<done> -> C<archived> is terminal to
+terminal and keeps the name. A caller that brings a claimant -- C<move ID todo
+--claim NAME>, and every C<handoff>, where C<--claim> is required -- hands the
+card to that agent instead. And "terminal" is whatever this board's config
+calls terminal, never the literal C<done>.
+
+The release happens B<before> the C<require_claim> check, so a claim on its way
+off the card cannot satisfy it: reopening straight into a column the board says
+needs an owner asks for C<--claim> rather than handing that column to whoever
+had finished the work (the shape of ticket #150).
 
 =cut
 

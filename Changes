@@ -1,5 +1,27 @@
 {{$NEXT}}
 
+    - Reopening a finished task releases the claim it still carried (#224).
+      Nothing ever took `claimed_by` off a card, so the moment it left a
+      terminal status the same bytes were a live lease again -- held by
+      whoever had finished the work rather than by anyone doing it. The card
+      sat in `todo`, `karr list` called it open work, `karr board` counted
+      it as claimed, and `karr pick` skipped it without a word: on a board
+      whose only card that was, a drain run was told "no available tasks"
+      while the board showed work waiting. A task leaving one of the board's
+      terminal statuses (`App::karr::Config/is_terminal_status`, never the
+      literal `done`) for a non-terminal one now has `claimed_by` and
+      `claimed_at` cleared, unless the command names a claimant itself --
+      `move ID todo --claim NAME`, or any `handoff` -- in which case that
+      agent holds it. `done` to `archived` is terminal to terminal and keeps
+      the name, since archiving resumes nothing. The release runs before the
+      `require_claim` check, so a claim on its way off the card cannot
+      satisfy it: `move ID in-progress` off a finished card now asks for
+      `--claim` instead of quietly handing the working column to the agent
+      that had finished the work. The trap predates #223 -- the holder could
+      always reopen its own card -- but #223 opened the easiest path into
+      it. `t/224-reopen-clears-claim.t` pins the release, the claimant that
+      wins over it, and the archive that keeps the name.
+
     - A claim on a task in a terminal status no longer blocks anything
       (#223). `check_claim` knew four cases -- unclaimed, the claimant
       matches, the claim expired, otherwise refuse -- and not one of them
