@@ -34,7 +34,9 @@ F<bin/karr-foundation>.
 =item * B<C<STDOUT>/C<STDERR>> -- L</enable_std_utf8>, likewise called from the
 two scripts. An in-process caller that captures output (a test, say) has to put
 the same layer on its capture handle, because reopening C<STDOUT> drops the
-layer the script installed.
+layer the script installed. The same is true of a caller that loads
+L<App::karr::Foundation> directly instead of running F<bin/karr-foundation> --
+see L<App::karr::Foundation/DESCRIPTION> for what that means in practice.
 
 =item * B<Git refs> -- L<App::karr::Git/write_ref> and
 L<App::karr::Git/read_ref> call L</to_octets> and L</from_octets>. Blobs hold

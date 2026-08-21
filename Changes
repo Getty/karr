@@ -1,5 +1,20 @@
 {{$NEXT}}
 
+    - The `enable_std_utf8()` contract for library callers is written down
+      (#221). `App::karr::Foundation` deliberately does not touch the
+      caller's standard handles -- stacking a second `:encoding(UTF-8)`
+      layer on a handle that already carries one is the double encode
+      `App::karr::Encoding` exists to prevent, and the decision belongs to
+      the program, not to a class it merely loads. Until now the only trace
+      of that contract was that both bin scripts call the function. The
+      `=description` of `App::karr::Foundation` now states it, with the
+      two-line setup a direct loader has to run (`enable_std_utf8()` plus
+      `decode_argv()`, since `new_with_options` reads `@ARGV`) and what
+      skipping either costs: `Wide character` on data-driven messages -- a
+      non-ASCII repo path, a YAML error through `clean_error` -- and
+      silently undecoded option values. `App::karr::Encoding` points at it
+      from the STDOUT/STDERR bullet rather than repeating it.
+
     - POD and `# ABSTRACT` no longer carry non-ASCII prose punctuation
       (#215): 65 em dashes become `--`, two ellipses become `...`, one
       arrow becomes `->`, and one multiplication sign becomes `x`, across

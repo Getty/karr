@@ -415,6 +415,32 @@ periodically (cron, systemd-timer, while-loop). It scans configured karr
 boards, detects changes or open work, and B<drains> each board by invoking the
 configured agent command repeatedly until no actionable task remains.
 
+B<Using this class as a library.> F<bin/karr-foundation> is what most callers
+run, and it is also where karr's character/octet boundary gets set up (see
+L<App::karr::Encoding>) before any command code runs: a C<:encoding(UTF-8)>
+layer goes on C<STDOUT>/C<STDERR>, and C<@ARGV> is decoded before
+C<new_with_options> reads it into option values. This class does not repeat
+either step -- both are the program's decision, not one a class it merely
+loads should make for it (see L<App::karr::Encoding/enable_std_utf8> and
+L<App::karr::Encoding/decode_argv>). A caller that loads
+C<App::karr::Foundation> directly, instead of invoking that script, is
+responsible for both:
+
+    use App::karr::Encoding qw( decode_argv enable_std_utf8 );
+
+    enable_std_utf8();
+    decode_argv();
+    App::karr::Foundation->new_with_options->run(@ARGV);
+
+Skipping the handles does not fail outright: every fixed message this class
+prints or warns is plain ASCII (ticket #214). What it does not cover is data
+-- a non-ASCII repo path folded into a C<skip $repo -- $wait> line, or a YAML
+error carried through C<clean_error> into a C<warn> -- which still risks
+C<Wide character in print>/C<warn> the first time it reaches a handle nobody
+configured. Skipping C<@ARGV> is quieter, not safer: option values built from
+it hold raw UTF-8 octets instead of decoded characters, with no warning to
+say so.
+
 B<Config file:> C<~/.config/karr-foundation/config.yml> (or C<--config>).
 
   dirs:
