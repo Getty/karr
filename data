@@ -1,0 +1,57 @@
+---
+claimed_at: 2026-08-21T06:44:43Z
+claimed_by: left-calm
+class: standard
+completed: 2026-08-21T06:44:43Z
+created: 2026-08-21T06:18:20Z
+id: 225
+priority: medium
+started: 2026-08-21T06:18:33Z
+status: done
+tags:
+- dashboard
+- cli
+- ux
+title: dashboard ignoriert --dir stumm und antwortet fuer ein anderes Verzeichnis
+updated: 2026-08-21T06:44:43Z
+---
+
+Beim Dogfooding gefunden, mit dem Arbeitsbaum-Stand verifiziert.
+
+## Befund
+
+`karr --help` dokumentiert `--dir PATH` als Wurzeloption: "USAGE: karr [--dir PATH] <command> [options]", darunter "--dir PATH   Starting path for Git repository discovery". Jedes andere Kommando richtet sich danach. `dashboard` nicht.
+
+    cd /tmp/.../scratchpad
+    karr --dir /home/getty/dev dashboard
+    -> sb1 (0)  sb2 (2)  sb3 (1)  sb4 (1)  sb5 (2)  verify223 (3)
+       10 repos  10 boards  12 open
+
+    karr dashboard          # dasselbe Verzeichnis, ohne --dir
+    -> identische Ausgabe
+
+`--dir` wird also verworfen, und zwar lautlos. Die Ausgabe sieht aus wie eine gueltige Antwort -- sie ist nur die Antwort auf eine andere Frage. Wer `--dir` benutzt, um einen anderen Baum abzufragen, bekommt seinen eigenen Arbeitsordner gezeigt und hat nichts, woran er es merken koennte.
+
+Die Form *hinter* dem Subkommando ist dagegen laut und richtig:
+
+    karr dashboard --dir /home/getty/dev
+    -> Unknown option: dir
+       USAGE: karr dashboard [PATH] [--depth N] ...
+
+Die Falle ist also genau die Wurzelposition, die `karr --help` als die dokumentierte vorfuehrt.
+
+## Warum das mehr ist als eine fehlende Option
+
+`dashboard` ist das Kommando, mit dem man sich einen Ueberblick ueber fremde Baeume verschafft -- "konfigurationsfreie Multi-Board-Uebersicht unter einem Verzeichnis", so steht es in CLAUDE.md. Ein falsches Verzeichnis faellt bei den anderen Kommandos sofort auf (die Karten sind fremd oder es gibt keine). Hier faellt es nicht auf: eine Liste von Repos mit Zahlen dahinter sieht immer plausibel aus.
+
+## Zu entscheiden beim Bauen
+
+`dashboard` nimmt seinen Scan-Wurzelpfad positionell (`karr dashboard PATH`, Default cwd). `--dir` heisst anderswo "Startpunkt der Git-Repository-Discovery" -- das ist nicht dieselbe Bedeutung, und beide zu haben koennte verwirren. Zwei vertretbare Auswege, einer davon muss es sein:
+
+1. `dashboard` nimmt `--dir` als Scan-Wurzel, wenn kein positionaler PATH da ist. Dann zu klaeren, was `karr --dir A dashboard B` bedeutet -- vermutlich: der positionale gewinnt, aber sag es im POD.
+2. `dashboard` weist `--dir` ausdruecklich zurueck, mit einer Meldung, die auf den positionalen PATH zeigt ("dashboard takes its scan root as an argument: karr dashboard PATH").
+
+Was nicht bleiben darf, ist die stumme Variante. Vorher pruefen, wie die Wurzeloption ueberhaupt an die Subkommandos durchgereicht wird (App::karr, MooX::Cmd) und ob es weitere Kommandos gibt, die `--dir` genauso stumm verwerfen -- dashboard war das erste, das mir auffiel, nicht notwendig das einzige.
+
+Regressionstest: `--dir` auf einen Baum zeigen lassen, der sich nachweisbar vom cwd unterscheidet, und pinnen, dass die Ausgabe entweder diesen Baum beschreibt (Weg 1) oder die Zurueckweisung nennt (Weg 2).
+Erledigt in 4aabef1. Weg 2 gewaehlt (laute Zurueckweisung, exit 2), Begruendung aus dem Code: --dir sucht in BoardDiscovery aufwaerts zur Wurzel EINES Repositories, dashboard sucht abwaerts ueber einen Baum voller Repositories -- derselbe Pfad uebergeben, antworten beide ueber verschiedene Verzeichnisse. Dazu stand die Entscheidung seit #220 schon im Header-Kommentar der Datei und leckte nur an der Wurzelposition. Die Vollstaendigkeitsfrage ist beantwortet: nur fuenf Kommandos komponieren weder BoardDiscovery noch BoardAccess -- agent-name, dashboard, get-refs, set-refs, skill. get-refs/set-refs sind seit #71 versorgt, skill ist #226, agent-name ist folgenlos. Volle Suite: 195 Dateien, 1427 Tests, pass.
