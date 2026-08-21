@@ -1,5 +1,23 @@
 {{$NEXT}}
 
+    - An abbreviated option that takes a value keeps its value (#247).
+      `karr edit 1 --prio high` answered `unexpected extra argument:
+      "high"`, blaming the value for a problem in the abbreviation in front
+      of it, while `--prio=high` worked and `--unbl` worked -- the broken
+      shape was exactly "abbreviated, takes a value, separated by a space".
+      `App::karr::Role::CliArgs` did not know the abbreviation consumed
+      anything and pushed the next token into the positionals, under a
+      comment claiming karr's abbreviatable flags consume nothing anyway,
+      which stopped being true once `--title`, `--priority`, `--body`,
+      `--claim` and `--note` existed. `karr get-refs --dir . REF` was worse
+      than a refusal: it read the displaced argument as the ref name and
+      answered. The fix asks a weaker question than which option an
+      abbreviation means -- one that reached the command body has already
+      resolved to exactly one, since an ambiguous or unknown one exits 2
+      before that -- so it only asks whether every option the token could
+      abbreviate agrees about taking a value. `--prio=high`, `--unbl`,
+      short forms and the `Option ti is ambiguous` message are unchanged.
+
     - An empty command-line argument is refused instead of vanishing
       (#243). `MooX::Cmd::Role` runs argv through
       `shellwords(join ' ', map { quotemeta } @ARGV)` before anything else
