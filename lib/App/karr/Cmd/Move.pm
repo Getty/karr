@@ -100,12 +100,22 @@ sub execute {
   $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
-  my $id_str = $pos[0] or die "Usage: karr move ID[,ID,...] [STATUS]\n";
-  # `karr move , todo` passes the truthy "," above and then splits to an empty
-  # list, so the loop below never ran: no ids, no output, no die, exit 0. A
-  # command that silently did nothing is the one answer the exit-code contract
-  # (ADR 0002) cannot express. The "Usage:" prefix is what bin/karr keys on to
-  # make it a usage error (2) rather than a runtime failure (1).
+  my $id_str = $pos[0];
+  # length, not truth: the id "0" is an argument that was given, just a false
+  # one, so `or` sent it down the branch meant for "no argument at all". That
+  # made `karr move 0 todo` a usage error (2) where `karr show 0` and even
+  # `karr move 0,1 todo` already answered "not found" (1) -- card numbers start
+  # at 1, so no real card was unreachable, but the exit-code contract ADR 0002
+  # promises to agents scripting this CLI fell on the wrong side (ticket #239,
+  # the same root as #153 and #230).
+  die "Usage: karr move ID[,ID,...] [STATUS]\n"
+    unless defined $id_str && length $id_str;
+  # `karr move , todo` passes that guard -- a comma is one character long --
+  # and then splits to an empty list, so the loop below never ran: no ids, no
+  # output, no die, exit 0. A command that silently did nothing is the one
+  # answer the exit-code contract (ADR 0002) cannot express. The "Usage:"
+  # prefix is what bin/karr keys on to make both of these guards a usage error
+  # (2) rather than a runtime failure (1).
   my @ids = $self->parse_ids($id_str);
   die "Usage: karr move ID[,ID,...] [STATUS]\n" unless @ids;
   my $new_status = $pos[1];

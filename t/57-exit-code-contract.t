@@ -183,4 +183,100 @@ subtest 'unknown option exits 2 on every command shape' => sub {
         2, 'unknown option on skill exits 2' );
 };
 
+# ------------------------------------------------------- 1 vs 2 for the id "0"
+
+# Ticket #239. `my $id = $pos[0] or die "Usage: ..."` in move, archive, delete,
+# edit and handoff read the given-but-false id "0" as "no id was passed at all"
+# and answered a usage error (2), while `show` -- which never had that guard --
+# called it a missing task (1). Card numbers start at 1, so no reachable card
+# was lost; what split was this contract, and ADR 0002 makes it a promise to
+# agents that script the CLI. An agent whose id arithmetic produced a 0 heard
+# "no such card" from one command and "you mistyped" from five others -- the
+# one distinction the two codes exist to draw, landing on the wrong side. Third
+# instance of the truthiness-guard root behind #153 and #230, and fixed the
+# same way there: `defined && length`.
+subtest 'the id 0 is a missing task (1), never a usage error (2)' => sub {
+    my $repo = _board_repo();
+
+    my @invocations = (
+        [ 'show',    '0' ],
+        [ 'move',    '0', 'todo' ],
+        [ 'archive', '0' ],
+        [ 'delete',  '0', '--yes' ],
+        [ 'edit',    '0', '--title', 'x' ],
+        [ 'handoff', '0', '--claim', 'some-agent' ],
+    );
+
+    for my $argv (@invocations) {
+        my $label = join ' ', @$argv;
+        my $rv = _run_karr( $repo, @$argv );
+        is( $rv->{exit}, 1, "karr $label exits 1 (runtime: no such task)" )
+            or diag $rv->{stderr};
+        like( $rv->{stderr}, qr/\QTask 0 not found\E/,
+            "karr $label names the id it could not find" );
+        unlike( $rv->{stderr}, qr/^Usage:/m,
+            "karr $label does not answer with a usage line" );
+    }
+};
+
+subtest 'the single id and the comma list agree about 0' => sub {
+    my $repo = _board_repo();
+
+    # parse_ids('0') has always returned the one-element list ("0"), so the
+    # emptiness guard under it (ticket #152, `die ... unless @ids`) never fired
+    # for a 0 either: `karr move 0,1 todo` already reported "Task 0 not found"
+    # and exited 1 while `karr move 0 todo` exited 2. Two spellings of the same
+    # argument, two contradictory answers -- now one.
+    my $single = _run_karr( $repo, 'move', '0',   'todo' );
+    my $list   = _run_karr( $repo, 'move', '0,1', 'todo' );
+
+    is( $single->{exit}, 1, 'karr move 0 todo exits 1' )
+        or diag $single->{stderr};
+    is( $list->{exit}, 1, 'karr move 0,1 todo exits 1' )
+        or diag $list->{stderr};
+    like( $list->{stderr}, qr/\QTask 0 not found\E/,
+        'the list form still reports the 0 as missing' );
+};
+
+subtest 'what stays a usage error: no id at all, and an id list that is empty' => sub {
+    my $repo = _board_repo();
+
+    # The branch the "0" was wrongly falling into is for a genuinely absent id.
+    for my $argv (
+        ['move'], ['archive'], [ 'edit', '--title', 'x' ],
+        [ 'delete', '--yes' ], [ 'handoff', '--claim', 'some-agent' ],
+    ) {
+        my $label = join ' ', @$argv;
+        my $rv = _run_karr( $repo, @$argv );
+        is( $rv->{exit}, 2, "karr $label (no id) still exits 2" )
+            or diag $rv->{stderr};
+        like( $rv->{stderr}, qr/^Usage:/m, "karr $label answers a Usage: line" );
+    }
+
+    # And, via the #152 guard below it, for an id argument that is present but
+    # splits to no ids -- the shell-built list that came out empty.
+    for my $argv (
+        [ 'move', ',', 'todo' ], ['archive', ','],
+        [ 'edit', ',', '--title', 'x' ], [ 'delete', ',', '--yes' ],
+    ) {
+        my $label = join ' ', @$argv;
+        my $rv = _run_karr( $repo, @$argv );
+        is( $rv->{exit}, 2, "karr $label (empty id list) still exits 2" )
+            or diag $rv->{stderr};
+    }
+
+    # A non-numeric id is NOT that branch and never was: "abc" is truthy, so it
+    # passed the old guard too, reached find_task and came back as a missing
+    # task (1). Pinned because #239 asked whether the conversion could tip it
+    # into a usage error -- it cannot. These guards only ever see the argument
+    # that is absent and the one that names no ids; deciding whether a present
+    # id exists is find_task's job, and its answer is a runtime failure.
+    my $abc = _run_karr( $repo, 'move', 'abc', 'todo' );
+    is( $abc->{exit}, 1, 'karr move abc todo exits 1: a bad id is not a typo' )
+        or diag $abc->{stderr};
+    like( $abc->{stderr}, qr/\QTask abc not found\E/,
+        'and reports it as a task that does not exist' );
+    unlike( $abc->{stderr}, qr/^Usage:/m, 'not as a usage error' );
+};
+
 done_testing;

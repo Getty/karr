@@ -1,5 +1,22 @@
 {{$NEXT}}
 
+    - The id `0` is a task that does not exist, not a usage error, in all
+      six commands that take one (#239). `move`, `edit`, `delete`,
+      `archive` and `handoff` guarded their positional with `my $id =
+      $pos[0] or die "Usage: ..."`, so `"0"` -- an argument that was given,
+      just a false one -- went down the branch meant for no argument at all
+      and exited 2, while `karr show 0` answered "not found" and exited 1.
+      Card numbers start at 1, so no real card was unreachable; what fell on
+      the wrong side is the exit-code contract ADR 0002 promises to agents
+      scripting this CLI, where 2 means a typo and 1 means the command ran
+      and failed. The single and the list form had already disagreed with
+      each other: `karr move 0,1 todo` answered "not found" all along,
+      because `parse_ids` splits `"0"` into a one-element list and never saw
+      the falsy string. Third instance of the root #153 and #230 fixed
+      elsewhere. `karr move , todo` and a missing id still exit 2, and
+      `karr move abc todo` still exits 1 -- it never was a usage error,
+      contrary to what the ticket assumed.
+
     - `karr delete` names the cards that point at the one being removed
       (#236). The board is searched backwards first -- a `depends_on` entry
       naming the id, or `parent` set to it -- and each dependent is reported

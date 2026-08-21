@@ -243,8 +243,12 @@ sub execute {
   $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
-  my $id_str = $pos[0] or die "Usage: karr edit ID[,ID,...] [FLAGS]\n";
-  # See the note in Cmd::Move: a comma with no ids around it is truthy here and
+  my $id_str = $pos[0];
+  # See the note in Cmd::Move: length, not truth, or the id "0" is read as no
+  # id at all and answered with a usage error instead of "not found" (#239).
+  die "Usage: karr edit ID[,ID,...] [FLAGS]\n"
+    unless defined $id_str && length $id_str;
+  # And a comma with no ids around it passes that guard and
   # splits to nothing, so the command used to exit 0 having done nothing.
   my @ids = $self->parse_ids($id_str);
   die "Usage: karr edit ID[,ID,...] [FLAGS]\n" unless @ids;

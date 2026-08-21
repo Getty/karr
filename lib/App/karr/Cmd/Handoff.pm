@@ -100,7 +100,11 @@ sub execute {
   $self->require_board;
 
   my @pos = $self->positional_args($args_ref);
-  my $id = $pos[0] or die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n";
+  # See the note in Cmd::Move: length, not truth, or the id "0" is read as no
+  # id at all and answered with a usage error instead of "not found" (#239).
+  my $id = $pos[0];
+  die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n"
+    unless defined $id && length $id;
 
   # The status a handoff lands in: the board's review column when it has one,
   # the derived last non-terminal column when it does not -- a literal
