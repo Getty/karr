@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-21T09:39:55Z
+claimed_by: cold-ball
+class: standard
+completed: 2026-08-21T09:39:55Z
+created: 2026-08-21T07:53:51Z
+id: 236
+priority: medium
+started: 2026-08-21T09:05:57Z
+status: done
+tags:
+- parity
+- delete
+- dependencies
+title: 'delete warnt nicht vor abhaengigen Karten und laesst ''depends: N (unknown)''
+  zurueck'
+updated: 2026-08-21T09:39:55Z
+---
+
+Beim systematischen Paritaetsvergleich gefunden, selbst nachgestellt.
+
+## Reproduktion
+
+    karr edit 6 --add_depends_on 2
+    karr delete 2 --yes
+    -> Deleted task 2: K2          (kein Wort mehr)
+    karr show 6
+    -> Depends:  2 (unknown)
+
+kanban-md sammelt in internal/board/mutate.go (um Zeile 41) `FindDependents(...)` und gibt in cmd/delete.go (um Zeile 97-99) jede gefundene Karte als `Warning:` auf STDERR aus. FindDependents (internal/board/board.go um Zeile 53-72) meldet jede Karte, deren `depends_on` die id nennt, und jede, die sie als `parent` traegt.
+
+karrs Cmd/Delete.pm (um Zeile 82-138) hat nur die Claim-Pruefung, keine Rueckwaertssuche.
+
+## Warum es bei karr mehr wiegt als bei der Referenz
+
+kanban-md loescht die Datei ebenfalls hart, aber karr hat zusaetzlich `karr archive` als weichen Weg -- und die Warnung ist genau das, was einen Aufrufer vom harten auf den weichen Weg schicken wuerde. Ohne sie bleibt Karte 6 mit einem Verweis auf eine id zurueck, die es nicht mehr gibt.
+
+Bemerkenswert: karr **zeigt** den Schaden bereits an. `show` rendert `2 (unknown)`, das Label kommt aus `_dependency_label`. Die Information, dass eine Abhaengigkeit ins Leere zeigt, ist also vorhanden -- sie wird nur nicht zu dem Zeitpunkt gegeben, an dem sie jemanden noch aufhalten koennte.
+
+`Cmd/Archive.pm` warnt ebenfalls nicht -- das ist aber paritaetskonform, kanban-mds `board.Archive` warnt auch nicht.
+
+## Begruendung gesucht, keine gefunden
+
+Geprueft: Cmd/Delete.pm, Cmd/Archive.pm, Role/DependencyCheck.pm, Role/DependencyArgs.pm, CLAUDE.md. DependencyCheck.pm um Zeile 113-127 dokumentiert eine bewusste Abweichung in die **Gegenrichtung** -- karr warnt, wenn eine Abhaengigkeit auf eine nicht existierende id zeigt, wo kanban-md sie als erfuellt zaehlt. Die fehlende Warnung beim Loeschen ist damit eine Luecke, keine Entscheidung: karr nimmt baumelnde Abhaengigkeiten anderswo ausdruecklich ernst.
+
+## Zu tun
+
+Rueckwaertssuche vor dem Loeschen, Warnung auf STDERR (nicht STDOUT, damit die Ausgabe parsebar bleibt -- so macht es Role/DependencyCheck::dependency_report schon, dessen Kanalwahl dort begruendet ist). Vorher klaeren:
+
+1. Ob die Warnung auch bei `--yes` kommt (ja -- sonst warnt sie genau dort nicht, wo niemand mehr hinschaut) und ob sie ohne `--yes` in die Rueckfrage gehoert.
+2. Ob `karr needs`/CrossBoard denselben Fall auf der anderen Boardseite hat: eine Karte auf Board B, die `A#2` braucht, waehrend A#2 geloescht wird. Wenn ja, gehoert das in ein eigenes Ticket, nicht hier hinein.
+3. Ob die Warnung den Loeschvorgang nur begleitet oder ihn abbricht. kanban-md warnt und loescht. Uebernehmen, es sei denn es gibt einen Grund dagegen.
+
+Regressionstest: loeschen mit einer abhaengigen Karte warnt und nennt sie; loeschen ohne abhaengige Karte warnt nicht; die Warnung geht nach STDERR und Exit bleibt 0.
+Erledigt in a4971db. Die Warnung steht vor dem Prompt und bricht damit bewusst die Regel aus Role/DependencyCheck ('erst nach dem Schreibvorgang'): die schuetzt vor einer Warnung ueber eine Mutation, die ihr CAS verloren hat, und setzt eine Karte voraus, die danach noch gelesen werden kann. Hier IST der Schreibvorgang die Entfernung. Unter --yes kommt sie trotzdem, weil das der Modus ist, in dem Agenten loeschen. Sie warnt und loescht, wie die Referenz -- ihr Zweck ist die Tuer, die kanban-md nicht hat: karr archive behaelt den Ref, die Abhaengigkeit loest sich weiter auf, und show schreibt 'archived' statt 'unknown'; die Meldung nennt genau dieses Kommando mit eingesetzter id. parent wird mitgeprueft, obwohl karr es nicht setzen kann: import bringt echte Werte herein, und nichts in karr rendert parent jemals -- anders als bei depends_on gibt es also keine zweite Chance, ein verwaistes Kind zu bemerken. Das POD von =attr parent behauptete, keine Logik konsultiere es; das ist korrigiert. Die Rueckwaertssuche bleibt lokal in Delete.pm statt auf der Rolle: ein Konsument, und #137 hat die Rolle gerade deshalb geteilt. Zwei Nebenbefunde als #241 (ungespuelter Prompt) und #242 (andere Boardseite) eingetragen. Volle Suite: 201 Dateien, 1472 Tests, pass.
