@@ -1,0 +1,61 @@
+---
+claimed_at: 2026-08-21T10:09:30Z
+claimed_by: wing-coat
+class: standard
+completed: 2026-08-21T10:09:30Z
+created: 2026-08-21T07:53:00Z
+id: 234
+priority: medium
+started: 2026-08-21T09:40:26Z
+status: done
+tags:
+- board
+- parity
+- bug
+title: board zaehlt und zeigt archivierte Karten, und prueft zweimal hart auf 'done'
+updated: 2026-08-21T10:09:30Z
+---
+
+Beim systematischen Paritaetsvergleich gefunden, selbst nachgestellt. Zwei Befunde in derselben Datei, gleiche Wurzel.
+
+## Befund 1: Archivierte Karten zaehlen mit
+
+kanban-md filtert in cmd/board.go (um Zeile 78-90) `IsArchivedStatus` heraus, bevor irgendetwas gezaehlt oder gerendert wird, und laesst die `archived`-Spalte ueber `BoardStatuses()` ganz weg.
+
+karr laedt in Cmd/Board.pm (um Zeile 114) ungefiltert, zaehlt in Zeile 218 `scalar(@tasks)` inklusive Archiv, zaehlt `blocked` (Zeile 213) ebenso, und behaelt die `archived`-Spalte, sobald sie nicht leer ist (Zeile 169-172).
+
+Nachgestellt: Board mit drei Karten, eine davon archiviert:
+
+    ## Archived
+    - 3 | C
+
+    3 tasks  1 claimed
+
+kanban-md haette hier zwei Karten gezaehlt und keine Archiv-Spalte gezeigt.
+
+Das ist dieselbe Frage, die #229 fuer `karr context` beantwortet hat -- dort war die Antwort Paritaet. Hier liegt sie umgekehrt: `context` filterte zu viel, `board` filtert zu wenig.
+
+## Befund 2: zweimal hartkodiertes `done`
+
+Cmd/Board.pm Zeile 132 und 171 pruefen `$status eq "done"` statt `$self->store->is_terminal_status($status)`. Genau das Muster, das Ticket #67 anderswo beseitigt hat.
+
+Folge auf einem importierten Board, dessen letzte Spalte `shipped` heisst statt `done`: `karr board` versteckt nichts, und `--done` tut gar nichts.
+
+## Begruendung gesucht, keine gefunden
+
+Geprueft: Cmd/Board.pm POD (Abschnitt OUTPUT MODES -- sagt nur "an empty archived is hidden", ohne Bezug auf kanban-md), t/37-board-render.t um Zeile 99-101 (testet ausschliesslich den leeren Fall), `grep` nach `archived` in docs/adr/ und CLAUDE.md.
+
+## Zu tun
+
+Beide Befunde zusammen, sie sitzen in derselben Datei und derselben Entscheidung.
+
+Vorher klaeren -- und hier ist die Antwort weniger offensichtlich als bei #229: `karr board` ist eine **Ansicht**, kein Interop-Vertrag wie der Kontextblock. Eine Archiv-Spalte anzuzeigen, wenn sie nicht leer ist, kann eine bewusst bessere Ansicht sein als kanban-mds. Aber dann muss die Fusszeile trotzdem sagen, was sie zaehlt, und die Entscheidung gehoert als Kommentar an die Stelle. Was nicht bleiben darf, ist die stille Abweichung ohne ein Wort dazu.
+
+Befund 2 hat dagegen keine zwei Lesarten: `is_terminal_status` ist im Repo die Antwort auf "ist das der Schluss", und zwei Stellen, die stattdessen ein Literal pruefen, sind schlicht die alte Form.
+
+Regressionstest fuer Befund 2 in jedem Fall: ein Board mit `shipped` als letzter Spalte, an dem sich zeigt, dass `--done` und das Verstecken greifen. Fuer Befund 1 je nachdem, wie die Frage oben entschieden wird.
+
+## Nicht in diesem Ticket
+
+Die grundsaetzlich andere Berichtsform -- kanban-mds `board` druckt Zaehler mit WIP-Auslastung, Overdue- und Prioritaetsverteilung, karr rendert Karten -- ist eine eigene, groessere Frage. WIP haengt ausserdem an #227.
+Erledigt in 80e66cb. Der Worker ist ueber meinen Vorschlag hinausgegangen und hat recht: ich hatte 'Fusszeile zaehlt nicht mit, Spalte darf bleiben' vorgeschlagen: das ist die schlechteste der drei Varianten, weil eine beibehaltene Spalte dann Karten zeigt, die die Gesamtzahl auslaesst -- das Gegenteil des bestehenden (N done hidden)-Vertrags, wo das Zurueckgehaltene mitgezaehlt wird und die Fusszeile es sagt. Das Archiv verlaesst 'board' also ganz, in allen drei Modi. Nebenbei aufgedeckt: --compact und --json haben die leere Archiv-Spalte nie versteckt, die Regel existierte nur im Standard-Renderer, war also nie eine durchdachte Ansichtsentscheidung. Zu Befund 2 kam ein dritter Hardcode dazu, den dieses Ticket nicht genannt hatte: die Zahl in '(N done hidden)' zaehlte selbst die Spalte done und hiess auf einem shipped-Board eine Spalte, die es nicht gibt -- sie loest jetzt die tatsaechliche Endspalte auf und benennt sie. Dazu die --done-Hilfezeile in App/karr.pm. Nebenbefund als #245 eingetragen (Skill-Datei behauptet WIP-Auslastung). Volle Suite: 202 Dateien, 1480 Tests, pass.
