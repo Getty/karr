@@ -1,0 +1,47 @@
+---
+claimed_at: 2026-08-21T10:09:17Z
+claimed_by: debt-gift
+class: standard
+completed: 2026-08-21T10:09:17Z
+created: 2026-08-21T08:33:51Z
+id: 239
+priority: low
+started: 2026-08-21T09:40:19Z
+status: done
+tags:
+- cli
+- exit-codes
+- parity
+title: Die id 0 ist bei show ein Nicht-gefunden und bei fuenf anderen Kommandos ein
+  Usage-Fehler
+updated: 2026-08-21T10:09:17Z
+---
+
+Beim Bauen von #230 gefunden, selbst nachgestellt. Dritte Auspraegung derselben Wurzel wie #153 und #230: ein Truthiness-Waechter auf einem benutzergesetzten Wert.
+
+## Befund
+
+    karr show 0             -> Task 0 not found                          exit 1
+    karr move 0 todo        -> Usage: karr move ID[,ID,...] [STATUS]     exit 2
+    karr archive 0          -> Usage: karr archive ID[,ID,...]           exit 2
+    karr delete 0 --yes     -> Usage: karr delete ID[,ID,...] [--yes]    exit 2
+    karr edit 0 --title x   -> Usage: karr edit ID[,ID,...] [FLAGS]      exit 2
+    karr handoff 0 --claim a-> Usage: ...                                exit 2
+
+Ursache: `my $id = $pos[0] or die "Usage: ..."` in Handoff.pm (um Zeile 103), Edit.pm (um Zeile 214) und den Entsprechungen in Move.pm, Archive.pm und Delete.pm. Die id "0" ist ein vorhandenes Argument, aber ein falscher Wert, also faellt sie in den Zweig fuer "kein Argument uebergeben".
+
+## Warum es ueberhaupt zaehlt
+
+Kartennummern beginnen bei 1, es geht also keine echte Karte verloren. Was auseinanderlaeuft, ist der Exit-Code-Vertrag: ADR 0002 macht ihn ausdruecklich zu einer Zusage an Agenten, die dieses CLI skripten. Ein Agent, der eine id berechnet und dabei eine 0 herausbekommt -- etwa weil ein Parse fehlschlug --, bekommt von `show` "das gibt es nicht" (exit 1, Laufzeitfehler) und von den fuenf anderen "du hast dich vertippt" (exit 2, Usage-Fehler). Genau die Unterscheidung, wegen der es zwei Codes gibt, faellt hier auf die falsche Seite.
+
+## Zu tun
+
+Die fuenf Waechter auf `defined && length` umstellen, so wie #153 und #230 es an ihren Stellen getan haben. Danach behandeln alle sechs Kommandos die 0 gleich: als id, die es nicht gibt, exit 1.
+
+Vorher klaeren:
+1. Ob `parse_ids` (fuer die Mehrfach-Form `1,2,3`) die 0 schon anders behandelt als der Einzelwaechter -- die Kommandos nehmen Listen, und es waere schlecht, wenn `karr move 0 todo` und `karr move 0,1 todo` verschiedene Antworten gaeben. Ticket #152 hat an `parse_ids` schon einmal die leere Liste geregelt, dort nachschauen.
+2. Was `t/57-exit-code-contract.t` heute festhaelt und ob dort Faelle stehen, die auf exit 2 fuer die 0 bauen.
+3. Ob eine nicht-numerische id (`karr move abc todo`) davon beruehrt wird -- die soll weiter ein Usage-Fehler bleiben, das ist der Fall, fuer den der Zweig gedacht ist.
+
+Regressionstest gehoert zu `t/57-exit-code-contract.t`, wo der Vertrag wohnt, oder zu `t/153`, wo die Fehlerklasse wohnt -- der Bauende entscheidet und begruendet es.
+Erledigt in 559384b. Der Worker hat eine Annahme dieses Tickets widerlegt statt sie umzusetzen: 'karr move abc todo' war NIE ein Usage-Fehler -- gegen einen git-archive-Export von HEAD geprueft, 'abc' ist wahr, kam durch den alten Waechter, durch parse_ids, bis find_task, und antwortete 'Task abc not found' mit exit 1. Es haette eine Fiktion festgeschrieben. Zweiter Befund derselben Pruefung: Einzel- und Listenform widersprachen sich schon vorher, weil split /,/ auf '0' ein einelementiges Ergebnis liefert und der falsche Wert #152s Leerheits-Waechter nie erreichte -- 'karr move 0,1 todo' antwortete immer schon 'not found'. Der Fix bringt die Einzelform mit der Batchform in Uebereinstimmung. parse_ids unangetastet, 'karr move , todo' weiter exit 2. Kein Test unter t/ baute auf der alten Antwort. Der Regressionstest kam nach t/57-exit-code-contract.t statt t/153: was hier kostet, ist ein falsch klassifizierter Exit-Code, und '1 statt 2' ist was jene Datei pinnt, waehrend jeder Subtest in t/153 exit 0 behauptet und dann einen Wert von der Karte zurueckliest. Zwei Nebenbefunde als #243 (leeres Positional wird verworfen, naechstes Wort rutscht nach) und #244 (derselbe Waechter in Cmd/Config.pm) eingetragen. Volle Suite: 202 Dateien, 1480 Tests, pass.
