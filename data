@@ -1,0 +1,56 @@
+---
+claimed_at: 2026-08-21T07:41:47Z
+claimed_by: king-tall
+class: standard
+completed: 2026-08-21T07:41:47Z
+created: 2026-08-21T07:19:12Z
+id: 229
+priority: medium
+started: 2026-08-21T07:19:44Z
+status: done
+tags:
+- context
+- parity
+- bug
+title: 'context: karr filtert alle terminalen Status heraus, kanban-md nur archived
+  -- und der Kommentar sagt das Zweite'
+updated: 2026-08-21T07:41:47Z
+---
+
+Gefunden beim Bauen von #228, beim Vergleich mit der Referenz. Nicht von #228 verursacht -- #228 hat nur den Zweig darunter kommentiert.
+
+## Befund
+
+`lib/App/karr/Cmd/Context.pm` um Zeile 118-119:
+
+    # Exclude archived from all operations
+    my @active_tasks = grep { !$self->store->is_terminal_status($_->status) } @tasks;
+
+Der Kommentar sagt "archived", der Code filtert jeden terminalen Status -- auf dem Standardboard also auch `done`. kanban-md filtert an derselben Stelle (cmd/context.go:47-53) mit `cfg.IsArchivedStatus`, und das ist woertlich `s == "archived"` (internal/config/config.go:499-501). Alles andere, `done` eingeschlossen, geht dort in GenerateContext hinein.
+
+Dass der Kommentar die Regel der Referenz beschreibt und der Code eine andere, ist das staerkste Anzeichen dafuer, dass es keine gewollte Abweichung ist, sondern eine, die nie jemandem auffiel.
+
+## Was daran haengt
+
+Drei Werte werden aus `@active_tasks` gebildet, zwei davon aendern sich dadurch:
+
+1. `total` in der Kopfzeile (`**N tasks**`): kanban-md zaehlt erledigte Karten mit, karr nicht. Auf einem Scratch-Board mit 5 Karten, davon 2 done, sagt karr "3 tasks".
+2. `blocked` und die Blocked-Sektion: kanban-mds computeSummary (internal/board/context.go:117-119) und buildBlockedSection (:172-180) pruefen `t.Blocked` ohne jede Statusbedingung. Eine blockierte Karte, die auf done steht, wird dort gezaehlt und aufgefuehrt; in karr verschwindet sie.
+3. `active` und `overdue` sind nicht betroffen -- beide pruefen den terminalen Status noch einmal selbst. Die In-Progress-Sektion ebenfalls nicht, weshalb der Kommentar aus #228 richtig bleibt.
+
+Die recently-completed-Sektion ist ebenfalls nicht betroffen: sie geht seit #99 ausdruecklich ueber alle Karten statt ueber @active_tasks.
+
+## Zu entscheiden
+
+Zwei Lesarten, und die Entscheidung gehoert vor den Code:
+
+A. **Paritaet herstellen** -- nur `archived` filtern, wie die Referenz. CLAUDE.md nennt Paritaet fuer die Board-Kommandos als Ziel, und der Kontextblock ist ueber die geteilten Sentinels ohnehin ein Interop-Vertrag: wenn beide Werkzeuge denselben Block in derselben Wirtsdatei pflegen, sollten dieselben Zahlen darin stehen.
+
+B. **Verhalten behalten und die Abweichung aufschreiben.** Fuer ein Agenten-Briefing ist "3 tasks" auf einem Board mit 224 erledigten Karten womoeglich die nuetzlichere Zahl als "227 tasks". Dann muss aber der Kommentar sagen, dass hier bewusst abgewichen wird, und warum -- und die Abweichung gehoert in die Paritaetsdokumentation, wo immer die in diesem Repo steht.
+
+Was nicht bleiben darf, ist der jetzige Zustand: ein Kommentar, der eine Regel beschreibt, die der Code nicht ausfuehrt.
+
+Wenn A gewaehlt wird, braucht es einen Test, der beide betroffenen Werte pinnt (total mit erledigten Karten, und eine blockierte done-Karte, die in der Blocked-Sektion auftaucht). Wenn B gewaehlt wird, keinen Test, nur den Kommentar -- dann aber pruefen, ob irgendein bestehender Test die heutigen Zahlen schon festhaelt, damit klar ist, was die Entscheidung absichert.
+
+kanban-md liegt fuer den Vergleich unter /tmp/.../scratchpad/kanban-md; falls es dort nicht mehr steht, nach ../kanban-md klonen, wie CLAUDE.md es beschreibt.
+Erledigt in 30fcf55. Weg A (Paritaet), und die Historie hat den Beleg geliefert, den ich nicht hatte: f099b17 fing mit 'ne archived' an, 85f6e9f hat es unter der Ueberschrift 'centralize config knowledge' auf is_terminal_status verbreitert -- ein Kapselungs-Sweep ueber zehn Dateien, keine Verhaltensentscheidung. Kein Test hielt die alten Zahlen fest. Betroffen waren total und blocked, nicht active/overdue/in-progress (die pruefen den terminalen Status jeweils selbst, wie kanban-mds computeSummary). @active_tasks heisst jetzt @context_tasks, weil der Name nach der Korrektur das Gegenteil des Inhalts behauptete. Eine bewusste Mikro-Abweichung: kanban-mds IsArchivedStatus verlangt zusaetzlich, dass das Board archived konfiguriert; karrs terminal_statuses legt seit #67 fest, dass archived unabhaengig davon terminal ist, und zwei Antworten auf dieselbe Frage waeren schlimmer als die Abweichung. Das zurueckgebliebene archived-Literal im recently-completed-Zweig ist mitgezogen. Volle Suite: 197 Dateien, 1439 Tests, pass.
