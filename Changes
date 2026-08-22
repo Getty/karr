@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `karr config show` no longer drops a key whose value is `0` or the
+      empty string (#255). The six optional rows of the plain-text table
+      -- `board.name`, `board.description`, the three `defaults.*` and
+      `foundation.reason` -- were filtered by truth where "did this
+      config set the key at all" was meant, so a board that set
+      `board.name` to `0` had that value reported by `config get` and by
+      `config show --json` while the table left the row out. That also
+      falsified the command's own promise that
+      `diff <(karr config show) <(karr config show --defaults)` is the
+      set of keys a board overrides: `board.description` and
+      `foundation.reason` have no default row, so an override worth `0`
+      fell out of both sides and the diff reported agreement where there
+      was none. The filter is now `defined`, not `defined && length` --
+      the empty string is the same disagreement with a different value,
+      since `config get` prints an empty line at exit 0 for it and
+      `--json` carries it, so it gets a row with a blank right-hand
+      side, the same nothing `config get` prints. `config set` still
+      refuses an empty argument (#243); an empty value arrives through
+      `karr import` or a hand-edited `config.yml`.
+
     - The `karr delete` warning that points at `karr archive` now says
       what archiving reports on the other board (#250). Keeping the card
       keeps the link resolvable, but a settled link says only that the

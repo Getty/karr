@@ -56,7 +56,12 @@ fallback was not. Rejected on C<set>, which has nothing to write to.
 
 Because it renders identically to a board read, C<< diff <(karr config show)
 <(karr config show --defaults) >> is exactly the set of keys this board
-overrides.
+overrides. That holds for every value a key can carry: the plain-text table
+lists a key whenever the config defines it, C<0> and the empty string
+included -- an empty value gets a row with a blank right-hand side, which is
+what C<config get> prints for it too. Through 0.500 the optional rows were
+filtered by truth, so a board that set C<board.name> to C<0> reported that key
+through C<get> and C<--json> but dropped it from both sides of the diff (#255).
 
 =item * C<--json>
 
@@ -230,22 +235,43 @@ sub _display_keys {
   # the board's statuses are (ticket #130).
   my $statuses = ref $d->{statuses} eq 'ARRAY' ? $d->{statuses} : [];
   my $classes  = ref $d->{classes}  eq 'ARRAY' ? $d->{classes}  : [];
+  # `defined`, not truth, on the six optional rows below. The question the
+  # filter asks is "did this config set the key at all", and a user-set `0` is
+  # a value, not an absence: `config set board.name 0` was accepted, `config get
+  # board.name` answered 0 and `config show --json` carried it, while this table
+  # dropped the row -- and with it the POD promise above that `diff <(karr
+  # config show) <(karr config show --defaults)` is the set of keys this board
+  # overrides, because `board.description` and `foundation.reason` have no
+  # default row for the override to differ from (#255). `foundation.enabled`
+  # already prints a bare `0` two lines down, unfiltered, so a zero row is
+  # nothing new in this output.
+  #
+  # `defined` alone rather than `defined && length`: the empty string is the
+  # same disagreement with a different value. `config set` cannot write one
+  # (#243 refuses an empty argument), but `karr import` and a hand-edited
+  # config.yml can, and there `config get board.description` prints an empty
+  # line at exit 0 while `--json` carries "" -- both call the key present, so
+  # the table does too. Rendering stays `_format_value`'s: it answers '' and
+  # leaves the row's right-hand side blank, which is the same nothing `config
+  # get` prints for it. A placeholder like `(empty)` would read better but is a
+  # notation no other surface of this command has, and would put `show` and
+  # `get` back in disagreement from the other side.
   my @out;
   push @out, ['version',            $d->{version}];
-  push @out, ['board.name',         $board->{name}]        if $board->{name};
-  push @out, ['board.description',  $board->{description}] if $board->{description};
+  push @out, ['board.name',         $board->{name}]        if defined $board->{name};
+  push @out, ['board.description',  $board->{description}] if defined $board->{description};
   push @out, ['tasks_dir',          $d->{tasks_dir}];
   push @out, ['statuses',           $statuses];
   push @out, ['priorities',         [$c->priorities]];
-  push @out, ['defaults.status',    $defaults->{status}]   if $defaults->{status};
-  push @out, ['defaults.priority',  $defaults->{priority}] if $defaults->{priority};
-  push @out, ['defaults.class',     $defaults->{class}]    if $defaults->{class};
+  push @out, ['defaults.status',    $defaults->{status}]   if defined $defaults->{status};
+  push @out, ['defaults.priority',  $defaults->{priority}] if defined $defaults->{priority};
+  push @out, ['defaults.class',     $defaults->{class}]    if defined $defaults->{class};
   push @out, ['claim_timeout',      $d->{claim_timeout}];
   push @out, ['lock_timeout',       $d->{lock_timeout}];
   push @out, ['classes',            $classes];
   push @out, ['foundation.enabled', $c->foundation_enabled];
   push @out, ['foundation.reason',  $d->{foundation}{reason}]
-    if ref $d->{foundation} eq 'HASH' && $d->{foundation}{reason};
+    if ref $d->{foundation} eq 'HASH' && defined $d->{foundation}{reason};
   return @out;
 }
 
@@ -340,9 +366,12 @@ sub _format_value {
 # the one output a reader consults to learn which columns a board has, which is
 # how an "extended status set" nobody configures got invented (ticket #130). The
 # name leads and its per-entry settings follow in parentheses, so the value
-# stays a single greppable line and still says which status wants a claim and
-# which class carries a WIP limit. --json is untouched by this: it carries the
-# entries as configured, never a rendering of them.
+# stays a single greppable line and still says which status wants a claim. On a
+# default board that claim flag is the only setting left to show: since #227 the
+# four default classes are name-only mappings and karr models no WIP limits at
+# all, so a class with settings in this rendering is one the board itself set or
+# imported. --json is untouched by this: it carries the entries as configured,
+# never a rendering of them.
 sub _format_entry {
   my ($self, $entry) = @_;
   return $self->_format_value($entry) unless ref $entry eq 'HASH';
