@@ -1,6 +1,9 @@
 requires 'Moo';
 requires 'MooX::Cmd';
 requires 'MooX::Options';
+# bin/karr resolves the command class from argv before MooX::Cmd dispatches
+# (ticket #256), which is the runtime-plugin case use_module exists for.
+requires 'Module::Runtime';
 requires 'YAML::XS';
 requires 'Path::Tiny';
 requires 'JSON::MaybeXS';

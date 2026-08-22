@@ -16,13 +16,25 @@ surplus positionals before a command does any work. A bare C<--> ends option
 processing, so everything after it is a positional however option-shaped it
 looks.
 
+The same walk answers one question earlier in the run: C<normalize_option_argv>
+respells the option flags in an argv with underscores, which F<bin/karr> does
+before MooX::Cmd dispatches so that a dashed option name survives whatever
+stands in front of it.
+
 Command classes provide C<_options_data> and C<_options_config> via MooX::Options.
 
 =cut
 
-# Extract the real positional arguments from the argv MooX::Cmd echoes back
-# into execute(). Because MooX::Options runs with protect_argv (its default),
-# the array handed to execute() still holds every original token in order:
+# Walk argv once and record what part each token plays: an option flag, the
+# value an option consumed, the bare "--" separator, or a positional. Both
+# readers below ask the same question of the same table, so it is answered in
+# one place and filtered afterwards -- positional_args keeps the positionals,
+# normalize_option_argv rewrites the flags.
+#
+# The walk exists to extract the real positional arguments from the argv
+# MooX::Cmd echoes back into execute(). Because MooX::Options runs with
+# protect_argv (its default), the array handed to execute() still holds every
+# original token in order:
 # recognised option flags, the values they consumed, and --opt=value forms
 # included (e.g. `move --claim tester 1 in-progress` arrives verbatim as
 # [--claim, tester, 1, in-progress]). This gives cobra-style freedom to place
@@ -48,7 +60,7 @@ Command classes provide C<_options_data> and C<_options_config> via MooX::Option
 # to execute(), so without this branch the walk below re-read the escaped tokens
 # as options and dropped them, leaving no positional at all. That was ticket
 # #72: an option-shaped title could only be passed via --title.
-sub positional_args {
+sub _classify_argv {
     my ($self, $args_ref) = @_;
 
     my %options_data = $self->_options_data;
@@ -60,12 +72,13 @@ sub positional_args {
         $by_name{$_} = $options_data{$name} for split /\|/, $short;
     }
 
-    my @positional;
+    my @classified;
     my @args = @$args_ref;
     while (@args) {
         my $arg = shift @args;
         if ($arg eq '--') {
-            push @positional, @args;
+            push @classified, [ $arg, 'separator' ];
+            push @classified, map { [ $_, 'positional' ] } @args;
             last;
         }
         if ($arg =~ /^-/) {
@@ -77,12 +90,21 @@ sub positional_args {
                 $data
                 ? ( defined $data->{format} ? 1 : 0 )
                 : $self->_abbreviation_takes_value( $name, \%options_data );
-            shift @args if $takes_value && !$has_inline && @args;
+            push @classified, [ $arg, 'option' ];
+            push @classified, [ shift(@args), 'value' ]
+                if $takes_value && !$has_inline && @args;
             next;
         }
-        push @positional, $arg;
+        push @classified, [ $arg, 'positional' ];
     }
-    return @positional;
+    return @classified;
+}
+
+sub positional_args {
+    my ($self, $args_ref) = @_;
+
+    return map { $_->[0] }
+        grep { $_->[1] eq 'positional' } $self->_classify_argv($args_ref);
 }
 
 =method positional_args
@@ -103,6 +125,81 @@ token after it is returned as a positional however option-shaped it looks.
 Never dies -- an argument list with no positionals returns an empty list.
 
 =cut
+
+# Spell every option flag in argv the way Getopt::Long will be told to expect
+# it: underscores, not dashes. F<bin/karr> runs this over argv before MooX::Cmd
+# dispatches, because MooX::Options cannot be relied on to do it for a flag that
+# follows another flag (ticket #256).
+#
+# MooX::Options is what makes the dashed spelling work at all: nothing declares
+# --claimed-by, the attribute is claimed_by, and
+# MooX::Options::Role::_options_fix_argv (4.103, line 148) folds '-' to '_' in
+# every option name it walks past before Getopt::Long is called. The walk misses
+# exactly one position. Having recognised an option, it takes the next token as
+# that option's value unconditionally (line 171-172, `defined $original_long_option
+# && ( defined( my $arg_value = shift @ARGV ) )`) and re-emits it verbatim --
+# no fold, no short-option split. For an option that really takes a value that
+# is right and harmless. For a BOOLEAN the next token is the next flag, which
+# therefore reaches Getopt::Long still dashed, under a name the generated
+# specification does not have:
+#
+#     karr list --claimed-by NAME          works
+#     karr list --json --claimed-by NAME   Unknown option: claimed-by   (exit 2)
+#     karr list --not-blocked --compact    works
+#     karr list --compact --not-blocked    Unknown option: not-blocked  (exit 2)
+#
+# Nothing is wrong with the second spelling of either pair; the flag in front of
+# it is. All nineteen karr options whose attribute name has an underscore were
+# reachable only in the orders that happen to avoid that position -- --add-tag,
+# --append-body, --depends-on, --write-to, --show-no-board and fourteen more.
+#
+# The question asked here is the weaker one that #247 settled on: not what an
+# option means, only whether it takes a value. Folding a flag's own dashes is
+# always safe -- _options_fix_argv folds the very same characters one step later
+# for every flag it does reach, so an unknown --bogus-opt still reports
+# "Unknown option: bogus_opt" exactly as before -- and the thing that must NOT
+# be folded is a value that merely looks like a flag (`karr edit 1 --body
+# --we-ird` stores --we-ird). _classify_argv already separates those two, so
+# this is a map over its answer and nothing more. A leading `no-` is left
+# standing so that the negation prefix keeps reaching _options_fix_argv as
+# such, for the day a karr option is declared negatable.
+#
+# This can go when _options_fix_argv puts the token it swallows through the same
+# rewriting as the token it recognised -- i.e. when the MooX::Options this
+# distribution requires no longer has the unconditional shift at line 171. 4.103
+# is the current release and still does; nothing here needs to change if it is
+# fixed, the fold simply becomes a second, identical fold.
+sub normalize_option_argv {
+    my ($self, $args_ref) = @_;
+
+    return map { $_->[1] eq 'option' ? $self->_underscore_option_name($_->[0]) : $_->[0] }
+        $self->_classify_argv($args_ref);
+}
+
+=method normalize_option_argv
+
+    @ARGV = $class->normalize_option_argv(\@ARGV);
+
+Returns C<$args_ref> with every long option flag in it respelled with
+underscores -- C<--claimed-by> becomes C<--claimed_by> -- and everything else
+returned untouched: positionals, short options, the values options consume,
+and every token after a bare C<-->. Both spellings mean the same option to
+karr, and this is the one that survives MooX::Options in every argv position
+(ticket #256). It reads the option table and nothing else, so unlike the two
+methods above it is called as a B<class> method, before any command object
+exists: F<bin/karr> runs it over argv for the command class MooX::Cmd is about
+to dispatch to.
+
+=cut
+
+sub _underscore_option_name {
+    my ($self, $token) = @_;
+
+    return $token unless $token =~ /\A--(no-)?([^=]*)(.*)\z/s;
+    my ($negation, $name, $rest) = ($1, $2, $3);
+    $name =~ tr/-/_/;
+    return '--' . (defined $negation ? $negation : '') . $name . $rest;
+}
 
 # Does a dash token that is not a full option name consume the token after it?
 #

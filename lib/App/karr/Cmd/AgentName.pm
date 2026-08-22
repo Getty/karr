@@ -7,10 +7,12 @@ use MooX::Cmd;
 use MooX::Options (
   usage_string => 'USAGE: karr agentname',
 );
+use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
 
 # Unknown option / bad option value exits 2, not 1 (ADR 0002 exit-code
 # contract). This board-less command has no BoardDiscovery to inherit it from.
+with 'App::karr::Role::CliArgs';
 with 'App::karr::Role::ExitCodes';
 
 =head1 SYNOPSIS

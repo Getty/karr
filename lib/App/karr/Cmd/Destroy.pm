@@ -8,10 +8,12 @@ use MooX::Options (
   usage_string => 'USAGE: karr destroy --yes',
 );
 use App::karr::Role::BoardDiscovery;
+use App::karr::Role::CliArgs;
 use App::karr::Role::SyncLifecycle;
 
 with 'App::karr::Role::BoardDiscovery';
 with 'App::karr::Role::SyncLifecycle';
+with 'App::karr::Role::CliArgs';
 
 =head1 SYNOPSIS
 

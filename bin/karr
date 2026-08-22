@@ -5,10 +5,12 @@
 use strict;
 use warnings;
 our $VERSION = '0.501';
+use Module::Runtime qw( use_module );
 use App::karr;
 use App::karr::SyncGuard;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
 use App::karr::Error qw( is_usage_error );
+use App::karr::Role::CliArgs;
 
 # The character/octet boundary (ticket #53). Everything above this line is
 # bytes, everything below is Perl characters: @ARGV comes in decoded, STDOUT and
@@ -94,10 +96,61 @@ sub _refuse_empty_argument {
       . "variable expanded there -- it is unset or empty.\n";
 }
 
+# An option name with a dash in it does not survive standing behind a boolean
+# flag, so the flags are respelled with underscores here, before MooX::Cmd and
+# MooX::Options ever look at argv (ticket #256).
+#
+# App::karr::Role::CliArgs/normalize_option_argv carries the whole diagnosis and
+# the condition under which this call may go again. What belongs here is only
+# why the CALL is here: the rewrite has to know which token is a flag and which
+# is the value of the flag in front of it, that answer comes out of the option
+# table of the command being run, and this is the last point at which the whole
+# argv is still in one piece.
+#
+# Which command that is, is decided exactly the way MooX::Cmd decides it half a
+# millisecond later: the first argv token that names a command
+# (MooX::Cmd::Role::_initialize_from_cmd, `first_index` across the WHOLE argv --
+# see the %COMMAND_ALIASES comment in App::karr for why the table is asked and
+# argv is not rewritten). Everything before that token is the root's own argv
+# and is normalized against App::karr, everything after it against the command
+# class. The command name itself is passed through untouched, which is what
+# keeps the dashed command spellings (`get-refs`) findable in the table.
+sub _normalize_option_argv {
+    my $commands = App::karr->_build_command_commands( {} );
+
+    my ( $at, $class );
+    for my $i ( 0 .. $#ARGV ) {
+        next unless defined $commands->{ $ARGV[$i] };
+        ( $at, $class ) = ( $i, $commands->{ $ARGV[$i] } );
+        last;
+    }
+
+    my @root = defined $at ? @ARGV[ 0 .. $at - 1 ]      : @ARGV;
+    my @name = defined $at ? ( $ARGV[$at] )             : ();
+    my @rest = defined $at ? @ARGV[ $at + 1 .. $#ARGV ] : ();
+
+    # Both calls are class-method calls: normalize_option_argv reads the option
+    # table and nothing else, so it needs no instance -- and no instance exists
+    # yet, which is the point of doing this here. Every App::karr::Cmd::* class
+    # composes App::karr::Role::CliArgs (t/256 pins that, because a command that
+    # forgot to would silently keep the defect for its own dashed options), but
+    # the guard stays: MooX::Cmd's plugin scan decides what a command class is,
+    # not this file.
+    @root = App::karr->normalize_option_argv( \@root );
+    if ( defined $class ) {
+        use_module($class);
+        @rest = $class->normalize_option_argv( \@rest )
+            if $class->can('normalize_option_argv');
+    }
+
+    @ARGV = ( @root, @name, @rest );
+    return;
+}
+
 # Inside the eval on purpose: the "Usage error:" marker is what
 # App::karr::Error::is_usage_error keys on, so the handler below turns this
 # into exit 2 through the same path as every other usage error.
-my $ran = eval { _refuse_empty_argument(); App::karr->new_with_cmd; 1 };
+my $ran = eval { _refuse_empty_argument(); _normalize_option_argv(); App::karr->new_with_cmd; 1 };
 if ( !$ran ) {
     my $err = $@;
 

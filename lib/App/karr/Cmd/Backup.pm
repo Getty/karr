@@ -11,10 +11,12 @@ use Path::Tiny;
 use App::karr::Encoding qw( yaml_dump );
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Role::BoardDiscovery;
+use App::karr::Role::CliArgs;
 use App::karr::Role::SyncLifecycle;
 
 with 'App::karr::Role::BoardDiscovery';
 with 'App::karr::Role::SyncLifecycle';
+with 'App::karr::Role::CliArgs';
 
 =head1 SYNOPSIS
 

@@ -1,5 +1,29 @@
 {{$NEXT}}
 
+    - An option name with a dash in it no longer disappears when a
+      boolean flag stands in front of it (#256). `karr list --claimed-by
+      NAME` worked and `karr list --json --claimed-by NAME` answered
+      "Unknown option: claimed-by", which is the order an agent types.
+      Nothing declares the dashed spelling -- the attribute is
+      `claimed_by`, and MooX::Options folds `-` to `_` in every option
+      name it walks past before Getopt::Long is called. Its walk misses
+      one position: having recognised an option it takes the next token
+      as that option's value unconditionally and re-emits it verbatim.
+      After a value-taking option that token really is the value, so
+      `--sort id --claimed-by NAME` was fine; after a boolean it is the
+      next flag, and it arrived still dashed. All nineteen karr options
+      whose attribute name has an underscore were affected --
+      `--add-tag`, `--append-body`, `--claimed-by`, `--depends-on`,
+      `--not-blocked`, `--write-to` and thirteen more -- as was the
+      wording of an unknown option reported from that position. karr now
+      respells the flags itself before MooX::Cmd dispatches; a value
+      that merely looks like a flag (`karr edit 1 --body --we-ird`)
+      keeps its dashes, which is the same "does this option take a
+      value" question #247 settled. MooX::Options 4.103 is the current
+      release and still has the unconditional swallow, so this is a
+      detour and not a version floor; `karr-foundation --dry-run` still
+      carries it.
+
     - `karr list --unclaimed` lists the cards no live claim holds -- the
       fourth of the filters #252 accepted, and the one #237 had taken
       for a duplicate of `--claimed-by`. They ask different questions:

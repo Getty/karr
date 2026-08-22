@@ -11,11 +11,13 @@ use MooX::Options (
 use App::karr::Error qw( user_error clean_error );
 use App::karr::Config;
 use App::karr::Role::BoardDiscovery;
+use App::karr::Role::CliArgs;
 use App::karr::Role::SkillFile;
 
 # SkillFile: _skill_content and _write_skill, shared with `karr skill`, which
 # installs the same file --claude-skill installs (tickets #145, #146).
 with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SkillFile';
+with 'App::karr::Role::CliArgs';
 
 =head1 SYNOPSIS
 
