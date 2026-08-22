@@ -5,7 +5,7 @@ our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr list [--status LIST] [--priority LIST] [--archived] [--sort FIELD] [options]',
+  usage_string => 'USAGE: karr list [--status LIST] [--priority LIST] [--archived] [--sort FIELD] [--limit N] [options]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -21,6 +21,8 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr list --status todo,in-progress --priority high,critical
     karr list --claimed-by agent-fox --compact
     karr list -s docker --json
+    karr list --sort priority --limit 5 --json
+    karr list --class expedite --not-blocked
 
 =head1 DESCRIPTION
 
@@ -67,6 +69,24 @@ Limit the result set to a specific assignee, tag, or claim owner.
 
 Performs a case-insensitive substring search across title, body, and tags.
 
+=item * C<--class>
+
+Limits the result to one class of service. A class the board does not
+configure is a usage error (exit C<2>) naming the classes it does configure,
+the same answer C<karr create --class> gives -- kanban-md compares the string
+and prints an empty list instead, which reads like "no such work" when the
+truth is "no such class". Note that C<list> does not render the class, so the
+filter narrows on a field only C<--json> and C<karr show> display; the
+validation is what keeps a typo from looking like an empty board.
+
+=item * C<--blocked>, C<--not-blocked>
+
+Show only the blocked cards, or only the unblocked ones. C<blocked> is what
+the meta column already prints, so this narrows on something visible.
+Passing both is a usage error (exit C<2>): kanban-md lets C<--blocked> win
+silently, and karr refuses a self-contradicting invocation instead, as it
+does for C<edit --claim --release> and C<move --next --prev> (ticket #235).
+
 =item * C<--sort>, C<--reverse>
 
 Sort by C<id>, C<title>, C<status>, C<priority>, C<created>, C<updated>, or
@@ -88,7 +108,24 @@ after every ASCII one.
 Tasks without a C<due> date sort last. Ties are broken by C<id>, and
 C<--reverse> turns the finished list around, tied entries with it.
 
+=item * C<-n>, C<--limit>
+
+Keeps at most N tasks, applied after filtering B<and> after sorting -- so
+C<--sort priority --limit 5> is the five most urgent open cards, not five
+arbitrary ones put in order. C<0>, the default, means no limit. A negative
+value is a usage error (exit C<2>) rather than kanban-md's silent "unlimited".
+The cut applies to C<--json> and C<--compact> exactly as it does to the table.
+
+This is not C<--last>, which C<karr show> and C<karr log> use for a different
+question: C<--last N> is the N most recent by time, C<--limit N> is the head
+of whatever C<--sort> just produced. C<karr list --sort updated --reverse
+--limit 5> is how this command spells the former.
+
 =back
+
+Filters run first, then the sort, then C<--limit>. That is kanban-md's order
+in C<board.List> and it is the only one that makes the last stage mean
+anything.
 
 =head1 SEE ALSO
 
@@ -156,14 +193,45 @@ option archived => (
   doc => 'Show only archived tasks',
 );
 
+option class => (
+  is => 'ro',
+  format => 's',
+  doc => 'Filter by class of service',
+);
+
+option blocked => (
+  is => 'ro',
+  doc => 'Show only blocked tasks',
+);
+
+option not_blocked => (
+  is => 'ro',
+  doc => 'Show only tasks that are not blocked',
+);
+
+option limit => (
+  is => 'ro',
+  format => 'i',
+  short => 'n',
+  default => sub { 0 },
+  doc => 'Show at most N tasks after filtering and sorting (0 = no limit)',
+);
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
   # "0 task(s)" and `[]` are answers about a board; a repository with no board
   # has to say that instead of borrowing them (#135).
   $self->require_local_board;
+  $self->_validate_options;
   my @tasks = $self->_load_tasks;
+  # Filter, then sort, then cut. kanban-md's board.List does the three in that
+  # order (internal/board/board.go) and the order is the whole point of the
+  # third: cutting before the sort would keep an arbitrary N and then order
+  # those, so `--sort priority -n 5` would answer with five tasks that are not
+  # the five most urgent ones.
   @tasks = $self->_filter(\@tasks);
   @tasks = $self->_sort(\@tasks);
+  @tasks = $self->_limit(\@tasks);
 
   if ($self->json) {
     # to_json_hash, not to_frontmatter: the body lives below the frontmatter in
@@ -201,6 +269,43 @@ sub execute {
       $title;
   }
   printf "\n%d task(s)\n", scalar @tasks;
+}
+
+# Every usage error this command can raise that does not need a task in hand,
+# decided in one place before the first ref is read: whether an invocation is
+# well formed is not a question about what happens to be on the board, and an
+# answer that arrives after the load has a chance of arriving after some of the
+# output too.
+sub _validate_options {
+  my ($self) = @_;
+
+  # Ticket #235's rule: an invocation that contradicts itself is refused, not
+  # silently resolved for the caller. kanban-md lets --blocked win over
+  # --not-blocked without a word (cmd/list.go tests `if blocked` first), which
+  # is the same silent pick karr already rejects for `edit --claim/--release`
+  # and `move --next/--prev`. Nobody types both on purpose, so the useful
+  # answer is the one that says so.
+  $self->usage_error('cannot use --blocked and --not-blocked together')
+    if $self->blocked && $self->not_blocked;
+
+  # 0 is the documented "no limit" and stays legal -- it is the default, and
+  # kanban-md spells unlimited that way too. A negative count is not a smaller
+  # list, it is a typo, and kanban-md's `Limit > 0` guard swallows it back into
+  # "unlimited": the caller asks for at most -1 tasks and gets the whole board.
+  # Rejected here for the reason `show`/`log --last` reject theirs (#76, #151,
+  # ADR 0002) -- note those two reject 0 as well, because a count of zero
+  # entries means nothing there while it means "all of them" here.
+  $self->usage_error( sprintf '--limit must be 0 or greater (got %d)', $self->limit )
+    if $self->limit < 0;
+
+  # A class the board does not configure is a usage error, naming the classes
+  # that exist -- the same answer `create --class` gives and the same answer
+  # --sort gives an unknown field. Deliberate divergence from kanban-md, whose
+  # filter is a bare string equality (internal/board/filter.go): there
+  # `list --class bogus` prints an empty list, which reads as "no such work"
+  # when the truth is "no such class". Validating needs the board's config, so
+  # this one sits after require_local_board rather than before it.
+  $self->config->validate_class( $self->class ) if defined $self->class;
 }
 
 sub _load_tasks {
@@ -248,6 +353,25 @@ sub _filter {
   if ($self->claimed_by) {
     @filtered = grep { $_->has_claimed_by && $_->claimed_by eq $self->claimed_by } @filtered;
   }
+  # Plain equality against the card's class, which App::karr::Task always has
+  # (it defaults to `standard`), so there is no unset case to fold in. The
+  # value was checked against the board's classes in _validate_options, so an
+  # empty result here means the board has no card of that class -- not that the
+  # class was misspelled.
+  if (defined $self->class) {
+    @filtered = grep { $_->class eq $self->class } @filtered;
+  }
+  # has_blocked is the whole test on both sides: L<App::karr::Task/BUILD>
+  # normalizes the field so the predicate is true exactly when the card is
+  # blocked, and `blocked: false` from a kanban-md document is not
+  # representable as "set but off" (ticket #58). The pair is mutually
+  # exclusive, rejected in _validate_options, so the elsif cannot hide a
+  # second filter from anybody.
+  if ($self->blocked) {
+    @filtered = grep { $_->has_blocked } @filtered;
+  } elsif ($self->not_blocked) {
+    @filtered = grep { !$_->has_blocked } @filtered;
+  }
   if ($self->search) {
     my $q = lc($self->search);
     @filtered = grep {
@@ -257,6 +381,20 @@ sub _filter {
     } @filtered;
   }
   return @filtered;
+}
+
+# Cut to --limit, last of the three stages and deliberately after the sort.
+# 0 -- the default -- is no limit rather than an empty list, matching
+# kanban-md's `if opts.Limit > 0` (internal/board/board.go); a negative value
+# never reaches here, _validate_options refuses it. The cut is in execute
+# rather than in either output branch so --json, --compact and the table all
+# see the same N tasks: a --limit that only applied to the human table would be
+# a limit exactly where the context it saves does not matter.
+sub _limit {
+  my ($self, $tasks) = @_;
+  my $limit = $self->limit;
+  return @$tasks unless $limit > 0 && @$tasks > $limit;
+  return @{$tasks}[ 0 .. $limit - 1 ];
 }
 
 sub _sort {

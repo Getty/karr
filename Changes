@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - `karr list` gains `--limit`/`-n`, `--class` and
+      `--blocked`/`--not-blocked` (#252). The cut is the last stage,
+      after the filters and after the sort, so `--sort priority -n 5`
+      is the five most urgent cards rather than five arbitrary ones put
+      in order, and it applies to `--json` and `--compact` as it does to
+      the table -- the whole point being the context an agent spends.
+      `0`, the default, is no limit; a negative count is a usage error
+      rather than kanban-md's silent "unlimited", the same answer
+      `show --last` and `log --last` give theirs. Note it is not
+      `--last`: that is the N most recent by time, this is the head of
+      whatever `--sort` produced. An unknown `--class` names the board's
+      own classes and exits 2 instead of printing an empty list, which
+      reads as "no such work" when the truth is "no such class"; and
+      `--blocked` together with `--not-blocked` is refused rather than
+      silently resolved in favour of one of them, as #235 settled for
+      the other four such pairs. `--unclaimed` is not part of this: it
+      has to reuse `pickable`'s claim test rather than spell a second
+      one, and that test is not reachable on its own yet.
+
     - The board config no longer carries per-class WIP limits (#227).
       `App::karr::Config::default_config` gave every board's `expedite`
       class `wip_limit: 1` and `bypass_column_wip: 1`, and `validate`
