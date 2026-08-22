@@ -39,6 +39,14 @@ use App::karr::Cmd::List;
 # (the top of the list is what pick would take) and still read from the config,
 # so the hardcoded-table failure mode stays pinned by the reordered-board
 # subtest, and t/110-list-priority-urgency-first.t pins the pick agreement.
+#
+# Note (ticket #237): `title` was the one field of kanban-md's seven that
+# @SORT_FIELDS never listed, so `karr list --sort title` was a usage error
+# (exit 2) rather than a sort. Its subtests live here, with the rest of the
+# per-field semantics, rather than in a file of their own: this file already
+# enumerates the accepted set in two places -- the usage-message assertion and
+# the "every accepted field" loop -- and a second home for the same statement
+# would be one more place to forget.
 
 sub _init_repo {
   my $repo = tempdir( CLEANUP => 1 );
@@ -183,6 +191,74 @@ subtest '--sort created/updated stay chronological' => sub {
   is_deeply list_ids( $store, sort => 'updated' ), [ 2, 1 ], 'oldest updated first';
 };
 
+subtest '--sort title is case-insensitive and ascending (ticket #237)' => sub {
+  my $store = _board();
+  mk( $store, id => 1, title => 'banana' );
+  mk( $store, id => 2, title => 'Apple' );
+  mk( $store, id => 3, title => 'cherry' );
+
+  # Fixture and expected ids taken from kanban-md's TestSortByTitle /
+  # TestSortByTitleReverse (internal/board/sort_test.go), unchanged.
+  is_deeply list_ids( $store, sort => 'title' ), [ 2, 1, 3 ],
+    'Apple, banana, cherry';
+  is_deeply list_ids( $store, sort => 'title', reverse => 1 ), [ 3, 1, 2 ],
+    '--reverse gives cherry, banana, Apple -- the order kanban-md prints too';
+};
+
+subtest '--sort title lowercases before comparing, so capitals do not group' => sub {
+  # The reference fixture above cannot tell `lc cmp lc` from a bare `cmp`: its
+  # one capital sits on the alphabetically first title either way. This one
+  # can -- under a bare `cmp` every capital sorts ahead of every lowercase
+  # letter, which is exactly the shortcut the ticket warned against.
+  my $store = _board();
+  mk( $store, id => 1, title => 'Zebra' );
+  mk( $store, id => 2, title => 'apple' );
+  mk( $store, id => 3, title => 'Mango' );
+
+  is_deeply list_ids( $store, sort => 'title' ), [ 2, 3, 1 ],
+    'apple, Mango, Zebra -- one alphabet, not upper-case first'
+    or diag 'a bare cmp would have given Mango, Zebra, apple';
+};
+
+subtest '--sort title breaks ties on id, and --reverse reverses them too' => sub {
+  my $store = _board();
+  mk( $store, id => 1, title => 'same title' );
+  mk( $store, id => 2, title => 'SAME TITLE' );
+  mk( $store, id => 3, title => 'Same Title' );
+  mk( $store, id => 4, title => 'other' );
+
+  # The `|| $a->id <=> $b->id` tie-break in _sort decides here; the comparator
+  # returns 0 for all three. kanban-md leaves ties to sort.SliceStable, whose
+  # input is id-ascending, so it prints the same run.
+  is_deeply list_ids( $store, sort => 'title' ), [ 4, 1, 2, 3 ],
+    'titles equal under lc() come out in id order';
+
+  # --reverse is a `reverse` of the finished list, not a flipped comparator,
+  # so the tied run turns around with everything else. kanban-md negates its
+  # less() instead, which makes it true in both directions for a tie and walks
+  # each equal element to the front of its run in insertionSort -- the same
+  # descending id order, reached by a different route.
+  is_deeply list_ids( $store, sort => 'title', reverse => 1 ), [ 3, 2, 1, 4 ],
+    '--reverse reverses the whole result, tied titles included';
+};
+
+subtest '--sort title compares characters, so non-ASCII lands after ASCII' => sub {
+  # Titles are characters by the time the comparator sees them, so lc() gets
+  # Unicode case rules and U+00C4 folds to U+00E4: the two umlaut titles below
+  # compare as the same case. What lc()+cmp does not do is collate -- the
+  # order is by codepoint, so every title opening with a non-ASCII letter
+  # sorts behind every ASCII one, and "Apfel" does not land next to
+  # "\x{c4}pfel". Predictable, not locale-aware, and not claimed to be.
+  my $store = _board();
+  mk( $store, id => 1, title => "\x{c4}pfelkuchen" );
+  mk( $store, id => 2, title => "\x{e4}pfel" );
+  mk( $store, id => 3, title => 'zzz' );
+
+  is_deeply list_ids( $store, sort => 'title' ), [ 3, 2, 1 ],
+    'zzz first (ASCII), then the umlaut pair case-insensitively'
+    or diag 'a bare cmp would have given zzz, then the capital umlaut first';
+};
+
 subtest 'an unknown --sort field is a usage error, not a method call' => sub {
   my $store = _board();
   mk( $store, id => 1, title => 'one' );
@@ -192,7 +268,7 @@ subtest 'an unknown --sort field is a usage error, not a method call' => sub {
   ok defined $err, '--sort bogus dies';
   like $err, qr/^Usage: karr list --sort /,
     'the message is a Usage: line (bin/karr maps that to exit 2, ADR 0002)';
-  like $err, qr/\Qid|status|priority|created|updated|due\E/,
+  like $err, qr/\Qid|title|status|priority|created|updated|due\E/,
     'it lists the accepted fields';
   like $err, qr/\Qbogus\E/, 'it echoes the rejected value';
   unlike $err, qr/Can't locate object method/,
@@ -236,7 +312,7 @@ subtest 'every accepted field is still accepted' => sub {
   mk( $store, id => 1, title => 'one', due => '2026-01-01' );
   mk( $store, id => 2, title => 'two' );
 
-  for my $field (qw( id status priority created updated due )) {
+  for my $field (qw( id title status priority created updated due )) {
     is list_error( $store, sort => $field ), undef, "--sort $field works";
   }
   is_deeply list_ids($store), [ 1, 2 ], 'the default sort is still by id';
@@ -272,6 +348,14 @@ subtest 'the CLI exits 2 on a bad --sort value (ADR 0002)' => sub {
 
   my $good = $run->( 'list', '--sort', 'priority' );
   is $good->{exit}, 0, 'a valid --sort still exits 0';
+
+  # The ticket's own repro: this was the usage error, seen from the CLI rather
+  # than from the comparator table.
+  my $titled = $run->( 'list', '--sort', 'title' );
+  is $titled->{exit}, 0, 'karr list --sort title exits 0 (ticket #237)'
+    or diag "stderr: $titled->{stderr}";
+  is_deeply [ $titled->{stdout} =~ /^#(\d+)/mg ], [ 1, 2 ],
+    '...and sorts by it: "one" before "two"';
 };
 
 done_testing;

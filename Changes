@@ -1,5 +1,22 @@
 {{$NEXT}}
 
+    - `karr list --sort title` sorts instead of refusing (#237). `title`
+      was the one field of kanban-md's seven that karr's `@SORT_FIELDS`
+      never listed, so the reference's own `--sort title` exited 2 with a
+      usage message -- and no POD, comment or test anywhere gave a reason
+      for the omission, which is what marked it as one rather than a
+      decision. It compares case-insensitively, as the reference does, so
+      `Apple` sorts before `banana` instead of ahead of every lowercase
+      title; ties still break on `id`, and `--reverse` still turns the
+      finished list around, tied entries with it. The comparison is on
+      characters and not collated, so a title opening outside ASCII sorts
+      behind every ASCII one -- predictable rather than locale-aware, and
+      the POD now says so instead of leaving it to be discovered. The
+      other half of the ticket -- which of kanban-md's remaining list and
+      pick options karr should adopt at all (`--limit`, `--class`,
+      `--unclaimed`, `--blocked`, `--group-by`, ...) -- is a scope
+      question, not an omission, and moved to #252 unanswered.
+
     - `karr delete` names the far card of a cross-board link before the
       card goes (#242). #236 closed the local half; this is the other one,
       and it is deliberately narrow: the card being deleted usually carries

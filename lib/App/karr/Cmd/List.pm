@@ -69,9 +69,9 @@ Performs a case-insensitive substring search across title, body, and tags.
 
 =item * C<--sort>, C<--reverse>
 
-Sort by C<id>, C<status>, C<priority>, C<created>, C<updated>, or C<due>, and
-optionally reverse the result order. Any other field is a usage error (exit
-C<2>).
+Sort by C<id>, C<title>, C<status>, C<priority>, C<created>, C<updated>, or
+C<due>, and optionally reverse the result order. Any other field is a usage
+error (exit C<2>).
 
 C<status> follows the board config's own order. C<priority> deliberately
 reads the config list the other way, most urgent first: C<--sort priority>
@@ -80,7 +80,13 @@ the top of a priority-sorted list is the task L<App::karr::Cmd::Pick> would
 hand out, and C<--reverse> gives the least-urgent-first view. kanban-md's
 ascending config order opened the list with the least urgent task when karr
 took this direction; it has since made the same change, so the two agree.
-Tasks without a C<due> date sort last. Ties are broken by C<id>.
+C<title> compares case-insensitively, as kanban-md does, so C<Apple> sorts
+before C<banana> rather than ahead of every lowercase title. The comparison
+is on characters and not collated, so a title starting outside ASCII sorts
+after every ASCII one.
+
+Tasks without a C<due> date sort last. Ties are broken by C<id>, and
+C<--reverse> turns the finished list around, tied entries with it.
 
 =back
 
@@ -130,7 +136,7 @@ option claimed_by => (
 
 # The complete set of --sort keys, in the order the usage message lists them.
 # Single source for the option doc, the usage message, and _comparators.
-my @SORT_FIELDS = qw( id status priority created updated due );
+my @SORT_FIELDS = qw( id title status priority created updated due );
 
 option sort => (
   is => 'ro',
@@ -294,6 +300,14 @@ sub _comparators {
   my %priority = $self->_index_of( $self->config->priorities );
   return {
     id       => sub { $_[0]->id <=> $_[1]->id },
+    # Case-insensitively, as kanban-md's compareTasks does via strings.ToLower
+    # (internal/board/sort.go:31). A bare `cmp` would sort every capitalized
+    # title ahead of every lowercase one, which is a second alphabet, not a
+    # sort by title. lc() sees characters here, not octets, so a title outside
+    # ASCII lowercases by Unicode rules -- but cmp still compares codepoints,
+    # so such a title sorts behind every ASCII one rather than beside its
+    # unaccented spelling. No collation is promised.
+    title    => sub { lc($_[0]->title) cmp lc($_[1]->title) },
     status   => sub { ($status{$_[0]->status}     // -1) <=> ($status{$_[1]->status}     // -1) },
     priority => sub { ($priority{$_[1]->priority} // -1) <=> ($priority{$_[0]->priority} // -1) },
     # created/updated are ISO-8601 UTC stamps, so a string compare is
