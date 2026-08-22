@@ -5,7 +5,7 @@ our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr pick --claim NAME [--move STATUS] [--status LIST] [--tags LIST]',
+  usage_string => 'USAGE: karr pick --claim NAME [--move STATUS] [--status LIST] [--tags LIST] [--compact]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
@@ -25,6 +25,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
     karr pick --claim agent-fox
     karr pick --claim agent-fox --status todo --move in-progress
     karr pick --claim agent-fox --tags backend,urgent --json
+    karr pick --claim agent-fox --compact
 
 =head1 DESCRIPTION
 
@@ -89,6 +90,15 @@ With C<--json> a successful pick prints the picked task as a JSON object, and
 picking nothing prints C<< {"picked":null} >>. Either way the exit status is
 C<0>, so a polling agent decodes the payload and tests for a task rather than
 reading the exit code or the message text.
+
+=head1 COMPACT OUTPUT
+
+C<--compact> ends the plaintext output after the assignment line: no
+C<Status | Priority | Class> line and no body. It is what kanban-md spends a
+flag of its own on (C<pick --no-body>), and it is the whole of the option here
+-- C<--json> renders the full task either way, and the dependency warnings are
+unaffected, because they go to STDERR and answer to C<--quiet> rather than to a
+flag about how much of STDOUT to print.
 
 =head1 EXCLUSIVITY
 
@@ -240,6 +250,28 @@ sub execute {
   }
 
   printf "Picked task %d: %s (claimed by %s)\n", $picked->id, $picked->title, $self->claim;
+
+  # Everything below is the detail block, and --compact is the instruction not
+  # to print it. Until #251 this command composed App::karr::Role::Output, took
+  # --compact from it and never looked at it, so `pick --claim x --compact` came
+  # out character-identical to `pick --claim x` -- an output that looks like an
+  # answer while disobeying the option, which is the failure #225 refused to
+  # leave standing.
+  #
+  # Meeting the option beat withdrawing it, and that was decided on the role
+  # rather than on this command: Role::Output declares --compact beside --json,
+  # so removing it from one consumer means splitting the role and moving the
+  # option surface of the seventeen further commands that ignore it just as
+  # silently (#254 has the full census). Pick meanwhile already prints in two
+  # parts -- who got which card, then what the card is -- so there is an obvious
+  # place to cut, and the reference cuts there too: kanban-md's `pick --no-body`
+  # ("suppress full task details after pick", cmd/pick.go:104) prints its
+  # confirmation line and returns before the detail block.
+  #
+  # Only the plaintext half. The --json branch returned above, exactly as
+  # noBody sits after the JSON check over there.
+  return if $self->compact;
+
   printf "Status: %s | Priority: %s | Class: %s\n", $picked->status, $picked->priority, $picked->class;
   if ($picked->body) {
     print "\n" . $picked->body . "\n";

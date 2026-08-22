@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - `karr pick --compact` prints the assignment and stops (#251).
+      `pick` composes `App::karr::Role::Output`, took `--compact` from
+      it along with `--json`, and never read it, so `karr pick --claim x
+      --compact` came out character-identical to `karr pick --claim x`
+      -- all three parts, assignment line, `Status | Priority | Class`,
+      and body. An accepted option that changes nothing is the failure
+      #225 and #226 refused to leave standing: an output that looks like
+      an answer while disobeying the flag. It now ends after the
+      assignment line, which is the cut kanban-md spends a flag of its
+      own on (`pick --no-body`) -- karr already had the option and
+      needed no second one. `--json` is untouched and still renders the
+      whole card, as it is there; so are the dependency warnings, which
+      are STDERR and answer to `--quiet` rather than to a flag about how
+      much of STDOUT to print. Meeting the option beat withdrawing it
+      because `Role::Output` declares `--compact` beside `--json`:
+      taking it off one command means splitting the role and moving the
+      option surface of the seventeen further commands that ignore it
+      just as silently, which is #254.
+
     - `karr log` no longer carries its own no-repository answer (#253).
       The branch printed `Not a git repository. No log available.` to
       STDOUT ahead of the `--json` check, so had it ever run it would
