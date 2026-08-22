@@ -342,10 +342,9 @@ sub _validate_options {
   # claims did I lose" is wanted, it deserves its own spelling rather than
   # arriving as the accident of two filters meeting.
   #
-  # Written in this order deliberately: `--unclaimed --claimed-by NAME` parses
-  # and `--claimed-by NAME --unclaimed` also does, but a bare boolean in front
-  # of a dashed option eats its name (#256), so the CLI cannot reach this line
-  # via `--unclaimed --claimed-by NAME`. It reaches it via the other order.
+  # Both orders reach this line. `--unclaimed --claimed-by NAME` did not until
+  # #256 -- a bare boolean in front of a dashed option ate its name, so that
+  # spelling died as `Unknown option: claimed-by` before the check could speak.
   # `defined`, like the --class check below and unlike the truthy guard the
   # filter itself uses: a value the caller typed is a value the caller typed
   # (#153, #239, #244), even when it is empty.

@@ -125,9 +125,9 @@
       reads as "no such work" when the truth is "no such class"; and
       `--blocked` together with `--not-blocked` is refused rather than
       silently resolved in favour of one of them, as #235 settled for
-      the other four such pairs. `--unclaimed` is not part of this: it
-      has to reuse `pickable`'s claim test rather than spell a second
-      one, and that test is not reachable on its own yet.
+      the other four such pairs. `--unclaimed` came separately, once
+      `pickable`'s claim test had been lifted into a method it could
+      reuse -- see the two entries above.
 
     - The board config no longer carries per-class WIP limits (#227).
       `App::karr::Config::default_config` gave every board's `expedite`

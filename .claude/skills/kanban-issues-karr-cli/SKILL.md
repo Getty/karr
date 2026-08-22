@@ -56,6 +56,7 @@ karr list -s "search term"                   # search title/body/tags
 karr list --sort priority --reverse          # sort and reverse
 karr list --sort priority -n 5 --json        # the five most urgent open cards
 karr list --claimed-by agent-1               # filter by claim owner
+karr list --unclaimed                        # only what no live claim holds
 karr list --compact                          # one-line output (agent-friendly)
 karr list --json                             # JSON output
 ```
@@ -68,6 +69,16 @@ first. `-n`/`--limit` cuts after filtering **and** after sorting, so
 `--sort priority -n 5` is the five most urgent open cards rather than five
 arbitrary ones put in order -- that is the "what next" call, instead of pulling
 the whole board and cutting it locally.
+
+`--unclaimed` is "what is free right now" -- `claimed_by` unset or empty, or a
+claim older than the board's `claim_timeout`. It is the question `karr pick`
+answers by *taking* the card, so this is how to see the free work without
+touching it, and it uses the very test `pick` uses. It is not the opposite of
+`--claimed-by NAME`: that one is an exact match on the field and matches an
+expired claim too, so the two overlap on "cards NAME no longer holds" and
+passing both is a usage error. Since it asks about the claim and nothing else,
+a blocked card nobody holds is still listed -- `--blocked --unclaimed` is a
+real triage query.
 
 ### Show task
 

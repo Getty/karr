@@ -17,12 +17,13 @@ use App::karr::Cmd::List;
 
 # Ticket #252: the scope decision on kanban-md's list filter set. Three of the
 # four options the maintainer accepted are pinned here -- --limit/-n, --class
-# and --blocked/--not-blocked. The fourth, --unclaimed, is not built: its one
-# hard requirement is that it reuse App::karr::Role::PickRules/pickable's claim
-# test rather than spell a second one, and that test is not reachable on its
-# own (pickable also refuses a blocked card, which --unclaimed must not).
-# Nothing here asserts anything about --unclaimed, so this file does not have
-# to change when it lands.
+# and --blocked/--not-blocked. The fourth, --unclaimed, landed after these and
+# is pinned in t/252-list-unclaimed-agrees-with-pick.t, a file of its own: its
+# one hard requirement was to reuse App::karr::Role::PickRules/pickable's claim
+# test rather than spell a second one, and that test was not reachable on its
+# own until it was lifted into App::karr::Role::ClaimTimeout/claim_held.
+# Nothing here asserts anything about --unclaimed, which is why this file did
+# not have to change when it landed.
 #
 # Probed against the pre-change code on a default board:
 #
