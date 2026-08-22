@@ -90,6 +90,10 @@ C<missing>, and C<< karr needs --resolve >> refuses on purpose to settle a link
 whose card cannot be read, so a card blocked on it stays blocked. C<karr
 archive> is the way out here too -- an archived card is still readable and
 C<archived> is terminal on every board, so the link settles instead of breaking.
+Settling says the far card is closed, not that it succeeded: karr records
+progress and not outcome, so archiving a card that was given up reports the same
+thing over there as archiving a finished one. The warning says so; if the card
+is being abandoned, that is worth a word on the far board itself.
 
 =item * C<needs:> -- a far card this one waits on. Nothing over there breaks
 when this card goes, because the link goes with it; what ends is anything on
@@ -383,6 +387,15 @@ sub _dependent_warnings {
 # needs` reads and this command does not, and `karr needs` is the command that
 # already answers that question.
 #
+# `finished or not` is the honest half of the `karr archive` door (#250).
+# Archiving keeps the link resolvable, and CrossBoard/link_state settles it on
+# the far board the moment this card is terminal -- whether the card was
+# finished or given up. karr records progress, not outcome, and a card archived
+# out of the backlog is frontmatter-identical to one archived after `done`
+# (CONTEXT.md, Task lifecycle), so nothing here could tell the far board which
+# it was. Saying it in the warning is all this side can do; reporting it on the
+# reading side is ticket #258.
+#
 # `may be waiting on it` rather than `is`: the two halves of the protocol are a
 # convention that nothing enforced before this module existed, which is why
 # App::karr::CrossBoard/link_state has a `verified` field at all. The far card
@@ -405,7 +418,8 @@ sub _cross_board_warnings {
   for my $ref ( App::karr::CrossBoard->escalated_from_of($task) ) {
     push @warnings, sprintf
       'Warning: task %d (%s) was escalated from %s, which may be waiting on it '
-      . 'from another board (use "karr archive %d" to keep that link resolvable)',
+      . 'from another board (use "karr archive %d" to keep that link resolvable '
+      . '-- it reads as settled over there, finished or not)',
       $id, $task->title, App::karr::CrossBoard->format_ref($ref), $id;
   }
   for my $ref ( App::karr::CrossBoard->needs_of($task) ) {

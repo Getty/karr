@@ -120,6 +120,10 @@ subtest 'the far card that raised this one is named before it goes' => sub {
         'the warning names the far card out of the tag on the card being deleted' );
     like( $r->{stderr}, qr/karr archive 1/,
         'and offers the door that keeps the far link resolvable' );
+    # The door is offered with its side effect, not as a clean way out (#250):
+    # a settled link says the far card is closed, never that it succeeded.
+    like( $r->{stderr}, qr/reads as settled over there, finished or not/,
+        'and says what archiving reports over there, finished or given up' );
     like( $r->{stdout}, qr/Deleted task 1: Fix the API/,
         'STDOUT reports the delete as usual' );
     unlike( $r->{stdout}, qr/Warning/, 'and stays parseable' );

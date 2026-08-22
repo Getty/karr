@@ -1,5 +1,19 @@
 {{$NEXT}}
 
+    - The `karr delete` warning that points at `karr archive` now says
+      what archiving reports on the other board (#250). Keeping the card
+      keeps the link resolvable, but a settled link says only that the
+      far card is closed -- `done` and `archived` are both terminal and
+      neither claims the work succeeded -- so the sentence ends `-- it
+      reads as settled over there, finished or not`. Text only:
+      `settled` and `karr needs --resolve` are unchanged, deliberately.
+      karr records progress and not outcome, and a card archived out of
+      the backlog is frontmatter-identical to one archived after `done`,
+      so a narrower settle rule could only guess -- and would guess
+      wrong on the common `done` -> `archived` path, leaving a waiting
+      card blocked with nothing on the far board able to unblock it.
+      `CONTEXT.md` carries that reasoning under "Task lifecycle" now.
+
     - The skill file `karr skill install` ships stops attributing a WIP
       utilization to `karr board` (#245). karr has never printed one --
       that is kanban-md's reporting shape -- and since #227 it does not
@@ -187,7 +201,8 @@
       `--json` carries it -- but under its own `cross_board_warnings` key,
       because a consumer cannot act on these the way it can on a local
       dependent. `karr archive` needs none of this, checked end to end: the
-      link stays resolvable and settles.
+      link stays resolvable and settles -- which says the far card is
+      closed, not that the work succeeded; see #250.
 
     - An abbreviated option that takes a value keeps its value (#247).
       `karr edit 1 --prio high` answered `unexpected extra argument:

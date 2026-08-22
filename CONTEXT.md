@@ -36,6 +36,26 @@ the foundation agent's per-run stdout capture).
 **Task lifecycle**:
 A **Task** carries timestamps for each milestone it passes: `claimed_at`,
 `started`, `completed`. `done` and `archived` are the terminal statuses.
+Terminal means *closed*, not *succeeded* — karr has a notion of progress and
+none of outcome. A card given up in the backlog and archived is
+frontmatter-identical to one archived after `done`: `update_timestamps` stamps
+`completed` on every terminal status and backfills `started`, so `karr archive`
+on a never-touched card records both a start and a completion, and no field
+says why the card ended. This is why a cross-board `needs:` link settles as
+soon as the far card is terminal — because that card is *closed*, not because
+it succeeded. Narrowing the rule to the `done` equivalent could only guess, and
+it would guess wrong in the common case, `done` → `archived` being the normal
+way a finished card is put away: the waiting card would stay blocked with
+nothing left on the far board able to unblock it, that card being terminal
+already. A false success that lets work continue is the cheaper error. The
+local `depends_on` side reads the rule the same way, but writes nothing: an
+archived dependency satisfies it silently, and `karr show` keeps printing
+`Depends: 1 (archived)`, so the word stays on the card. `karr needs --resolve`
+does write — tag gone, block gone, in another repository — which is why the
+same reading deserves more caution across boards than within one. Giving a card
+up is therefore something to say on the far board yourself.
+_Avoid_: "settled"/"resolved" read as "succeeded" — both say only that the far
+card is closed.
 
 **Identity**:
 Who is acting, as `<role>/<git-email>`. The git email comes from git config;
