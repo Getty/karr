@@ -13,7 +13,8 @@ use App::karr::Error qw( is_usage_error );
 # The character/octet boundary (ticket #53). Everything above this line is
 # bytes, everything below is Perl characters: @ARGV comes in decoded, STDOUT and
 # STDERR encode on the way out, and no command body encodes anything itself.
-# STDIN stays raw on purpose -- karr restore decodes its own payload.
+# STDIN stays raw on purpose -- every reader of it decodes its own payload, and
+# App::karr::Encoding/enable_std_utf8 says which readers those are (#246).
 enable_std_utf8();
 decode_argv();
 

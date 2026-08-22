@@ -6,6 +6,7 @@ use strict;
 use warnings;
 use Exporter qw( import );
 use Encode qw( encode decode FB_CROAK LEAVE_SRC );
+use IO::Handle;
 use YAML::XS ();
 use JSON::MaybeXS ();
 
@@ -196,16 +197,60 @@ sub decode_argv {
   enable_std_utf8();
 
 Puts a C<:encoding(UTF-8)> layer on C<STDOUT> and C<STDERR> so command bodies
-can C<print> character strings.
+can C<print> character strings, and turns autoflush on for both.
 
-C<STDIN> is deliberately left alone. Only L<App::karr::Cmd::Restore> reads it,
-and it decodes its own payload, so a layer here would decode it twice.
+The autoflush is not a convenience -- it pays back what the layer costs. A bare
+C<STDERR> is unbuffered, so a warning printed before a result also arrives in
+a combined stream before it; the C<:encoding(UTF-8)> layer buffers, and that
+stops being true. Both handles then flushed at exit, C<STDOUT> first, so a
+combined stream carried every warning karr wrote B<after> every result it
+wrote: C<< karr delete 1 --yes 2>&1 >> reported C<Deleted task 1> above the
+warning that the deletion orphaned a dependent (#249).
+
+Both handles carry the autoflush, not just the one the layer broke.
+Autoflushing C<STDERR> alone would only turn the inversion around: L<karr
+move|App::karr::Cmd::Move> prints its outcome first and warns after, so its
+combined output would then read warning-before-outcome. With both handles
+flushed at every C<print>, a combined stream shows what the code printed, in
+the order it printed it -- which is what a terminal shows anyway, C<STDOUT>
+being line buffered and C<STDERR> unbuffered there. That is why this was never
+visible interactively and hit only whoever reads both streams as one: a
+C<< 2>&1 >> pipeline, or an agent harness capturing combined output.
+
+The price is a C<write> per C<print> instead of one per full buffer, which for
+a command that prints a board is a few hundred small writes. The one caller
+that prints steadily is L<App::karr::Foundation>, whose runner tees agent
+output; there it is a gain rather than a cost -- an operator's
+C<< karr-foundation ... > run.log >> now fills as the run happens instead of in
+4k jumps, the per-board C<fork> can no longer inherit a half-full buffer and
+write it twice (the hand-written flushes around that C<fork> stay, now as
+cheap no-ops), and parallel boards interleave at whole prints rather than at
+buffer boundaries that can split a line.
+
+C<STDIN> is deliberately left alone, and the rule is that every reader of it
+decodes what it read itself. L<App::karr::Cmd::Restore>,
+L<App::karr::Cmd::SetRefs> and L<App::karr::Foundation> slurp a whole payload,
+each setting C<binmode STDIN, ':raw'> first and passing the octets through
+L</from_octets> exactly once. A layer installed here would buy those three
+nothing -- C<:raw> pops it straight back off -- and would silently decode twice
+for a reader that ever forgot that C<binmode>. The fourth reader,
+L<App::karr::Cmd::Delete>, is the odd one out: it reads one line of typed
+answer to its confirmation. That line stays octets, which is without
+consequence only because nothing keeps it -- it is matched against C</^y/i>
+and dropped, never stored, echoed or written to a ref. A reader that starts
+using an answer as text has to decode it like the other three, rather than
+expect a layer here.
 
 =cut
 
 sub enable_std_utf8 {
   binmode STDOUT, ':encoding(UTF-8)';
   binmode STDERR, ':encoding(UTF-8)';
+  # After the binmode, and on both handles: see above (#249). The layer takes
+  # STDERR's unbuffered default away, and flushing only STDERR would invert the
+  # commands that print their outcome before they warn.
+  STDOUT->autoflush(1);
+  STDERR->autoflush(1);
   return;
 }
 

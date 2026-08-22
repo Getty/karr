@@ -1,5 +1,35 @@
 {{$NEXT}}
 
+    - karr's warnings no longer arrive under the results they are about
+      (#249). `karr delete 1 --yes 2>&1` printed `Deleted task 1` above
+      the warning that the deletion orphaned a dependent, although the
+      warning is written first. A bare STDERR is unbuffered, but karr's
+      is not bare: the `:encoding(UTF-8)` layer `App::karr::Encoding`
+      installs takes that away, so both handles flushed at exit, STDOUT
+      first, and every warning landed under every result -- dependency
+      warnings, cross-board warnings, expired-claim reports alike.
+      `enable_std_utf8` now turns autoflush on for STDOUT and STDERR, so
+      a combined stream reads in the order the code printed in, which is
+      what a terminal always showed and why this only ever hit `2>&1`, a
+      pipeline, or an agent harness reading combined output. Both
+      handles and not only STDERR: flushing STDERR alone reverses the
+      inversion instead of removing it, because `karr move` prints its
+      outcome first and warns afterwards. The price is a write per
+      print; for `karr-foundation`, whose runner tees agent output, it
+      is a gain -- a redirected run log fills as the run happens, and a
+      per-board fork can no longer inherit a half-full buffer and write
+      it twice.
+
+    - The POD of `App::karr::Encoding::enable_std_utf8` no longer says
+      that only `karr restore` reads STDIN (#246). It names all four
+      readers -- restore, set-refs, `karr-foundation plan` and the
+      confirmation of `karr delete` -- and states the rule they follow
+      instead of counting them: every reader decodes what it read
+      itself, a layer here would be popped straight off by their own
+      `binmode STDIN, ':raw'`, and the one reader that takes typed input
+      keeps its answer as octets only because it matches it and drops
+      it.
+
     - The confirmation prompt of `karr delete` goes to STDERR (#248).
       `printf "n\n" | karr delete 1 --json` put a bare `Delete task 1: A?
       [y/N] ` in front of the result object: the object was always there,

@@ -11,6 +11,7 @@ requires 'Try::Tiny';
 requires 'Encode';
 requires 'Scalar::Util';
 requires 'IO::Select';
+requires 'IO::Handle';
 requires 'Errno';
 requires 'POSIX';
 requires 'Sys::Hostname';

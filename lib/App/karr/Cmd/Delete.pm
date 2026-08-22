@@ -229,14 +229,19 @@ sub execute {
       # karr has already acted on the answer. `karr delete 1 < answers` in a
       # terminal printed the question and the outcome together at the end.
       #
-      # The flush moves with the question and is no formality on the new
-      # handle. A bare STDERR is unbuffered, which would have made this line
-      # dead code -- but karr's STDERR is not bare: the :encoding(UTF-8) layer
-      # App::karr::Encoding installs buffers it, and on a pipe not one byte of
-      # the question arrives until karr exits. So the flush is exactly as
-      # load-bearing here as it was on STDOUT, and ->flush does not care how the
-      # handle is buffered, so the question arrives before the wait whichever
-      # way stderr and stdin are connected.
+      # The flush moves with the question, and what it is worth changed under
+      # it: #249 turned autoflush on for STDOUT and STDERR in
+      # App::karr::Encoding::enable_std_utf8, so on the CLI path the question is
+      # already on the wire when this line runs, and t/241 passes without it.
+      # It stays anyway, for the same reason it was written. The promise belongs
+      # to the question -- it must be readable before the read below blocks --
+      # and not to whatever the process-wide handle setup happens to be today: a
+      # caller that reaches this command without bin/karr, an in-process test
+      # that reopened STDERR onto a capture handle and so dropped both the layer
+      # and the autoflush with it, or a later revert of #249, all get a buffered
+      # handle back. ->flush does not care how the handle is buffered, and on an
+      # unbuffered one it costs a call, so the question arrives before the wait
+      # whichever way stderr and stdin are connected.
       STDERR->flush;
       my $answer = <STDIN>;
 

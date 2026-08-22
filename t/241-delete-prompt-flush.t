@@ -47,18 +47,27 @@ use App::karr::Task;
 # explicit flush also stops the interactive case from depending on a PerlIO
 # implementation detail that nothing promises.
 #
-# This test fails without the flush: the select() below then times out, because
-# the handle on a pipe is block buffered and not one byte arrives until karr
-# exits. Ticket #248 moved the question from stdout to stderr and that stays
-# true, counter-intuitive as it looks -- a bare STDERR is unbuffered, but karr's
-# is not bare: App::karr::Encoding puts an :encoding(UTF-8) layer on it, and
-# that layer buffers.
+# This test used to fail without the flush: the select() below then timed out,
+# because the handle on a pipe is block buffered and not one byte arrived until
+# karr exited. That stayed true when #248 moved the question from stdout to
+# stderr -- counter-intuitive as it looks, since a bare STDERR is unbuffered,
+# but karr's was not bare: App::karr::Encoding puts an :encoding(UTF-8) layer on
+# it, and that layer buffers.
+#
+# Ticket #249 then turned autoflush on for both handles in that same function,
+# because the buffering was reordering karr's warnings against its results in a
+# combined stream (t/249-combined-output-order.t). So the question now reaches
+# the pipe with or without Delete's own STDERR->flush, and this file no longer
+# fails if that line is deleted -- it fails if the autoflush and the flush both
+# go. What it pins is unchanged and is the part a user notices: the question is
+# out on the wire before karr blocks on the answer, whoever put it there.
 
 my $ROOT = abs_path('.');
 my $BIN  = "$ROOT/bin/karr";
 
-# How long to wait for the question. Only a run without the flush pays it --
-# with the flush the prompt arrives as soon as karr gets there.
+# How long to wait for the question. Only a run where nothing pushed the
+# question out pays it -- when something did, the prompt arrives as soon as karr
+# gets there.
 my $DEADLINE = 20;
 
 # A fresh isolated temp repo, never the developer's real board.
@@ -100,9 +109,9 @@ subtest 'the question arrives before karr waits for the answer' => sub {
     # Watched on stderr, not stdout: ticket #248 moved the question to the
     # channel a question belongs on, so that stdout carries only the outcome and
     # stays decodable under --json. The property this subtest pins is unchanged
-    # by that -- the question is out on the wire before karr blocks -- and the
-    # explicit flush is still what puts it there, because the handle now carries
-    # the :encoding(UTF-8) layer App::karr::Encoding installs.
+    # by that, and unchanged again by #249's autoflush: the question is out on
+    # the wire before karr blocks, whether Delete's own flush put it there or
+    # the autoflush App::karr::Encoding sets beside the :encoding(UTF-8) layer.
     my $prompt   = '';
     my $deadline = time + $DEADLINE;
     while ( time < $deadline ) {
@@ -121,7 +130,8 @@ subtest 'the question arrives before karr waits for the answer' => sub {
         'the whole question is out on the wire while karr is still waiting' );
 
     # Answer it, so the child always finishes and this file never hangs -- also
-    # without the flush, where the loop above ran out of time.
+    # on a karr that leaves the question in a buffer, where the loop above ran
+    # out of time.
     print {$in} "n\n";
     close $in;
 
