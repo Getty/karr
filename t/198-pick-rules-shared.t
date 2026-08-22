@@ -199,6 +199,13 @@ subtest 'the ranking itself, pinned card by card' => sub {
   # where `standard` would, and `standard` is not in this list either -- index
   # 0), most urgent priority first. Then beta: p3 with the id tie-break, then
   # p1, then the priority the board never heard of. gamma last.
+  #
+  # What this order does NOT pin is that last step, the fallback for a class
+  # the board does not list on a board that lists no `standard` either: 7 has
+  # the most urgent priority of the three class-0 cards, so it comes out first
+  # whether that fallback is karr's 0 or kanban-md's -1 (ticket #240). The
+  # subtest below is the one that can tell those apart -- do not read this
+  # `@expected` as cover for it.
   my @expected = ( 7, 6, 2, 1, 3, 5, 8, 4 );
 
   for my $i ( 0 .. $#expected ) {
@@ -206,6 +213,31 @@ subtest 'the ranking itself, pinned card by card' => sub {
   }
 
   both_choose( $repo, undef, 'nothing left once every card is claimed' );
+};
+
+subtest 'an unknown class on a board without `standard`' => sub {
+  # A deliberate divergence from kanban-md in this ranking (ticket #240,
+  # documented in App::karr::Role::PickRules/pick_rank): a class
+  # the board does not list takes `standard`'s index, and index 0 where the
+  # board's `classes` does not name `standard` either. kanban-md's classOrder
+  # passes ClassIndex("standard") straight through, and that is -1 on such a
+  # board, which would put the unknown class ahead of every configured one.
+  #
+  # The decision is to stay gentle -- a card with a typo in its class behaves
+  # like an ordinary card instead of jumping the queue -- and this is the only
+  # assertion that holds it. Card 2 is given the board's least urgent priority
+  # and the higher id, so nothing but the class rung can put it in front: with
+  # the fallback at 0 it ranks level with `alpha` and loses on priority; with
+  # -1 it would be handed out first and round 1 here would fail.
+  my $repo = _board(
+    priorities => [qw( p0 p1 p2 p3 )],
+    classes    => [qw( alpha beta gamma )],
+  );
+  mk( $repo, id => 1, class => 'alpha', priority => 'p3' );
+  mk( $repo, id => 2, class => 'quux',  priority => 'p0' );
+
+  both_choose( $repo, 1, 'the listed class with the urgent priority goes first' );
+  both_choose( $repo, 2, 'the unknown class waits its turn instead of leading' );
 };
 
 subtest 'eligibility itself, pinned reason by reason' => sub {

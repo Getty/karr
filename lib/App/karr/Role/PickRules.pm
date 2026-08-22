@@ -123,7 +123,9 @@ sub pick_rank {
     # class; higher priority index = more urgent priority. So the sort key for
     # priority is `(max - priority_index)` -- most-urgent-last in the config
     # list comes out first. A priority the board does not list at all sorts
-    # below every listed one; an unlisted class sorts with `standard`.
+    # below every listed one; a class the board does not list sorts where
+    # `standard` does -- and `$std_cls_idx` below decides what that means on a
+    # board that does not list `standard` either.
     #
     # Between class and priority sits kanban-md's one exception, and it is not
     # a general due-date rule: only where both cards carry `fixed-date` does
@@ -134,6 +136,15 @@ sub pick_rank {
     my %pri_idx; $pri_idx{ $priorities[$_] } = $_ for 0 .. $#priorities;
     my %cls_idx; $cls_idx{ $classes[$_] }    = $_ for 0 .. $#classes;
     my $max_pri     = $#priorities;
+
+    # `// 0`, not kanban-md's -1, and that is a decision rather than an
+    # oversight (ticket #240): kanban-md's classOrder returns
+    # cfg.ClassIndex("standard") as it stands, so on a board whose `classes`
+    # never names `standard` the unknown class comes back -1 and outranks
+    # every configured class. Here it lands level with the board's first class
+    # instead. See this method's POD for the reasoning; a change to -1 is
+    # visible in t/198-pick-rules-shared.t, subtest 'an unknown class on a
+    # board without `standard`'.
     my $std_cls_idx = $cls_idx{standard} // 0;
 
     return sort {
@@ -155,6 +166,23 @@ imported from kanban-md ranks by its own names (ticket #149). Lower class index
 is more urgent, higher priority index is more urgent -- kanban-md's convention,
 from its F<pick.go>. The id tie-break makes the order total, so the first
 element is well defined however the sort was reached.
+
+A name neither list carries still has to rank somewhere. An unlisted priority
+sorts below every listed one. An unlisted class -- a typo, or a card imported
+from a board with other classes -- takes C<standard>'s index, and index C<0>
+where the board's C<classes> does not name C<standard> either, which puts it
+level with the first class the board does list.
+
+That last C<0> is a deliberate divergence from kanban-md. Its C<classOrder> in
+F<internal/board/pick.go> returns C<< cfg.ClassIndex("standard") >>
+unchanged, which is C<-1> on a board without C<standard>, so there an unlisted
+class outranks every configured one and is handed out first. karr keeps such a
+card ordinary instead: a class the board never heard of is far more likely a
+mistake than a claim to urgency, and a card with a typo in it jumping the
+queue is the worse of the two failures. The two can only differ on a board
+that replaced the default C<classes> list -- which does name C<standard> --
+with one that does not, so nothing reaches the difference by accident (ticket
+#240).
 
 One class breaks that order, and only against itself: where B<both> cards are
 C<fixed-date>, the due date decides before priority is asked (ticket #233).
