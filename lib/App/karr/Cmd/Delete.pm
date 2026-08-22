@@ -41,6 +41,15 @@ answer, the command refuses rather than guessing.
 
 =back
 
+The prompt itself goes to STDERR, on every path and not only under C<--json>: a
+question is dialogue, not a result, and STDOUT belongs to the result. That is
+what keeps C<< karr delete ID --json >> decodable as a whole when the answer is
+typed rather than passed as C<--yes>, and what keeps C<< karr delete ID >
+kept.txt >> from writing the question into the file instead of showing it to the
+operator waiting for it. The outcome stays on STDOUT: C<Deleted task ...> or
+C<Skipped task ...> in plain mode, and the result object -- with C<deleted> true
+or false -- under C<--json>.
+
 =head1 CLAIMS
 
 A task with a live claim is not deleted, whoever holds it. Release the claim
@@ -178,7 +187,34 @@ sub execute {
     );
 
     unless ($self->yes) {
-      printf "Delete task %d: %s? [y/N] ", $task->id, $task->title;
+      # STDERR, and not only under --json (#248). The question used to go to
+      # STDOUT, which put a bare `Delete task 1: A? [y/N] ` in front of the
+      # result object: the object was there, but the stream as a whole would
+      # not decode, and this is the command whose output a caller is most
+      # likely to read before doing something irreversible.
+      #
+      # The channel is unconditional rather than a branch on --json, for three
+      # reasons. A prompt is not a result -- `deleted` below is the result, and
+      # the question is dialogue, which is what STDERR is for; the rule
+      # App::karr::Role::DependencyCheck states one module over ("the human
+      # copy goes to STDERR so STDOUT stays parseable") is likewise
+      # unconditional, only its *suppression* depends on an option. Second, the
+      # non-JSON path has the same defect in a quieter form: `karr delete 1 >
+      # kept.txt` wrote the question into the file, so the operator at the
+      # terminal was asked nothing and waited at a blank cursor. And third,
+      # making the channel depend on a flag means the fix only reaches the
+      # caller who remembered the flag.
+      #
+      # Rejecting `--json` without `--yes` outright was the other candidate. It
+      # would have deleted a live answer: `deleted => false` with the two
+      # warning keys beside it is exactly the shape #236 and #242 built for a
+      # card the operator declined to delete, and under --yes there is no
+      # prompt to decline at all, so that shape would become unreachable. It
+      # also refuses `printf 'y\nn\ny\n' | karr delete 1,2,3 --json`, a
+      # per-card answer that --yes cannot express because --yes is
+      # all-or-nothing. --json names an output format and --yes a confirmation
+      # policy; they are orthogonal, not the contradicting pair #235 refuses.
+      printf STDERR "Delete task %d: %s? [y/N] ", $task->id, $task->title;
       # The question has to be out before the read that waits for its answer,
       # and this printf alone does not put it there: it ends without a newline,
       # so nothing in the buffering flushes it (#241).
@@ -193,10 +229,15 @@ sub execute {
       # karr has already acted on the answer. `karr delete 1 < answers` in a
       # terminal printed the question and the outcome together at the end.
       #
-      # STDOUT->flush is the form App::karr::Foundation already uses, and it
-      # does not care how the handle is buffered, so the question arrives
-      # before the wait whichever way stdout and stdin are connected.
-      STDOUT->flush;
+      # The flush moves with the question and is no formality on the new
+      # handle. A bare STDERR is unbuffered, which would have made this line
+      # dead code -- but karr's STDERR is not bare: the :encoding(UTF-8) layer
+      # App::karr::Encoding installs buffers it, and on a pipe not one byte of
+      # the question arrives until karr exits. So the flush is exactly as
+      # load-bearing here as it was on STDOUT, and ->flush does not care how the
+      # handle is buffered, so the question arrives before the wait whichever
+      # way stderr and stdin are connected.
+      STDERR->flush;
       my $answer = <STDIN>;
 
       # <STDIN> returns undef at EOF, and karr used to run straight on into

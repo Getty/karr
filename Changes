@@ -1,5 +1,28 @@
 {{$NEXT}}
 
+    - The confirmation prompt of `karr delete` goes to STDERR (#248).
+      `printf "n\n" | karr delete 1 --json` put a bare `Delete task 1: A?
+      [y/N] ` in front of the result object: the object was always there,
+      but the stream as a whole would not decode -- on the one command
+      whose output a caller is most likely to read before doing something
+      irreversible. The channel is unconditional and not a branch on
+      `--json`, for three reasons. A question is dialogue and not a
+      result, which is the rule `App::karr::Role::DependencyCheck` already
+      states one module over. The plain path had the same defect quietly:
+      `karr delete 1 > kept.txt` wrote the question into the file and left
+      the operator waiting at a blank cursor. And a channel that depends
+      on a flag only reaches the caller who remembered the flag. Refusing
+      `--json` without `--yes` was the other candidate and was rejected:
+      it would make the `deleted: false` result #236 and #242 built
+      unreachable, since under `--yes` there is no prompt to decline, and
+      it refuses `printf 'y\nn\ny\n' | karr delete 1,2,3 --json`, a
+      per-card answer `--yes` cannot express. #241's `->flush` moved with
+      the question and is no formality on the new handle -- a bare STDERR
+      is unbuffered, but karr's is not bare: the `:encoding(UTF-8)` layer
+      `App::karr::Encoding` installs buffers it, and on a pipe not one
+      byte of the question arrives until karr exits. The outcome is
+      unchanged and stays on STDOUT.
+
     - `karr list --sort title` sorts instead of refusing (#237). `title`
       was the one field of kanban-md's seven that karr's `@SORT_FIELDS`
       never listed, so the reference's own `--sort title` exited 2 with a

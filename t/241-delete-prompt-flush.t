@@ -48,7 +48,11 @@ use App::karr::Task;
 # implementation detail that nothing promises.
 #
 # This test fails without the flush: the select() below then times out, because
-# stdout on a pipe is block buffered and not one byte arrives until karr exits.
+# the handle on a pipe is block buffered and not one byte arrives until karr
+# exits. Ticket #248 moved the question from stdout to stderr and that stays
+# true, counter-intuitive as it looks -- a bare STDERR is unbuffered, but karr's
+# is not bare: App::karr::Encoding puts an :encoding(UTF-8) layer on it, and
+# that layer buffers.
 
 my $ROOT = abs_path('.');
 my $BIN  = "$ROOT/bin/karr";
@@ -92,16 +96,23 @@ subtest 'the question arrives before karr waits for the answer' => sub {
     # Deliberately nothing written to $in yet, and $in stays open: karr is left
     # blocking on a read that will not complete, which is the moment the
     # operator is looking at a cursor.
+    #
+    # Watched on stderr, not stdout: ticket #248 moved the question to the
+    # channel a question belongs on, so that stdout carries only the outcome and
+    # stays decodable under --json. The property this subtest pins is unchanged
+    # by that -- the question is out on the wire before karr blocks -- and the
+    # explicit flush is still what puts it there, because the handle now carries
+    # the :encoding(UTF-8) layer App::karr::Encoding installs.
     my $prompt   = '';
     my $deadline = time + $DEADLINE;
     while ( time < $deadline ) {
         my $rin = '';
-        vec( $rin, fileno($out), 1 ) = 1;
+        vec( $rin, fileno($err), 1 ) = 1;
         my $ready = select( my $rout = $rin, undef, undef, 1 );
         next unless defined $ready && $ready > 0;
         my $chunk = '';
-        my $read  = sysread( $out, $chunk, 4096 );
-        last unless $read;    # child died or closed stdout
+        my $read  = sysread( $err, $chunk, 4096 );
+        last unless $read;    # child died or closed stderr
         $prompt .= $chunk;
         last if $prompt =~ /\[y\/N\]/;
     }
@@ -114,17 +125,22 @@ subtest 'the question arrives before karr waits for the answer' => sub {
     print {$in} "n\n";
     close $in;
 
-    my $rest = '';
-    my $chunk;
-    $rest .= $chunk while sysread( $out, $chunk, 4096 );
-    my $stderr = do { local $/; <$err> };
+    my $stdout = do { local $/; <$out> };
+    my $rest   = do { local $/; <$err> };
     waitpid( $pid, 0 );
     my $exit = $? >> 8;
 
+    $stdout = '' unless defined $stdout;
+    $rest   = '' unless defined $rest;
+
     is( $exit, 0, 'answering no is an answer, not a failure' )
-        or diag $stderr;
-    like( $prompt . $rest, qr/Skipped task 1: Doomed/,
+        or diag $prompt . $rest;
+    like( $prompt . $rest . $stdout, qr/Skipped task 1: Doomed/,
         'and the exchange still reads as one conversation from end to end' );
+    like( $stdout, qr/Skipped task 1: Doomed/,
+        'with the outcome on stdout, where a caller reads results (#248)' );
+    unlike( $stdout, qr/\[y\/N\]/,
+        'and the question on stderr, where a caller reads dialogue (#248)' );
 };
 
 done_testing;
