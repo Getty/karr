@@ -182,10 +182,19 @@ sub execute {
   if ($action eq 'show') {
     $self->_show_all($config);
   } elsif ($action eq 'get') {
-    my $key = $pos[1] or die "Usage: karr config get KEY\n";
+    # length, not truth, on both keys below: `or` reads the key "0" as no key
+    # at all and answers a usage error (2) where an unknown key answers
+    # "Unknown key" (1) -- the fourth and last site of the shape #153, #230 and
+    # #239 closed elsewhere (#244). No config key is numeric, so nothing real
+    # was unreachable; what was wrong is which side of the exit-code contract
+    # (ADR 0002) a bad key falls on. The value below already used //, which
+    # keeps `config set foundation.enabled 0` writable.
+    my $key = $pos[1];
+    die "Usage: karr config get KEY\n" unless defined $key && length $key;
     $self->_get_key($config, $key);
   } elsif ($action eq 'set') {
-    my $key = $pos[1] or die "Usage: karr config set KEY VALUE\n";
+    my $key = $pos[1];
+    die "Usage: karr config set KEY VALUE\n" unless defined $key && length $key;
     my $val = $pos[2] // die "Usage: karr config set KEY VALUE\n";
     $self->_set_key($config, $key, $val);
     $self->sync_after;

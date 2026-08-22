@@ -82,16 +82,25 @@ sub execute {
         sprintf '--last must be 1 or greater (got %d)', $self->last )
       if $self->last < 1;
 
-    # "No log entries." is what a board with no activity says; a repository
-    # with no board has to say something else (#135).
+    # This is where the empty answers are told apart, and all three are
+    # settled before a single ref is read. "No log entries." is what a board
+    # with no activity says; a repository with no board says something else
+    # and exits 1 (#135), and a directory that is no repository at all never
+    # gets this far, because $self->store builds from git_root and git_root
+    # answers "Not a git repository. karr requires Git." itself.
+    #
+    # That last one used to be answered here, with a local `unless
+    # ($git->is_repo)` printing "Not a git repository. No log available." It
+    # was live only while this command built its own Git handle on an
+    # arbitrary directory; the refs-first refactor made $self->git come from
+    # git_root, which cannot return a non-repository, and the branch has been
+    # unreachable ever since. Removed with #253 -- it was also the one line in
+    # any --json-capable command that would have put plain text on STDOUT
+    # under --json (#248), so anything re-added here belongs on STDERR or in
+    # the payload, not in a bare print.
     $self->require_local_board;
 
     my $git = $self->git;
-
-    unless ($git->is_repo) {
-        print "Not a git repository. No log available.\n";
-        return;
-    }
 
     # Read all log refs (refs/karr/log/*) natively via Git::Native.
     my @entries;

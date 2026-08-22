@@ -1,5 +1,25 @@
 {{$NEXT}}
 
+    - `karr log` no longer carries its own no-repository answer (#253).
+      The branch printed `Not a git repository. No log available.` to
+      STDOUT ahead of the `--json` check, so had it ever run it would
+      have put plain text into a stream a caller decodes. It could not
+      run: since the refs-first refactor the command's Git handle comes
+      from `git_root`, which refuses a non-repository itself, and #135
+      later put `require_local_board` in front of it as well. Removed
+      rather than fixed; the three empty answers `karr log` can give --
+      no repository, no board, no activity -- are all settled before a
+      ref is read, and `karr log --json` decodes as a whole in each of
+      them.
+
+    - `karr config get 0` and `karr config set 0 x` report an unknown
+      key (exit 1) instead of a usage error (exit 2) (#244). Last site
+      of the truthiness guard #153, #230 and #239 removed elsewhere:
+      `or` tested truth where length was meant, so the key `0` fell into
+      the branch for "no key was given at all". No configuration key is
+      numeric, so this only moves which side of the exit-code contract
+      (ADR 0002) a bad key lands on.
+
     - karr's warnings no longer arrive under the results they are about
       (#249). `karr delete 1 --yes 2>&1` printed `Deleted task 1` above
       the warning that the deletion orphaned a dependent, although the

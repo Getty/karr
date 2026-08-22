@@ -279,4 +279,54 @@ subtest 'what stays a usage error: no id at all, and an id list that is empty' =
     unlike( $abc->{stderr}, qr/^Usage:/m, 'not as a usage error' );
 };
 
+# ------------------------------------------ 1 vs 2 for the config key "0"
+
+# Ticket #244, the last site of the shape above: `my $key = $pos[1] or die
+# "Usage: ..."` in Cmd::Config, once for `get` and once for `set`. Same split
+# as the ids -- `karr config get 0` answered a usage error (2) where every
+# other unknown key answers "Unknown key" (1) -- but a key, not an id, which is
+# why #239 left it standing rather than taking it along.
+#
+# Pinned here even though the class is already pinned three times, because
+# nothing else can fail when these two lines change: the ids above are a
+# different command surface with a different message pair, and the second of
+# the two sites (set) is exactly the kind that gets fixed halfway. The last
+# assertion is the reason the value below it is guarded with // and not with
+# `or`: "0" is a legal value for foundation.enabled, so a falsy value must
+# still be written.
+subtest 'the config key 0 is an unknown key (1), never a usage error (2)' => sub {
+    my $repo = _board_repo();
+
+    my $get = _run_karr( $repo, 'config', 'get', '0' );
+    is( $get->{exit}, 1, 'karr config get 0 exits 1 (runtime: no such key)' )
+        or diag $get->{stderr};
+    like( $get->{stderr}, qr/\QUnknown key: 0\E/,
+        'and names the key it could not resolve' );
+    unlike( $get->{stderr}, qr/^Usage:/m, 'not a usage line' );
+
+    my $set = _run_karr( $repo, 'config', 'set', '0', 'x' );
+    is( $set->{exit}, 1, 'karr config set 0 x exits 1 (runtime: not writable)' )
+        or diag $set->{stderr};
+    unlike( $set->{stderr}, qr/^Usage:/m, 'not a usage line either' );
+
+    # The branch those two were wrongly falling into is for a key that is
+    # genuinely absent, and it stays a usage error.
+    for my $argv ( [ 'config', 'get' ], [ 'config', 'set' ],
+        [ 'config', 'set', 'claim_timeout' ] )
+    {
+        my $label = join ' ', @$argv;
+        my $rv = _run_karr( $repo, @$argv );
+        is( $rv->{exit}, 2, "karr $label (nothing to act on) still exits 2" )
+            or diag $rv->{stderr};
+        like( $rv->{stderr}, qr/^Usage:/m, "karr $label answers a Usage: line" );
+    }
+
+    # A falsy *value* is a value, and always was: the guard on $pos[2] is //.
+    is( _run_karr( $repo, 'config', 'set', 'foundation.enabled', '0' )->{exit},
+        0, 'karr config set foundation.enabled 0 still writes the falsy value' );
+    my $read = _run_karr( $repo, 'config', 'get', 'foundation.enabled' );
+    is( $read->{exit},   0,     'and reading it back exits 0' );
+    like( $read->{stdout}, qr/\A0\s*\z/, 'with the 0 that was written' );
+};
+
 done_testing;
