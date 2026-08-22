@@ -163,8 +163,8 @@ subtest 'the parsing and claim helpers are the role\'s own' => sub {
     ok $ok, 'a consumer supplying the declared names composes' or diag $err;
 
     my @OWN = qw( _parse_timeout _parse_claim_stamp _claim_expired
-                  claim_timeout_secs check_claim expired_claim_report
-                  _expired_claims );
+                  claim_timeout_secs claim_held check_claim
+                  expired_claim_report _expired_claims );
 
     ok( $pkg->can($_), "...and is handed ->$_ by the composition" ) for @OWN;
 
@@ -192,12 +192,19 @@ subtest 'every consumer of the role supplies it' => sub {
     # have breaks `karr <cmd>` outright, not just this file. The ->can loop is
     # what says which name, instead of leaving it to a compile error.
     #
-    # Pick and Unlock compose App::karr::Role::ClaimTimeout by name; the rest
-    # get it through App::karr::Role::TaskMutation, and Role::Tiny hands an
+    # Pick, Unlock and List compose App::karr::Role::ClaimTimeout by name; the
+    # rest get it through App::karr::Role::TaskMutation, and Role::Tiny hands an
     # unmet requires of a composed role up to whoever composes the composer, so
     # the requirement reaches them just the same. All of them satisfy it the
     # same way, via App::karr::Role::BoardAccess.
-    for my $cmd (qw( Pick Unlock Move Edit Handoff Delete Archive )) {
+    #
+    # List is the one that writes nothing: it composes the role for claim_held
+    # alone, so `karr list --unclaimed` and `karr pick` cannot disagree about
+    # which cards are free (#252). It still has to supply all three names, and
+    # json and quiet are the interesting ones there -- a read-only command has
+    # no use for expired_claim_report and could plausibly have been given the
+    # role without them.
+    for my $cmd (qw( Pick Unlock List Move Edit Handoff Delete Archive )) {
         my $pkg = "App::karr::Cmd::$cmd";
         require_ok($pkg) or next;
         ok( $pkg->can($_), "$cmd supplies ->$_" ) for @ALL;

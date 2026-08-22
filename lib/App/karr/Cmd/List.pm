@@ -9,11 +9,20 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+# For --unclaimed, and for nothing else: claim_held is the claim test
+# App::karr::Role::PickRules/pickable applies, so the free cards this command
+# lists are the free cards `karr pick` hands out (ticket #252). The role is
+# composed rather than the predicate rewritten here, which is the whole point
+# of the option. The rest of what it brings -- check_claim and its reporting
+# half -- belongs to the mutating commands; `list` writes nothing and never
+# calls it.
+use App::karr::Role::ClaimTimeout;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::Error qw( user_error );
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::ClaimTimeout';
 
 =head1 SYNOPSIS
 
@@ -23,6 +32,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr list -s docker --json
     karr list --sort priority --limit 5 --json
     karr list --class expedite --not-blocked
+    karr list --unclaimed --sort priority -n 5
 
 =head1 DESCRIPTION
 
@@ -86,6 +96,31 @@ the meta column already prints, so this narrows on something visible.
 Passing both is a usage error (exit C<2>): kanban-md lets C<--blocked> win
 silently, and karr refuses a self-contradicting invocation instead, as it
 does for C<edit --claim --release> and C<move --next --prev> (ticket #235).
+
+=item * C<--unclaimed>
+
+Shows only the cards nobody is holding right now -- C<claimed_by> unset or
+empty, or set to a claim older than the board's C<claim_timeout>. It is the
+answer to "what is free" that until now only C<karr pick> could give, and
+C<pick> answers it by B<taking> the card.
+
+The test is not a second reading of the field: this filter calls
+L<App::karr::Role::ClaimTimeout/claim_held>, the same method
+L<App::karr::Role::PickRules/pickable> calls, so a card C<list --unclaimed>
+shows is a card C<karr pick> can hand out. It asks about the claim and nothing
+else, matching kanban-md's C<IsUnclaimed>: blocked cards and cards with unmet
+dependencies are unpickable but not claimed, so they are still listed, and
+C<--blocked --unclaimed> is a real query rather than an empty one. On a board
+with C<claim_timeout: 0s> no claim ever expires, so there C<--unclaimed> means
+C<claimed_by> empty and nothing more.
+
+C<--unclaimed> is not the negation of C<--claimed-by>, which is where #237's
+reading of the pair went wrong. C<--claimed-by NAME> is an exact string match
+on the field and matches an B<expired> claim too, because the name stays on
+the card until something re-stamps it; C<--unclaimed> is about who holds the
+card now. Passing both is a usage error (exit C<2>) -- see the comment in
+C<_validate_options> for why that is the answer even though the two do have a
+common case.
 
 =item * C<--sort>, C<--reverse>
 
@@ -209,6 +244,11 @@ option not_blocked => (
   doc => 'Show only tasks that are not blocked',
 );
 
+option unclaimed => (
+  is => 'ro',
+  doc => 'Show only tasks no live claim holds',
+);
+
 option limit => (
   is => 'ro',
   format => 'i',
@@ -288,6 +328,30 @@ sub _validate_options {
   $self->usage_error('cannot use --blocked and --not-blocked together')
     if $self->blocked && $self->not_blocked;
 
+  # The pair has a common case, and that is precisely why it is refused rather
+  # than answered. --claimed-by NAME is an exact match on the field and so also
+  # matches a claim of NAME's that has expired; --unclaimed is "nobody holds
+  # this now", which an expired claim satisfies. The two therefore intersect on
+  # "cards NAME claimed and no longer holds" -- a real set, non-empty on a
+  # normal board, and a third question nobody typed. Answering it silently is
+  # worse than answering the contradicting pairs #235 collected, not better: a
+  # plausible, non-empty list comes back for an invocation whose author meant
+  # either "free cards" or "NAME's cards" and got neither. So this follows
+  # `edit --claim/--release`, `move --next/--prev` and --blocked/--not-blocked
+  # above and refuses, which also leaves the door open -- if "which of my
+  # claims did I lose" is wanted, it deserves its own spelling rather than
+  # arriving as the accident of two filters meeting.
+  #
+  # Written in this order deliberately: `--unclaimed --claimed-by NAME` parses
+  # and `--claimed-by NAME --unclaimed` also does, but a bare boolean in front
+  # of a dashed option eats its name (#256), so the CLI cannot reach this line
+  # via `--unclaimed --claimed-by NAME`. It reaches it via the other order.
+  # `defined`, like the --class check below and unlike the truthy guard the
+  # filter itself uses: a value the caller typed is a value the caller typed
+  # (#153, #239, #244), even when it is empty.
+  $self->usage_error('cannot use --unclaimed and --claimed-by together')
+    if $self->unclaimed && defined $self->claimed_by;
+
   # 0 is the documented "no limit" and stays legal -- it is the default, and
   # kanban-md spells unlimited that way too. A negative count is not a smaller
   # list, it is a typo, and kanban-md's `Limit > 0` guard swallows it back into
@@ -352,6 +416,21 @@ sub _filter {
   }
   if ($self->claimed_by) {
     @filtered = grep { $_->has_claimed_by && $_->claimed_by eq $self->claimed_by } @filtered;
+  }
+  # The claim test itself is App::karr::Role::ClaimTimeout/claim_held -- the
+  # one App::karr::Role::PickRules/pickable applies -- so this list and `karr
+  # pick` cannot come to disagree about which cards are free (#59, #198, #252).
+  # One window for the whole run, read once here rather than per card: a
+  # board-wide filter that re-read claim_timeout for every card could in
+  # principle straddle a config change mid-list, and would certainly do the
+  # parse N times.
+  #
+  # Claim only, as kanban-md's IsUnclaimed is: pickable goes on to exclude
+  # blocked and terminal cards, and neither is a statement about who holds the
+  # card. --blocked --unclaimed is a real triage query here, not an empty one.
+  if ($self->unclaimed) {
+    my $timeout = $self->claim_timeout_secs;
+    @filtered = grep { !$self->claim_held( $_, $timeout ) } @filtered;
   }
   # Plain equality against the card's class, which App::karr::Task always has
   # (it defaults to `standard`), so there is no unset case to fold in. The

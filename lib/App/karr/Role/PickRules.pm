@@ -60,19 +60,23 @@ sub pickable {
         return 0 if $self->store->is_terminal_status( $task->status );
     }
 
-    # `claimed_by: ""` means unclaimed. kanban-md's omitempty writes the key
-    # only when it is non-empty, but a card it read and rewrote -- or any
-    # hand-written one -- can carry the empty string, and Moo's predicate calls
-    # that "set". So every imported kanban-md card looked as though somebody
-    # held it, and pick reported an empty board while `karr list` showed the
-    # work sitting there (ticket #59).
-    # This is the same emptiness test App::karr::Role::ClaimTimeout/check_claim
-    # already applies; the two have to agree or a task pick refuses is a task
-    # move happily accepts.
-    return 0
-      if $task->has_claimed_by
-      && length $task->claimed_by
-      && !$self->_claim_expired( $task, $timeout );
+    # One claim test in karr, and this is a call to it rather than a copy of it
+    # (ticket #252). These were three lines spelled out here -- has_claimed_by,
+    # length, and the expiry parse -- which was fine while `karr pick` was the
+    # only caller and became the #59/#198 failure the moment `karr list
+    # --unclaimed` needed the same answer: two spellings of "free" drift, and
+    # then a list says a card is available that pick will not hand out.
+    #
+    # It could not be borrowed by calling pickable itself, because the whole of
+    # what used to stand here is the claim, and the next line is not: blocked is
+    # pick's rule, not part of being claimed, and kanban-md's IsUnclaimed
+    # (internal/board/filter.go) does not ask it either. That is why the claim
+    # test moved out and this line stayed behind it.
+    #
+    # What moved is exactly what was here, `claimed_by: ""` included -- see
+    # App::karr::Role::ClaimTimeout/claim_held for the reasoning that came with
+    # it.
+    return 0 if $self->claim_held( $task, $timeout );
     return 0 if $task->has_blocked;
 
     if ( $filter{tags} ) {
@@ -106,6 +110,13 @@ already-split lists, not the comma-separated option strings -- splitting
 belongs to the command that owns the option. An absent (or empty) filter is
 not the same as an empty list: no C<statuses> means "anything but terminal",
 C<< statuses => [] >> means nothing qualifies.
+
+The claim half of the test is L<App::karr::Role::ClaimTimeout/claim_held>,
+called rather than restated: C<karr list --unclaimed> asks that same method
+about every card on the board, so what the list shows as free is what this
+method lets C<karr pick> take (ticket #252). The blocked test deliberately
+stayed here and is not part of it -- a blocked card is unpickable, not
+claimed.
 
 =cut
 

@@ -195,6 +195,74 @@ sub _claim_expired {
     return (Time::Piece::gmtime() - $claimed) > $timeout_secs;
 }
 
+# The claim test as one question, because two callers now ask it and karr may
+# only have one answer (ticket #252). It was three lines in the middle of
+# App::karr::Role::PickRules/pickable, with `return 0 if $task->has_blocked` on
+# the very next line, so `karr list --unclaimed` could not borrow it by calling
+# pickable with neutralised filters: the blocked line came along, --unclaimed
+# would have meant "free AND not blocked", and `list --blocked --unclaimed`
+# would have been permanently empty. kanban-md's IsUnclaimed
+# (internal/board/filter.go) asks about the claim and nothing else, and so does
+# this.
+#
+# check_claim is not this question and cannot be made into it: it dies instead
+# of answering, lets the caller through by name, excuses a card in a terminal
+# status, and records what it let past into _expired_claims. This one takes no
+# claimant, keeps no exception, writes nothing, and answers about the card
+# alone -- which is why it can be asked once per card across a whole board.
+#
+# `claimed_by: ""` is unclaimed, the case that came here from pickable
+# unchanged: kanban-md's omitempty writes the key only when it is non-empty,
+# but a card it read and rewrote -- or any hand-written one -- can carry the
+# empty string, and Moo's predicate calls that "set". Every imported kanban-md
+# card looked held (ticket #59). check_claim's first line spells the same test
+# for the same reason, and the two have to agree or a task `pick` refuses is a
+# task `move` accepts.
+#
+# $timeout is optional so a single call reads as a question about one card;
+# pass it explicitly when asking about many, so one window covers the run
+# rather than re-reading the board config per card. `//` and not `||`: 0 is a
+# window of no length, not an absent one -- see _claim_expired, and ticket
+# #232 for what conflating the two did.
+sub claim_held {
+    my ( $self, $task, $timeout ) = @_;
+    return 0 unless $task->has_claimed_by && length $task->claimed_by;
+    return $self->_claim_expired( $task, $timeout // $self->claim_timeout_secs ) ? 0 : 1;
+}
+
+=method claim_held
+
+    $self->claim_held( $task );
+    $self->claim_held( $task, $secs );
+
+True when somebody holds C<$task> right now: C<claimed_by> is set and not the
+empty string, and the claim is not older than the timeout. False when the card
+carries no claim, carries C<claimed_by: ""> -- which is kanban-md's way of
+writing "unclaimed" and has to be read as one (ticket #59) -- or carries a
+claim that has expired and so no longer blocks anybody.
+
+C<$secs> is the claim window in seconds and defaults to
+L</claim_timeout_secs>. Pass it explicitly when asking about many cards in one
+command run, so one window covers the whole run. C<0> is not the shortest
+window but no window at all: on a board with C<claim_timeout: 0s> a claim
+never expires, so every claimed card stays held until the claim is released.
+
+This is the only definition of "free" in karr, and both callers of it are
+meant to stay callers: L<App::karr::Role::PickRules/pickable> asks it about
+the card C<karr pick> is about to hand out, and C<karr list --unclaimed> asks
+it about every card on the board. A second spelling of the test is how C<list>
+and C<pick> come to disagree about which work is available (tickets #59,
+#198).
+
+It is B<not> L</check_claim> with the dying left out. That method answers a
+different question -- may I<this caller> write this card -- and its extra
+cases say so: the current claimant is let through by name, a card in a
+terminal status is not guarded at all, and an expired claim stepped over is
+recorded for L</expired_claim_report>. This one asks only whether the card is
+held, by anybody, and records nothing.
+
+=cut
+
 # Keyed by task id rather than a flat list, for the reason spelled out above
 # check_claim: the check runs inside a compare-and-swap callback that re-runs on
 # contention, and `karr delete` applies it twice for one card. A keyed slot is

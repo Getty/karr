@@ -1,5 +1,32 @@
 {{$NEXT}}
 
+    - `karr list --unclaimed` lists the cards no live claim holds -- the
+      fourth of the filters #252 accepted, and the one #237 had taken
+      for a duplicate of `--claimed-by`. They ask different questions:
+      `--claimed-by NAME` is an exact match on a field that keeps the
+      name until something re-stamps it, so it matches an expired claim
+      too, while `--unclaimed` asks who holds the card now --
+      `claimed_by` unset or empty, or a claim older than the board's
+      `claim_timeout`. The filter asks about the claim and nothing else,
+      matching kanban-md's `IsUnclaimed`, so a blocked card nobody holds
+      is still listed and `--blocked --unclaimed` is a real triage query
+      rather than a permanently empty one. Passing it with
+      `--claimed-by` is a usage error (exit 2), as `--blocked` with
+      `--not-blocked` already is (#235): the two do have a common case
+      -- a claim NAME no longer holds -- and a plausible, non-empty
+      answer to a third question nobody typed is the worse of the two
+      silences.
+
+    - `karr list --unclaimed` and `karr pick` cannot disagree about
+      which work is free. The claim test is now one method,
+      `App::karr::Role::ClaimTimeout::claim_held`, that both call; it
+      was three lines inside `Role::PickRules::pickable` with the
+      blocked test on the next line, so no second caller could borrow it
+      without also inheriting "and not blocked". Nothing about what
+      `pick` or karr-foundation's ticket mode hands out changes -- the
+      moved lines are the same lines -- but the second copy that #59 and
+      #198 are both about no longer has to be written.
+
     - `karr config show` no longer drops a key whose value is `0` or the
       empty string (#255). The six optional rows of the plain-text table
       -- `board.name`, `board.description`, the three `defaults.*` and
