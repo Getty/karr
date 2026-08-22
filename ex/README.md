@@ -484,7 +484,7 @@ The board defaults, as `App::karr::Config` provides them:
 |---|---|
 | `statuses` | `backlog`, `todo`, `in-progress`\*, `review`\*, `done`, `archived` |
 | `priorities` | `low`, `medium`, `high`, `critical` |
-| `classes` | `expedite` (WIP limit 1, bypasses column WIP), `fixed-date`, `standard`, `intangible` |
+| `classes` | `expedite`, `fixed-date`, `standard`, `intangible` |
 | `claim_timeout` | `1h` |
 | `lock_timeout` | `5m` |
 | `defaults` | status `backlog`, priority `medium`, class `standard` |
