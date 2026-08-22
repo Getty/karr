@@ -1,5 +1,30 @@
 {{$NEXT}}
 
+    - The skill file `karr skill install` ships stops attributing a WIP
+      utilization to `karr board` (#245). karr has never printed one --
+      that is kanban-md's reporting shape -- and since #227 it does not
+      model WIP limits at all, so the shipped example config lost its
+      `wip_limits:` block too (a key karr never modelled, even before
+      #227) in favour of the `classes:` list a board really carries. The
+      `board` section now says what the command does instead: one
+      section per column in board order, the final column hidden unless
+      `--done` with the footer naming what it withheld, and archived
+      cards in no output mode at all (#234). Three further descriptions
+      had drifted and were measured against the running command rather
+      than corrected from memory: `list` hides the whole terminal group
+      and not only `archived`, and gained `--class`, `--blocked`,
+      `--not-blocked` and `--limit`/`-n` (#252) plus `--sort title`
+      (#237); `pick --compact` now ends the output after the assignment
+      line (#251) and ranks two `fixed-date` cards by due date (#233);
+      `delete` warns about dependent and cross-board cards (#242, #236)
+      and asks its question on STDERR so `--json` decodes as a whole
+      (#248). And `init --claude-skill` installs to
+      `.claude/skills/kanban-issues-karr-cli/SKILL.md`, not to
+      `.claude/skills/karr/SKILL.md` as the file claimed. This is the
+      briefing an agent in a foreign repository reads, so a command
+      description that has gone stale there is a wrong instruction, not
+      a typo.
+
     - `karr list` gains `--limit`/`-n`, `--class` and
       `--blocked`/`--not-blocked` (#252). The cut is the last stage,
       after the filters and after the sort, so `--sort priority -n 5`
