@@ -188,8 +188,14 @@ subtest 'the materialized config is one kanban-md can load' => sub {
   # `true` from a YAML `1`.
   like( $raw, qr/^\s*(?:-\s*)?require_claim:\s*true\s*$/m,
     'require_claim is a YAML boolean' );
-  like( $raw, qr/^\s*(?:-\s*)?bypass_column_wip:\s*true\s*$/m,
-    'bypass_column_wip is a YAML boolean' );
+  # bypass_column_wip used to be checked here as well -- it sat on the default
+  # expedite class until #227 removed the class WIP keys karr never enforced, so
+  # a default board's view no longer carries one. The key is still typed as a
+  # boolean for the boards that do carry it (t/227 pins that); what stands in for
+  # it here is karr's own boolean, which kanban-md ignores but go-yaml still has
+  # to parse.
+  like( $raw, qr/^\s*(?:-\s*)?enabled:\s*true\s*$/m,
+    'foundation.enabled is a YAML boolean' );
   unlike( $raw, qr/^\s*(?:-\s*)?(?:require_claim|bypass_column_wip|enabled):\s*[01]\s*$/m,
     'no boolean key is written as an integer' );
 

@@ -17,10 +17,12 @@ use App::karr::Git;
 #
 # The statuses and classes lists allow both a bare name and the mapping form
 # ({ name => 'in-progress', require_claim => 1 }), and the default board uses
-# both: two statuses carry require_claim, every class carries wip_limit or
-# bypass_column_wip. The renderer joined the raw list, so every mapping came out
-# as its address. `classes` was worse than `statuses` -- all four entries are
-# mappings, so the answer was four addresses and no names at all.
+# both: two statuses carry require_claim, and every class is a mapping. The
+# renderer joined the raw list, so every mapping came out as its address.
+# `classes` was worse than `statuses` -- all four entries are mappings, so the
+# answer was four addresses and no names at all. (The default classes carried
+# wip_limit and bypass_column_wip when this was written; #227 removed the two
+# dead keys, and the last subtest below keeps a board that still carries one.)
 #
 # Not cosmetic: this is the output a reader consults to learn which columns a
 # board has, and two unreadable entries invite invention -- the ticket was filed
@@ -105,10 +107,12 @@ subtest 'config get classes names every class and its settings (RED, #130)' => s
     unlike( $rv->{stdout}, qr/HASH\(0x/, 'no stringified hash ref' );
 
     # All four default classes are mappings, so before the fix this line was
-    # four addresses -- the board's classes were unreadable outright.
+    # four addresses -- the board's classes were unreadable outright. Since #227
+    # a default class is a mapping carrying nothing but its name, so the settings
+    # half of the rendering is pinned on the custom board further down instead.
     is( _line( $rv->{stdout} ),
-        'expedite (bypass_column_wip: 1, wip_limit: 1), fixed-date, standard, intangible',
-        'names lead, per-class settings follow' );
+        'expedite, fixed-date, standard, intangible',
+        'every class is named, and a name-only mapping renders bare' );
 };
 
 subtest 'config get priorities is unchanged -- a plain list stays plain' => sub {
@@ -161,13 +165,13 @@ subtest '--json carries the entries as configured, not the rendering (#130)' => 
     is_deeply(
         eval { decode_json( $classes->{stdout} ) },
         {   classes => [
-                { name => 'expedite', wip_limit => 1, bypass_column_wip => 1 },
+                { name => 'expedite' },
                 { name => 'fixed-date' },
                 { name => 'standard' },
                 { name => 'intangible' },
             ]
         },
-        'classes --json keeps wip_limit and bypass_column_wip'
+        'classes --json is the configured structure, mappings and all'
     ) or diag $classes->{stdout};
 
     my $priorities = _run_karr( $repo, 'config', 'get', 'priorities', '--json' );

@@ -196,8 +196,11 @@ sub classes {
 =method classes
 
 Returns the configured class-of-service names in board order, accepting both
-the mapping form C<< { name => 'expedite', wip_limit => 1 } >> and a bare
-string, the same way L</statuses> does.
+the mapping form C<< { name => 'expedite' } >> and a bare string, the same way
+L</statuses> does. The name is the only thing karr reads off a class entry: a
+class decides pick order (L<App::karr::Role::PickRules>) and nothing else, so a
+board whose entry carries more -- kanban-md's C<wip_limit> and
+C<bypass_column_wip>, say -- keeps those keys stored and unread.
 
     my @classes = $config->classes;
 
@@ -455,11 +458,12 @@ sub validate {
       if grep { !defined || !length } @classes;
     die "Board config is invalid: classes contain duplicates\n"
       if _has_duplicates(@classes);
-    for my $c ( @{ $data->{classes} } ) {
-      next unless ref $c eq 'HASH' && defined $c->{wip_limit};
-      die "Board config is invalid: class $c->{name} wip_limit must be >= 0\n"
-        unless $c->{wip_limit} =~ /\A\d+\z/;
-    }
+    # Nothing checks a class entry beyond its name. karr used to validate
+    # `wip_limit >= 0` here without enforcing the limit anywhere, so a board
+    # got a rejection for a setting that could never take effect (#227). Boards
+    # written before that removal still carry the key; validate ignores keys it
+    # does not model, so such a board keeps saving and the key rides along in
+    # refs/karr/config untouched -- karr does not scrub what it stopped reading.
   }
 
   my $defaults = $data->{defaults} // {};
@@ -494,8 +498,15 @@ sub validate {
 Checks a fully merged board config and dies with a C<Board config is invalid:>
 message on the first problem, mirroring kanban-md's C<Config.Validate>. Only the
 parts karr actually models are checked -- karr keeps C<next_id> in a ref rather
-than in the config, has no WIP limits or TUI section yet, and uses its own
+than in the config, has no WIP limits and no TUI section, and uses its own
 C<version> numbering, so those three checks are deliberately absent.
+
+karr has no WIP limits at all, neither kanban-md's per-status C<wip_limits> nor
+its per-class C<wip_limit>/C<bypass_column_wip>: no command, role or mutation
+path consults one, and nothing here rejects one either. Until #227 the class
+form was validated anyway, which made every board advertise a limit that could
+not take effect. A board written back then still carries the key; it is passed
+through unvalidated and unread, exactly like any other key karr does not model.
 
 Called from L<App::karr::BoardStore/save_config>, which is the single write
 choke point for C<refs/karr/config>, so C<karr config set>, C<karr import> and
@@ -698,7 +709,11 @@ sub default_config {
     ],
     priorities => [qw( low medium high critical )],
     classes => [
-      { name => 'expedite', wip_limit => 1, bypass_column_wip => 1 },
+      # No wip_limit / bypass_column_wip here: kanban-md gives its expedite
+      # class both, but karr enforces neither -- no command, role or mutation
+      # path ever reads them. Carrying them in the defaults made every board
+      # advertise a setting that does nothing (ticket #227).
+      { name => 'expedite' },
       { name => 'fixed-date' },
       { name => 'standard' },
       { name => 'intangible' },
@@ -759,7 +774,11 @@ class-vs-instance convention L</is_terminal_status> documents.
 # (internal/config/config.go): StatusConfig.RequireClaim / .ShowDuration,
 # ClassConfig.BypassColumnWIP, TUIConfig.HideEmptyColumns -- plus karr's own
 # foundation.enabled, which kanban-md ignores but which is a boolean all the
-# same. Listed here, next to default_config, so the two stay in step.
+# same. Listed here, next to default_config, so the two stay in step. Three of
+# them (show_duration, bypass_column_wip, hide_empty_columns) are keys karr does
+# not model and never writes itself; they stay listed because a board may still
+# carry one -- from an older karr or a hand-edited config -- and materialize has
+# to hand kanban-md a real boolean or go-yaml refuses the whole file (#60).
 my %BOOLEAN_KEY = map { $_ => 1 }
   qw( require_claim show_duration bypass_column_wip hide_empty_columns enabled );
 
@@ -800,9 +819,16 @@ my %VIEW_KEY = map { $_ => 1 } qw(
   claim_timeout lock_timeout foundation defaults
 );
 
-# The same question one level down, inside a status or class entry.
+# The same question one level down, inside a status or class entry. A class
+# entry is its name and nothing else: kanban-md decorates its expedite class
+# with `wip_limit` and `bypass_column_wip`, and karr enforces neither, so
+# adopting them would freeze another tool's defaults into refs/karr/config as
+# an override nobody chose -- the same argument `wip_limits` gets one level up
+# and `show_duration` gets beside it (#88, #227). The pruning is one-way: a
+# board that already carries the keys keeps them, they just cannot come back in
+# through a file view.
 my %VIEW_STATUS_KEY = map { $_ => 1 } qw( name require_claim );
-my %VIEW_CLASS_KEY  = map { $_ => 1 } qw( name wip_limit bypass_column_wip );
+my %VIEW_CLASS_KEY  = map { $_ => 1 } qw( name );
 
 sub reconcile_view_config {
   my ( $class, $overrides, $view ) = @_;

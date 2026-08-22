@@ -43,6 +43,12 @@ subtest 'effective config merges sparse overrides with defaults' => sub {
 subtest 'default config has no wip limits' => sub {
   my $config = App::karr::Config->default_config;
   ok !exists $config->{wip_limits}, 'default config no longer defines wip limits';
+  # The class level was the other half (#227): karr shipped wip_limit and
+  # bypass_column_wip on the expedite class, validated them, and enforced them
+  # nowhere. t/227 owns what that means for a board that still carries them.
+  my @with_wip = grep { ref $_ eq 'HASH' && ( exists $_->{wip_limit} || exists $_->{bypass_column_wip} ) }
+    @{ $config->{classes} };
+  is scalar @with_wip, 0, 'no default class carries a wip limit either';
 };
 
 done_testing;

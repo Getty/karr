@@ -1,5 +1,24 @@
 {{$NEXT}}
 
+    - The board config no longer carries per-class WIP limits (#227).
+      `App::karr::Config::default_config` gave every board's `expedite`
+      class `wip_limit: 1` and `bypass_column_wip: 1`, and `validate`
+      checked the value -- but no command, role or mutation path ever
+      read either key, so a board advertised a limit that could not take
+      effect and refused a value for a setting that did nothing. karr
+      has no WIP limits, per-status or per-class, and the POD of
+      `validate` now says that instead of listing the class check among
+      the parity gaps. A board that already carries the keys is
+      unaffected: `validate` ignores keys it does not model, so nothing
+      that used to save starts failing, and the keys ride along in
+      `refs/karr/config` untouched -- karr does not scrub what it
+      stopped reading. They can no longer come back in through a
+      kanban-md file view, though: adopting another tool's class
+      defaults would freeze them into the board as an override nobody
+      chose, which is the #88 failure, so `wip_limit` and
+      `bypass_column_wip` are pruned from an imported `config.yml` the
+      same way `wip_limits` and `show_duration` already were.
+
     - `karr pick --compact` prints the assignment and stops (#251).
       `pick` composes `App::karr::Role::Output`, took `--compact` from
       it along with `--json`, and never read it, so `karr pick --claim x
