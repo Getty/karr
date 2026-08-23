@@ -15,7 +15,9 @@
       `materialize`, `move`, `needs`, `repair`, `skill`, `unlock` -- now
       answer `Unknown option: compact` with their usage and exit 2.
       `--json` is unchanged everywhere, and still wins where both are
-      given.
+      given. The skill file `karr skill install` ships knows the four
+      new renderings, and says which nine commands take `--compact` at
+      all, so an agent does not discover the other thirteen by exit 2.
 
     - An option name with a dash in it no longer disappears when a
       boolean flag stands in front of it (#256). `karr list --claimed-by
