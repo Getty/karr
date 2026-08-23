@@ -1,0 +1,91 @@
+---
+claimed_at: 2026-08-22T21:34:29Z
+claimed_by: take-disk
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T12:11:21Z
+id: 252
+priority: low
+started: 2026-08-22T21:17:58Z
+status: done
+tags:
+- parity
+- list
+- pick
+- scope
+title: Welche list/pick-Optionen von kanban-md soll karr uebernehmen?
+updated: 2026-08-23T21:50:53Z
+---
+
+Abgespalten von #237, dessen Teil 1 (--sort title) gebaut ist. Dies ist die Umfangsentscheidung, die dort bewusst nicht getroffen wurde: welche der Filter- und Ausgabeoptionen von kanban-md soll karr uebernehmen?
+
+Die Einschaetzung unten ist erhoben, nicht vermutet -- jede Option in der Referenz nachgelesen, gegen karrs vorhandene Mittel gehalten.
+
+## Klein und klar lohnend
+
+**--limit / -n** (board.go: Kuerzung nach Filter und Sortierung, 0 = unbegrenzt). Wenige Zeilen in `execute` nach `_sort`, muss fuer --json und --compact gleichermassen gelten. Bester Gegenwert pro Zeile: `karr list --sort priority -n 5 --json` ist der "naechste fuenf Sachen"-Aufruf, den Agenten heute nachbilden, indem sie das ganze Board ziehen -- die Option deckelt den Kontext, den ein Agent verbrennt. Namensnotiz: karr nennt "die N juengsten" bei `show` und `log` `--last`, das ist eine andere Operation (Aktualitaet statt Kopf des sortierten Ergebnisses); beide koennen nebeneinander stehen, das POD sollte es sagen.
+
+**--unclaimed**. Die Annahme aus #237, das ueberschneide sich mit --claimed-by, stimmt nicht: --claimed-by NAME ist exakter Vergleich und trifft auch einen ABGELAUFENEN Claim; --unclaimed ist "haelt gerade niemand" (leer ODER abgelaufen unter claim_timeout). karr rechnet genau dieses Praedikat schon in `Role/PickRules::pickable` plus `Role/ClaimTimeout::_claim_expired`, inklusive des `claimed_by: ""`-Falls aus #59. Fuer karr die wertvollste des ganzen Satzes, weil das Fleet-Modell auf Claims laeuft und "was ist frei" heute nur ueber `karr pick` beantwortbar ist -- das die Karte dabei NIMMT. Harte Auflage: muss `pickable`s Claim-Test wiederverwenden, keinen zweiten. Ein `list` und ein `pick`, die sich ueber "frei" uneinig sind, ist genau die Fehlerart, vor der #59 und das `pickable`-POD warnen.
+
+**--class**. Filter trivial (karr hat volle Klassenunterstuetzung, `pick_rank` stellt Klasse sogar vor Prioritaet). Die Entscheidung ist die Validierung: karr macht aus einer unbekannten Klasse ueberall sonst einen Usage-Fehler und hat genau das fuer --sort so entschieden -- `list --class bogus` sollte also die Klassen des Boards nennen und mit 2 aussteigen statt eine leere Liste zu drucken. Bewusste Abweichung von der Referenz (dort blosse Gleichheit ohne Validierung). Kleiner Haken: `list` rendert die Klasse nicht, gefiltert wuerde also auf einem unsichtbaren Feld.
+
+**--blocked**. Ein Grep, weil `Task::_normalize_blocked` schon garantiert, dass `has_blocked` genau dann wahr ist -- und `list` druckt "blocked" bereits in der Meta-Spalte, es waere also ein Filter auf etwas Sichtbarem. Echte Triage-Ansicht. Die Referenz laesst bei --blocked zusammen mit --not-blocked stillschweigend --blocked gewinnen; nach #235 waere fuer karr ein Usage-Fehler richtig.
+
+**--not-blocked**: nur Symmetrie. Die Standardliste zeigt ohnehin alles, und `pick` ueberspringt blockierte Karten schon.
+
+## Braucht erst Entscheidungen, dann Code
+
+**--unblocked** ist NICHT die Verneinung von --blocked, sondern "alle depends_on in einem terminalen Status" -- und genau dort ist karr von der Referenz bewusst abgewichen: eine fehlende Abhaengigkeits-id ist bei karr eine WARNUNG, nicht "erfuellt" (`Role/DependencyCheck`, im Kommentar begruendet), und unerfuellte Abhaengigkeiten blockieren gar nichts -- `karr pick` gibt die Karte heraus und warnt (#123). Dazu hat karr Cross-Board-`needs`, ohne Gegenstueck in der Referenz, deren fernen Zustand `list` nicht aufloesen kann, ohne Transport zu machen, den es nicht machen darf.
+
+Drei Antworten noetig, bevor eine Zeile geschrieben wird: zaehlt eine fehlende id als blockiert? Zaehlen Cross-Board-needs mit? Was passiert, wenn das ferne Board nicht erreichbar ist? Lohnend -- vermutlich unter dem Namen `--ready` -- aber als entworfenes Feature, nicht als Paritaets-Pflichtuebung.
+
+## Nicht auf list
+
+**--group-by** ist kein Filter, es ERSETZT die Kartenliste durch eine Zaehlung (Gruppen mit Status-Zaehlern und WIP-Limits; die Karten verschwinden aus der Ausgabe). karr besitzt diese Form schon zweimal: `karr board` (Zaehler je Status) und `karr metrics`. kanban-md haengt --group-by selbst auch an `board`. Empfehlung: wenn karr Gruppierung will, gehoert sie an `board`, wo der Renderer existiert und wo "Ausgabe ist Zaehlung, nicht Karten" niemanden ueberrascht -- und mit eigenem Ticket, getrennt vom Filtersatz. Haengt ausserdem an #227 (WIP).
+
+## Blockiert
+
+**--parent** (list und pick). Filter trivial, Feature nicht: `Task.pm`s eigenes `=attr parent` dokumentiert das Feld als inert -- nichts in karr setzt es, nur `karr delete` liest es (#236). Auf jedem nicht importierten Board liefern beide Optionen also immer die leere Menge. Eine Option, die nur importierte Karten treffen kann, ist eine Falle. Gehoert hinter das Setzen von `parent` in create/edit, und dann neben eine Unteraufgaben-Darstellung, die karr nicht hat.
+
+**pick --no-body** braucht karr nicht als eigene Flagge -- der Platz ist schon da und kaputt: `pick` nimmt `--compact` an und ignoriert es. Das ist #251, und die richtige Antwort dort ist "--compact soll bei pick bedeuten, was es sagt", nicht eine zweite Flagge daneben.
+
+## Reihenfolge, falls gewuenscht
+
+--limit, --unclaimed, --class, --blocked (klein und klar) -> --not-blocked (Symmetrie) -> --unblocked (erst die drei Semantikfragen) -> --group-by (eigenes Ticket, an board) -> --parent (blockiert).
+
+Umfangsentscheidung getroffen (Maintainer): die vier als "klein und klar lohnend" eingestuften Optionen werden uebernommen. Drei davon gebaut, alle in lib/App/karr/Cmd/List.pm, Regressionstest t/252-list-filter-limit-options.t (14 Subtests, gruen).
+
+GEBAUT
+
+--limit / -n (Default 0 = unbegrenzt). Kuerzung als dritte Stufe in execute, nach _filter und _sort, damit --sort priority -n 5 die fuenf dringendsten sind und nicht fuenf beliebige in Reihenfolge. Liegt in execute und nicht in einem Ausgabezweig, also greift sie fuer Tabelle, --compact und --json gleich; der Fusszeilenzaehler zaehlt die gedruckten Zeilen, nicht die Treffer. Abweichung von der Referenz: ein negativer Wert ist ein Usage-Fehler (exit 2) statt kanban-mds stillem "unbegrenzt" -- dieselbe Antwort, die show/log --last auf ihren Zahlenwert geben (#76, #151). 0 bleibt legal, weil 0 hier "alle" heisst und dort "keine". POD grenzt --limit gegen --last ab.
+
+--class. Filter ist eine Gleichheit auf task->class (immer gesetzt, Default standard). Die Entscheidung war die Validierung: config->validate_class laeuft in _validate_options, also nennt list --class bogus die Klassen DES BOARDS und steigt mit 2 aus, statt eine leere Liste zu drucken. Bewusste Abweichung von der Referenz (dort blosse Gleichheit) und so kommentiert. Auch --class "" ist damit ein Usage-Fehler (#243).
+
+--blocked / --not-blocked. Grep auf has_blocked, das Task::_normalize_blocked schon garantiert (#58); ein Dokument mit blocked: false landet auf der richtigen Seite und ist im Test gepinnt. Beide zusammen sind ein Usage-Fehler (exit 2) statt kanban-mds stillem Vorrang fuer --blocked -- nach #235.
+
+NICHT GEBAUT: --unclaimed
+
+Die harte Auflage des Tickets -- pickables Claim-Test wiederverwenden, keinen zweiten schreiben -- ist mit dem heutigen Code nicht erfuellbar, und der Auftrag sagte: dann anhalten statt herausloesen.
+
+Role/PickRules::pickable rechnet den Claim-Test nicht als eigene Einheit, sondern als drei Zeilen mitten in einer Kette, und direkt danach steht "return 0 if $task->has_blocked". Ein Aufruf pickable($t, statuses => [$t->status]) neutralisiert nur den Status-Zweig; die blocked-Zeile bleibt. Damit waere list --unclaimed "frei UND nicht blockiert", list --blocked --unclaimed immer leer, und kanban-mds IsUnclaimed (internal/board/filter.go) fragt ausdruecklich nur nach dem Claim. check_claim ist auch kein Ersatz: es stirbt statt zu antworten, hat die Terminal-Ausnahme und schreibt _expired_claims.
+
+Was fehlt, ist eine Methode. Vorschlag, sobald PickRules.pm wieder frei ist (#240 arbeitet gerade darin):
+
+  # in Role/ClaimTimeout.pm, wo _claim_expired schon wohnt
+  sub claim_held {
+    my ( $self, $task, $timeout ) = @_;
+    return 0 unless $task->has_claimed_by && length $task->claimed_by;
+    return $self->_claim_expired( $task, $timeout // $self->claim_timeout_secs ) ? 0 : 1;
+  }
+
+und pickables drei Zeilen werden zu "return 0 if $self->claim_held( $task, $timeout );". Dann ist list --unclaimed ein grep auf !claim_held mit einem Timeout pro Lauf, und es gibt genau eine Definition von "frei". Ohne die Aenderung in PickRules waere jede Variante eine zweite Kopie -- genau das, wovor #198 und #59 warnen.
+
+Test t/252 sagt nichts ueber --unclaimed aus, muss also beim Nachziehen nicht angefasst werden.
+
+BEWUSST NICHT UEBERNOMMEN: --group-by (eigene Ausgabeform, gehoert an board), --parent (solange karr parent nicht setzt), pick --no-body (seit #251 als pick --compact erledigt), --unblocked (braucht die drei Semantikfragen aus dem Ticket zuerst).
+
+NEBENBEFUND, eigenes Ticket #256: eine Option mit Bindestrich verliert ihren Namen, wenn ein boolesches Flag davor steht. karr list --json --claimed-by NAME sagt heute schon "Unknown option: claimed-by" (exit 2); --not-blocked erbt das. Ursache in MooX::Options::Role::_options_fix_argv, nicht in karr.
+
+ZUR KLASSENSICHTBARKEIT (Frage aus dem Auftrag): kein Problem, das --class aufhalten sollte. list filtert heute schon auf drei unsichtbaren Feldern -- --tag, --claimed-by und -s/--search rendern nichts in der Zeile -- und --json traegt class ohnehin, karr show druckt es. Was den Unterschied macht, ist die Validierung: ein Tippfehler kann nicht mehr wie ein leeres Board aussehen, und das ist genau der Fall, in dem ein unsichtbares Feld gefaehrlich waere. Eine class-Spalte in der Meta-Klammer waere eine Aenderung an JEDER list-Ausgabe und gehoert, wenn ueberhaupt, in ein eigenes Ticket.
+
+Drei der vier Optionen gebaut (--limit/-n, --class, --blocked/--not-blocked) in lib/App/karr/Cmd/List.pm plus POD; Test t/252-list-filter-limit-options.t, 14 Subtests, gruen. --unclaimed bewusst NICHT gebaut: pickables Claim-Test ist keine eigene Einheit (die blocked-Zeile steht direkt dahinter), also waere jede Variante entweder semantisch falsch oder eine zweite Kopie -- Vorschlag fuer die eine fehlende Methode (claim_held in Role/ClaimTimeout) steht im Ticket, PickRules.pm blieb wie verlangt unberuehrt. Nebenbefund als #256 abgelegt. Nicht committet, Changes nicht angefasst.
