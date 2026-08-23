@@ -1,0 +1,44 @@
+---
+claimed_at: 2026-08-22T04:58:59Z
+claimed_by: rope-made
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T10:27:29Z
+id: 246
+priority: low
+started: 2026-08-22T04:58:38Z
+status: done
+tags:
+- docs
+- encoding
+title: Encoding.pm behauptet, nur Restore lese STDIN -- inzwischen sind es vier
+updated: 2026-08-23T21:50:53Z
+---
+
+Nebenbefund aus #241, dort korrekt nicht angefasst (Encoding gehoert der Ref-Domaene).
+
+`lib/App/karr/Encoding.pm` um Zeile 200-201, im POD von `enable_std_utf8`:
+
+    C<STDIN> is deliberately left alone. Only L<App::karr::Cmd::Restore> reads
+    it, and it decodes its own payload, so a layer here would decode it twice.
+
+Das "Only" stimmt nicht mehr. STDIN wird heute an vier Stellen gelesen:
+
+- `Cmd/Restore.pm` -- `binmode STDIN, ":raw"`, dann Payload slurpen
+- `Cmd/SetRefs.pm` -- dasselbe Muster
+- `Foundation.pm` -- dasselbe Muster (die YAML-Kette aus #213)
+- `Cmd/Delete.pm` -- liest die Antwort auf die Loesch-Rueckfrage
+
+## Warum das ueber einen Tippfehler hinausgeht
+
+Der Satz begruendet eine Entscheidung: warum `enable_std_utf8` STDIN nicht anfasst. Die Begruendung stuetzt sich auf "nur ein Leser, und der dekodiert selbst". Mit vier Lesern ist die Entscheidung womoeglich immer noch richtig -- aber sie ruht nicht mehr auf dem Grund, der dasteht. Genau die Sorte Stelle, an der jemand spaeter die Regel aendert, weil die Begruendung nicht mehr traegt, ohne zu merken, dass die Regel selbst noch stimmt.
+
+Besonders `Cmd/Delete.pm` faellt aus dem Muster: es slurpt keine Payload, sondern liest eine Zeile Benutzereingabe -- die einzige Stelle, an der ein Mensch etwas eintippt. Ob die ohne Dekodierschicht richtig behandelt wird, ist eine echte Frage (heute wird nur auf `^y` geprueft, also praktisch folgenlos, aber der Satz sollte es sagen).
+
+## Zu tun
+
+Den Absatz auf den heutigen Stand bringen: alle Leser benennen (oder die Aufzaehlung durch die Regel ersetzen, wenn sie sich sauber formulieren laesst -- etwa "jeder Leser dekodiert seine Payload selbst"), und den Sonderfall `Delete` einordnen. Beim Schreiben pruefen, ob die Entscheidung selbst noch richtig ist -- wenn ja, sagen warum; wenn nein, ist das ein eigenes Ticket und keine POD-Aenderung.
+
+`grep -rn "STDIN" lib/ bin/` findet die Stellen.
+
+Absatz im POD von enable_std_utf8 ersetzt: statt 'Only Restore' jetzt die Regel (jeder STDIN-Leser dekodiert seine Payload selbst) plus alle vier Leser namentlich. Stand per grep verifiziert, nicht aus dem Ticket uebernommen: Restore, SetRefs und Foundation setzen alle binmode STDIN, ':raw' und geben die Oktette genau einmal durch from_octets; Delete liest eine Zeile Benutzereingabe ohne Dekodierung. Die Entscheidung selbst bleibt richtig und der Grund steht jetzt da: ':raw' poppt eine hier gesetzte Schicht ohnehin wieder ab (empirisch geprueft: PerlIO::get_layers zeigt danach nur unix,perlio, gelesen werden Oktette), also brachte sie den dreien nichts und wuerde nur einem Leser schaden, der das binmode vergisst. Delete als Sonderfall eingeordnet: die Antwort bleibt Oktette, folgenlos nur weil sie gegen /^y/i geprueft und verworfen wird -- nie gespeichert, ausgegeben oder in einen Ref geschrieben; wer eine Antwort als Text benutzt, muss selbst dekodieren. Kein Folgeticket noetig. Dazu die gleiche veraltete Aussage in bin/karr Zeile 16 nachgezogen. Tests: t/215-pod-ascii-only.t, t/124-source-ascii-only.t, podchecker (31 statt 30 vorbestehende =func-Linkwarnungen, gleiche Klasse) -- PASS. Kein Changes-Eintrag vorgeschlagen (reine POD-/Kommentarkorrektur).
