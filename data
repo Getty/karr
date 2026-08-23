@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-08-22T04:49:00Z
+claimed_by: fled-onto
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T09:51:24Z
+id: 244
+priority: low
+started: 2026-08-22T04:43:39Z
+status: done
+tags:
+- cli
+- exit-codes
+title: 'config get/set: derselbe Truthiness-Waechter wie #239, eine Datei weiter'
+updated: 2026-08-23T21:50:53Z
+---
+
+Restposten aus #239, damit die Fehlerklasse geschlossen ist und niemand sie ein viertes Mal entdecken muss.
+
+`lib/App/karr/Cmd/Config.pm` um Zeile 185 und 188:
+
+    my $key = $pos[1] or die "Usage: karr config get KEY\n";
+
+Dieselbe Form, die #153 (Optionswerte), #230 (create --title) und #239 (die fuenf id-Waechter) an ihren Stellen beseitigt haben: `or` prueft Wahrheit, nicht Laenge. `karr config get 0` antwortet deshalb mit einem Usage-Fehler (exit 2) statt mit dem Laufzeitfehler fuer einen unbekannten Schluessel (exit 1).
+
+## Warum es trotzdem nur "low" ist
+
+Es gibt keinen numerischen Konfigurationsschluessel, der praktische Schaden ist also null. Und anders als bei #239 ist es ein Schluessel, keine id -- es faellt damit ausserhalb dessen, was #239 als "die fuenf Waechter" abgegrenzt hatte, und wurde dort bewusst liegengelassen statt beilaeufig mitgenommen.
+
+## Zu tun
+
+Auf `defined && length` umstellen, in derselben Form wie die anderen drei Tickets. Beide Stellen (get und set) pruefen, nicht nur die erste. Ob ein Test dazugehoert, entscheidet der Bauende: die Klasse ist inzwischen dreifach gepinnt, und ein vierter Test, der nur zeigt "auch hier ist es jetzt exit 1", traegt wenig -- ein Satz im Kommentar mit Verweis auf #239 traegt womoeglich mehr.
+
+Beide Waechter in Cmd/Config.pm auf `defined && length` umgestellt (Zeilen 191-197). Vorher nachgestellt: `karr config get 0` -> "Usage: karr config get KEY", exit 2, waehrend `karr config get bogus` -> "Unknown key: bogus", exit 1; `karr config set 0 x` ebenso exit 2 gegen "Key 'bogus' is read-only" exit 1. Nachher beide exit 1. Der dritte Waechter, `my $val = $pos[2] // die ...`, war schon richtig -- // statt or -- und bleibt: `karr config set foundation.enabled 0` muss den falschen Wert schreiben koennen, verifiziert. Test doch geschrieben, gegen die Empfehlung des Tickets: ein Subtest in t/57-exit-code-contract.t, wo #239 seinen hat. Begruendung -- nichts unter t/ konnte fehlschlagen, wenn diese zwei Zeilen zuruecklaufen (die ids dort sind eine andere Kommandooberflaeche mit einem anderen Meldungspaar), die zweite der beiden Stellen ist genau die Sorte, die halb repariert wird, und der Subtest pinnt zusaetzlich zwei Dinge, die sonst nirgends stehen: dass "kein Schluessel uebergeben" weiter exit 2 ist, und dass `config set foundation.enabled 0` den falschen Wert schreibt -- der Grund, warum dort // steht. Gegenprobe: mit gestashtem Fix faellt der Subtest mit 5 Assertions, mit Fix gruen. Gelaufen: t/57-exit-code-contract.t pass (11 Tests), t/06-config-cmd.t t/138-config-get-json-wrapping.t t/129-config-list-entry-rendering.t t/49-config-skill-options-first.t pass (28 Tests). Volle Suite bewusst nicht -- parallele Agenten. Beim Durchgehen von Cmd/Config.pm: kein weiterer Argument-Waechter dieser Form (Zeile 144 ist //, 198 ist //, 284 ist `ne ''`), aber eine verwandte Stelle gefunden und als #255 eingetragen: _display_keys filtert sechs optionale Zeilen mit Wahrheit statt defined, weshalb `config show` einen board.name/foundation.reason mit dem Wert 0 verschweigt, den `config get` und `config show --json` melden. Changes nicht angefasst (Auftrag), Vorschlag steht im Abschlussbericht.
