@@ -19,7 +19,7 @@ requires 'Errno';
 requires 'POSIX';
 requires 'Sys::Hostname';
 requires 'Time::HiRes';
-requires 'Git::Native', '0.005';
+requires 'Git::Native', '0.006';
 requires 'Git::Libgit2', '0.007';
 # Not used directly -- Git::Libgit2 loads the C library through it. Pinned so
 # an install cannot land on libgit2 < 1.9.3, where the ssh transport loops
