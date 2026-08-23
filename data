@@ -1,0 +1,45 @@
+---
+claimed_at: 2026-08-22T04:33:47Z
+claimed_by: fate-rise
+class: standard
+completed: 2026-08-23T23:03:57Z
+created: 2026-08-21T07:53:58Z
+id: 237
+priority: low
+started: 2026-08-21T11:48:26Z
+status: done
+tags:
+- parity
+- list
+title: 'list: --sort title fehlt, und mit ihm der halbe Filtersatz von kanban-md'
+updated: 2026-08-23T23:03:57Z
+---
+
+Beim systematischen Paritaetsvergleich gefunden. Kleinere Kaliber als die uebrigen Funde aus derselben Runde, deshalb niedrige Prioritaet -- aber verifiziert.
+
+## 1. --sort title
+
+    karr list --sort title
+    -> Usage: karr list --sort id|status|priority|created|updated|due (got "title")   (Exit 2)
+
+kanban-md fuehrt `title` als gueltiges Feld (cmd/list.go um Zeile 30) und sortiert case-insensitiv aufsteigend (internal/board/sort.go um Zeile 31-32), getestet in sort_test.go. karrs `@SORT_FIELDS` in Cmd/List.pm (Zeile 133) hat sechs der sieben Felder -- `title` fehlt als einziges.
+
+Begruendung gesucht in POD (FILTERS AND SORTING), dem Kommentarblock ueber `_comparators`, und t/79-list-sort-semantics.t. Der Test begruendet ausfuehrlich, **warum** unbekannte Felder ein Usage-Error sind (der Method-Call-Bug), sagt aber nirgends, dass `title` bewusst gestrichen wurde. Sieht nach Auslassung aus.
+
+## 2. Fehlende list- und pick-Optionen
+
+kanban-md hat, karr nicht: `--limit`/`-n` (Default 0 = unbegrenzt), `--blocked`, `--not-blocked`, `--unblocked`, `--unclaimed`, `--class`, `--parent`, `--group-by`; bei `pick` zusaetzlich `--parent` und `--no-body`.
+
+Das ist kein anderer Default, sondern gar keine Antwort -- deshalb hier zusammen mit dem kleinen Fund und nicht als eigenes Ticket. `--parent` faellt ohnehin weg, solange karr `parent` nicht setzen kann (als Luecke dokumentiert in Task.pm um Zeile 146-151).
+
+## Zu tun
+
+`--sort title` ist ein Einzeiler plus Test und sollte einfach nachgezogen werden -- mit case-insensitiver Sortierung wie die Referenz, nicht mit `cmp`.
+
+Fuer den Optionssatz vorher entscheiden, welche davon karr ueberhaupt will. `--class` und `--limit` sind offensichtlich nuetzlich, `--group-by` ist eine ganze Ausgabeform, `--unclaimed` ueberschneidet sich mit `--claimed-by`. Nicht alles auf einmal, und nicht ohne die Frage vorher gestellt zu haben.
+
+Teil 1 gebaut und committet (77e6db5): `title` in @SORT_FIELDS, case-insensitiver Vergleich wie kanban-md (lc cmp lc, nicht cmp), POD und Usage-Meldung nachgezogen. Vier Subtests in t/79 -- Referenzfixture aus sort_test.go, ein zweiter Fixture der lc-cmp-lc von cmp unterscheiden kann, Tie-Break auf id in beiden Richtungen, Nicht-ASCII hinter ASCII -- plus die CLI-Repro im Exit-Code-Subtest. Volle Suite gruen: 209 Dateien, 1538 Tests.
+
+Teil 2 (der fehlende list/pick-Optionssatz) bewusst nicht angefasst: das ist die Umfangsentscheidung, die das Ticket ausdruecklich nicht in einem Nebensatz getroffen haben wollte. Liegt erhoben als #252 und braucht eine Antwort vom Maintainer, keinen Code.
+
+Zu pruefen beim Review: ob die zugesagte Nicht-Kollation (Nicht-ASCII sortiert hinter ASCII) so dokumentiert genug ist, oder ob karr da spaeter mehr verspricht als lc()+cmp halten kann.
