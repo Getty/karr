@@ -5,14 +5,16 @@ our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr show [ID] [--me] [--agent NAME] [--last N] [--json]',
+  usage_string => 'USAGE: karr show [ID] [--me] [--agent NAME] [--last N] [--json] [--compact]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::CompactOutput;
 use App::karr::Task;
 use App::karr::CrossBoard;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::CompactOutput';
 
 =head1 SYNOPSIS
 
@@ -22,6 +24,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr show --me            # the last task my identity acted on
     karr show --agent fox-owl # the last task claimed by that agent
     karr show 12 --json
+    karr show --last 5 --compact  # one line per card
 
 =head1 DESCRIPTION
 
@@ -34,6 +37,14 @@ the C<N> most recently updated. C<--me> instead resolves the task(s) the
 current identity most recently acted on (via the activity log). C<--agent NAME>
 shows the task(s) most recently claimed by that agent name. C<ID> always wins
 over the selector options.
+
+C<--compact> replaces that full view with one line per card -- the very line
+C<karr list --compact> prints, from L<App::karr::Task/compact_line>. It is the
+rendering for confirming what a selector selected without reading a screenful
+per card, and it is what C<show --compact> was silently failing to do while
+C<--compact> was declared for every command in L<App::karr::Role::Output>
+(#254). C<--json> is unaffected by it: the payload is the whole card either
+way.
 
 =head1 SEE ALSO
 
@@ -181,6 +192,11 @@ sub execute {
   my @pos = $self->positional_args($args_ref);
   my @tasks = $self->_select_tasks($pos[0]);
 
+  # "No tasks found." stands under --compact too. It is one line already, and
+  # printing nothing at all would make an empty selection indistinguishable
+  # from a card whose line went missing -- `list --compact` can afford silence
+  # because its table says "0 task(s)", this command has no second half to say
+  # it in.
   unless (@tasks) {
     print "No tasks found.\n" unless $self->json;
     $self->print_json([]) if $self->json;
@@ -191,6 +207,17 @@ sub execute {
     my @data = map { $_->to_json_hash } @tasks;
     # A single explicit lookup stays a bare object for backward compatibility.
     $self->print_json(@data == 1 ? $data[0] : \@data);
+    return;
+  }
+
+  # Below --json and above the detail view, the same place `pick` cuts (#251):
+  # --compact shapes the plaintext rendering and never the payload. The line
+  # is App::karr::Task's, shared with `list --compact` so the two renderings
+  # of one card cannot drift apart (#254).
+  if ($self->compact) {
+    for my $task (@tasks) {
+      print $task->compact_line . "\n";
+    }
     return;
   }
 

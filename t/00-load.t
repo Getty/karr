@@ -17,6 +17,7 @@ my @modules = qw(
   App::karr::CrossBoard
   App::karr::Role::BoardAccess
   App::karr::Role::Output
+  App::karr::Role::CompactOutput
   App::karr::Role::DependencyArgs
   App::karr::Role::DependencyCheck
   App::karr::Cmd::Init

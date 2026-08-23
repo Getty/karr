@@ -5,13 +5,16 @@ our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr config [show|get KEY|set KEY VALUE] [--defaults] [--json]',
+  usage_string => 'USAGE: karr config [show|get KEY|set KEY VALUE] '
+    . '[--defaults] [--json] [--compact]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::CompactOutput;
 use App::karr::Config;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::CompactOutput';
 
 =head1 SYNOPSIS
 
@@ -20,6 +23,7 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr config set board.name "New Board Name"
     karr config show --defaults
     karr config --json
+    karr config show --compact
 
 =head1 DESCRIPTION
 
@@ -79,6 +83,25 @@ bare, which left C<get board> answering C<{"name":"..."}> -- byte-identical to
 the wrapped form of a scalar key called C<name>, and no key in the payload to
 tell them apart (#131). Consumers that read the bare list or mapping must now
 index the requested key first; a scalar read is unchanged.
+
+=item * C<--compact>
+
+C<show> prints C<key=value>, one key per line, instead of padding the key into
+a 25-column field:
+
+    karr config show --compact | grep '^claim_timeout='
+
+Same keys, same order, and the same rendered values as the padded table --
+only the frame changes, so the C<diff> of a board against C<--defaults>
+described above holds for this rendering too. A value is still rendered for
+people (a list joins with C<, >), because C<show> and C<--compact> disagreeing
+about what a board's statuses are would be the trap of #130 again; the payload
+notation is C<--json>, and C<--json> wins where both are given.
+
+C<get> and C<set> are unchanged by it: C<get> already prints the bare value
+and nothing else -- which is what C<$(karr config get claim_timeout)> relies
+on and is as terse as an answer gets -- and C<set> already confirms in a single
+short line. The option is accepted there and has nothing left to shorten.
 
 =back
 
@@ -216,6 +239,18 @@ sub _show_all {
   }
 
   my @keys = $self->_display_keys($d);
+
+  # Same rows, no column: `key=value` is what a script cuts on, and the padded
+  # table is what a person reads. Until #254 this command took --compact from
+  # App::karr::Role::Output and printed the padded table for it anyway.
+  if ($self->compact) {
+    for my $entry (@keys) {
+      my ($key, $val) = @$entry;
+      printf "%s=%s\n", $key, $self->_format_value($val);
+    }
+    return;
+  }
+
   for my $entry (@keys) {
     my ($key, $val) = @$entry;
     printf "%-25s %s\n", $key, $self->_format_value($val);

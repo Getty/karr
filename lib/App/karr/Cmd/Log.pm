@@ -5,25 +5,35 @@ our $VERSION = '0.501';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-    usage_string => 'USAGE: karr log [--agent NAME] [--task ID] [--last N] [--json]',
+    usage_string => 'USAGE: karr log [--agent NAME] [--task ID] [--last N] [--json] [--compact]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::CompactOutput;
 use App::karr::Encoding qw( json_decode );
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::CompactOutput';
 
 =head1 SYNOPSIS
 
     karr log
     karr log --agent agent-fox
     karr log --task 12 --last 50 --json
+    karr log --compact
 
 =head1 DESCRIPTION
 
 Reads activity entries stored in C<refs/karr/log/*> and prints a merged view of
 recent actions. The command is only available when the board is inside a Git
 repository because the log lives in Git refs, not in local task files.
+
+The default rendering pads the agent and action into columns so a run of
+entries reads as a table. C<--compact> drops the padding and prints one
+space-separated line per entry -- timestamp, agent, action, C<#id>, detail --
+which is shorter, survives a long agent name without pushing the rest of the
+line right, and cuts on whitespace. The detail is omitted entirely when the
+entry carries none, rather than leaving a trailing space behind.
 
 =head1 FILTERS
 
@@ -134,8 +144,28 @@ sub execute {
         return;
     }
 
+    # One line, so --compact has nothing to shorten here and says the same
+    # thing. Silence would be a worse compact answer than a short sentence.
     unless (@entries) {
         print "No log entries.\n";
+        return;
+    }
+
+    # No column padding: single spaces, `#12` for the task the way `list
+    # --compact` spells an id, and no trailing space when an entry has no
+    # detail. Until #254 this command took --compact from
+    # App::karr::Role::Output and printed the padded table for it regardless.
+    if ($self->compact) {
+        for my $e (@entries) {
+            my $line = sprintf '%s %s %s #%s',
+                $e->{ts}      // '?',
+                $e->{agent}   // '?',
+                $e->{action}  // '?',
+                $e->{task_id} // '?';
+            $line .= ' ' . $e->{detail}
+                if defined $e->{detail} && length $e->{detail};
+            print $line . "\n";
+        }
         return;
     }
 

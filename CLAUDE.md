@@ -54,7 +54,8 @@ counterpart and no parity obligation.
 - `bin/karr` — CLI entry point
 - `lib/App/karr.pm` — Main app, MooX::Cmd root
 - `lib/App/karr/Cmd/*.pm` — Subcommands (MooX::Cmd default namespace)
-- `lib/App/karr/Role/Output.pm` — Role for --json and --compact output options
+- `lib/App/karr/Role/Output.pm` — Role for the --json output option and the JSON printers
+- `lib/App/karr/Role/CompactOutput.pm` — Role for --compact, composed only by the nine commands that render one
 - `lib/App/karr/Encoding.pm` — The character/octet boundary: argv, std handles, ref blobs, YAML, JSON
 - `lib/App/karr/Role/BoardDiscovery.pm` — Role providing git/store/config discovery
 - `lib/App/karr/Role/SyncLifecycle.pm` — Role providing sync_before/sync_after with retry

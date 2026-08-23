@@ -1,5 +1,22 @@
 {{$NEXT}}
 
+    - `--compact` is now declared only by the nine commands that render
+      one, and four of them are new to it (#254). `karr show --compact`
+      prints one line per card, the very line `karr list --compact`
+      prints; `karr context --compact` prints the board's four numbers
+      as `key=value` and nothing else; `karr log --compact` drops the
+      column padding for one space-separated line per entry; and `karr
+      config show --compact` prints `key=value` per line instead of the
+      padded table. The option used to sit beside `--json` in the role
+      every command with an alternate rendering composes, so all
+      twenty-two of them advertised it in `--help` and thirteen accepted
+      it and threw it away without a word. Those thirteen -- `archive`,
+      `delete`, `disable`, `edit`, `enable`, `handoff`, `import`,
+      `materialize`, `move`, `needs`, `repair`, `skill`, `unlock` -- now
+      answer `Unknown option: compact` with their usage and exit 2.
+      `--json` is unchanged everywhere, and still wins where both are
+      given.
+
     - An option name with a dash in it no longer disappears when a
       boolean flag stands in front of it (#256). `karr list --claimed-by
       NAME` worked and `karr list --json --claimed-by NAME` answered

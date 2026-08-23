@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::CompactOutput;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::PickRules;
 use App::karr::Task;
@@ -17,8 +18,8 @@ use App::karr::Lock;
 use Time::Piece;
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::ClaimTimeout', 'App::karr::Role::DependencyCheck',
-     'App::karr::Role::PickRules';
+     'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout',
+     'App::karr::Role::DependencyCheck', 'App::karr::Role::PickRules';
 
 =head1 SYNOPSIS
 
@@ -259,10 +260,12 @@ sub execute {
   # leave standing.
   #
   # Meeting the option beat withdrawing it, and that was decided on the role
-  # rather than on this command: Role::Output declares --compact beside --json,
-  # so removing it from one consumer means splitting the role and moving the
-  # option surface of the seventeen further commands that ignore it just as
-  # silently (#254 has the full census). Pick meanwhile already prints in two
+  # rather than on this command: Role::Output declared --compact beside --json
+  # then, so removing it from one consumer meant splitting the role and moving
+  # the option surface of the seventeen further commands that ignored it just as
+  # silently. #254 did exactly that -- --compact now lives in
+  # App::karr::Role::CompactOutput, which this command composes and the thirteen
+  # that render nothing do not. Pick meanwhile already prints in two
   # parts -- who got which card, then what the card is -- so there is an obvious
   # place to cut, and the reference cuts there too: kanban-md's `pick --no-body`
   # ("suppress full task details after pick", cmd/pick.go:104) prints its

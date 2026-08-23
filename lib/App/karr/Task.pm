@@ -697,6 +697,32 @@ already end in one, to match kanban-md's own writer byte-for-byte.
 
 =cut
 
+# One card, one line. The format is `list --compact`'s, and it lives here
+# rather than in that command because `show --compact` prints the same line
+# (#254) and two commands spelling one printf out separately is how two
+# renderings of the same thing start to drift. Callers add the newline.
+#
+# Fixed-width on the two fields whose width is bounded, free on the one whose
+# width is not: the id column pads to four so short and long ids stay aligned
+# and a five-digit board simply widens the row, and the status is
+# right-aligned to the width of the longest default status name. The title is
+# printed as it stands, never truncated -- what a compact rendering saves is
+# lines, not the content of a line.
+sub compact_line {
+  my ($self) = @_;
+  return sprintf '#%-4u %10s %s', $self->id, $self->status, $self->title;
+}
+
+=method compact_line
+
+  print $task->compact_line . "\n";
+
+Renders the task as the single line C<karr list --compact> and
+C<karr show --compact> print for it -- id, status, title -- with no trailing
+newline.
+
+=cut
+
 sub _parse_content {
   my ($class, $content) = @_;
   # The closing delimiter is anchored to the start of a line (/m), the way

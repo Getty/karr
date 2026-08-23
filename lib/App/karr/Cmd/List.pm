@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::CompactOutput;
 # For --unclaimed, and for nothing else: claim_held is the claim test
 # App::karr::Role::PickRules/pickable applies, so the free cards this command
 # lists are the free cards `karr pick` hands out (ticket #252). The role is
@@ -22,7 +23,7 @@ use App::karr::Config;
 use App::karr::Error qw( user_error );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::ClaimTimeout';
+     'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout';
 
 =head1 SYNOPSIS
 
@@ -283,9 +284,11 @@ sub execute {
     return;
   }
 
+  # The line itself is L<App::karr::Task/compact_line>, so `show --compact`
+  # prints exactly this and cannot drift from it (#254).
   if ($self->compact) {
     for my $t (@tasks) {
-      printf "#%-4u %10s %s\n", $t->id, $t->status, $t->title;
+      print $t->compact_line . "\n";
     }
     return;
   }

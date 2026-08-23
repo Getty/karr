@@ -7,6 +7,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::ClaimTimeout;
 use App::karr::Role::CliArgs;
+use App::karr::Role::CompactOutput;
 use App::karr::Role::DependencyArgs;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::ExitCodes;
@@ -62,8 +63,9 @@ my $FRAMEWORK = qr{
 my %KNOWN_LEAK = ();
 
 my @ROLES = map { "App::karr::Role::$_" } qw(
-    BoardAccess BoardDiscovery ClaimTimeout CliArgs DependencyArgs
-    DependencyCheck ExitCodes Output SkillFile SyncLifecycle TaskMutation
+    BoardAccess BoardDiscovery ClaimTimeout CliArgs CompactOutput
+    DependencyArgs DependencyCheck ExitCodes Output SkillFile SyncLifecycle
+    TaskMutation
 );
 
 # Every sub in $pkg's symbol table, paired with the package it was really

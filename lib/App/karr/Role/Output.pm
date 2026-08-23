@@ -11,19 +11,21 @@ use App::karr::Encoding ();
 
 =head1 DESCRIPTION
 
-Small role that adds shared output options for commands with alternate
-renderings and provides a JSON printer used throughout the CLI.
+Small role that adds the shared C<--json> option for commands with a
+machine-readable rendering, and provides the JSON printer used throughout the
+CLI.
+
+C<--compact> used to be declared here beside it and is not: only nine commands
+render a compact form, while every command with a C<--json> composes this role,
+so the shared declaration advertised C<--compact> on thirteen commands that
+ignored it (#254). It lives in L<App::karr::Role::CompactOutput> now, which
+those nine compose in addition to this role.
 
 =cut
 
 option json => (
   is => 'ro',
   doc => 'JSON output',
-);
-
-option compact => (
-  is => 'ro',
-  doc => 'Compact output',
 );
 
 # Characters out, not octets: STDOUT carries the CLI's :encoding(UTF-8) layer

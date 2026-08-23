@@ -6,7 +6,7 @@ use Moo;
 use MooX::Cmd;
 use MooX::Options (
   usage_string => 'USAGE: karr context [--write-to FILE] [--sections LIST] [--days N] '
-    . '[--activity-limit N] [--json]',
+    . '[--activity-limit N] [--json] [--compact]',
 );
 use Path::Tiny ();
 use App::karr::Error qw( user_error clean_error );
@@ -14,10 +14,12 @@ use App::karr::Encoding qw( json_decode );
 use Time::Piece;
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Role::CompactOutput;
 use App::karr::Task;
 use App::karr::Config;
 
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
+     'App::karr::Role::CompactOutput';
 
 =head1 SYNOPSIS
 
@@ -26,12 +28,32 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
     karr context --write-to AGENTS.md --days 14
     karr context --activity-limit 10
     karr context --json
+    karr context --compact
 
 =head1 DESCRIPTION
 
 Builds a concise board summary suitable for embedding into agent context files
 such as F<AGENTS.md>. The command can print Markdown directly, emit structured
 JSON, or update an existing file between sentinel comments.
+
+C<--compact> prints the board's four numbers and nothing else -- one
+C<key=value> per line, under the same names the C<--json> summary uses, with no
+headings, no sections and no sentinels:
+
+    board_name=karr
+    total_tasks=41
+    active=7
+    blocked=1
+    overdue=0
+
+That is the reading of a briefing that fits in a prompt header or a status
+line, and it is what C<context --compact> was silently failing to do while
+C<--compact> was declared for every command in L<App::karr::Role::Output>
+(#254). It shapes what is printed, not what is written: with C<--write-to> the
+file still receives the Markdown block, because those sentinels are an interop
+contract with kanban-md (see L</FILE UPDATE MODE>) and a compacted block would
+be one neither tool could find again -- and the line that run prints is a
+single line already. C<--json> wins over both.
 
 Only C<archived> tasks are left out of the summary. Finished work still counts
 towards the reported total and is still reported as blocked if it is, which is
@@ -230,6 +252,23 @@ sub execute {
       sections => \@section_data,
     };
     $self->print_json($out);
+    return;
+  }
+
+  # The header numbers alone, keyed the way the --json summary keys them so a
+  # reader does not have to learn two vocabularies for the same four counts.
+  # Below --json and above the Markdown, the place `pick` cuts (#251): the
+  # payload is never reshaped by --compact, the prose is.
+  #
+  # --write-to wins over it deliberately. The block in that file is delimited
+  # by sentinels karr shares with kanban-md, so what goes between them is not
+  # this command's to compact -- and such a run prints one line either way.
+  if ( $self->compact && !$self->write_to ) {
+    printf "board_name=%s\n", $board_name;
+    printf "total_tasks=%d\n", $total;
+    printf "active=%d\n", $active;
+    printf "blocked=%d\n", $blocked;
+    printf "overdue=%d\n", $overdue;
     return;
   }
 

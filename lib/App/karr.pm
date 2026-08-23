@@ -273,7 +273,12 @@ sub _print_help {
   $out .= "\n" . colored("OPTIONS:", 'bold') . "\n";
   $out .= "  --dir PATH   Starting path for Git repository discovery\n";
   $out .= "  --json       JSON output (most commands)\n";
-  $out .= "  --compact    Compact output (list, board)\n";
+  # Named in full rather than "(list, board)": --compact is declared by
+  # App::karr::Role::CompactOutput, which exactly these nine commands compose,
+  # and anywhere else it is an unknown option that exits 2 (#254). The old
+  # parenthesis named two of them and read like a shortened list.
+  $out .= "  --compact    Compact output (board, config, context, dashboard,\n";
+  $out .= "               list, log, metrics, pick, show)\n";
   $out .= "\n" . colored("EXAMPLES:", 'bold') . "\n";
   $out .= "  karr init --name \"My Project\"\n";
   $out .= "  karr create --title \"Fix login bug\" --priority high\n";

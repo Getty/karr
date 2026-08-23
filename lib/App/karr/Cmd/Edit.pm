@@ -235,10 +235,12 @@ option unblock => (
 );
 
 # Every option above that can change a card, in the order they are declared:
-# the ones that carry a value, and the two that are flags. --json, --compact and
-# --quiet are deliberately absent -- they decide how the result is printed, not
-# what it is, so `karr edit 5 --json` asks for a change just as little as
-# `karr edit 5` does. --timestamp is absent for the same reason on the write
+# the ones that carry a value, and the two that are flags. --json and --quiet
+# are deliberately absent -- they decide how the result is printed, not what it
+# is, so `karr edit 5 --json` asks for a change just as little as `karr edit 5`
+# does. (--compact stood here too until #254, when this command stopped taking
+# it: it never rendered one, and an option accepted and thrown away is not a
+# rendering.) --timestamp is absent for the same reason on the write
 # side: it decorates the text --append-body appends and appends nothing of its
 # own, so `karr edit 5 --timestamp` names no change either (ticket #238). A new
 # field option belongs on one of these lists; leaving it off makes it invisible

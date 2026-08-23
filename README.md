@@ -1142,10 +1142,13 @@ Important refs:
 
 ### Output and exit codes
 
-Every board command takes `--json` for machine-readable output and `--compact`
-for terse one-line output. `karr list --json` emits the full card payload —
-frontmatter plus body — so reading a whole set of tickets is one call rather
-than one `karr show` per id.
+Every board command takes `--json` for machine-readable output. `karr list
+--json` emits the full card payload — frontmatter plus body — so reading a
+whole set of tickets is one call rather than one `karr show` per id.
+
+`--compact` is the terse plaintext rendering, and only the nine commands that
+have one take it: `board`, `config`, `context`, `dashboard`, `list`, `log`,
+`metrics`, `pick`, `show`. Anywhere else it is an unknown option and exits `2`.
 
 The exit code is a stable contract, because karr's primary callers are agents
 scripting the CLI (`docs/adr/0002-exit-code-contract.md`):
