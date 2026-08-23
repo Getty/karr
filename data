@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-22T04:33:53Z
+claimed_by: date-once
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T11:30:39Z
+id: 248
+priority: medium
+started: 2026-08-21T11:48:19Z
+status: done
+tags:
+- json
+- delete
+- bug
+title: delete --json ist auf dem interaktiven Pfad kein JSON
+updated: 2026-08-23T21:50:53Z
+---
+
+Nebenbefund aus #242, selbst nachgestellt.
+
+    printf "n\\n" | karr delete 1 --json
+    -> Delete task 1: A? [y/N] {"deleted":false,"id":1,"title":"A"}
+
+    python3 -c "import json,sys; json.loads(sys.stdin.read())"
+    -> JSONDecodeError: Expecting value: line 1 column 1
+
+Die Rueckfrage geht nach STDOUT, auch unter `--json`. Das Objekt ist da, aber der Strom ist als Ganzes nicht dekodierbar.
+
+## Warum das ein Vertragsbruch ist
+
+`--json` verspricht maschinenlesbares STDOUT -- darauf beruht die ganze Kanalaufteilung, die `Role/DependencyCheck` begruendet ("STDERR keeps STDOUT parseable, --json carries the same fact as data because a JSON consumer never reads STDERR"). Genau diese Regel wird hier von der Rueckfrage gebrochen, und zwar von dem Kommando, dessen Ausgabe man am ehesten auswertet, bevor man etwas Unwiderrufliches tut.
+
+Nachbar von #241, aber nicht dasselbe: #241 hat die **Spuelung** des Prompts repariert, nicht seinen **Kanal**.
+
+## Zu entscheiden
+
+Drei Auswege, und die Wahl ist keine Formalie:
+
+1. **Prompt nach STDERR**, wenn `--json` gesetzt ist. Klein, aber es macht den Kanal des Prompts von einer Option abhaengig -- inkonsistent.
+2. **Prompt immer nach STDERR.** Konsequenter: eine Rueckfrage ist keine Ausgabe, sondern Dialog, und STDERR ist der Dialogkanal. Aendert aber den nicht-JSON-Pfad mit.
+3. **`--json` ohne `--yes` zurueckweisen** (Usage-Fehler, exit 2). Wer maschinenlesbar loeschen will, soll sich entscheiden. Am strengsten, und womoeglich am ehrlichsten -- eine interaktive Rueckfrage in einem Modus fuer Maschinen ist selbst schon ein Widerspruch, und #235 hat gerade fuenf davon zurueckgewiesen.
+
+Meine Neigung geht zu 2 oder 3; entscheide am Code und begruende es. Pruef dabei, ob andere Kommandos unter `--json` etwas nach STDOUT drucken, das kein JSON ist -- `grep` nach `print`/`printf` ohne `$self->json`-Bedingung.
+
+Regressionstest: der Strom muss unter `--json` in beiden Antwortfaellen (y und n) als Ganzes dekodierbar sein.
+
+Gebaut und committet (700cecc). Gewaehlt wurde Variante 2: der Prompt geht auf jedem Pfad nach STDERR, nicht nur unter --json. Begruendung steht im Code und in der Commit-Message -- eine Rueckfrage ist Dialog und kein Ergebnis, der nicht-JSON-Pfad hatte denselben Defekt leiser (`karr delete 1 > kept.txt` schrieb die Frage in die Datei), und ein Kanal, der an einem Flag haengt, erreicht nur den Aufrufer, der das Flag gesetzt hat.
+
+Variante 3 (--json ohne --yes zurueckweisen) wurde geprueft und verworfen: sie macht die `deleted: false`-Form von #236/#242 unerreichbar, weil es unter --yes keine Rueckfrage zum Ablehnen gibt, und sie verbietet `printf "y\nn\ny\n" | karr delete 1,2,3 --json` -- eine Antwort pro Karte, die --yes als Alles-oder-nichts nicht ausdruecken kann.
+
+#241s flush ist mitgewandert und dort kein Formalismus: karrs STDERR traegt die :encoding(UTF-8)-Schicht aus App::karr::Encoding und ist damit gepuffert. t/241 sagt das jetzt dazu, damit die Zeile nicht als offensichtlich redundant geloescht wird.
+
+Neuer Test t/248-delete-json-prompt-channel.t: pinnt den Strom, nicht das Objekt -- jede Zusicherung dekodiert STDOUT am Stueck. Beide Antworten (y und n), der gemischte Batch, und der Klartextpfad. Volle Suite gruen: 209 Dateien, 1538 Tests.
+
+Der Pruefauftrag des Tickets (andere Kommandos unter --json) ist erledigt: Archive schirmt beide Zeilen ab, Log.pm:92 ist der einzige Kandidat und liegt als #253 -- unverifiziert, ob der Pfad hinter require_local_board ueberhaupt erreichbar ist.
