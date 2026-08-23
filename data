@@ -1,0 +1,43 @@
+---
+claimed_at: 2026-08-22T21:21:51Z
+claimed_by: done-many
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T09:19:29Z
+id: 240
+priority: low
+started: 2026-08-22T21:15:21Z
+status: done
+tags:
+- pick
+- parity
+title: pick_rank stuft eine unbekannte Klasse anders ein als kanban-md, wenn 'standard'
+  nicht konfiguriert ist
+updated: 2026-08-23T21:50:53Z
+---
+
+Nebenbefund aus #233, dort bewusst nicht mitgebaut -- mit einer Begruendung, die traegt.
+
+## Der Unterschied
+
+`Role/PickRules.pm::pick_rank` nimmt fuer eine Karte mit unbekannter Klasse `$cls_idx{standard} // 0`. kanban-mds `classOrder` (internal/board/pick.go, unter sortPickCandidates) nimmt `cfg.ClassIndex("standard")`, und das ist **-1**, wenn `standard` gar nicht konfiguriert ist.
+
+Auf einem Board, dessen `classes` kein `standard` enthaelt, landet eine Karte mit unbekannter Klasse in kanban-md damit vor allen anderen; in karr gleichauf mit der ersten konfigurierten Klasse.
+
+## Warum es nicht in #233 mitgebaut wurde
+
+Es ist ein Token, aber es zieht zwei Erklaerungen hinter sich her:
+
+- Das POD von `pick_rank` sagt "an unlisted class sorts with `standard`".
+- `t/198-pick-rules-shared.t` hat im Subtest "the ranking itself, pinned card by card" einen Kommentar, der erklaert, `quux` "ranks where `standard` would ... index 0".
+
+Und -- das ist der Punkt -- die Zusicherung dort **ueberlebt beide Varianten**: Karte 7 kommt mit `0` wie mit `-1` zuerst heraus. Die Aenderung wuerde also keinen Test rot machen, sondern eine Erklaerung veralten lassen. Genau die Sorte Aenderung, die stillschweigend eine Luege im Repo hinterlaesst, wenn man sie beilaeufig mitnimmt.
+
+## Zu entscheiden
+
+1. Uebernimmt karr kanban-mds -1, oder bleibt es bei "sortiert mit standard"? Beides ist vertretbar: karrs Variante ist gutmuetiger (eine Karte mit Tippfehler in der Klasse verhaelt sich wie eine normale Karte), kanban-mds ist auffaelliger (sie draengt sich nach vorn und faellt auf).
+2. Wie erreichbar der Fall ueberhaupt ist: `standard` steht in `default_config`, ein Board muss es also aktiv entfernt haben. Wenn die Antwort "praktisch nie" lautet, ist die richtige Loesung womoeglich gar keine Codeaenderung, sondern ein Satz im POD, der sagt, was bei fehlendem `standard` gilt.
+
+Was auch immer entschieden wird: POD von `pick_rank` und der Kommentar in t/198 muessen danach dasselbe sagen wie der Code.
+
+POD-Klarstellung statt Codeaenderung, wie entschieden: pick_rank unveraendert. Role/PickRules.pm: POD von pick_rank sagt jetzt, dass eine unbekannte Klasse standards Index nimmt und 0, wenn das Board kein standard listet, und dass das eine bewusste Abweichung von kanban-mds -1 ist (gutmuetig statt vordraengelnd; ein Board muss die Default-classes-Liste ersetzt haben). Kommentar an der // 0-Zeile und im Sortier-Block entsprechend. t/198: der irrefuehrende quux-Kommentar sagt jetzt, dass @expected den Fall gerade NICHT pinnt. Zusaetzlich neuer Subtest 'an unknown class on a board without standard' (Karte 2: unbekannte Klasse, unwichtigste Prioritaet, hoehere id) -- mit // -1 mutiert faellt genau dieser Subtest um, sonst nichts. prove -l t/198-pick-rules-shared.t PASS, ebenso t/233, t/125, t/124, t/215 und die vier pick-Kommandotests. Kein Commit, kein Changes-Eintrag (reine Doku, kein Verhalten).
