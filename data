@@ -1,0 +1,91 @@
+---
+claimed_at: 2026-08-22T22:21:43Z
+claimed_by: lawn-pipe
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-22T04:48:35Z
+id: 255
+priority: low
+started: 2026-08-22T22:11:29Z
+status: done
+tags:
+- cli
+- config
+- output
+title: config show verschweigt einen Wert '0', den get und --json melden
+updated: 2026-08-23T21:50:53Z
+---
+
+Beim Schliessen von #244 in `lib/App/karr/Cmd/Config.pm` gefunden und nachgestellt. Es ist dieselbe Wurzel -- Wahrheit statt Laenge auf einem benutzergesetzten Wert -- aber nicht dieselbe Stelle: kein Argument-Waechter, sondern ein Anzeigefilter, und er trennt nicht Exit-Code 1 von 2, sondern `config show` von `config get` und `config show --json`.
+
+## Befund
+
+    karr config set board.name 0        -> Set board.name = 0        exit 0
+    karr config set foundation.reason 0 -> Set foundation.reason = 0 exit 0
+
+    karr config show                    -> keine Zeile board.name,
+                                           keine Zeile foundation.reason
+    karr config get board.name          -> 0                         exit 0
+    karr config get foundation.reason   -> 0                         exit 0
+    karr config show --json             -> {"board":{"name":"0"}, ...
+                                           "foundation":{"reason":"0"} ...}
+
+Der Wert steht in `refs/karr/config`, `get` liest ihn, `--json` traegt ihn, und
+die Klartext-Tabelle laesst die Zeile weg.
+
+## Ursache
+
+`_display_keys` (um Zeile 226-239) filtert die optionalen Zeilen mit `if`:
+
+    push @out, [board.name,        $board->{name}]        if $board->{name};
+    push @out, [board.description, $board->{description}] if $board->{description};
+    push @out, [defaults.status,   $defaults->{status}]   if $defaults->{status};
+    push @out, [defaults.priority, $defaults->{priority}] if $defaults->{priority};
+    push @out, [defaults.class,    $defaults->{class}]    if $defaults->{class};
+    push @out, [foundation.reason, $d->{foundation}{reason}]
+      if ref $d->{foundation} eq HASH && $d->{foundation}{reason};
+
+Gemeint ist "diese Karte hat den Schluessel gar nicht gesetzt", geprueft wird
+"der Wert ist wahr". Praktisch erreichbar sind davon `board.name`,
+`board.description` und `foundation.reason`: die drei sind schreibbar und
+haben keinen Validator, `0` kommt also durch. Die drei `defaults.*` sind
+validiert und koennen den Wert `0` heute nicht annehmen -- ausser ueber
+`karr import` oder eine von Hand geschriebene `config.yml`, wo nichts sie
+davon abhaelt.
+
+## Warum es zaehlt
+
+Die POD dieser Datei sagt ausdruecklich zu:
+
+    Because it renders identically to a board read, diff <(karr config show)
+    <(karr config show --defaults) is exactly the set of keys this board
+    overrides.
+
+Fuer einen Wert `0` stimmt das nicht: der Schluessel ist ueberschrieben und
+faellt aus dem diff heraus. Und `show` ist die Ausgabe, in der man nachsieht,
+was eine Konfiguration eigentlich enthaelt -- #78 hat aus genau diesem Grund
+jede Liste und jede Mapping-Dereferenzierung dort abgesichert, damit `show`
+auch ueber einer kaputten Konfiguration noch antwortet.
+
+## Zu tun
+
+Die sechs Filter von Wahrheit auf `defined` (oder `defined && length`, falls
+der leere String weiter unsichtbar bleiben soll -- das ist die Frage, die das
+Ticket entscheiden muss) umstellen. `version`, `tasks_dir`, `claim_timeout`,
+`lock_timeout` und `foundation.enabled` sind unbedingt, die sind nicht
+betroffen; `foundation.enabled` steht schon heute mit `0` in der Tabelle, weil
+es ueber `$c->foundation_enabled` und ohne Filter geht -- das ist der Beleg,
+dass eine `0`-Zeile in dieser Ausgabe niemanden stoert.
+
+Vorher klaeren: ob der leere String dieselbe Antwort bekommen soll wie die
+`0`. `karr config set board.description ""` ist heute nicht aufrufbar (#243
+lehnt ein leeres Argument ab), ueber `import` aber sehr wohl, und eine Zeile
+`board.description` mit nichts dahinter ist womoeglich informativer als keine
+Zeile -- oder Rauschen. Beides vertretbar, aber es gehoert entschieden und
+nicht nebenbei mitgenommen.
+
+Regressionstest: ein Board mit `board.name = 0`, und `config show`,
+`config get board.name` und `config show --json` muessen sich ueber den Wert
+einig sein.
+
+Six optional rows in _display_keys switched from truthiness to defined; --defaults renders through the same function, so both sides of the POD diff promise are fixed at once. Empty string decided as 'defined alone': config get prints an empty line at exit 0 for it and --json carries the empty string, so show now gives it a row with a blank right-hand side rather than a second silent omission; reachable via karr import, not via config set (#243). Also pulled in the stale WIP-limit sentence in the _format_entry comment (comment only). Regression test t/255-config-show-defined-values.t: RED on 4 of 5 subtests before the fix, green after. Fifteen test files run individually, all PASS. Changes entry proposed in the report, not written; not committed. NOTE: this card was claimed with the name flew-down at move time but carries lawn-pipe -- handoff uses the name the card holds.
