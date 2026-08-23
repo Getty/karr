@@ -141,6 +141,16 @@ before C<banana> rather than ahead of every lowercase title. The comparison
 is on characters and not collated, so a title starting outside ASCII sorts
 after every ASCII one.
 
+B<Collation is a non-goal, not a gap.> C<--sort title> is C<lc> plus a
+codepoint compare, and it stays that way: C<Aebi>, C<Zebra>, C<Abi> sorts
+C<Abi>, C<Aebi>, C<Zebra> under German rules and C<Abi>, C<Zebra>, C<Aebi>
+here. What the option promises is a stable, reproducible order that agrees
+with kanban-md on the same board -- not a locale-correct one. A collating
+sort would need a locale to collate B<for>, and a board is read by agents on
+machines that share none; two hosts would then disagree about what
+C<--sort title --limit 5> returns. Anyone who needs alphabetical order for a
+human takes C<--json> and sorts it where the locale is known.
+
 Tasks without a C<due> date sort last. Ties are broken by C<id>, and
 C<--reverse> turns the finished list around, tied entries with it.
 
@@ -525,7 +535,11 @@ sub _comparators {
     # sort by title. lc() sees characters here, not octets, so a title outside
     # ASCII lowercases by Unicode rules -- but cmp still compares codepoints,
     # so such a title sorts behind every ASCII one rather than beside its
-    # unaccented spelling. No collation is promised.
+    # unaccented spelling. No collation is promised, and none is coming: a
+    # collating comparator needs a locale to collate for, boards are read by
+    # agents on machines that share none, and two hosts disagreeing about the
+    # order is worse than one order that is merely not alphabetical. The POD
+    # under FILTERS AND SORTING states this as a non-goal (ticket #237).
     title    => sub { lc($_[0]->title) cmp lc($_[1]->title) },
     status   => sub { ($status{$_[0]->status}     // -1) <=> ($status{$_[1]->status}     // -1) },
     priority => sub { ($priority{$_[1]->priority} // -1) <=> ($priority{$_[0]->priority} // -1) },
