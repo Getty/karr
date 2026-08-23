@@ -65,11 +65,22 @@ sub _classify_argv {
 
     my %options_data = $self->_options_data;
     my %by_name;
+    # %long_by_alias is the DECLARED short spelling of an option, not a prefix
+    # rule: normalize_option_argv needs a `--long` carrier when it has to hand
+    # a flag-shaped value over inline, and `-a=VALUE` is not one (Getopt::Long
+    # reads the `=` as the first character of the value for a short option).
+    # Resolving a declared alias is not the abbreviation question
+    # _abbreviation_takes_value refuses to answer -- that one asks WHICH option
+    # a prefix names, and it is still not asked anywhere here.
+    my %long_by_alias;
     for my $name (keys %options_data) {
         $by_name{$name} = $options_data{$name};
         my $short = $options_data{$name}{short};
         next unless defined $short;
-        $by_name{$_} = $options_data{$name} for split /\|/, $short;
+        for my $alias (split /\|/, $short) {
+            $by_name{$alias}      = $options_data{$name};
+            $long_by_alias{$alias} = $name;
+        }
     }
 
     my @classified;
@@ -90,7 +101,7 @@ sub _classify_argv {
                 $data
                 ? ( defined $data->{format} ? 1 : 0 )
                 : $self->_abbreviation_takes_value( $name, \%options_data );
-            push @classified, [ $arg, 'option' ];
+            push @classified, [ $arg, 'option', $long_by_alias{$name} ];
             push @classified, [ shift(@args), 'value' ]
                 if $takes_value && !$has_inline && @args;
             next;
@@ -160,7 +171,9 @@ Never dies -- an argument list with no positionals returns an empty list.
 # "Unknown option: bogus_opt" exactly as before -- and the thing that must NOT
 # be folded is a value that merely looks like a flag (`karr edit 1 --body
 # --we-ird` stores --we-ird). _classify_argv already separates those two, so
-# this is a map over its answer and nothing more. A leading `no-` is left
+# this is a walk over its answer: flags are folded, and a flag-shaped value is
+# handed to its own option inline, which is the half ticket #259 added and
+# which the loop below explains where it happens. A leading `no-` is left
 # standing so that the negation prefix keeps reaching _options_fix_argv as
 # such, for the day a karr option is declared negatable.
 #
@@ -172,23 +185,78 @@ Never dies -- an argument list with no positionals returns an empty list.
 sub normalize_option_argv {
     my ($self, $args_ref) = @_;
 
-    return map { $_->[1] eq 'option' ? $self->_underscore_option_name($_->[0]) : $_->[0] }
-        $self->_classify_argv($args_ref);
+    my @classified = $self->_classify_argv($args_ref);
+    my @out;
+    for my $i ( 0 .. $#classified ) {
+        my ( $token, $kind, $long ) = @{ $classified[$i] };
+
+        if ( $kind eq 'option' ) {
+            push @out, $self->_underscore_option_name($token);
+            next;
+        }
+
+        # The other half of the same upstream shift (ticket #259). A value
+        # that merely looks like a flag is safe in space form only while
+        # _options_fix_argv reaches the option in front of it; when something
+        # it recognises stands one place earlier it swallows THAT option as
+        # its own value, and this token arrives in flag position and is
+        # folded -- `karr edit 1 --json -a --dashed-note` stored
+        # --dashed_note. Handing the value over inline settles it in every
+        # position: `--opt=VALUE` is one token, _options_fix_argv splits it
+        # itself and re-emits the half after the `=` verbatim, and a swallowed
+        # `--opt=VALUE` reaches Getopt::Long as the assignment it already was.
+        #
+        # Which option this is has not been asked -- _classify_argv decided
+        # this token is a value, which is #247's weaker question, and the
+        # carrier is the option's own spelling. Only a DECLARED short alias is
+        # resolved, because `-a=VALUE` is not an assignment to Getopt::Long;
+        # an abbreviation keeps its own spelling (`--prio=--weird`), so no
+        # prefix rule is reimplemented here.
+        if ( $kind eq 'value' && $token =~ /\A-/ && @out ) {
+            my $carrier = defined $classified[ $i - 1 ][2]
+                ? '--' . $classified[ $i - 1 ][2]
+                : $out[-1];
+            if ( $carrier =~ /\A--/ ) {
+                $out[-1] = $carrier . '=' . $token;
+                next;
+            }
+        }
+
+        push @out, $token;
+    }
+    return @out;
 }
 
 =method normalize_option_argv
 
     @ARGV = $class->normalize_option_argv(\@ARGV);
 
-Returns C<$args_ref> with every long option flag in it respelled with
-underscores -- C<--claimed-by> becomes C<--claimed_by> -- and everything else
-returned untouched: positionals, short options, the values options consume,
-and every token after a bare C<-->. Both spellings mean the same option to
-karr, and this is the one that survives MooX::Options in every argv position
-(ticket #256). It reads the option table and nothing else, so unlike the two
+Returns C<$args_ref> in the spelling that survives MooX::Options in every argv
+position (tickets #256 and #259). Two things change and nothing else does:
+
+=over 4
+
+=item * Every long option flag is respelled with underscores --
+C<--claimed-by> becomes C<--claimed_by>. Both spellings mean the same option
+to karr; only this one reaches Getopt::Long intact from behind another flag.
+
+=item * A value that looks like a flag is joined to its own option with an
+C<=>, so C<< --body --we-ird >> comes back as one token, C<--body=--we-ird>.
+The value is unchanged -- it keeps its dashes, and that is the point: as a
+separate token it could still be folded when something recognised stands one
+place in front of the option. A declared short alias is resolved to its long
+name to carry the value (C<< -a --we-ird >> becomes
+C<--append_body=--we-ird>), because C<-a=VALUE> is not an assignment to
+Getopt::Long; an abbreviation keeps its own spelling.
+
+=back
+
+Positionals, options whose value is not flag-shaped, an option that already
+carries its value inline, and every token after a bare C<--> are returned
+untouched. It reads the option table and nothing else, so unlike the two
 methods above it is called as a B<class> method, before any command object
 exists: F<bin/karr> runs it over argv for the command class MooX::Cmd is about
-to dispatch to.
+to dispatch to, and F<bin/karr-foundation> over its own.
 
 =cut
 

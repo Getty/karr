@@ -320,18 +320,23 @@ subtest 'normalize_option_argv touches flags only (RED)' => sub {
         [ App::karr::Cmd::List->normalize_option_argv( ['--claimed-by=a-name'] ) ],
         ['--claimed_by=a-name'],
         'an inline value keeps its dashes' );
+    # The carrier changed with #259 -- a flag-shaped value now rides inline on
+    # its own option instead of standing behind it -- but the promise this and
+    # the short-option pin below make is the same one, and #259 is what makes
+    # it hold in every argv position: the value keeps its dashes and is never
+    # read as a flag.
     is_deeply(
         [ App::karr::Cmd::Edit->normalize_option_argv( [qw( --body --we-ird )] ) ],
-        [qw( --body --we-ird )],
-        'a flag-shaped value is left alone' );
+        [qw( --body=--we-ird )],
+        'a flag-shaped value keeps its dashes, carried inline' );
     is_deeply(
         [ App::karr::Cmd::Edit->normalize_option_argv( [ '--timestamp', '--', '--we-ird' ] ) ],
         [ '--timestamp', '--', '--we-ird' ],
         'nothing after the separator is folded' );
     is_deeply(
         [ App::karr::Cmd::Edit->normalize_option_argv( [qw( -a --we-ird )] ) ],
-        [qw( -a --we-ird )],
-        'a short option and the value it takes are both untouched' );
+        [qw( --append_body=--we-ird )],
+        'a short option is resolved to its long name to carry the value' );
     is_deeply(
         [ App::karr::Cmd::List->normalize_option_argv( ['--no-not-blocked'] ) ],
         ['--no-not_blocked'],
@@ -376,12 +381,90 @@ subtest 'App::karr::Foundation normalizes its own argv (RED)' => sub {
         'the flag behind a boolean is respelled' );
     is_deeply(
         [ App::karr::Foundation->normalize_option_argv( [ '--note', '--we-ird' ] ) ],
-        [ '--note', '--we-ird' ],
-        'a flag-shaped value of a value-taking option keeps its dashes' );
+        [ '--note=--we-ird' ],
+        'a flag-shaped value keeps its dashes, carried inline (#259)' );
     is_deeply(
         [ App::karr::Foundation->normalize_option_argv( [qw( answer 7 darkpan )] ) ],
         [qw( answer 7 darkpan )],
         'the hub command and its positionals are untouched' );
+};
+
+# ------------------------------------------------------- (e) RED, #259:
+# the other half of the same upstream shift. #256 fixed the case where a
+# BOOLEAN is followed by an option whose name has a dash. This is the case
+# where a boolean is followed by a VALUE-TAKING option whose value looks like
+# a flag: _options_fix_argv swallows the value-taking option as the boolean's
+# value, so the value behind it lands in flag position and is folded --
+#
+#     karr edit 1 --json -a --dashed-note      stored --dashed_note
+#     karr list --json --claimed-by --weird-name   filtered on --weird_name
+#
+# -- and the second one is the worse shape, because #256 turned what used to
+# be a loud `Unknown option: claimed-by` (exit 2) into a silent exit 0 with an
+# empty list: a plausible answer to a question nobody typed, which #225, #226
+# and #251 all rank below an error message.
+#
+# The value is never in doubt here. _classify_argv has already decided that
+# this token is the value of the option in front of it -- the same weaker
+# question #247 settled -- so the fix is to hand it over in a form
+# _options_fix_argv cannot read as a flag whatever stands in front of it.
+
+subtest 'edit --json -a --dashed-note stores the value as typed (RED)' => sub {
+    my $repo = _setup_repo();
+    _seed_tasks( $repo, 1 );
+
+    my $rv = _run_karr( $repo, 'edit', 1, '--json', '-a', '--dashed-note' );
+    is( $rv->{exit}, 0, 'the edit succeeds' ) or diag $rv->{stderr};
+
+    my $body = _show( $repo, 1 );
+    like( $body, qr/--dashed-note/, 'the body carries the value as typed' );
+    unlike( $body, qr/--dashed_note/, 'and not the folded spelling' );
+};
+
+subtest 'list --json --claimed-by --weird-name filters on what was typed (RED)' => sub {
+    my $repo = _setup_repo();
+    _seed_tasks( $repo, 2 );
+
+    my $claim = _run_karr( $repo, 'move', 1, 'in-progress', '--claim', '--weird-name' );
+    is( $claim->{exit}, 0, 'a card is claimed under a flag-shaped name' )
+        or diag $claim->{stderr};
+
+    my $flag_first = _run_karr( $repo, 'list', '--json', '--claimed-by', '--weird-name' );
+    my $opt_first  = _run_karr( $repo, 'list', '--claimed-by', '--weird-name', '--json' );
+
+    is( $flag_first->{exit}, 0, '--json --claimed-by VALUE exits 0' )
+        or diag $flag_first->{stderr};
+    is( $flag_first->{stdout}, $opt_first->{stdout},
+        'both orders return the same JSON' );
+
+    my $found = decode_json( $flag_first->{stdout} );
+    is( scalar(@$found), 1, 'the claimed card is found, not a silent empty list' );
+};
+
+subtest 'a flag-shaped value is handed over inline (RED)' => sub {
+    require App::karr::Cmd::Edit;
+    require App::karr::Cmd::List;
+
+    is_deeply(
+        [ App::karr::Cmd::Edit->normalize_option_argv( [qw( --json -a --dashed-note )] ) ],
+        [qw( --json --append_body=--dashed-note )],
+        'a short option is resolved to its long name to carry the value' );
+    is_deeply(
+        [ App::karr::Cmd::List->normalize_option_argv( [qw( --json --claimed-by --weird-name )] ) ],
+        [qw( --json --claimed_by=--weird-name )],
+        'a long option keeps its own spelling and takes the value inline' );
+    is_deeply(
+        [ App::karr::Cmd::Edit->normalize_option_argv( [qw( --prio --weird )] ) ],
+        [qw( --prio=--weird )],
+        'an abbreviation is not resolved -- the = is all it needs (#247)' );
+    is_deeply(
+        [ App::karr::Cmd::Edit->normalize_option_argv( [qw( --body plain-value )] ) ],
+        [qw( --body plain-value )],
+        'a value that is not flag-shaped is left in space form' );
+    is_deeply(
+        [ App::karr::Cmd::Edit->normalize_option_argv( [ '--timestamp', '--', '--we-ird' ] ) ],
+        [ '--timestamp', '--', '--we-ird' ],
+        'nothing after the separator is touched' );
 };
 
 # ------------------------------------------------------- (c) GREEN pins:

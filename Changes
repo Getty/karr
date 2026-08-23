@@ -46,6 +46,32 @@
       --dry-run` -- the spelling its own SYNOPSIS invites -- no longer
       answers "Unknown option: dry-run".
 
+    - A value that looks like a flag now rides inline on its own option,
+      so it survives whatever stands in front of it (#259). This is the
+      other half of the shift #256 routed around: having recognised an
+      option, MooX::Options takes the next token as that option's value
+      unconditionally. After a boolean that token is the next option, and
+      #256 folds it so Getopt::Long recognises it -- but when the next
+      option is one that TAKES a value, it is swallowed as the boolean's
+      value and its own value lands one place later, in flag position,
+      where it is folded. `karr edit 1 --json -a --dashed-note` stored
+      `--dashed_note`, and `karr list --json --claimed-by --weird-name`
+      filtered on `--weird_name`: a name nobody typed, answered with exit
+      0 and an empty list. That second shape is the one this repo ranks
+      below an error message (#225, #226, #251), and #256 is what turned
+      it from a loud `Unknown option: claimed-by` into a quiet wrong
+      answer -- the frequent order was worth fixing, but the fix was not
+      finished. `App::karr::Role::CliArgs` now joins a flag-shaped value
+      to its option with an `=`, which is one token
+      _options_fix_argv splits itself and re-emits verbatim. A declared
+      short alias is resolved to its long name to carry it
+      (`-a --we-ird` becomes `--append_body=--we-ird`), because `-a=VALUE`
+      is not an assignment to Getopt::Long; an abbreviation keeps its own
+      spelling (`--prio=--weird`), so no prefix rule is reimplemented --
+      the question asked is still only #247's, whether the option takes a
+      value. Values that are not flag-shaped, options that already carry
+      their value inline, and everything after a bare `--` are untouched.
+
     - `karr list --unclaimed` lists the cards no live claim holds -- the
       fourth of the filters #252 accepted, and the one #237 had taken
       for a duplicate of `--claimed-by`. They ask different questions:
