@@ -1,0 +1,47 @@
+---
+claimed_at: 2026-08-22T22:14:16Z
+claimed_by: rock-yeah
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-22T21:55:25Z
+id: 257
+priority: low
+started: 2026-08-22T22:14:09Z
+status: done
+tags:
+- docs
+- wip
+title: 'ex/README.md nennt fuer expedite ein WIP-Limit, das es seit #227 nicht mehr
+  gibt'
+updated: 2026-08-23T21:50:53Z
+---
+
+Restposten aus #227, dort erkannt und bewusst liegengelassen -- die Datei stand ausserhalb des Auftrags.
+
+## Der Fund
+
+`ex/README.md` um Zeile 480 leitet eine Tabelle mit dem Satz ein: "The board defaults, as `App::karr::Config` provides them". Die Zeile darunter lautet:
+
+    | `classes` | `expedite` (WIP limit 1, bypasses column WIP), `fixed-date`, `standard`, `intangible` |
+
+Seit #227 (Commit 4b7121a) gibt `default_config` fuer `expedite` nur noch `{ name => "expedite" }` her. `wip_limit` und `bypass_column_wip` sind aus den Defaults und aus `validate` heraus, karr kennt WIP-Limits gar nicht mehr. Die Zelle beschreibt damit eine Konfiguration, die kein Board mehr bekommt -- und der einleitende Satz behauptet ausdruecklich, die Tabelle gebe wieder, was `App::karr::Config` liefert.
+
+## Warum es ein eigenes Ticket ist und nicht Teil von #245
+
+#245 hatte die **ausgelieferte** Skill-Datei zum Gegenstand: das, was `karr skill install` in fremde Repositories schreibt und was ein Agent dort als Briefing liest. `ex/README.md` ist Beispielmaterial im Repository, das karr nirgendwohin installiert. Andere Reichweite, andere Dringlichkeit -- deshalb getrennt und mit niedriger Prioritaet.
+
+## Zu tun
+
+Die Klammer streichen, so dass die Zelle nur noch die vier Klassennamen fuehrt.
+
+Beim Anfassen die uebrige Tabelle gegen `default_config` gegenpruefen, nicht nur diese eine Zeile -- der einleitende Satz gibt ein Versprechen fuer die ganze Tabelle ab, und wenn eine Zelle veraltet ist, kann es eine zweite auch sein. Ebenso den Rest der Datei auf Aussagen ueber WIP-Limits durchsehen (`grep -in wip ex/README.md`).
+
+Kein Test prueft den Inhalt von `ex/README.md`, es ist also nichts rot deswegen -- und genau deshalb faellt es sonst niemandem auf.
+
+Klammer gestrichen, Zelle fuehrt jetzt nur die vier Klassennamen. Commit siehe git log.
+
+Die uebrige Tabelle gegen ein live ausgefuehrtes App::karr::Config->default_config geprueft, nicht angenommen: statuses (mit require_claim auf in-progress und review), priorities, claim_timeout 1h, lock_timeout 5m, defaults und foundation.enabled 1 stimmen alle noch.
+
+Zwei Dinge bewusst nicht angefasst: die Tabelle laesst board.name, tasks_dir und version aus, was der einleitende Satz streng genommen mitverspricht -- das ist aelter als dieses Ticket und eine Frage, wieviel Schema ein Walkthrough tragen soll, keine Falschaussage. Und der Rest der Datei traegt kein WIP mehr (grep: nur noch "wipe" in anderer Bedeutung).
+
+Nebenbei gefunden und an den #255-Agenten weitergereicht, weil er die Datei gerade haelt: der Kommentarblock ueber _format_entry in Cmd/Config.pm nennt als Beispiel noch "which class carries a WIP limit".
