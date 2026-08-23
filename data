@@ -1,0 +1,43 @@
+---
+claimed_at: 2026-08-22T04:58:25Z
+claimed_by: drug-come
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T11:30:45Z
+id: 249
+priority: low
+started: 2026-08-22T04:44:00Z
+status: done
+tags:
+- encoding
+- output
+title: STDERR ist wegen der Encoding-Schicht gepuffert, Warnungen erscheinen nach
+  der Erfolgsmeldung
+updated: 2026-08-23T21:50:53Z
+---
+
+Nebenbefund aus #242, selbst nachgestellt.
+
+    karr delete 1 --yes 2>&1
+    -> Deleted task 1: A
+       Warning: task 2 (B) depends on task 1, which is being deleted (...)
+
+Die Warnung wird im Code **vor** dem Loeschen und vor der Erfolgsmeldung ausgegeben. Landen beide Stroeme in derselben Pipe, kommt sie trotzdem danach.
+
+Vermutete Ursache (vom Bauenden zu bestaetigen, nicht zu uebernehmen): `App::karr::Encoding::enable_std_utf8` setzt `binmode STDERR, ":encoding(UTF-8)"`, und die PerlIO-Schicht bringt eine Pufferung mit, die STDERR von Haus aus nicht hat.
+
+## Warum das zaehlt
+
+Auf einem echten Terminal stimmt die Reihenfolge (geprueft) -- der Fall trifft, wer **beide Stroeme zusammen einfaengt**, also `2>&1` oder eine Harness, die combined output liest. Das tun Agenten routinemaessig, und karr ist ein CLI fuer Agenten.
+
+Die Folge ist keine falsche Information, sondern eine falsche **Reihenfolge**: die Warnung, die eine Entscheidung beeinflussen sollte, steht unter dem Ergebnis der Entscheidung. Betrifft alles, was karr auf STDERR schreibt -- #236s Abhaengigkeitswarnungen, #242s Cross-Board-Warnungen, `dependency_report`, `expired_claim_report`.
+
+## Zu klaeren
+
+1. Erst die Ursache bestaetigen: ist es wirklich die Encoding-Schicht? Ein Test mit und ohne `binmode` beantwortet das in einer Minute.
+2. Falls ja: Autoflush auf STDERR nach dem `binmode` ist die naheliegende Antwort -- aber pruefen, ob das an anderer Stelle etwas kostet (Foundation tee-t Agentenausgabe ueber select/fork, dort ist Pufferung womoeglich beabsichtigt).
+3. Der Ort waere `App::karr::Encoding::enable_std_utf8` selbst -- dieselbe Funktion, die die Schicht setzt, sollte auch ihre Nebenwirkung beheben. Aber `Encoding` besitzt laut CLAUDE.md jeden Uebergang, also gehoert die Entscheidung dorthin und nicht in einzelne Kommandos.
+
+Regressionstest ist der heikle Teil: er muss beide Stroeme in **eine** Pipe fuehren und die Reihenfolge pruefen -- so ist der Fehler ueberhaupt aufgefallen.
+
+Ursache bestaetigt: die :encoding(UTF-8)-Schicht auf STDERR nimmt STDERR seine Pufferfreiheit; ohne binmode kommt die Warnung zuerst, mit binmode zuletzt (beide Handles flushen erst beim Exit, STDOUT zuerst). Fix in App::karr::Encoding::enable_std_utf8: autoflush auf BEIDEN Handles. Nur STDERR haette die Inversion nur umgedreht -- karr move druckt Ergebnis vor Warnung und haette dann warning-before-outcome gelesen (empirisch geprueft). Neuer Test t/249-combined-output-order.t fuehrt beide Stroeme in EINE Pipe (fork+dup, kein Shell) und prueft beide Richtungen; faellt ohne Fix (Subtest 1) und beim Halbfix nur-STDERR (Subtest 2). Foundation: kein Nachteil, die Handflushes um _spawn_repo werden zu No-ops. Nachgezogen: Kommentar an STDERR->flush in Cmd/Delete.pm und Kopf/Kommentare in t/241 (der Flush bleibt, ist auf dem CLI-Pfad jetzt aber redundant). Tests: t/249, t/241, t/248, t/70, t/167, t/124, t/215, t/157, t/51, t/65, t/80, t/93, t/78, t/30, t/161, t/214, t/122, t/148, t/151, t/187, t/79, t/110, t/220 -- alle PASS. Volle Suite bewusst nicht gefahren (parallele Agenten). Changes-Eintrag im Bericht, Datei nicht angefasst; nicht committet.
