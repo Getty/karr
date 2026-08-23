@@ -1,0 +1,208 @@
+---
+claimed_at: 2026-08-22T22:19:32Z
+claimed_by: flew-down
+class: standard
+completed: 2026-08-23T23:03:57Z
+created: 2026-08-21T11:30:51Z
+id: 250
+priority: medium
+started: 2026-08-22T21:12:23Z
+status: done
+tags:
+- crossboard
+- archive
+- semantics
+title: archive auf einer aufgegebenen Eskalation meldet der anderen Boardseite Erfolg
+updated: 2026-08-23T23:03:57Z
+---
+
+Beim Bauen von #242 aufgefallen, dort korrekt nicht mitgebaut -- es ist eine Frage an die Semantik, nicht an das Kommando.
+
+## Der Fall
+
+Karte A#1 wurde von B#5 eskaliert. Auf A wird sie **aufgegeben** und archiviert:
+
+    boardA$ karr archive 1
+    boardB$ karr needs --board boardA=...   -> archived (settled)
+    boardB$ karr needs --resolve            -> resolved boardA#1 ... unblocked
+
+`archived` ist auf jedem Board terminal (die Regel aus #67). Der Cross-Board-Verweis gilt damit als erfuellt, und die wartende Karte auf B wird entblockt -- so, als waere die Arbeit getan. Sie wurde aber weggelegt.
+
+## Warum das kein Nebenwiderspruch ist
+
+Genau darauf beruht die Warnung aus #242: sie schickt den Aufrufer von `delete` zu `archive`, weil `archive` den Ref behaelt und der Verweis aufloesbar bleibt. Fuer eine **erledigte** Karte ist das richtig. Fuer eine **aufgegebene** ist es eine falsche Erfolgsmeldung an ein anderes Repository -- und dort wird jemand auf einer Grundlage weiterarbeiten, die es nicht gibt.
+
+`delete` ist in diesem Fall ehrlicher als `archive`: dort meldet `karr needs` ein sichtbares `does not exist`.
+
+## Zu klaeren, und keine der Antworten ist offensichtlich
+
+1. **Unterscheidet karr ueberhaupt zwischen "fertig" und "aufgegeben"?** `done` und `archived` sind beide terminal. Wenn nicht, ist das die eigentliche Luecke, und sie ist groesser als dieses Ticket.
+2. **Soll `link_state` zwischen den terminalen Status unterscheiden** -- `done` als erfuellt, `archived` als "weggelegt, nicht erfuellt"? Das waere eine Aenderung an `CrossBoard`, die `karr needs --resolve` betrifft und womoeglich bestehende Boards anders beurteilt als bisher.
+3. **Oder gehoert die Unterscheidung gar nicht in den Status**, sondern in einen expliziten Vermerk beim Archivieren einer eskalierten Karte?
+4. Betrifft es die lokale `depends_on`-Seite genauso? Eine archivierte Karte, auf die eine andere wartet, entblockt sie dort ebenfalls -- pruefen, ob das dieselbe Frage ist oder eine andere.
+
+Vor jeder Codeaenderung: `docs/adr/` und `CONTEXT.md` lesen. Wenn die Antwort lautet, dass karr die Unterscheidung bewusst nicht macht, dann ist das Ergebnis dieses Tickets ein Absatz, der das festhaelt -- und die #242-Warnung sollte ihren Verweis auf `archive` dann vorsichtiger formulieren.
+
+## Erhebung (nur Untersuchung, kein Code geaendert) -- vier Antworten, alle nachgestellt
+
+Zwei Wegwerf-Boards in File::Temp, HOME auf ein Fake-HOME gesetzt (damit die echte
+Fleet-Config nicht gelesen wird), boardA/boardB, Eskalationsprotokoll durchgespielt.
+Das echte Board dieses Repos wurde nicht angefasst. Keine Testsuite gefahren.
+
+### 1. Unterscheidet karr zwischen "fertig" und "aufgegeben"? Nein -- in keinem Feld.
+
+Karte 1 von backlog direkt archiviert (aufgegeben), Karte 2 nach done bewegt und
+danach archiviert (erledigt). Die beiden Frontmatter sind bis auf die Titel gleich:
+
+    {"completed":"...","started":"...","status":"archived", ...}   # aufgegeben
+    {"completed":"...","started":"...","status":"archived", ...}   # erledigt
+
+`Task::update_timestamps` stempelt bei *jedem* terminalen Status `completed`, und
+`started` gleich mit, wenn es fehlt ("eine direkt nach done gezogene Karte haette
+sonst keine messbare Zykluszeit", #68). Also stempelt `karr archive 1` auf einer nie
+angefassten Backlog-Karte Beginn *und* Abschluss. `App::karr::Task` hat kein
+outcome/resolution-Feld; die einzige Ergebnisdimension der Karte ist der Status, und
+der kennt nur "terminal" und "nicht terminal".
+
+Der einzige Ort, an dem karr die beiden terminalen Status heute *ueberhaupt*
+unterscheidet, ist Sichtbarkeit, nicht Ergebnis: `Cmd::Metrics` wirft `archived`
+komplett aus jeder Kennzahl (Zeile ~305, Kommentar "Archived work is out of every
+figure"), `list --archived` ist ein reiner Statusfilter, und
+`Config::terminal_statuses` liefert "done-Aequivalent zuerst, `archived` immer".
+Diese Ordnung ist der einzige vorhandene Haken fuer eine Unterscheidung -- sie sagt
+aber "letzte Spalte" vs. "abgelegt", nicht "gelungen" vs. "aufgegeben".
+
+**Das ist die eigentliche Luecke, und sie ist groesser als dieses Ticket**: karr hat
+keinen Begriff von Ergebnis, nur von Fortschritt.
+
+### 2. Was `link_state` heute tut, und was an einer Unterscheidung haengt
+
+`CrossBoard::link_state` (Zeile ~496) fragt genau eine Frage:
+
+    my $settled = $store->is_terminal_status( $far->status );
+
+`settled` ist der einzige Zustand, auf den `karr needs --resolve` handelt. Nachgestellt:
+
+    boardA$ karr archive 1                      # aufgegeben, nie bearbeitet
+    boardB$ karr needs   -> needs boardA#1 -- archived (settled), back-reference verified
+    boardB$ karr needs --resolve
+            -> resolved boardA#1 -- archived (settled)
+               unblocked (was: waiting for boardA#1)
+    boardB$ karr show 1  -> keine Tags mehr, kein Blocked
+
+Der `needs:`-Tag wird entfernt, `blocked` gelesen und geloescht. Der Aktivitaetslog
+auf B haelt danach nur "needs task#1 backlog" fest -- welcher Link settelte und
+welcher Block fiel, steht nirgends mehr auf B. Der Fehlbefund ist also nicht nur
+falsch, er ist von B aus auch nicht mehr rekonstruierbar.
+
+Wuerde `link_state` nur noch das done-Aequivalent (`(terminal_statuses)[0]`) als
+`settled` zaehlen, wuerden anders beurteilt:
+
+* **Jede erledigte und danach aufgeraeumte Karte.** Nachgestellt: Karte auf A
+  in-progress -> done -> archive; B sieht `archived (settled)`, byte-gleich zum
+  aufgegebenen Fall. Nach der Aenderung waere sie `open`, `--resolve` wuerde den
+  Block nie mehr heben, und *nichts auf A koennte ihn noch heben* -- die Karte ist
+  schon terminal. Das ist der teurere Irrtum in die andere Richtung, und
+  `CONTEXT.md` nennt done -> archived ausdruecklich den normalen Weg ("`done` ->
+  `archived` keeps the name -- archiving does not resume anything").
+* **Foundation-Ketten.** `Foundation/Executor.pm:1095` benutzt dasselbe
+  `link_state` als Precheck eines Kettenschritts; ein Schritt, der auf eine
+  archivierte Fernkarte wartet, wuerde nicht mehr freigegeben (fremde Domaene,
+  aber gleiche Codestelle).
+* Tests: t/192 pinnt `settled` an `done` und an `shipped` (importiertes Board),
+  nicht an `archived` -- der Bruch traefe also nicht die vorhandenen Zusicherungen,
+  sondern reale Boards.
+
+Kein BoardStore-Vertrag muesste sich dafuer aendern: `effective_config` ist
+oeffentlich, `App::karr::Config->from_merged($store->effective_config)
+->terminal_statuses` liefert das done-Aequivalent von hier aus.
+
+### 3. Die lokale `depends_on`-Seite: dasselbe Urteil, andere Folgen
+
+Nachgestellt auf einem Board: Karte 1 aus dem Backlog archiviert (aufgegeben),
+Karte 3 haengt per `depends_on: [1]`.
+
+    karr move 2 todo   (Abhaengigkeit noch offen)
+      -> Warning: task 2 depends on task 1, which is still backlog
+    karr archive 1
+    karr move 3 todo   -> keine Warnung. `karr pick` bietet 3 an.
+
+`Role::DependencyCheck` fragt dieselbe eine Frage (`is_terminal_status($dep->status)`),
+also gilt eine aufgegebene Abhaengigkeit auch lokal als erfuellt -- und zwar
+*schweigend*, waehrend eine geloeschte Abhaengigkeit gemeldet wird ("does not exist
+on this board"). Exakt dieselbe Asymmetrie wie ueber Boardgrenzen.
+
+Die Folgen sind aber nicht dieselben, und das ist der Grund, es getrennt zu halten:
+lokal wird nur *gewarnt und uebergeben* (#123), nichts wird veraendert, und
+`karr show 3` zeigt dauerhaft "Depends: 1 (archived)" -- die Spur bleibt auf der
+Karte, der Mensch sieht das Wort und kann nachsehen. `needs --resolve` dagegen
+*schreibt*: Tag weg, Block weg, in einem fremden Repository, ohne Spur. Gleiche
+Frage nach der Semantik, deutlich unterschiedliche Dringlichkeit.
+
+### 4. Ein expliziter Vermerk beim Archivieren -- ja, und der Traeger existiert schon
+
+Nachgestellt: `blocked` + `block_reason` **ueberleben das Archivieren** unveraendert,
+und sie sind auch *nachtraeglich* auf einer archivierten Karte setzbar
+(`karr edit 1 --block "..."`, `karr edit 1 --add-tag abandoned` -- beides geht heute,
+ohne neue Kommandooberflaeche):
+
+    {"blocked":true,"block_reason":"we are not going to do this","status":"archived",...}
+
+`link_state` liest diese Felder heute nicht an und meldet trotzdem
+`archived (settled)`. Beide Traeger ueberstehen auch die kanban-md-Bruecke:
+`blocked: bool` + `block_reason: string` sind drueben modelliert
+(`Task.pm:347`), und Tags sowieso -- das ist genau das Argument, mit dem
+`CrossBoard` ein neues Frontmatter-Feld ausgeschlossen hat.
+
+Der Vermerk laesst #67 unangetastet (der Status bleibt terminal) und wirkt nur
+vorwaerts: bestehende Archive tragen ihn nicht, also aendert er kein einziges
+heutiges Board rueckwirkend -- was ein Vorteil ist, kein Mangel.
+
+## Empfehlung: Weg 3, mit einer moeglichen kleinen Ergaenzung
+
+**Weg 2 (link_state unterscheidet die terminalen Status) sollte nicht gebaut
+werden.** Er ist an der Beobachtung aus (1) widerlegt: die aufgegebene und die
+erledigte Karte sind an der Fernseite nicht unterscheidbar, also kann die Regel
+nur raten -- und sie raet dann im *haeufigen* Fall (fertig, dann aufgeraeumt)
+falsch, mit einem Block, den niemand mehr heben kann. Ein Fehlalarm, der Arbeit
+dauerhaft stehen laesst, ist schlimmer als die heutige Falschmeldung, die
+wenigstens weiterlaufen laesst.
+
+**Weg 3 ist die ehrliche Antwort auf dem heutigen Datenmodell**: karr kennt
+Fortschritt, kein Ergebnis. Das Ergebnis dieses Tickets ist damit
+(a) ein Absatz in `CONTEXT.md` unter "Task lifecycle", der festhaelt, dass
+`done` und `archived` beide terminal sind und *keine* Aussage ueber Erfolg
+treffen -- ein Cross-Board-Verweis settelt, weil die Fernkarte geschlossen ist,
+nicht weil sie gelungen ist; und (b) die vorsichtigere Formulierung der
+#242-Warnung: sie sagt heute `use "karr archive %d" to keep that link
+resolvable`, was richtig ist, aber die Nebenwirkung verschweigt. Ehrlicher waere
+"... haelt den Verweis aufloesbar; die Gegenseite liest ihn dann als
+abgeschlossen -- gib die Karte auf, sag es dort drueben selbst". Ebenso der
+POD-Satz in `Cmd/Delete.pm` (Abschnitt CROSS-BOARD LINKS, "so the link settles
+instead of breaking").
+
+**Weg 4 (expliziter Vermerk) ist die einzige Variante, die die Unterscheidung
+tatsaechlich moeglich macht**, und sie ist billig, weil der Traeger
+(`blocked`/`block_reason`) existiert, das Archivieren uebersteht und
+interop-fest ist. Wenn er kommt, dann als *Bericht* und nicht als
+Settle-Regel: `link_state` nimmt ein Feld dazu (z.B. `far_blocked` +
+Grund), `karr needs` druckt es, `settled` und `--resolve` bleiben wie sie sind.
+Dann sieht die wartende Seite "archived (settled) -- die Fernkarte war beim
+Archivieren blockiert: 'we are not going to do this'" und entscheidet selbst.
+Das waere ein eigenes Ticket, kein Nachtrag zu diesem.
+
+Nicht beantwortbar ohne Auschecken: was kanban-md fuer aufgegebene Karten
+vorsieht -- `../kanban-md` ist hier nicht vorhanden, und Cross-Board-Links haben
+dort ohnehin kein Gegenstueck.
+
+Weg 3 umgesetzt, kein Verhalten geaendert.
+
+CONTEXT.md, Eintrag "Task lifecycle" erweitert: terminal heisst *geschlossen*, nicht *gelungen* -- karr kennt Fortschritt, kein Ergebnis. Mit dem Grund: eine aus dem Backlog archivierte Karte ist frontmatter-identisch zu einer nach `done` archivierten (`update_timestamps` stempelt `completed` bei jedem terminalen Status und traegt `started` nach), also settelt ein `needs:`-Link, weil die Fernkarte geschlossen ist, nicht weil sie gelungen ist. Eine engere Regel koennte nur raten und raete im haeufigen Fall (`done` -> `archived`) daneben, mit einem Block, den auf der Fernseite niemand mehr heben kann; ein falscher Erfolg, der weiterlaufen laesst, ist der billigere Irrtum. Dazu eine `_Avoid_`-Zeile ("settled"/"resolved" als "gelungen" gelesen).
+
+Lokale Seite: kein eigener Eintrag, sondern zwei Saetze im selben Absatz -- dieselbe Regel, andere Tragweite: `depends_on` erfuellt sich schweigend, aber `karr show` druckt weiter `Depends: 1 (archived)`, die Spur bleibt auf der Karte; `needs --resolve` schreibt (Tag weg, Block weg) in einem fremden Repository. Ein zweiter Begriff waere eine Dublette im Vokabulardokument.
+
+Cmd/Delete.pm, nur Text: die #242-Warnung heisst jetzt ... (use "karr archive %d" to keep that link resolvable -- it reads as settled over there, finished or not). Eine Klausel, eine Zeile, +53 Zeichen. Der POD-Abschnitt CROSS-BOARD LINKS bekommt drei Saetze hinter "so the link settles instead of breaking": Settling sagt geschlossen, nicht gelungen. Dazu ein Kommentar vor `_cross_board_warnings` mit dem Grund und dem Verweis auf #258.
+
+Tests: t/242 pinnt jetzt die neue Klausel (die alte Zusicherung war nur `qr/karr archive 1/` und blieb gueltig). prove -l t/242-delete-cross-board-warning.t t/236-delete-dependent-warning.t t/125-dependency-warnings.t t/88-delete-ref-outcome.t -- alle PASS. Volle Suite bewusst nicht gefahren (parallele Agenten).
+
+Offen fuer den Maintainer: (a) Changes nicht angefasst, Vorschlag im Bericht; der #242-Eintrag unter {{$NEXT}} endet mit "the link stays resolvable and settles" und traegt dieselbe Halbwahrheit. (b) Die Entscheidung hat ADR-Form (Ablehnung der engeren Settle-Regel mit Begruendung) -- ein docs/adr/-Eintrag waere vertretbar, wurde absichtlich nicht angelegt.
