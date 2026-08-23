@@ -1,0 +1,103 @@
+---
+claimed_at: 2026-08-23T14:47:02Z
+claimed_by: stem-vast
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-22T04:47:31Z
+id: 254
+priority: medium
+started: 2026-08-23T13:59:46Z
+status: done
+tags:
+- cli
+- ux
+- output
+title: Role::Output gibt --compact an 17 Kommandos aus, die es nicht rendern
+updated: 2026-08-23T21:50:53Z
+---
+
+Erhoben beim Bauen von #251 (dort ist `pick` erledigt). #251 Punkt 1 verlangte die Vollzaehligkeit; das hier ist ihr Rest.
+
+## Befund
+
+`App::karr::Role::Output` deklariert `--json` und `--compact` gemeinsam. 22 Kommandos komponieren die Rolle, aber nur vier lesen `$self->compact`:
+
+    rendern --compact:  board, dashboard, list, metrics
+    nehmen es an und verwerfen es stumm:
+      archive, config, context, delete, disable, edit, enable, handoff,
+      import, log, materialize, move, needs, repair, show, skill, unlock
+
+(pick war das achtzehnte und ist seit #251 versorgt.)
+
+Jedes dieser Kommandos fuehrt `--compact: Compact output` in seinem `--help` auf, ohne Vorbehalt, und tut damit nichts. Das ist dieselbe Klasse wie #225/#226: eine dokumentierte Option wird angenommen und stumm weggeworfen.
+
+## Zwei Gruppen, verschiedene Antworten
+
+Nach der Ausgabeform getrennt:
+
+1. **Einzeilige Bestaetigung** -- move, edit, handoff, archive, delete, disable, enable. Die Ausgabe ist schon eine Zeile; `--compact` ist hier hoechstens folgenlos erfuellt, nicht falsch beantwortet.
+2. **Mehrzeilige Ausgabe ohne kompakte Form** -- show, context, config, log, needs, unlock, import, materialize, repair, skill. Hier verspricht die Option etwas, das es nicht gibt. `show --compact` ist der auffaelligste: `list --compact` druckt genau die Einzeiler, die `show --compact` naheliegenderweise fuer eine Karte druecken wuerde.
+
+## Vorschlag zur Mechanik
+
+`--compact` aus `Role::Output` herausloesen in eine eigene kleine Rolle (Arbeitsname `App::karr::Role::CompactOutput`), die nur die Kommandos komponieren, die die Option auch rendern. Dann verschwindet sie aus `--help` ueberall sonst, und `karr move 1 done --compact` antwortet mit `Unknown option: compact` plus Usage und Exit 2 -- die laute Zurueckweisung aus #225/#226.
+
+Der Zuschnitt ist billig, weil kein einziger der 17 Konsumenten `->compact` je liest: nur `Role/Output.pm` und die vier rendernden Kommandos aendern sich. Die Suite ruft `--compact` ausschliesslich mit list, board, dashboard und metrics auf (geprueft), also faellt dort nichts um.
+
+Vor dem Bauen zu entscheiden: ob `show` (und ggf. `context`, `log`, `config`) stattdessen eine echte kompakte Form bekommen sollen, statt die Option zu verlieren. Das waere ein eigener Nutzen und kein blosses Aufraeumen -- aber es ist eine Feature-Entscheidung und gehoert benannt, nicht nebenbei getroffen.
+
+Regressionstest: pinnen, dass `--compact` bei einem Kommando ohne kompakte Form mit Exit 2 zurueckgewiesen wird, und dass die vier rendernden Kommandos die Option unveraendert annehmen.
+
+Entscheidung (Maintainer, 2026-08-23): groesster Zuschnitt. --compact wandert in App::karr::Role::CompactOutput; die Rolle komponieren board, dashboard, list, metrics, pick (unveraendert) PLUS show, context, log, config -- die vier bekommen ein echtes kompaktes Rendering:
+  show    -> eine Zeile pro Karte im list --compact-Format
+  context -> nur die Kennzahlen, ohne Prosa
+  log     -> eine Zeile pro Eintrag
+  config  -> key=value je Zeile (ohne Spaltenpadding, grep/cut-freundlich)
+Die uebrigen 13 Kommandos verlieren die Option und weisen sie laut zurueck (Exit 2 + Usage), wie #225/#226 es verlangen.
+
+Gebaut im groessten Zuschnitt (Maintainer-Entscheidung vom 2026-08-23, siehe Log oben).
+
+Neu: lib/App/karr/Role/CompactOutput.pm. --json und die JSON-Drucker blieben in Role::Output.
+Komponieren die neue Rolle: board, config, context, dashboard, list, log, metrics, pick, show (9).
+Verlieren --compact: archive, delete, disable, edit, enable, handoff, import, materialize, move,
+needs, repair, skill, unlock (13) -- alle dreizehn live geprueft: Exit 2, 'Unknown option: compact',
+Usage. Die Zurueckweisung faellt beim Parsen, vor execute(); ohne Seiteneffekt.
+
+Vier neue Renderings:
+  show --compact    -> App::karr::Task::compact_line, zeichengleich mit der Zeile, die
+                       list --compact fuer dieselbe Karte druckt (geteilter Renderer, damit die
+                       beiden Ansichten einer Karte nicht auseinanderlaufen koennen)
+  context --compact -> die fuenf Schluessel der --json-Summary als key=value, keine Prosa
+  log --compact     -> eine Zeile je Eintrag ohne Padding, leeres Detail faellt ganz weg
+  config show       -> key=value ohne Padding, gleiche Schluessel/Reihenfolge wie die Tabelle
+--json gewinnt ueberall und ist bitgleich mit und ohne --compact.
+
+Zwei Nebenentscheidungen, bewusst so: config get/set nehmen --compact folgenlos an (get druckt
+schon den nackten Wert, ein key= davor braeche Aufrufer); context --write-to gewinnt ueber
+--compact (der Block im Zielfile hat mit kanban-md geteilte Sentinels).
+
+Test: t/254-compact-output-role.t, 12 Subtests. Jede Zusage einmal gegen eine gebrochene
+Implementierung gegengeprueft. Die Partitionspruefung iteriert alle 31 Cmd::*-Klassen und schlaegt
+an, sobald die Rolle einem zehnten Kommando gegeben oder einem der neun genommen wird.
+
+Volle Suite: 218 Dateien, 1616 Tests, PASS.
+
+Mitgezogen: Changes, README.md ('Every board command takes --json und --compact' war schon vor
+dieser Aenderung falsch), CLAUDE.md-Architekturliste, karr --help (nannte fuer --compact nur
+'list, board'), ein stale Kommentar in Edit.pm, der #251-Kommentar in Pick.pm.
+
+Nicht angefasst: share/claude-skill.md und die Skill-Kopie nennen --compact nur fuer list, board,
+pick, metrics -- weiter korrekt, aber die vier neuen Renderings stehen dort noch nicht.
+
+Nebenbefund als eigenes Ticket abgelegt: #260 (context --json --write-to schreibt die Datei nie).
+
+Nachtrag (cf7e800): share/claude-skill.md und die Skill-Kopie nachgezogen -- im Handoff oben standen sie noch als 'nicht angefasst'.
+
+Vier Zeilen in den jeweiligen Kommandobloecken (show, config, context, log) plus eine Notiz
+ueber '## Commands', die die Regel selbst benennt: --json auf jedem Kommando mit alternativer
+Ausgabe, --compact auf genau neun, sonst eine Zurueckweisung. Ein Agent, der nur diese Datei
+liest, haette die anderen dreizehn sonst per Exit 2 entdeckt.
+
+Beide Kopien mit truncating write (cat >) geschrieben; Inode 10223757 behaelt seine 54
+manage-skills-Hardlinks, t/62 gruen, beide byte-identisch. Changes-Eintrag um zwei Saetze
+ergaenzt statt eines zweiten Eintrags -- dasselbe Ticket.
