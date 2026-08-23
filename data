@@ -1,0 +1,108 @@
+---
+claimed_at: 2026-08-22T22:39:30Z
+claimed_by: cash-than
+class: standard
+completed: 2026-08-23T23:03:57Z
+created: 2026-08-22T21:31:56Z
+id: 256
+priority: medium
+started: 2026-08-22T22:12:09Z
+status: done
+tags:
+- cli
+- parity
+- bug
+title: 'Ein Flag vor einer Option mit Bindestrich frisst deren Namen: --json --claimed-by
+  ist ''Unknown option'''
+updated: 2026-08-23T23:03:57Z
+---
+
+Beim Bau von #252 (list --not-blocked) gefunden, aber nicht von dort verursacht -- der Fehler ist aelter und trifft jede karr-Option, deren Name einen Bindestrich hat.
+
+## Nachgestellt
+
+    karr list --claimed-by NAME        -> laeuft, exit 0
+    karr list --json --claimed-by NAME -> Unknown option: claimed-by   (exit 2)
+    karr list --archived --claimed-by NAME -> dito
+    karr list --reverse --claimed-by NAME  -> dito
+    karr list --sort id --claimed-by NAME  -> laeuft, exit 0
+
+Also: die Bindestrich-Schreibweise geht nur, solange kein *boolesches* Flag direkt davor steht. Steht eine Option mit Wert davor, geht es.
+
+Mit #252 kommt --not-blocked dazu und erbt es genau so: `karr list --not-blocked --compact` laeuft, `karr list --compact --not-blocked` sagt "Unknown option: not-blocked". Beide exit 2, aber der Satz ist falsch -- und `karr list --json --not-blocked` ist genau der Aufruf, den ein Agent tippt.
+
+## Ursache
+
+MooX::Options::Role::_options_fix_argv (Zeile 119-202 in 4.103) laeuft einmal ueber @ARGV, bevor Getopt::Long es sieht, und schreibt dabei Bindestriche im Optionsnamen in Unterstriche um (Zeile 148: `$arg_name_without_dash =~ s/\-/_/gx`). Das ist der ganze Mechanismus, durch den --claimed-by ueberhaupt jemals auf claimed_by trifft.
+
+Der Haken steht in Zeile 171-172:
+
+    if ( defined $original_long_option
+        && ( defined( my $arg_value = shift @ARGV ) ) )
+
+Fuer eine erkannte Option wird das naechste argv-Element bedingungslos als deren Wert geschluckt und unveraendert weitergereicht -- auch fuer ein boolesches Flag, das gar keinen Wert nimmt. Das geschluckte Element durchlaeuft die Umschreibung nie. Getopt::Long bekommt dann `--json --claimed-by NAME` mit dem Bindestrich-Namen und kennt ihn nicht.
+
+Positionell bleibt es heil (das geschluckte Element wird an derselben Stelle wieder eingereiht), deshalb faellt es nur bei Namen mit Bindestrich auf.
+
+## Betroffen
+
+Jede Option, deren Attributname einen Unterstrich hat und die im POD mit Bindestrich dokumentiert ist. Auf list: --claimed-by, --not-blocked. Zu pruefen ist der Rest des Kommandosatzes -- `grep -n "^option [a-z_]*_" lib/App/karr/Cmd/*.pm` findet die Kandidaten.
+
+## Zu entscheiden
+
+Die Ursache liegt im Modul, nicht in karr. Also entweder (a) upstream melden und in karr die Unterstrich-Schreibweise als die dokumentierte fuehren, (b) in karr selbst eine eigene @ARGV-Vorbehandlung vor MooX::Options haengen, die Bindestrich-Namen normalisiert, oder (c) Optionen ohne Unterstrich benennen, wo es geht -- fuer --not-blocked ginge das nicht ohne die Paritaet zu verlieren.
+
+Wer es baut: ein Regressionstest fuer beide Reihenfolgen bei mindestens zwei Kommandos, und t/247 (abgekuerzte Optionen) ist der Nachbar, mit dem es sich vertragen muss.
+
+2026-08-22 22:39 Behoben in karr, mit Regressionstest t/256-dashed-option-after-flag.t. Nicht committet.
+
+## Vorfrage: in karr reparierbar, upstream trotzdem echt
+
+MooX::Options 4.103 ist die aktuelle CPAN-Release (cpanm --info: REHSACK/MooX-Options-4.103.tar.gz) und enthaelt den Fehler. Ein Versionspin loest nichts; cpanfile pinnt MooX::Options weiter nicht.
+
+Kleinste Reproduktion ohne karr (MooX::Options 4.103, Getopt::Long 2.57):
+
+    package Demo;
+    use Moo; use MooX::Options protect_argv => 0;
+    option json        => ( is => 'ro' );
+    option claimed_by  => ( is => 'ro', format => 's' );
+    option not_blocked => ( is => 'ro' );
+    package main; Demo->new_with_options;
+
+    perl demo.pl --claimed-by X            ok
+    perl demo.pl --claimed-by X --json     ok
+    perl demo.pl --json --claimed-by X     Unknown option: claimed-by
+    perl demo.pl --json --not-blocked      Unknown option: not-blocked
+
+Stelle: MooX::Options::Role::_options_fix_argv. Zeile 148 faltet '-' zu '_' im Optionsnamen -- der einzige Grund, warum die Bindestrich-Schreibweise ueberhaupt je funktioniert. Zeile 171-172 nimmt fuer eine erkannte Option das naechste argv-Element bedingungslos als deren Wert und reicht es woertlich weiter. Bei einem Booleschen ist dieses Element die naechste Flagge und durchlaeuft die Faltung nie. Vorschlag: das Element nur schlucken, wenn die erkannte Option einen Wert nimmt -- `defined $option_data->{$original_long_option}{format}` steht dort schon zur Verfuegung (zwei Zeilen tiefer fuer autorange benutzt). Nichts eingereicht; das entscheidet der Maintainer.
+
+## Betroffene Optionen -- vollstaendig, erhoben ueber _options_data aller 31 Kommandoklassen
+
+    context      --activity-limit, --write-to
+    create       --depends-on, --escalated-from
+    dashboard    --hide-no-board, --show-no-board
+    edit         --add-depends-on, --add-needs, --add-tag, --append-body,
+                 --remove-depends-on, --remove-needs, --remove-tag
+    init         --claude-skill, --new-board
+    list         --claimed-by, --not-blocked
+    needs        --fleet-config
+    sync         --accept-foreign-board
+
+19 Optionen, und jedes dieser Kommandos hat mindestens eine boolesche Option, also war jede von ihnen in der kaputten Position erreichbar. Dazu karr-foundation --dry-run (App::karr::Foundation) -- eigenes Binary, eigene Lane, unveraendert kaputt.
+
+Zweite Auspraegung derselben Ursache: auch ein Tippfehler hinter einer Flagge wurde ungefaltet gemeldet -- `karr list --bogus-opt` sagte "Unknown option: bogus_opt", `karr list --json --bogus-opt` sagte "bogus-opt".
+
+## Gebaut
+
+- App::karr::Role::CliArgs: der Argv-Walk ist jetzt einmal da (_classify_argv, liefert pro Token option/value/separator/positional). positional_args ist ein Filter darueber; neu ist normalize_option_argv, das die Flaggen -- und nur die Flaggen -- mit Unterstrichen schreibt. Ein flaggenfoermiger *Wert* (`karr edit 1 --body --we-ird`) bleibt unangetastet; genau diese Wert-Frage aus #247 wird wiederverwendet, keine zweite Abkuerzungslogik.
+- bin/karr ruft das vor MooX::Cmd, getrennt fuer Root-Argv und Kommando-Argv, wobei das Kommando genauso bestimmt wird wie MooX::Cmd es bestimmt (erstes argv-Token, das in _build_command_commands steht).
+- CliArgs jetzt in allen 31 Cmd-Klassen komponiert; es fehlte in Init, Backup, Destroy, Restore, AgentName -- Init war betroffen (--claude-skill, --new-board). t/256 pinnt die Komposition, damit ein kuenftiges Kommando den Fehler nicht durch ein vergessenes `with` zurueckholt.
+- cpanfile: Module::Runtime.
+
+## Tests
+
+t/256-dashed-option-after-flag.t: 18 Subtests. Gegen HEAD gefahren -- die 10 RED-Subtests fallen dort, die 7 GREEN-Pins laufen dort durch. Ebenfalls gruen: t/76, t/247, t/243, t/43, t/57, t/131, t/124, t/85, t/86. Volle Suite bewusst nicht gefahren (parallele Agenten).
+
+## Offen
+
+karr-foundation --dry-run: eine Zeile, sobald jemand die Lane anfasst -- `with 'App::karr::Role::CliArgs'` in App::karr::Foundation und `@ARGV = App::karr::Foundation->normalize_option_argv(\@ARGV);` vor new_with_options in bin/karr-foundation.
