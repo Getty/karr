@@ -1,0 +1,55 @@
+---
+claimed_at: 2026-08-22T04:52:24Z
+claimed_by: huge-firm
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T12:07:12Z
+id: 251
+priority: medium
+started: 2026-08-22T04:44:13Z
+status: done
+tags:
+- cli
+- pick
+- ux
+title: pick nimmt --compact an und ignoriert es
+updated: 2026-08-23T21:50:53Z
+---
+
+Beim Bauen von #237 aufgefallen, selbst nachgestellt.
+
+    karr pick --claim probe1
+    -> Picked task 1: banana (claimed by probe1)
+       Status: backlog | Priority: medium | Class: standard
+
+    karr pick --claim probe2 --compact
+    -> Picked task 2: Apple (claimed by probe2)
+       Status: backlog | Priority: medium | Class: standard
+
+Zeichengleich. `Cmd/Pick.pm` komponiert `Role::Output`, bekommt dadurch die Option `--compact` und wertet sie nie aus.
+
+## Dieselbe Klasse wie #225 und #226
+
+Eine dokumentierte Option wird angenommen und stumm verworfen. Dort war es die Wurzeloption `--dir` bei `dashboard` und `skill`, hier eine Option, die das Kommando sich selbst durch die Rolle einhandelt. `karr --help` fuehrt `--compact` unter den globalen Optionen ("Compact output (list, board)") -- immerhin mit einer Einschraenkung, aber `karr pick --help` nennt sie ohne jeden Vorbehalt.
+
+## Zu klaeren, bevor gebaut wird
+
+1. **Welche Kommandos komponieren `Role::Output`, ohne `--compact` auszuwerten?** `pick` ist beim Bauen von #237 aufgefallen, nicht notwendig das einzige. Erst erheben, dann entscheiden -- das war bei #225/#226 der Teil, der die Klasse geschlossen hat.
+2. **Was soll `--compact` bei `pick` bedeuten?** Naheliegend ist die Detailzeile weglassen und nur die Zuteilung drucken -- das ist, was kanban-mds `pick --no-body` tut (`cmd/pick.go` um Zeile 104: Bestaetigungszeile, kein Detailblock, ohne Wirkung auf `--json`). karr braucht dafuer keine zweite Flagge, es hat den Platz schon.
+3. **Oder soll die Option verschwinden**, wo sie nichts bedeutet? Das waere der andere ehrliche Weg -- aber `Role::Output` gibt sie zusammen mit `--json` aus, sie einzeln abzuwaehlen kostet womoeglich mehr als sie zu erfuellen. Am Code entscheiden.
+
+Was nicht bleiben darf, ist die stumme Variante -- dieselbe Begruendung wie in #225: eine Ausgabe, die plausibel aussieht, aber die Option nicht befolgt, ist schlechter als eine Fehlermeldung.
+
+Regressionstest: `pick --compact` muss sich nachweisbar von `pick` unterscheiden (oder die Option nachweisbar zurueckweisen).
+
+Weg 2 aus dem Ticket gewaehlt: --compact erfuellen, nicht abwaehlen. Pick druckt in zwei Teilen (Zuteilungszeile, dann Detailzeile + Body), also gibt es hier eine offensichtliche Schnittkante, und die Referenz schneidet an derselben Stelle -- kanban-mds `pick --no-body` (cmd/pick.go:104) druckt die Bestaetigung und kehrt vor dem Detailblock zurueck. Abwaehlen haette Role::Output aufspalten und die Optionsflaeche von 17 weiteren Kommandos mitbewegt; die Begruendung steht als Kommentar an der Rueckgabe in execute, nicht nur hier.
+
+Erhebung (Punkt 1, vollstaendig): 22 Kommandos komponieren Role::Output, vier lesen $self->compact -- board, dashboard, list, metrics. Stumm verworfen wurde es ausser bei pick auch bei archive, config, context, delete, disable, edit, enable, handoff, import, log, materialize, move, needs, repair, show, skill, unlock. Die 17 sind #254, mit Zweiteilung nach Ausgabeform (einzeilige Bestaetigung vs. mehrzeilige Ausgabe ohne kompakte Form) und dem Vorschlag, --compact in eine eigene Rolle zu ziehen; kein Konsument dort liest ->compact, und die Suite ruft --compact nur mit den vier rendernden Kommandos auf, der Zuschnitt waere also billig. Bewusst nicht in dieses Ticket gezogen, weil er Cmd/Config.pm und Cmd/Log.pm beruehrt, in denen gerade andere Agenten arbeiten -- und weil #225 die Klasse genauso geschlossen hat: einen Fall bauen, den Rest als #226 anlegen.
+
+Geaendert: lib/App/karr/Cmd/Pick.pm (usage_string, SYNOPSIS, neue Sektion COMPACT OUTPUT, `return if $self->compact;` vor dem Detailblock). Role/Output.pm nicht angefasst.
+
+Test: t/251-pick-compact.t, sechs Subtests -- Default-Rendering unveraendert, --compact druckt nur die Zuteilung, die beiden Renderings unterscheiden sich nachweisbar (das Ticket hatte sie zeichengleich gemessen), --json bleibt der volle Datensatz, der Leerpfad bleibt einzeilig, und ein Subtest faehrt den echten CLI, damit die Flagge nachweislich aus argv kommt. RED verifiziert: mit auskommentiertem `return` fallen 3 von 6 Subtests.
+
+prove -l t/251-pick-compact.t -> PASS. Dazu gruen: alle acht bestehenden pick-Tests (16, 48, 83, 97, 111, 153, 198, 233) sowie 00-load, 51-json-output, 125-dependency-warnings, 131-help-column-alignment, 153-falsy-option-values, 215-pod-ascii-only, 247-abbreviated-option-value. Volle Suite bewusst nicht gefahren (parallele Agenten).
+
+Nicht committet, Changes nicht angefasst -- Vorschlag fuer den Eintrag liegt im Bericht.
