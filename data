@@ -1,0 +1,58 @@
+---
+claimed_at: 2026-08-22T21:32:39Z
+claimed_by: fame-cook
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T07:15:10Z
+id: 227
+priority: medium
+started: 2026-08-22T21:14:52Z
+status: done
+tags:
+- parity
+- config
+- wip
+title: 'WIP-Limits: die Konfiguration nimmt sie an und validiert sie, durchgesetzt
+  wird nichts'
+updated: 2026-08-23T21:50:53Z
+---
+
+Beim Dogfooding gefunden, gegen die Referenzimplementierung geprueft (kanban-md nach /tmp/.../scratchpad/kanban-md geklont, wie CLAUDE.md es vorsieht).
+
+## Befund
+
+Jedes neue karr-Board bekommt aus App::karr::Config::default_config diese Klasse:
+
+    { name => "expedite", wip_limit => 1, bypass_column_wip => 1 }
+
+`validate` nimmt die Angabe ernst genug, um sie zu pruefen (Config.pm um Zeile 457-459: "class NAME wip_limit must be >= 0"). Gelesen wird sie danach nirgends. Ein `grep -rn wip lib/` findet ausser diesen beiden Stellen nichts -- kein Kommando, keine Rolle, kein Mutationspfad fragt je danach.
+
+Folge: auf jedem Board steht eine Einstellung, die aussieht, als sei sie aktiv, einen falschen Wert sogar zurueckweist, und nichts bewirkt. Wer `wip_limit` auf eine eigene Klasse setzt, bekommt eine Validierung und keine Wirkung -- und nichts sagt ihm das.
+
+Das POD von `validate` benennt die Luecke ("karr ... has no WIP limits or TUI section yet"), aber nur fuer die kanban-md-Pruefungen, die absichtlich fehlen. Dass die Klassen-Ebene geprueft und trotzdem nicht durchgesetzt wird, steht dort nicht.
+
+## Was kanban-md hat (die Paritaetsflaeche)
+
+1. `wip_limits: {status: N}` in der Konfiguration -- Spalten-WIP. karr hat diesen Schluessel gar nicht (internal/config/config.go:31, validateWIPLimits ab 222, Zugriff ab 316).
+2. Klassen-WIP ueber `wip_limit` plus `bypass_column_wip` -- karr parst und validiert es, setzt es nicht durch.
+3. Durchsetzung beim Statuswechsel: internal/board/mutate.go:169 und :198, Fehler `CLASS_WIP_EXCEEDED` ueber task.ValidateClassWIPExceeded.
+4. Warnung in der Kontext-Zusammenfassung: `WIPWarning` in ContextSummary (internal/board/context.go:40, gesetzt bei :140, gedruckt bei :239). karrs `karr context` hat davon nichts.
+5. `karr init --wip-limits status:N` (cmd/init.go:70, parseWIPLimits ab 119). karrs init kennt die Option nicht.
+
+## Zu entscheiden -- das ist eine Umfangsfrage fuer den Maintainer, nicht fuer den Bauenden
+
+Drei Auswege, sie schliessen einander aus:
+
+A. **Volle Paritaet bauen.** Konfigurationsschluessel `wip_limits`, Durchsetzung im Mutationspfad, Kontextwarnung, init-Option. Der groesste Brocken, und er beruehrt den Mutationspfad, den zuletzt #224 angefasst hat.
+
+B. **Nur die Klassen-Ebene durchsetzen**, die schon konfiguriert und validiert wird, und den Spalten-WIP weiter als Luecke fuehren. Macht die vorhandene Einstellung ehrlich, ohne neue Konfigurationsflaeche.
+
+C. **Die tote Einstellung entfernen** -- `wip_limit`/`bypass_column_wip` aus default_config und aus `validate` heraus, und im POD sagen, dass karr keine WIP-Limits kennt. Der kleinste Eingriff, aber er nimmt eine Konfiguration weg, die auf bestehenden Boards schon in `refs/karr/config` steht (Migrationsfrage: was passiert mit einem Board, das den Schluessel traegt, wenn validate ihn nicht mehr kennt?).
+
+Meine Einschaetzung ohne Anspruch: B ist das beste Verhaeltnis von Aufwand zu Ehrlichkeit, A ist die Paritaetsantwort, C waere richtig, wenn WIP-Limits fuer karrs Mehr-Agenten-Fall gar nicht gewollt sind. Vor dem Bauen entscheiden, nicht waehrend.
+
+## Nebenbefund aus derselben Untersuchung, ausdruecklich KEIN Fehler
+
+`karr context` fuehrt Karten in `todo` unter der Ueberschrift "### In Progress" und zaehlt sie als "active". Das ist exakte Paritaet: kanban-mds buildInProgressSection (internal/board/context.go:161-170) benutzt dieselbe Regel -- nicht erster Status, nicht terminal, nicht blockiert -- und computeSummary (:107-120) dieselbe fuer "active", mit einem eigenen Kommentar dort. karrs Cmd/Context.pm hat an der Stelle keinen Kommentar, der das festhaelt, und die Ueberschrift ist breiter als ihr Name. Wer sie liest, koennte sie fuer einen Fehler halten und "reparieren" -- und damit den Interop-Vertrag brechen, den die kanban-md-Sentinels absichtlich herstellen. Ein Satz Kommentar an der Stelle waere das Richtige; das Verhalten aendern nicht.
+
+Weg C umgesetzt (Maintainer-Entscheid): wip_limit/bypass_column_wip raus aus Config::default_config und aus validate; POD von validate und classes sagt jetzt, dass karr gar keine WIP-Limits kennt (weder wip_limits pro Spalte noch wip_limit/bypass_column_wip pro Klasse). Migration empirisch auf Wegwerf-Boards geklaert, nicht aus dem Code gelesen: validate weist unbekannte Schluessel weder zurueck noch prueft es sie (top-level, status- und class-Ebene je einzeln probiert), ein Board mit dem Schluessel ueberlebt config show / list / create / move / edit / config set unveraendert mit Exit 0, und der Schluessel bleibt beim naechsten Schreiben in refs/karr/config stehen (_diff_hashes speichert die abweichende classes-Liste komplett) -- als Entscheidung im Kommentar festgehalten: karr scheuert nicht weg, was es nur nicht mehr liest. Kein repair-Pfad und kein Betreiber-Hinweis: karr repair existiert, weil dort die gespeicherten Bytes falsch sind und das Board sonst falsch gelesen wuerde; hier ist der Wert nur ungelesen. Notwendiger Zusatz: %VIEW_CLASS_KEY auf 'name' gekuerzt, sonst friert ein kanban-md-Rundlauf dessen Klassen-Defaults als Board-Override ein (#88) -- t/102 war damit rot, mit der Kuerzung wieder gruen. bypass_column_wip bleibt in %BOOLEAN_KEY, damit ein Altboard beim materialize weiter ein echtes YAML-true liefert (#60). Tests: neu t/227-class-wip-removed.t (auf dem Baum vor der Aenderung alle 4 Subtests rot), angepasst t/129 (pinnte die alten Defaults), t/82 (#60-Boolean-Zeile), t/02. Kommando: prove -l t/02-config.t t/82-materialize-import-safety.t t/102-import-config-reconcile.t t/129-config-list-entry-rendering.t t/227-class-wip-removed.t -> All tests successful (5 Dateien, 29 Tests). Nebenbefund karr context: schon durch #228 erledigt, Kommentar steht in Cmd/Context.pm, nichts geaendert. Offen fuer den Maintainer: ex/README.md:487 nennt die WIP-Limits noch als Board-Default; Changes-Eintrag im Bericht, nicht angefasst; nicht committet.
