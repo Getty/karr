@@ -80,6 +80,32 @@ sub _run_karr {
     };
 }
 
+sub _run_foundation {
+    my (@argv) = @_;
+
+    my $stderr = gensym;
+    my $pid = open3(
+        undef,
+        my $stdout_fh,
+        $stderr,
+        $^X,
+        "-I$ROOT/lib",
+        "$ROOT/bin/karr-foundation",
+        @argv,
+    );
+
+    my $stdout = do { local $/; <$stdout_fh> };
+    my $stderr_text = do { local $/; <$stderr> };
+    waitpid( $pid, 0 );
+    my $exit = $? >> 8;
+
+    return {
+        exit   => $exit,
+        stdout => defined $stdout ? $stdout : '',
+        stderr => defined $stderr_text ? $stderr_text : '',
+    };
+}
+
 sub _git_ok {
     my (@cmd) = @_;
     my $rc = system(@cmd);
@@ -310,6 +336,52 @@ subtest 'normalize_option_argv touches flags only (RED)' => sub {
         [ App::karr::Cmd::List->normalize_option_argv( ['--no-not-blocked'] ) ],
         ['--no-not_blocked'],
         'a leading no- is left standing for MooX::Options to read as negation' );
+};
+
+# ------------------------------------------------------- (d) RED, #256:
+# the OTHER binary. bin/karr respells argv before MooX::Cmd dispatches, but
+# bin/karr-foundation calls new_with_options straight, so the same defect
+# survives there -- dry_run is its only option whose name folds, and
+# `--verbose --dry-run` is the spelling the SYNOPSIS itself invites.
+#
+# Pointed at a config path that does not exist on purpose: the binary then
+# says so and exits 0 without touching a repository, which makes the two
+# orders comparable byte for byte and keeps the developer's own fleet config
+# out of the test.
+
+subtest 'karr-foundation --verbose --dry-run: the same defect, one binary over (RED)' => sub {
+    my $missing = tempdir( CLEANUP => 1 ) . '/no-such-config.yml';
+    ok( !-e $missing, 'the config path really does not exist' );
+
+    my $flag_first = _run_foundation( '--config', $missing, '--verbose', '--dry-run' );
+    my $opt_first  = _run_foundation( '--config', $missing, '--dry-run', '--verbose' );
+
+    unlike( $flag_first->{stderr}, qr/Unknown option/,
+        'the dashed option behind the flag is not reported as unknown' );
+    is( $flag_first->{exit}, $opt_first->{exit},
+        'both orders exit the same' );
+    is( $flag_first->{stderr}, $opt_first->{stderr},
+        'both orders say the same thing' );
+};
+
+subtest 'App::karr::Foundation normalizes its own argv (RED)' => sub {
+    require App::karr::Foundation;
+
+    can_ok( 'App::karr::Foundation', 'normalize_option_argv' )
+        or return;
+
+    is_deeply(
+        [ App::karr::Foundation->normalize_option_argv( [qw( --verbose --dry-run )] ) ],
+        [qw( --verbose --dry_run )],
+        'the flag behind a boolean is respelled' );
+    is_deeply(
+        [ App::karr::Foundation->normalize_option_argv( [ '--note', '--we-ird' ] ) ],
+        [ '--note', '--we-ird' ],
+        'a flag-shaped value of a value-taking option keeps its dashes' );
+    is_deeply(
+        [ App::karr::Foundation->normalize_option_argv( [qw( answer 7 darkpan )] ) ],
+        [qw( answer 7 darkpan )],
+        'the hub command and its positionals are untouched' );
 };
 
 # ------------------------------------------------------- (c) GREEN pins:

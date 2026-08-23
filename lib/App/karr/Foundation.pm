@@ -41,6 +41,15 @@ use App::karr::Foundation::Limits;
 # central handler in F<bin/karr-foundation> never sees those exits at all.
 with 'App::karr::Role::ExitCodes';
 
+# An option name with a dash in it does not survive standing behind a boolean
+# flag -- MooX::Options re-emits the token after a recognised option verbatim,
+# so `karr-foundation --verbose --dry-run` reached Getopt::Long under a name
+# the specification does not have (ticket #256). F<bin/karr> routes around it
+# for every command class; this binary needs the same walk for the same
+# reason, and `dry_run` -- the spelling the SYNOPSIS itself uses -- is the
+# option it applies to here.
+with 'App::karr::Role::CliArgs';
+
 # Instruction handed to a synthesized agent command via the $PROMPT variable
 # when neither the .karr file nor the config overrides it.
 our $DEFAULT_PROMPT =

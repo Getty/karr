@@ -18,6 +18,14 @@ decode_argv();
 # (`ask`, `answer`, `chain`, `plan`) -- see App::karr::Foundation::run. MooX::Options is
 # configured with protect_argv => 0 in that class, which is what makes the
 # leftovers visible here.
+# An option name with a dash in it does not survive standing behind a boolean
+# flag, so the flags are respelled with underscores before MooX::Options looks
+# at argv (ticket #256). F<bin/karr> does the same one step earlier, because it
+# has to pick the command class first; here there is only one option table, so
+# the call is the whole of it. App::karr::Role::CliArgs/normalize_option_argv
+# carries the diagnosis and the condition under which the call may go again.
+@ARGV = App::karr::Foundation->normalize_option_argv( \@ARGV );
+
 my $exit;
 my $ran = eval {
     my $foundation = App::karr::Foundation->new_with_options;
