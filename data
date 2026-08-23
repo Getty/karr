@@ -1,0 +1,35 @@
+---
+claimed_at: 2026-08-22T21:52:51Z
+claimed_by: nine-lion
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-21T09:54:28Z
+id: 245
+priority: low
+started: 2026-08-22T21:44:01Z
+status: done
+tags:
+- docs
+- skill
+title: Die ausgelieferte Skill-Datei schreibt karr board eine WIP-Auslastung zu, die
+  es nie gab
+updated: 2026-08-23T21:50:53Z
+---
+
+Nebenbefund aus #234, dort korrekt nicht mitgebaut.
+
+`share/claude-skill.md` und die hardlink-gleiche `.claude/skills/kanban-issues-karr-cli/SKILL.md` beschreiben `karr board` als "Shows tasks grouped by status with WIP utilization". Eine WIP-Auslastung hat karrs `board` nie gedruckt -- das ist kanban-mds Berichtsform, und WIP-Limits sind in karr ueberhaupt nicht durchgesetzt (#227).
+
+## Warum das mehr als ein Tippfehler ist
+
+Das ist die Datei, die `karr skill install` in fremde Repositories schreibt. Ein Agent, der sie als Briefing liest, erwartet von `karr board` eine Zahl, die dort nicht steht -- und sucht sie im Zweifel in der Ausgabe, statt das Kommando zu benutzen, das sie ihm geben koennte. Seit #234 ist die Beschreibung noch etwas falscher: `board` zeigt archivierte Karten jetzt gar nicht mehr.
+
+## Zu tun
+
+Beide Dateien angleichen an das, was `board` tatsaechlich tut. Beim Schreiben auch pruefen, ob die Datei weitere Kommandobeschreibungen traegt, die inzwischen ueberholt sind -- diese Sitzung hat `board`, `context`, `pick`, `delete`, `move`, `edit`, `create`, `dashboard` und `skill` angefasst.
+
+**Achtung beim Bearbeiten:** die beiden Dateien sind Hardlinks voneinander und muessen laut CLAUDE.md identisch bleiben. Die Repo-Kopie ist ausserdem ueber manage-skills mit anderen Repositories geteilt -- **nicht** mit `Edit`/`Write` oder `sed -i` bearbeiten, das erzeugt eine neue Inode und bricht den Link. `cat > .claude/skills/kanban-issues-karr-cli/SKILL.md` ist der Weg; siehe Skill `manage-skills` und den Abschnitt "Repository metadata" in CLAUDE.md. `t/62-skill-doc-sync.t` prueft die Gleichheit der beiden.
+
+Erst nach #227 anfassen, falls dort Weg A (volle WIP-Paritaet) gewaehlt wird -- dann waere der Satz naemlich nicht falsch, sondern nur verfrueht.
+
+Fixed in share/claude-skill.md and .claude/skills/kanban-issues-karr-cli/SKILL.md, both written with cat >, skill copy keeps inode 10223757 and linkcount 53. Corrected: board description (no WIP utilization; grouped by column, final column hidden unless --done, archived nowhere -- #234), the wip_limits: block in the example config (replaced by classes:, #227), and init --claude-skill's install path (.claude/skills/karr/SKILL.md -> .claude/skills/kanban-issues-karr-cli/SKILL.md). Added, all verified on a throwaway board: list --class/--blocked/--not-blocked/-n --limit and the sort field list incl. title (#252, #237), plus the note that list hides the terminal group by default; pick --compact and the fixed-date due-date rule (#251, #233); delete's dependent and cross-board warnings, the STDERR prompt channel and the claim guard (#248, #242, #236). Checked and left alone: context, config writable keys, handoff, show, log, metrics, needs, dashboard, skill, unlock, sync, materialize, repair, backup/restore/destroy, set-refs. Test: prove -l t/62-skill-doc-sync.t -> PASS (1 test); diff of the two files empty. Changes entry proposed in the report, not written. Two side findings reported, both need their own ticket: ex/README.md:487 still calls expedite 'WIP limit 1, bypasses column WIP'; and MooX::Options' _options_fix_argv swallows the token after a boolean flag unrewritten, so 'karr list --compact --not-blocked' and 'karr list --compact --claimed-by X' die with 'Unknown option'.
