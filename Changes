@@ -40,8 +40,11 @@
       keeps its dashes, which is the same "does this option take a
       value" question #247 settled. MooX::Options 4.103 is the current
       release and still has the unconditional swallow, so this is a
-      detour and not a version floor; `karr-foundation --dry-run` still
-      carries it.
+      detour and not a version floor. `bin/karr-foundation` gets the same
+      walk: it has one option table instead of thirty-one, so the call is
+      the whole of the fix there, and `karr-foundation --verbose
+      --dry-run` -- the spelling its own SYNOPSIS invites -- no longer
+      answers "Unknown option: dry-run".
 
     - `karr list --unclaimed` lists the cards no live claim holds -- the
       fourth of the filters #252 accepted, and the one #237 had taken
@@ -102,7 +105,10 @@
       so a narrower settle rule could only guess -- and would guess
       wrong on the common `done` -> `archived` path, leaving a waiting
       card blocked with nothing on the far board able to unblock it.
-      `CONTEXT.md` carries that reasoning under "Task lifecycle" now.
+      `CONTEXT.md` carries that reasoning under "Task lifecycle" now,
+      and `docs/adr/0004-a-terminal-status-is-finished.md` states the
+      rule it rests on: karr records progress and not outcome, so every
+      terminal status means finished and none of them means "given up".
 
     - The skill file `karr skill install` ships stops attributing a WIP
       utilization to `karr board` (#245). karr has never printed one --
@@ -270,7 +276,13 @@
       finished list around, tied entries with it. The comparison is on
       characters and not collated, so a title opening outside ASCII sorts
       behind every ASCII one -- predictable rather than locale-aware, and
-      the POD now says so instead of leaving it to be discovered. The
+      the POD now says so instead of leaving it to be discovered, and
+      says it as a non-goal rather than a gap: a collating comparator
+      would need a locale to collate for, and a board read by agents on
+      machines that share none would then have two hosts disagreeing
+      about what `--sort title --limit 5` returns. One reproducible
+      order that agrees with kanban-md beats an alphabetical one that
+      does not travel. The
       other half of the ticket -- which of kanban-md's remaining list and
       pick options karr should adopt at all (`--limit`, `--class`,
       `--unclaimed`, `--blocked`, `--group-by`, ...) -- is a scope

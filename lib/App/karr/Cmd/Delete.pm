@@ -93,7 +93,9 @@ C<archived> is terminal on every board, so the link settles instead of breaking.
 Settling says the far card is closed, not that it succeeded: karr records
 progress and not outcome, so archiving a card that was given up reports the same
 thing over there as archiving a finished one. The warning says so; if the card
-is being abandoned, that is worth a word on the far board itself.
+is being abandoned, that is worth a word on the far board itself. That karr has
+no "given up" to report at all is the decision in
+F<docs/adr/0004-a-terminal-status-is-finished.md>, not an omission here.
 
 =item * C<needs:> -- a far card this one waits on. Nothing over there breaks
 when this card goes, because the link goes with it; what ends is anything on
