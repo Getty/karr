@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-08-22T04:54:20Z
+claimed_by: ours-hero
+class: standard
+completed: 2026-08-23T21:50:53Z
+created: 2026-08-22T04:33:15Z
+id: 253
+priority: low
+started: 2026-08-22T04:49:23Z
+status: done
+tags:
+- json
+- log
+- output
+title: 'log: die Nicht-Repo-Meldung steht vor dem --json-Zweig'
+updated: 2026-08-23T21:50:53Z
+---
+
+Restbefund aus #248, dessen Auftrag lautete: pruefen, ob andere Kommandos unter `--json` etwas nach STDOUT drucken, das kein JSON ist.
+
+## Erhebung
+
+`grep` ueber alle `Cmd/*.pm` nach `print`/`printf`/`say` ohne STDERR-Ziel, gehalten gegen die Frage, ob die Klasse ueberhaupt `Role::Output` komponiert (ohne die gibt es kein `--json`, und dann ist Klartext auf STDOUT die richtige Antwort). `Create.pm` hat die Rolle nicht -- faellt raus. Von den uebrigen bleiben zwei Kandidaten, und einer davon ist sauber:
+
+- `Archive.pm:79` und `:108` -- **kein Fund.** Beide Zeilen tragen `unless $self->json` in der Folgezeile.
+- `Log.pm:92` -- der Kandidat.
+
+## Der Fund
+
+    lib/App/karr/Cmd/Log.pm:92
+    print "Not a git repository. No log available.\n";
+
+Die Zeile steht **vor** dem `if ($self->json)`-Zweig (Zeile ~124), ist also unter `--json` nicht abgeschirmt: `karr log --json` wuerde in diesem Fall einen Klartextsatz auf STDOUT legen statt eines JSON-Werts, und damit denselben Vertrag brechen, den #248 fuer `delete` repariert hat.
+
+## Was offen ist -- und warum das Ticket klein bleiben koennte
+
+Unverifiziert ist, ob der Pfad ueberhaupt erreichbar ist. Zwei Zeilen darueber steht `$self->require_local_board`, und wenn das in einem Verzeichnis ohne Git-Repository schon aussteigt, ist der `unless ($git->is_repo)`-Block toter Code -- und der Fund waere keine Ausgabefrage, sondern eine Aufraeumfrage.
+
+Der Kommentar an Ort und Stelle beruft sich auf #135 ("ein Board ohne Aktivitaet sagt `No log entries.`, ein Repository ohne Board muss etwas anderes sagen"), was nahelegt, dass der Block einmal erreichbar war. Ob er es nach #135 noch ist, entscheidet dieses Ticket.
+
+## Zu tun
+
+1. Reproduzieren: `karr log --json` in einem Verzeichnis ohne Git-Repository, und in einem Git-Repository ohne Board. Exit-Code und beide Stroeme festhalten.
+2. Ist der Pfad erreichbar: entweder die Meldung unter `--json` als JSON ausgeben oder nach STDERR schieben -- entlang derselben Begruendung wie #248 (STDOUT traegt das Ergebnis) und mit Blick darauf, was die anderen Kommandos in der leeren Lage tun.
+3. Ist er unerreichbar: den Block entfernen und den #135-Kommentar dorthin ziehen, wo die Unterscheidung heute tatsaechlich faellt.
+
+Regressionstest in beiden Faellen: der Strom von `karr log --json` muss als Ganzes dekodierbar sein, auch in der leeren Lage.
+
+Reproduziert, und der Befund ist der zweite der beiden Faelle des Tickets: der Block ist toter Code. Gemessen -- `karr log --json` in einem Verzeichnis ohne Git-Repository: exit 1, STDOUT leer, STDERR "Not a git repository. karr requires Git."; in einem Git-Repository ohne Board: exit 1, STDOUT leer, STDERR die #135-Absage. Die Klartextzeile erscheint in keiner der beiden Lagen. Ursache: `$self->git` kommt ueber `_build_git` -> `_build_store` -> `_build_git_root`, und `_build_git_root` steigt selbst mit `user_error("Not a git repository. karr requires Git.")` aus, wenn kein Repository gefunden wird; das Git-Objekt darunter zeigt auf genau den Workdir-Root, den libgit2 gerade geoeffnet hat, `is_repo` ist dort konstruktiv wahr. Die Datierung praeziser als das Ticket vermutete: der Block war live, als er 07d371a geschrieben wurde -- damals baute das Kommando sein Git-Objekt selbst mit `App::karr::Git->new(dir => $self->board_dir->parent)`, ohne Repository-Waechter. Das refs-first-Refactoring 69c34b3 ersetzte das durch `$self->git` und toetete ihn; #135 (5b2eb74) setzte zwei Jahre spaeter `require_local_board` und den Kommentar darueber, ohne den Leichnam zu bemerken. Der #135-Kommentar stand also bereits an der Stelle, wo die Unterscheidung faellt -- nichts zu verschieben. Geaendert: Block entfernt, `my $git = $self->git;` bleibt (wird unten fuer list_refs/read_ref gebraucht), und der Kommentar ueber `require_local_board` nennt jetzt alle drei leeren Lagen samt der Stelle, die die dritte beantwortet, plus die #248-Begruendung fuer den Fall, dass jemand hier wieder etwas drucken will. Kein Test, keine POD und nichts sonst im Baum hing an der Meldung (nur ein historisches Planungsdokument unter docs/superpowers/). Regressionstest neu: t/253-log-json-empty-stream.t, vier Subtests, pinnt den Vertrag statt des Zweiges -- leeres Board (STDOUT dekodiert zu []), halbinitialisiertes Board (Notiz auf STDERR, STDOUT dekodiert am Stueck), kein Board / kein Repository (exit 1, STDOUT komplett leer, Absage auf STDERR), und Filter ohne Treffer (--task 999 / --agent nobody, exit 0, []). Gegenprobe, dass er fallen kann: mit wieder eingesetztem Block und entferntem require_local_board fallen Subtest 2 und 3. Gelaufen: t/253-log-json-empty-stream.t t/151-log-last-range.t t/17-log.t t/90-activity-log-coverage.t t/130-read-commands-no-board.t pass (28 Tests), t/00-load.t pass. Volle Suite bewusst nicht -- parallele Agenten. Changes nicht angefasst (Auftrag), Vorschlag im Abschlussbericht.
