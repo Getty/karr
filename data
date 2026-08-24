@@ -1,0 +1,57 @@
+---
+claimed_at: 2026-08-24T00:27:18Z
+claimed_by: claude
+class: standard
+completed: 2026-08-24T00:27:18Z
+created: 2026-08-23T14:13:55Z
+id: 260
+priority: low
+started: 2026-08-24T00:01:03Z
+status: done
+tags:
+- cli
+- ux
+- output
+title: context --json --write-to FILE schreibt die Datei nicht und sagt es nicht
+updated: 2026-08-24T00:27:18Z
+---
+
+Gefunden beim Bauen von #254 (dort nicht angefasst -- eigener Befund, eigene Entscheidung).
+
+## Befund
+
+`App::karr::Cmd::Context::execute` beantwortet --json und kehrt zurueck, bevor
+--write-to ueberhaupt angesehen wird:
+
+    if ($self->json) { $self->print_json($out); return; }
+    ...
+    if ($self->write_to) { $self->_write_to_file($md) } else { print $md }
+
+Damit ist
+
+    karr context --json --write-to AGENTS.md
+
+reproduzierbar: JSON auf STDOUT, Exit 0, AGENTS.md bleibt unangetastet bzw.
+wird nicht angelegt (in einer Sandbox nachgestellt, 2026-08-23). Die Option,
+deren einziger Zweck das Schreiben ist, wird angenommen und stumm verworfen --
+dieselbe Klasse wie #225/#226/#254.
+
+## Was die richtige Antwort ist, ist eine Entscheidung
+
+Drei Kandidaten:
+
+1. `--json` gewinnt und die Kombination wird laut als Usage-Fehler
+   zurueckgewiesen (Exit 2) -- am naechsten an #225/#226.
+2. `--write-to` gewinnt: Datei bekommt den Markdown-Block (Sentinel-Vertrag mit
+   kanban-md), STDOUT bekommt das JSON-Ergebnis der Schreiboperation statt der
+   heutigen Prosa-Zeile "Context written to ...". Das ist die einzige Variante,
+   in der beide Optionen etwas tun.
+3. Nur dokumentieren, dass --json die Datei nicht schreibt -- billig, aber
+   loest den stummen Verlust nicht.
+
+#254 hat fuer --compact Variante "Datei gewinnt, Terminalzeile ist ohnehin
+einzeilig" gewaehlt; die JSON-Seite ist damit NICHT mitentschieden, weil --json
+im Gegensatz zu --compact die Prosa-Zeile ersetzt statt sie stehen zu lassen.
+
+Regressionstest: pinnen, dass die gewaehlte Antwort eintritt (Datei existiert
+danach, oder Exit 2), nicht der heutige stille Exit 0 ohne Datei.
