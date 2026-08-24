@@ -1,0 +1,67 @@
+---
+class: standard
+completed: 2026-08-24T00:28:47Z
+created: 2026-08-23T18:51:02Z
+id: 262
+priority: medium
+started: 2026-08-24T00:28:47Z
+status: done
+tags:
+- github
+- ffi
+title: 'GH #6: Warnungsflut aus FFI::CheckLib bei unvollstaendigem Kommando'
+updated: 2026-08-24T00:28:47Z
+---
+
+Gemeldet 2026-07-08 von jwrightecs, GitHub-Issue #6, auf perl 5.34.
+
+  karr move 1 in-progress        # ohne --claim
+
+Nach der richtigen Fehlermeldung "Status in-progress requires --claim" folgt
+ein Schwall:
+
+  Use of uninitialized value $regex in regexp compilation
+    at FFI/CheckLib.pm line 125 during global destruction    (mehrfach)
+  Use of uninitialized value in string ne
+    at FFI/CheckLib.pm line 137 during global destruction    (mehrfach)
+
+"during global destruction" ist der Hinweis: das passiert beim Abbau, nicht im
+Kommando. Die Meldungen kommen aus FFI::CheckLib, also aus der Kette unter
+Git::Libgit2, nicht aus karr selbst -- karr sieht davon nichts und kann sie
+auch nicht abfangen, solange sie beim Interpreter-Ende entstehen.
+
+Hier nicht reproduzierbar: auf perl 5.40.1 gibt derselbe Aufruf genau eine
+Zeile aus. Der Unterschied ist entweder die Perl-Version oder die Version der
+FFI-Kette auf der Maschine des Melders.
+
+Gegen den fertigen Stack auf einem alten Perl gegenpruefen -- genau dafuer ist
+der Gesamt-Test da. Danach dem Melder antworten, auch wenn die Ursache
+ausserhalb liegt: er hat sauber berichtet und wartet seit Juli.
+
+Nachgemessen 2026-08-23, und der Ticketkoerper oben liegt an einer Stelle
+falsch: der Befund ist nicht undiagnostiziert.
+
+GH #6 traegt seit dem 2026-08-13 eine ausfuehrliche Antwort von Getty. Sie
+benennt die Ursache -- libgit2-Wiedereintritt in Perls global destruction:
+ein noch scharfer SyncGuard wurde dort abgeraeumt, sein DESTROY fuhr einen
+vollen Push, und zu dem Zeitpunkt waren FFI::CheckLibs Suchtabellen und
+FFI::Platypus' Typ-Parser-Globals bereits freigegeben -- und den Fix in zwei
+Lagen: App::karr::Git verweigert jede native Operation solange
+${^GLOBAL_PHASE} eq 'DESTRUCT' (Git.pm:281), SyncGuard::DESTROY meldet in
+dieser Phase statt zu pushen (SyncGuard.pm:211).
+
+Beides steht unter 0.500 in Changes, und 0.500 ist seit dem 2026-08-14 auf
+CPAN -- einen Tag NACH dem Kommentar, der sie noch als kommend ankuendigte.
+
+Damit ist "hier nicht reproduzierbar" oben nicht die Perl-Version und nicht
+die FFI-Kette, sondern schlicht: der Fehler ist gefixt und dieser Baum hat
+den Fix. Ein Gegentest auf altem Perl beweist nichts mehr, was die zwei
+Codestellen nicht schon sagen.
+
+Offen ist damit nur noch eines, und es ist keine Codearbeit: dem Melder
+sagen, dass 0.500 draussen ist, und das Issue schliessen. Er hat sauber
+berichtet und wartet seit Juli.
+
+
+Erledigt 2026-08-24: auf GH #6 gepostet, dass 0.500 seit dem 14.08. auf CPAN
+ist und beide Fix-Lagen traegt (issuecomment-5389376370), Issue geschlossen.
