@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-08-24T00:27:18Z
+claimed_by: claude
+class: standard
+completed: 2026-08-24T00:27:18Z
+created: 2026-08-22T23:03:31Z
+id: 259
+priority: medium
+started: 2026-08-23T23:32:23Z
+status: done
+tags:
+- cli
+- bug
+- argv
+title: Ein flaggenfoermiger WERT hinter einem Boolean wird umgeschrieben -- und ein
+  lauter Fehler dabei still
+updated: 2026-08-24T00:27:18Z
+---
+
+Restbefund aus dem Sitzungsreview zu #256. Vom Reviewer nachgestellt, nicht erschlossen.
+
+## Der Fall
+
+    karr edit 1 --json -a --dashed-note
+    -> gespeichert wird `--dashed_note`
+
+Dieselbe Wurzel wie #256 (`MooX::Options::Role::_options_fix_argv` schluckt hinter einer erkannten Option das naechste Token unbedingt), aber die andere Haelfte davon: #256 hat den Fall repariert, in dem hinter einem Boolean eine **Option** steht, deren Name Bindestriche traegt. Hier steht hinter dem Boolean eine **wertnehmende** Option, und deren Wert sieht aus wie eine Flagge -- der wird jetzt mit umgeschrieben, obwohl er ein Wert ist.
+
+**Vorbestehend**, nicht von #256 verursacht: auf einem `git archive`-Export des Standes vor #256 identisch reproduziert.
+
+## Was neu ist, und deshalb hier steht
+
+Eine Folge hat sich durch #256 geaendert, und zwar zum Schlechteren:
+
+    karr list --json --claimed-by --weird-name
+
+war vorher ein lauter Usage-Fehler (`Unknown option: claimed-by`, exit 2) und filtert jetzt **still** auf `--weird_name` -- also auf einen Claim-Namen, den niemand getippt hat, mit exit 0 und leerer Liste. Das ist genau die Fehlerform, die #225, #226 und #251 in diesem Repo als schlimmer eingestuft haben als eine Fehlermeldung: eine Antwort, die plausibel aussieht und eine andere Frage beantwortet.
+
+Kein Grund, #256 zurueckzunehmen -- der Fall dort war haeufig und dieser ist selten. Aber der Fix ist damit nicht zu Ende.
+
+## Zu klaeren
+
+1. Kann `App::karr::Role::CliArgs`s neuer `_classify_argv` den Unterschied ueberhaupt sehen? Er weiss, welche Option einen Wert nimmt (das ist die Frage, die #247 beantwortet hat und die #256 wiederverwendet) -- die Frage ist, ob die Information an der Stelle ankommt, an der das Token umgeschrieben wird, oder ob die Umschreibung passiert, bevor die vorhergehende Option klassifiziert ist.
+2. Falls ja: den Wert unangetastet lassen, so wie `karr edit 1 --body --we-ird` es schon wird (das funktioniert seit #256 und ist getestet) -- pruefen, warum der eine Fall geht und der andere nicht.
+3. Falls nein: entscheiden, ob der lautere alte Zustand (Usage-Fehler) fuer diese Position wiederherstellbar ist. Ein Fehler ist besser als eine stille falsche Filterung.
+
+Regressionstest: beide Formen, mit einem Boolean davor und ohne, und der stille Fall muss nachweislich laut werden oder nachweislich den richtigen Wert speichern.
+
+Beruehrt `t/256-dashed-option-after-flag.t`, das die funktionierende Haelfte schon pinnt -- dort dazu, nicht daneben.
