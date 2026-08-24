@@ -52,8 +52,22 @@ C<--compact> was declared for every command in L<App::karr::Role::Output>
 (#254). It shapes what is printed, not what is written: with C<--write-to> the
 file still receives the Markdown block, because those sentinels are an interop
 contract with kanban-md (see L</FILE UPDATE MODE>) and a compacted block would
-be one neither tool could find again -- and the line that run prints is a
-single line already. C<--json> wins over both.
+be one neither tool could find again.
+
+C<--json> and C<--compact> do not compete with C<--write-to> and never did
+(#260). C<--write-to> is a side effect; the output flags decide what stdout
+carries. All three combinations write the same Markdown block to the file and
+differ only in what is printed:
+
+    karr context --write-to AGENTS.md              Context written to AGENTS.md
+    karr context --json    --write-to AGENTS.md    the JSON payload
+    karr context --compact --write-to AGENTS.md    the four numbers
+
+With an output flag the C<Context written to ...> confirmation goes to
+B<stderr>, so C<< karr context --json --write-to AGENTS.md > ctx.json >>
+leaves behind a file that decodes whole -- the channel rule C<delete>'s prompt
+follows for the same reason (#248). Without one, stdout is prose anyway and
+the line stays there.
 
 Only C<archived> tasks are left out of the summary. Finished work still counts
 towards the reported total and is still reported as blocked if it is, which is
@@ -80,7 +94,14 @@ whether the stamp is a bare C<YYYY-MM-DD> or a full RFC3339 timestamp.
 
 When C<--write-to> is used, the command replaces the content between
 C<BEGIN kanban-md context> and C<END kanban-md context> if those sentinels are
-already present; otherwise it appends the generated block to the file.
+already present; otherwise it appends the generated block to the file. A file
+that does not exist yet is created carrying the block alone.
+
+It is a file update and not a redirection: the rest of the host file is left
+as it was, and a later run rewrites the same block in place rather than adding
+a second one. That is why the block is always Markdown, whatever C<--json> or
+C<--compact> ask for on stdout -- both tools find their block by these
+sentinels, and a payload between them is one neither could update again.
 
 =head1 SEE ALSO
 
@@ -240,6 +261,27 @@ sub execute {
     push @section_data, { name => $sec, items => \@items } if @items;
   }
 
+  # --write-to is a SIDE EFFECT and the output flags decide stdout; the two
+  # were never in conflict (ticket #260). --write-to does not redirect the
+  # output, it maintains a block delimited by sentinels karr shares with
+  # kanban-md inside a host file. What goes between those sentinels is
+  # Markdown by that interop contract and is not the caller's to choose, so
+  # neither --json nor --compact has anything to say about the FILE -- and
+  # neither is a reason to skip the write.
+  #
+  # Both were getting that wrong from opposite sides. --json answered and
+  # returned before --write-to was read at all: no file, exit 0, and nothing
+  # said -- the option whose only job is to write, accepted and dropped, the
+  # class #225/#226/#254 are about. --compact wrote the file and dropped its
+  # own rendering instead. One rule now covers both.
+  my $stdout_wants_markdown = !( $self->json || $self->compact );
+  my $md =
+    ( $self->write_to || $stdout_wants_markdown )
+    ? $self->_render_markdown($board_name, $total, $active, $blocked, $overdue, \@section_data)
+    : undef;
+
+  $self->_write_to_file($md) if $self->write_to;
+
   if ($self->json) {
     my $out = {
       board_name => $board_name,
@@ -259,11 +301,7 @@ sub execute {
   # reader does not have to learn two vocabularies for the same four counts.
   # Below --json and above the Markdown, the place `pick` cuts (#251): the
   # payload is never reshaped by --compact, the prose is.
-  #
-  # --write-to wins over it deliberately. The block in that file is delimited
-  # by sentinels karr shares with kanban-md, so what goes between them is not
-  # this command's to compact -- and such a run prints one line either way.
-  if ( $self->compact && !$self->write_to ) {
+  if ($self->compact) {
     printf "board_name=%s\n", $board_name;
     printf "total_tasks=%d\n", $total;
     printf "active=%d\n", $active;
@@ -272,14 +310,7 @@ sub execute {
     return;
   }
 
-  # Render markdown
-  my $md = $self->_render_markdown($board_name, $total, $active, $blocked, $overdue, \@section_data);
-
-  if ($self->write_to) {
-    $self->_write_to_file($md);
-  } else {
-    print $md;
-  }
+  print $md;
 }
 
 sub _render_markdown {
@@ -355,7 +386,18 @@ sub _write_to_file {
   eval { $file->spew_utf8($out); 1 }
     or user_error( "Could not write $file: ", clean_error($@) );
 
-  printf "Context written to %s\n", $self->write_to;
+  # stdout belongs to the payload when an output flag claims it, so the
+  # confirmation goes to stderr there. Same answer #248 gave for `delete`'s
+  # prompt and for the same reason: `karr context --json --write-to AGENTS.md
+  # > ctx.json` has to leave behind a file that decodes whole, and a
+  # key=value rendering that carries one line of prose is not key=value.
+  # Without an output flag stdout is prose anyway, so the line stays put.
+  if ( $self->json || $self->compact ) {
+    printf STDERR "Context written to %s\n", $self->write_to;
+  }
+  else {
+    printf "Context written to %s\n", $self->write_to;
+  }
 }
 
 sub _task_item {
