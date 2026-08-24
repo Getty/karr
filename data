@@ -1,0 +1,66 @@
+---
+class: standard
+completed: 2026-08-24T00:28:47Z
+created: 2026-08-23T18:50:26Z
+id: 261
+priority: low
+started: 2026-08-24T00:28:47Z
+status: done
+tags:
+- github
+title: 'GH #3: Worktree-Meldung laeuft ins Leere -- t/29 ist gruen, Melder antwortet
+  nicht'
+updated: 2026-08-24T00:28:47Z
+---
+
+Gemeldet 2026-04-14, GitHub-Issue #3: "karr doesnt work properly with worktrees".
+Zwei Kommentare.
+
+Nachgemessen am 23.08.2026: t/29-worktree.t laeuft gruen, alle 5 Subtests, als
+Teil der vollstaendigen Suite (218 Dateien, 1616 Tests, PASS).
+
+Du hattest am 18.05. um einen erneuten Versuch gebeten und nie eine Antwort
+bekommen. Ohne Reproduktion laesst sich nichts belegen.
+
+Kandidat zum Schliessen -- mit einer Notiz, was gemessen wurde und dass es bei
+neuer Information gern wieder aufgemacht wird. Nicht kommentarlos zumachen.
+
+Nachgemessen 2026-08-23 gegen HEAD (0.501-dev), die exakte Folge aus dem
+Bericht, in einem Bare-Repo mit angehaengten Worktrees:
+
+  karr board       im Worktree  -> "No karr board in this repository", klare
+                                   Absage statt der alten Meldung
+  karr init        im Worktree  -> Initialized karr board in refs/karr/
+  karr create "CYCLE-13" --priority high -> Created task 1   (das war der
+                                   Schritt, der im Bericht in
+                                   BoardAccess.pm:119 starb)
+  karr board       im Worktree  -> zeigt die Karte
+  karr board       im Bare-Repo -> zeigt dieselbe Karte   (im Bericht:
+                                   "Not a git repository")
+
+Ein zweiter angehaengter Worktree sieht dasselbe Board, ein Worktree an einem
+normalen Clone ebenfalls. Auch ihre Schreibweise mit positionalem Titel
+(karr create "CYCLE-14" --priority high) laeuft.
+
+Zwei Releases haben das nach dem Bericht bewegt, und beide sind laenger
+draussen als die unbeantwortete Rueckfrage vom 18.05.:
+
+  0.202 (2026-05-17)  Cmd::List "use"te App::karr::Role::BoardAccess ohne es
+                      zu komponieren -- "Can't locate object method
+                      'load_tasks'". Dieselbe Datei, in der ihr karr create
+                      starb. Dazu kam t/29-worktree.t.
+  0.400 (2026-07-07)  Board-Erkennung unter der gitdir-Indirektion eines
+                      Worktrees (und unter gepackten Refs): geprueft wurde auf
+                      die lose Datei .git/refs/karr/config, die es in einem
+                      Worktree nie gibt. Aufgeloest wird jetzt refs/karr/config
+                      ueber libgit2.
+
+Die Rueckfrage vom 18.05. ging also an einen Stand, der den ersten Fix schon
+hatte -- sie war berechtigt, nur hat sie nie eine Antwort bekommen.
+
+Zu tun: antworten mit dem, was gemessen wurde, und schliessen. Entwurf liegt
+beim Maintainer.
+
+
+Erledigt 2026-08-24: Messung als Kommentar auf GH #3 gepostet
+(issuecomment-5389375617), Issue geschlossen.
