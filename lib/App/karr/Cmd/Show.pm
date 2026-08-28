@@ -12,6 +12,7 @@ use App::karr::Role::Output;
 use App::karr::Role::CompactOutput;
 use App::karr::Task;
 use App::karr::CrossBoard;
+use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
      'App::karr::Role::CompactOutput';
@@ -151,7 +152,13 @@ sub _select_tasks {
   # Explicit id always wins.
   if (defined $id) {
     my $task = $self->find_task($id);
-    die "Task $id not found\n" unless $task;
+    # The id names no card, so there is nothing to show -- end on the command
+    # that lists the ids that do exist, the same spelling the mutation commands
+    # raise through App::karr::Role::TaskMutation/task_not_found (ticket k264).
+    # Show is read-only and composes no mutation role, so the line is inlined.
+    die "Task $id not found on this board:\n"
+      . command_hint('list', '--compact') . "\n"
+      unless $task;
     return ($task);
   }
 

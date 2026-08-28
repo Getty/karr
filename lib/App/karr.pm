@@ -6,6 +6,10 @@ use Moo;
 use MooX::Cmd;
 use MooX::Options;
 use Term::ANSIColor qw( colored );
+# Loaded without importing: this is a command class and runs no namespace::clean
+# (MooX::Options forbids it), so `use ... qw( command_hint )` would compose
+# command_hint as a method on the root. Called fully qualified below instead.
+use App::karr::Error ();
 use App::karr::Role::BoardAccess;
 use App::karr::Cmd::Board;
 
@@ -329,7 +333,13 @@ sub execute {
   # through to the board summary below.
   my ($unknown) = $self->positional_args($args_ref);
   if (defined $unknown) {
-    die "Unknown command: $unknown\nRun 'karr --help' to see the available commands.\n";
+    # The way out was prose ("Run 'karr --help' ...") where it could be a line to
+    # copy (ticket k264). The "Unknown command:" marker MUST stay at the start of
+    # the first line -- App::karr::Error::is_usage_error and bin/karr classify the
+    # exit code on it (ADR 0002, exit 2) -- so the hint goes on the line after it,
+    # last, the way every k263 suggestion does. `--help` is a real token, not a
+    # placeholder, so the line is printed rather than withheld.
+    die "Unknown command: $unknown\n" . App::karr::Error::command_hint('--help') . "\n";
   }
 
   # Default action: show board summary. The default Board is constructed

@@ -154,7 +154,11 @@ sub execute {
     my ($id) = @_;
 
     my $task = $self->find_task($id);
-    die "Task $id not found\n" unless $task;
+    # The unguarded pre-read fires before delete_task_guarded below, so this is
+    # the not-found a caller normally meets; the guard raises the same line only
+    # on the race where the card vanishes in the window. One spelling for both,
+    # and for every other command on the mutation path (ticket k264).
+    die $self->task_not_found($id) unless $task;
 
     # A live claim blocks the delete whoever holds it -- an empty claimant, the
     # way kanban-md's cmd/delete.go calls CheckClaim. Neither implementation

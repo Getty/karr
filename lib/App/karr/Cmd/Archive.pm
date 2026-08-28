@@ -73,7 +73,11 @@ sub execute {
     # sit inside update_task_guarded's callback below, applied to the very
     # revision that gets written.
     my $found = $self->find_task($id);
-    die "Task $id not found\n" unless $found;
+    # The unguarded pre-read fires before update_task_guarded below, so this is
+    # the not-found a caller normally meets; the guard raises the same line only
+    # on the race where the card vanishes in the window. One spelling for both,
+    # and for every other command on the mutation path (ticket k264).
+    die $self->task_not_found($id) unless $found;
 
     if ($found->status eq 'archived') {
       printf "Task %d is already archived: %s\n", $found->id, $found->title

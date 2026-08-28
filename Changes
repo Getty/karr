@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - The working-command sweep reaches the frequent commands (k264).
+      "Task 999 not found", shared by `move`, `edit`, `delete`,
+      `archive`, `handoff` and `show`, now reads "Task 999 not found on
+      this board:" with `karr list --compact` on its own last line -- the
+      real id, one spelling for every command, and the way to see the ids
+      that do exist. And an unknown command spells the way out as a line
+      to copy: `karr wibble` ends on `karr --help` instead of quoting it
+      inside prose, with the "Unknown command:" marker still leading the
+      first line so the exit code stays 2. Exit codes are unchanged and
+      `--json` keeps its single-line `error` field.
+
     - Errors about a missing or malformed option now end with the
       invocation that would have worked, built from the words the caller
       typed (k263). `karr move 79 in-progress` answered "Status

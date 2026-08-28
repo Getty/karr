@@ -215,6 +215,35 @@ written.
 
 =cut
 
+# One spelling of "this id names no card" for every command on the mutation
+# path (ticket k264). update_task_guarded and delete_task_guarded raise it when
+# the ref is gone; archive and delete raise the same off the unguarded pre-read
+# they take before the guard (Cmd::Archive, Cmd::Delete), so move, edit, delete,
+# archive and handoff can never disagree on the wording -- the drift k263 warned
+# about when it unified "No karr board found" across five commands. The id is
+# real and only `karr list --compact` follows it, carrying no placeholder, so
+# the suggestion is always printed (the shape `karr needs` got in k263). The
+# trailing newline is here so a `die` honours it and Carp appends no call site.
+sub task_not_found {
+    my ($self, $id) = @_;
+    return "Task $id not found on this board:\n"
+        . App::karr::Error::command_hint('list', '--compact') . "\n";
+}
+
+=method task_not_found
+
+    die $self->task_not_found($id);
+
+The one message every command on the mutation path raises when an id names no
+card: the id as the caller gave it, and C<karr list --compact> on its own last
+line as the way to see the ids that do exist. Shared so that C<move>, C<edit>,
+C<delete>, C<archive> and C<handoff> -- which reach it through
+L</update_task_guarded>, L</delete_task_guarded> and the unguarded pre-reads in
+L<App::karr::Cmd::Archive> and L<App::karr::Cmd::Delete> -- spell it one way
+(ticket k264, the shape L<App::karr::Cmd::Needs> got in k263).
+
+=cut
+
 sub update_task_guarded {
     my ($self, $id, $mutate) = @_;
     my $git = $self->git;
@@ -222,7 +251,7 @@ sub update_task_guarded {
 
     return $git->retry_contended( "task $id", sub {
         my ( $oid, $content ) = $git->read_ref_with_oid($ref);
-        die "Task $id not found\n" unless defined $oid && length $content;
+        die $self->task_not_found($id) unless defined $oid && length $content;
 
         my $task = App::karr::Task->from_string( $content,
             repair_frontmatter => $git->board_is_legacy_encoded );
@@ -297,7 +326,7 @@ sub delete_task_guarded {
 
     my $task = $git->retry_contended( "task $id", sub {
         my ( $oid, $content ) = $git->read_ref_with_oid($ref);
-        die "Task $id not found\n" unless defined $oid && length $content;
+        die $self->task_not_found($id) unless defined $oid && length $content;
 
         my $found = App::karr::Task->from_string( $content,
             repair_frontmatter => $git->board_is_legacy_encoded );
