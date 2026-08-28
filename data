@@ -1,0 +1,79 @@
+---
+claimed_at: 2026-08-28T12:21:21Z
+claimed_by: walk-pull
+class: standard
+completed: 2026-08-28T16:56:34Z
+created: 2026-08-28T03:00:12Z
+id: 263
+priority: high
+started: 2026-08-28T09:46:44Z
+status: done
+tags:
+- dx
+- errors
+- agents
+title: Error messages show the command that would have worked
+updated: 2026-08-28T16:56:34Z
+---
+
+Every error about a missing or malformed option prints the command that would
+have worked, built from the arguments the user actually typed -- never a
+generic example with a placeholder id.
+
+## The case that prompted this
+
+An agent moving card 79, four calls for one move:
+
+  karr move 79 in-progress            -> "Status 'in-progress' requires --claim"
+  karr move 79 in-progress --claim    -> "Option claim requires an argument" + usage
+  karr move --help | head -30         -> read the usage
+  karr move 79 in-progress --claim main-agent   -> worked
+
+Two separate faults:
+
+1. "requires --claim" names the option but not that a value follows, so the
+   agent typed `--claim` bare. The message provoked the second error.
+2. The second error did carry the answer (`--claim=String`, high up in a
+   15-line usage block), but the agent had piped through `tail -3` -- karr
+   output is long, agents truncate it -- and saw only the -h/--help/--man
+   lines.
+
+## What to build
+
+Replace the bare requirement with the corrected invocation:
+
+  Status 'in-progress' requires a claim:
+    karr move 79 in-progress --claim NAME
+
+Real id, real status, the caller's own words. Only the value the user has to
+supply stays a placeholder.
+
+Placement matters as much as content: the actionable line goes LAST. Agents
+pipe karr through `tail -n`, so anything printed before a long usage block is
+what gets cut. Today it is exactly backwards.
+
+## Scope
+
+Start with the commands an agent meets rarely -- move, handoff, needs,
+materialize, import, repair -- where nothing is memorised and every message is
+read cold. The frequent ones (list, show, create) can follow.
+
+Out of scope, deliberately: --json output is untouched, and the exit-code
+contract of ADR 0002 stands. No environment sniffing is needed here -- a
+message that shows the working command serves a human equally well. Detecting
+an AI caller only becomes a question for output a human would find noisy, and
+that is a separate ticket.
+
+2026-08-28 12:21 Implemented in the working tree, not committed. Both faults are closed.
+
+Fault 1 (content): App::karr::Error/command_hint is the one renderer for the suggestion line; clean_error had to learn to carry it through the batch runner's first-line reduction, or every move failure would have shown the colon with the answer cut off. require_claim now says "requires a claim:" plus the working line, through claim_hint_tokens on Role::TaskMutation (default karr edit ID --status STATUS, overridden in Cmd::Move). move, needs, import, materialize and repair covered; "No karr board found" unified across all five commands that raise it.
+
+Fault 2 (placement): Role::ExitCodes buffers STDERR for the length of new_with_options and prints the diagnostic AFTER the usage block with the suggestion under it. Two writers had to be caught, which is why a $SIG{__WARN__} handler alone was not enough -- Getopt::Long warns, but a required=>1 option missing is reported by MooX::Options with a bare print STDERR that no warn handler sees. The placeholder comes from the command's own usage_string, so both messages about --claim say NAME.
+
+Unknown option deliberately gets the reordering and no suggestion: the only working line there is the caller's own minus the token they meant something by, and an agent reading tail -1 would have copied a state-changing move it never asked for.
+
+prove -l t/ run in full by the orchestrator on the delivered tree: Files=220, Tests=1650, PASS, nothing skipped. New t/263-error-shows-working-command.t (24 subtests), eight existing tests adjusted, Changes entry under {{$NEXT}}.
+
+Deferred to k264: Task ID not found from update_task_guarded and Unknown command: in App::karr -- both belong to the frequent commands this ticket set aside.
+
+Review durch: Code sauberer, konsistenter Durchbau; neuer Test (24 Subtests) + 8 angepasste Tests grün (97 Tests PASS). Committet als 15246fa.
