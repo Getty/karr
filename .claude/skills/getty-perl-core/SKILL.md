@@ -135,6 +135,7 @@ Every distribution ships a `Changes` file with a `{{$NEXT}}` token at the top (D
 
 - **Add a bullet under `{{$NEXT}}` in the SAME commit as any user-facing change** — new bindings, behaviour changes, bug fixes, deprecations. If a CPAN consumer would notice, it belongs there.
 - **Match the existing style:** two-space indent, `  - ` bullets, wrap near 78 columns, present-tense imperative ("New binding X", "Fix Y on macOS").
+- **One topic, one bullet, one to three lines** — touching an area again rewrites the bullet that is already there instead of adding a second. Wording and length: `getty-git-commit-style`.
 - **Skip pure dev-tooling noise** — skill hardlinks, editor config, internal CI refactors. A CI fix that unbreaks the build for everyone IS worth a line.
 - **Never hand-edit the version line or timestamp** — `[NextRelease]` owns those.
 
