@@ -291,12 +291,23 @@ sub _print_help {
   $out .= "  karr board\n";
   $out .= "\nRun " . colored("karr <command> --help", 'bold') . " for command-specific options.\n";
 
-  if ($code > 0) { warn $out } else { print $out }
   # Exit-code contract (ADR 0002): a positive code here is a usage/option-parse
   # error from MooX::Options (unknown option, bad value on the root command), so
   # normalize it to 2. Help requests (-h/--help) arrive with code 0 -> exit 0.
   # A negative code means "print, do not exit" and is left untouched.
   $code = 2 if $code > 0;
+
+  # The root reaches this instead of App::karr::Role::ExitCodes' options_usage
+  # wrapper (the `around` below hands it $code and never calls $orig), so the
+  # reordering of ticket k263 is asked for here by name: the diagnostic
+  # MooX::Options already wrote is buffered, and this puts it back AFTER the
+  # block above with the invocation that would have worked under it, then exits.
+  # It returns 0 when there is nothing to move -- a help request, or a call
+  # that did not come out of option parsing at all -- and has then printed
+  # whatever was buffered unchanged, which is what the two lines below expect.
+  $self_or_class->_usage_error_last( $out, $code );
+
+  if ($code > 0) { warn $out } else { print $out }
   exit $code if $code >= 0;
 }
 

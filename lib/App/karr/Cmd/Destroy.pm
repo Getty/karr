@@ -7,6 +7,7 @@ use MooX::Cmd;
 use MooX::Options (
   usage_string => 'USAGE: karr destroy --yes',
 );
+use App::karr::Error qw( command_hint );
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::CliArgs;
 use App::karr::Role::SyncLifecycle;
@@ -73,7 +74,10 @@ sub execute {
   # the push on a crash.
   $self->sync_before;
 
-  die "No karr board found. Run 'karr init' to create one.\n"
+  # The one spelling of this sentence, shared with require_board and with
+  # destroy/materialize/repair: the way out is a command on its own last line
+  # (ticket k263).
+  die "No karr board found:\n" . command_hint('init') . "\n"
     unless $store->has_board_refs;
 
   $store->delete_all_karr_refs;

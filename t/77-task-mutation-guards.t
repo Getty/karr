@@ -107,13 +107,19 @@ subtest 'edit --status obeys the same rules as move (#55)' => sub {
 
     my $move = _run_karr( $repo, undef, 'move', 1, 'in-progress' );
     is( $move->{exit}, 1, 'move 1 in-progress without --claim is refused' );
-    like( $move->{stderr}, qr/requires --claim/, '...with the require_claim message' );
+    like( $move->{stderr}, qr/requires a claim/, '...with the require_claim message' );
+    # The suggestion is the caller's own command line with the missing piece
+    # added, so the two doors offer two different ones (k263).
+    like( $move->{stderr}, qr/^  karr move 1 in-progress --claim NAME$/m,
+        '...and move suggests the move that would have worked' );
 
     # The bug: the same state change through the other door.
     my $edit = _run_karr( $repo, undef, 'edit', 1, '--status', 'in-progress' );
     is( $edit->{exit}, 1, 'edit 1 --status in-progress without --claim is refused too' )
         or diag $edit->{stdout} . $edit->{stderr};
-    like( $edit->{stderr}, qr/requires --claim/, '...with the same message' );
+    like( $edit->{stderr}, qr/requires a claim/, '...with the same message' );
+    like( $edit->{stderr}, qr/^  karr edit 1 --status in-progress --claim NAME$/m,
+        '...and edit suggests the edit that would have worked' );
     is( _task($repo)->status, 'todo', 'and the status was not changed' );
 
     # With a claim it goes through, and it stamps the lifecycle dates that

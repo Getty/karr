@@ -9,7 +9,7 @@ use Module::Runtime qw( use_module );
 use App::karr;
 use App::karr::SyncGuard;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
-use App::karr::Error qw( is_usage_error );
+use App::karr::Error qw( is_usage_error set_original_argv );
 use App::karr::Role::CliArgs;
 
 # The character/octet boundary (ticket #53). Everything above this line is
@@ -19,6 +19,15 @@ use App::karr::Role::CliArgs;
 # App::karr::Encoding/enable_std_utf8 says which readers those are (#246).
 enable_std_utf8();
 decode_argv();
+
+# The caller's own words, kept for the suggestion line an option-parse error
+# ends on (ticket k263). Recorded HERE because both rewrites below change argv
+# and neither leaves what anyone typed: _refuse_empty_argument's diagnosis reads
+# the raw line, and _normalize_option_argv respells --claimed-by as
+# --claimed_by and folds a flag-shaped value onto its option with an `=`.
+# App::karr::Role::ExitCodes reads it back through App::karr::Error, and prints
+# no suggestion at all where nothing was recorded.
+set_original_argv(@ARGV);
 
 # Push insurance, flushed at the last safe moment (ticket #37).
 #

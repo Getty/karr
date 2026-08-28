@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
 
@@ -79,7 +80,9 @@ sub execute {
   # Read-only: materialize reflects the current local refs into files, so it
   # syncs nothing (matching the reading commands list/show/board).
   my $store = $self->store;
-  die "No karr board found. Run 'karr init' to create one.\n"
+  # Same sentence as everywhere else, with the way out spelled as the command
+  # instead of quoted inside the prose, and last (ticket k263).
+  die "No karr board found:\n" . command_hint('init') . "\n"
     unless $store->has_board_refs;
 
   # Asked before materialize_to runs, so the answer is about the working tree

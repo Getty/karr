@@ -16,6 +16,7 @@ use App::karr::Role::BoardDiscovery;
 use App::karr::Role::SyncLifecycle;
 use App::karr::Role::CliArgs;
 use App::karr::Role::Output;
+use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardDiscovery';
 with 'App::karr::Role::SyncLifecycle';
@@ -171,7 +172,9 @@ sub execute {
   my $guard = $self->sync_before;
   $guard->done unless $self->yes;
 
-  die "No karr board found. Run 'karr init' to create one.\n"
+  # Same sentence as everywhere else, with the way out spelled as the command
+  # instead of quoted inside the prose, and last (ticket k263).
+  die "No karr board found:\n" . command_hint('init') . "\n"
     unless $store->has_board_refs;
 
   # The encoding migration is first and is the only one that can be skipped
@@ -205,7 +208,7 @@ sub execute {
   # One hint for the whole run, not one per section: both findings are applied
   # by the same --yes, and printing it twice made the report read as two
   # separate offers.
-  print "\nRun 'karr repair --yes' to apply.\n"
+  print "\nTo apply:\n" . command_hint( 'repair', '--yes' ) . "\n"
     if !$self->yes && ( @$repaired || @{ $stamps->{clamp} } );
 }
 

@@ -179,7 +179,9 @@ subtest 'a reopen into a column that wants an owner asks for one' => sub {
     # `edit --release`.
     my $rv = _run_karr( $repo, 'move', '1', 'in-progress' );
     isnt( $rv->{exit}, 0, 'a claimless reopen into in-progress is refused' );
-    like( $rv->{stderr}, qr/requires --claim/, 'and says what it wants' );
+    like( $rv->{stderr}, qr/requires a claim/, 'and says what it wants' );
+    like( $rv->{stderr}, qr/^  karr move 1 in-progress --claim NAME$/m,
+        'and the invocation that would have worked (k263)' );
     is( _field_of( $repo, 1, 'Status' ), 'done', 'the card did not move' );
     is( _field_of( $repo, 1, 'Claimed' ), 'alpha-one',
         'and a refused move released nothing' );

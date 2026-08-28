@@ -9,7 +9,7 @@ use MooX::Options (
 );
 use Path::Tiny;
 use App::karr::Encoding qw( yaml_dump );
-use App::karr::Error qw( user_error clean_error );
+use App::karr::Error qw( user_error clean_error command_hint );
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::CliArgs;
 use App::karr::Role::SyncLifecycle;
@@ -64,7 +64,10 @@ sub execute {
   my $guard = $self->sync_before;
   $guard->done;
 
-  die "No karr board found. Run 'karr init' to create one.\n"
+  # The one spelling of this sentence, shared with require_board and with
+  # destroy/materialize/repair: the way out is a command on its own last line
+  # (ticket k263).
+  die "No karr board found:\n" . command_hint('init') . "\n"
     unless $store->has_board_refs;
 
   # Characters all the way: spew_utf8 encodes for the --output file, and the

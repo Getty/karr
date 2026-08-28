@@ -112,7 +112,7 @@ subtest 'the ticket reproduction: --status X --release no longer slips through r
         'edit', 1, '--status', 'in-progress', '--release' );
     is( $bug->{exit}, 1, 'edit --status in-progress --release is now refused' )
         or diag $bug->{stdout} . $bug->{stderr};
-    like( $bug->{stderr}, qr/Status 'in-progress' requires --claim/,
+    like( $bug->{stderr}, qr/Status 'in-progress' requires a claim/,
         '...with the require_claim message' );
 
     my $task = _task($repo);
@@ -120,7 +120,7 @@ subtest 'the ticket reproduction: --status X --release no longer slips through r
     is( $task->claimed_by, 'agent-a', 'and the pre-existing claim is still there' );
 };
 
-subtest 'unclaimed-then-release: --release clears a claim, plain --status still requires --claim (#150)' => sub {
+subtest 'unclaimed-then-release: --release clears a claim, plain --status still requires a claim (#150)' => sub {
     my $repo = _setup_repo();
 
     # --release alone, with nothing else to do, is fine: it clears the claim
@@ -139,7 +139,7 @@ subtest 'unclaimed-then-release: --release clears a claim, plain --status still 
     is( $no_claim_move->{exit}, 1,
         'edit --status in-progress without --claim is still refused' )
         or diag $no_claim_move->{stdout} . $no_claim_move->{stderr};
-    like( $no_claim_move->{stderr}, qr/requires --claim/,
+    like( $no_claim_move->{stderr}, qr/requires a claim/,
         '...with the same require_claim message as move' );
 
     # And the same shape with --claim lands the task and records the claim,

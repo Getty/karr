@@ -212,7 +212,7 @@ subtest 'require_claim is not satisfied by claimed_by: ""' => sub {
 
   ok( defined $err, 'the move fails' )
     or diag('move succeeded, which it must not');
-  like( $warned, qr/requires --claim/,
+  like( $warned, qr/requires a claim/,
     'moving into a require_claim status still needs a real claimant' )
     or diag("warned: $warned");
 

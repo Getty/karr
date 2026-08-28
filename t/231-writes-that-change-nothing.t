@@ -300,7 +300,7 @@ subtest 'a same-status move is not asked for a claim it does not need' => sub {
     # Deliberate, and the order kanban-md uses: the short-circuit sits in front
     # of require_claim, so a card already parked in a column that wants an owner
     # is not what the command declining to move it has to answer for. It used to
-    # exit 1 with "Status 'in-progress' requires --claim" for a move that would
+    # exit 1 with "Status 'in-progress' requires a claim" for a move that would
     # not have moved anything.
     my $rv = _run_karr( $repo, 'move', '1', 'in-progress' );
     is( $rv->{exit}, 0, 'the no-op is not refused for a missing claim' )
@@ -314,7 +314,7 @@ subtest 'a same-status move is not asked for a claim it does not need' => sub {
     my $back = _run_karr( $repo, 'move', '1', 'in-progress' );
     is( $back->{exit}, 1, 'a real move into in-progress without --claim is refused' )
         or diag $back->{stdout} . $back->{stderr};
-    like( $back->{stderr}, qr/requires --claim/, 'with the require_claim message' );
+    like( $back->{stderr}, qr/requires a claim/, 'with the require_claim message' );
 };
 
 done_testing;

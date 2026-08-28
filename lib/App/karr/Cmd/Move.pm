@@ -17,6 +17,7 @@ use Time::Piece;
 # forbids it), so an imported `JSON` would become a method on the command. The
 # two booleans are wanted as functions anyway, the way App::karr::Task calls them.
 use JSON::MaybeXS ();
+use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
      'App::karr::Role::TaskMutation';
@@ -108,6 +109,27 @@ sub execute {
 
   my @pos = $self->positional_args($args_ref);
   my $id_str = $pos[0];
+  # Read before the id guards below rather than after them, because the guards
+  # now quote it back: `karr move , todo` is missing an id, not a status, and
+  # the line that would have worked says `todo` where it knows it (ticket k263).
+  my $new_status = $pos[1];
+  # The suggestion goes after the "Usage:" line, never in front of it: the
+  # marker has to stay at the start of the first line for bin/karr's handler to
+  # read it as a usage error (ADR 0002), and the actionable line is what a
+  # `tail -n` has to be left holding.
+  #
+  # And it is appended only when it can carry a word the caller really typed.
+  # `karr move , todo` keeps it -- `todo` is theirs, so the line shows which
+  # half was wrong. `karr move` with nothing at all has nothing to quote back,
+  # and a suggestion of pure placeholders would only spell the "Usage:" line a
+  # second time: that is the generic example with a placeholder id that k263
+  # forbids, and it is exactly what an agent reading `tail -1` would be left
+  # holding. With no suggestion the "Usage:" line is itself the actionable
+  # line, and it is last on its own.
+  my $usage = "Usage: karr move ID[,ID,...] [STATUS]\n"
+    . ( defined $new_status && length $new_status
+        ? command_hint( 'move', 'ID', $new_status ) . "\n"
+        : '' );
   # length, not truth: the id "0" is an argument that was given, just a false
   # one, so `or` sent it down the branch meant for "no argument at all". That
   # made `karr move 0 todo` a usage error (2) where `karr show 0` and even
@@ -115,7 +137,7 @@ sub execute {
   # at 1, so no real card was unreachable, but the exit-code contract ADR 0002
   # promises to agents scripting this CLI fell on the wrong side (ticket #239,
   # the same root as #153 and #230).
-  die "Usage: karr move ID[,ID,...] [STATUS]\n"
+  die $usage
     unless defined $id_str && length $id_str;
   # `karr move , todo` passes that guard -- a comma is one character long --
   # and then splits to an empty list, so the loop below never ran: no ids, no
@@ -124,8 +146,7 @@ sub execute {
   # prefix is what bin/karr keys on to make both of these guards a usage error
   # (2) rather than a runtime failure (1).
   my @ids = $self->parse_ids($id_str);
-  die "Usage: karr move ID[,ID,...] [STATUS]\n" unless @ids;
-  my $new_status = $pos[1];
+  die $usage unless @ids;
 
   # A target status and a relative move are two answers to the same question,
   # and a caller who gives both has contradicted themselves -- so the invocation
@@ -183,17 +204,33 @@ sub execute {
 
       my $task_new_status = $new_status;
 
+      # Every message from here on names the card and ends in the invocation
+      # that would have worked, and stays ONE line of prose above it: these are
+      # raised inside run_batch, whose clean_error keeps the first line and the
+      # suggestion block and drops anything in between (ticket k263).
       if ($self->next) {
-        my $idx = $self->_status_index(\@statuses, $task->status);
-        die "Already at last status\n" if $idx >= $#statuses;
+        my $idx = $self->_status_index(\@statuses, $task->status, $id);
+        die "Task $id is already at the last status '" . $task->status
+          . "', so --next has nowhere to go:\n"
+          . command_hint( 'move', $id, 'STATUS' ) . "\n"
+          if $idx >= $#statuses;
         $task_new_status = $statuses[$idx + 1];
       } elsif ($self->prev) {
-        my $idx = $self->_status_index(\@statuses, $task->status);
-        die "Already at first status\n" if $idx <= 0;
+        my $idx = $self->_status_index(\@statuses, $task->status, $id);
+        die "Task $id is already at the first status '" . $task->status
+          . "', so --prev has nowhere to go:\n"
+          . command_hint( 'move', $id, 'STATUS' ) . "\n"
+          if $idx <= 0;
         $task_new_status = $statuses[$idx - 1];
       }
 
-      die "New status required\n" unless $task_new_status;
+      # The valid list rides along wherever the suggestion has to fall back to
+      # the STATUS placeholder: the caller is being asked for a value, and the
+      # board is the only place that vocabulary exists. Same shape
+      # App::karr::Config/_usage_error prints for a rejected one.
+      die 'New status required (valid: ' . join( ', ', @statuses ) . "):\n"
+        . command_hint( 'move', $id, 'STATUS' ) . "\n"
+        unless $task_new_status;
 
       # A move to the status the card already has, with no claim to hand over,
       # changes nothing -- so it writes nothing: the write is what stamps
@@ -265,12 +302,28 @@ sub execute {
   $self->report_batch_failure($failed, scalar @ids);
 }
 
+# The status looked up here is the card's own, not one the caller typed -- only
+# --next/--prev come through -- so a miss means the card sits in a column this
+# board does not configure and no relative move can be computed from it. The
+# card is named, the board's vocabulary is printed, and the way out is the
+# explicit form (ticket k263).
 sub _status_index {
-  my ($self, $statuses, $status) = @_;
+  my ($self, $statuses, $status, $id) = @_;
   for my $i (0..$#$statuses) {
     return $i if $statuses->[$i] eq $status;
   }
-  die "Unknown status: $status\n";
+  die "Task $id is at '$status', which this board does not configure (valid: "
+    . join( ', ', @$statuses ) . "):\n"
+    . command_hint( 'move', $id, 'STATUS' ) . "\n";
+}
+
+# App::karr::Role::TaskMutation raises the require_claim message and cannot know
+# which command is running; its default names `karr edit ID --status STATUS`.
+# Here the status is a positional and the caller has just typed it, so the
+# suggestion is the caller's own command line with the one missing piece added.
+sub claim_hint_tokens {
+  my ( $self, $task, $status ) = @_;
+  return ( 'move', $task->id, $status, '--claim', 'NAME' );
 }
 
 1;

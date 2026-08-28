@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
+use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output';
 
@@ -81,7 +82,10 @@ sub execute {
 
   $self->check_positional_args($args_ref, 0);
 
-  die "Importing the file view replaces refs/karr/tasks/* and config from the tasks/ directory. Re-run with --yes.\n"
+  # "Re-run with --yes" left the caller to reassemble the command line; the line
+  # itself costs nothing and survives a `tail -n` (ticket k263).
+  die "Importing the file view replaces refs/karr/tasks/* and config from the tasks/ directory:\n"
+    . command_hint( 'import', '--yes' ) . "\n"
     unless $self->yes;
 
   # Guard against wiping every task ref when there is no view to import: a
@@ -90,7 +94,8 @@ sub execute {
   my $board_dir = $self->git_root;
   my $tasks_dir = $board_dir->child('tasks');
   die "No materialized task view found at $board_dir (no tasks/ directory).\n"
-    . "Run 'karr materialize' first, or place a tasks/ directory there before importing.\n"
+    . "Place a tasks/ directory there before importing, or write the view first:\n"
+    . command_hint( 'materialize' ) . "\n"
     unless $tasks_dir->exists;
 
   # Ticket #50: the directory existing is not the same as there being a view.
@@ -98,9 +103,15 @@ sub execute {
   # tasks/ imported zero tasks, deleted the whole board and reported success.
   # Empty input means "nothing to import", never "delete everything".
   my @cards = $tasks_dir->children(qr/\.md$/);
+  # Two suggestions, because there are two intents behind an empty view and no
+  # way to tell them apart from here: refresh what the refs actually hold, or
+  # take cards off the board on purpose. Both go last, in the order a caller
+  # who did not mean to delete anything would want them.
   die "No task cards found in $tasks_dir -- the file view is empty.\n"
-    . "Importing it would delete every task on the board. Run 'karr materialize' to\n"
-    . "refresh the view, or remove tasks deliberately with 'karr delete ID'.\n"
+    . "Importing it would delete every task on the board. Refresh the view, or\n"
+    . "remove tasks deliberately:\n"
+    . command_hint( 'materialize' ) . "\n"
+    . command_hint( 'delete', 'ID' ) . "\n"
     unless @cards;
 
   # Writing command: pull before, push after, with SyncGuard insurance.

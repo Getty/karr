@@ -163,9 +163,10 @@ different things from the reader (#133):
 
 =over 4
 
-=item * nothing under C<refs/karr/> -- "No karr board found. Run 'karr init' to
-create one.", the sentence C<backup>, C<destroy>, C<materialize> and C<repair>
-raise off L<App::karr::BoardStore/has_board_refs> for the same state;
+=item * nothing under C<refs/karr/> -- "No karr board found:", followed by
+C<karr init> on its own line (L<App::karr::Error/command_hint>), the same
+message C<backup>, C<destroy>, C<materialize> and C<repair> raise off
+L<App::karr::BoardStore/has_board_refs> for the same state;
 
 =item * refs present, C<refs/karr/config> missing -- a half-board: the message
 names it as one, says how many task refs are at stake, and says that C<karr
@@ -196,7 +197,13 @@ sub require_board {
     # off has_board_refs, where it means exactly this. No mention of 'karr sync'
     # here, unlike the read-side message in require_local_board: this method is
     # called after sync_before, so the pull has already run and found nothing.
-    die "No karr board found. Run 'karr init' to create one.\n"
+    #
+    # One spelling for all five, not two: the way out is the command itself on
+    # its own last line rather than a name quoted mid-sentence (ticket k263),
+    # and a sentence that reads differently depending on which command raised
+    # it is worse than either wording alone.
+    App::karr::Error::user_error( "No karr board found:\n",
+        App::karr::Error::command_hint('init') )
         unless $store->has_board_refs;
 
     # Refs are there, only refs/karr/config is missing. Saying "no board found"

@@ -2,6 +2,6 @@
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "caveman@caveman": true,
-    "briefing@briefing": true
+    "briefing@getty": true
   }
 }

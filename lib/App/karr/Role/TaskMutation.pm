@@ -107,12 +107,21 @@ sub run_batch {
             die $err if App::karr::Error::is_usage_error($err);
             $failed++;
             my $line = App::karr::Error::clean_error($err);
+            # A suggestion block (App::karr::Error/command_hint) belongs to the
+            # STDERR text a person or an agent reads off the terminal, not to
+            # the --json payload: `error` has been exactly one line for as long
+            # as it has existed, and a reader of it is scripting this CLI
+            # already and has no use for a shell line to copy (ticket k263).
+            my ($json_line) = split /\n/, $line, 2;
+            # The colon on the prose line is there to introduce the suggestion.
+            # With the suggestion gone it introduces nothing, so it goes too.
+            $json_line =~ s/:\z// unless $json_line eq $line;
             # The id is echoed as a number when it is one, so an agent reading
             # --json gets the same type it passed in -- and a non-numeric id
             # does not add "Argument isn't numeric" to the diagnosis of what is
             # already an error.
             push @results,
-              { id => ( $id =~ /\A[0-9]+\z/ ? $id + 0 : $id ), error => $line };
+              { id => ( $id =~ /\A[0-9]+\z/ ? $id + 0 : $id ), error => $json_line };
             warn "$line\n" unless $self->json;
             next;
         }
@@ -137,8 +146,10 @@ per-id results and the number of failures.
 
 Whatever the callback returns is appended to the results; a callback that dies
 contributes C<< { id => $id, error => $message } >> instead and the message is
-also warned to STDERR unless C<--json> is in force. Usage errors are re-thrown
-rather than collected: they condemn the whole invocation, not one id.
+also warned to STDERR unless C<--json> is in force. The STDERR text carries any
+suggestion line the failure came with (L<App::karr::Error/command_hint>); the
+C<error> field stays the single line it has always been. Usage errors are
+re-thrown rather than collected: they condemn the whole invocation, not one id.
 
 =cut
 
@@ -418,7 +429,15 @@ sub apply_status_change {
         $task->clear_claimed_at;
     }
 
-    die "Status '$new_status' requires --claim\n"
+    # "requires a claim", not "requires --claim": naming the option said nothing
+    # about a value following it, and the agent in ticket k263 read it, typed
+    # `--claim` bare, and collected a second error for its trouble. The line
+    # under it is the whole invocation that would have worked, built from the id
+    # and the status this call already has -- see claim_hint_tokens for why the
+    # command name comes from the consumer.
+    App::karr::Error::user_error(
+        "Status '$new_status' requires a claim:\n",
+        App::karr::Error::command_hint( $self->claim_hint_tokens( $task, $new_status ) ) )
         if $self->store->status_requires_claim($new_status)
         && !( defined $claimant && length $claimant )
         && !$task->has_claimed_by;
@@ -486,6 +505,28 @@ The release happens B<before> the C<require_claim> check, so a claim on its way
 off the card cannot satisfy it: reopening straight into a column the board says
 needs an owner asks for C<--claim> rather than handing that column to whoever
 had finished the work (the shape of ticket #150).
+
+=cut
+
+sub claim_hint_tokens {
+    my ( $self, $task, $status ) = @_;
+    return ( 'edit', $task->id, '--status', $status, '--claim', 'NAME' );
+}
+
+=method claim_hint_tokens
+
+    my @tokens = $self->claim_hint_tokens( $task, 'in-progress' );
+
+The words after C<karr> in the suggestion C<apply_status_change> prints when a
+status needs a claim and none is on the card. A hook, because the message is
+raised here and only the consumer knows which command the caller actually typed.
+
+The default is C<< karr edit ID --status STATUS --claim NAME >>, which is right
+for every consumer that reaches a require_claim column through an option rather
+than a positional -- L<App::karr::Cmd::Edit>, and L<App::karr::Cmd::Archive>,
+which has no C<--claim> of its own to offer. L<App::karr::Cmd::Move> overrides
+it with its own spelling. L<App::karr::Cmd::Handoff> never gets here: C<--claim>
+is required on that command, so the check above is always satisfied.
 
 =cut
 

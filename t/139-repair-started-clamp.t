@@ -192,7 +192,7 @@ subtest 'a dry run reports and writes nothing' => sub {
   is( $rv->{exit}, 0, 'exits 0' ) or diag $rv->{stderr};
   like( $rv->{stdout}, qr/Would raise 'started' to 'created' on 1 card\(s\): 1\b/,
     'it says what it would do' );
-  like( $rv->{stdout}, qr/Run 'karr repair --yes' to apply/, 'and how to do it' );
+  like( $rv->{stdout}, qr/^  karr repair --yes$/m, 'and how to do it (k263)' );
 
   is_deeply( _oids($repo), $before, 'and not one ref moved' );
   is( _card( $repo, 1 )->started, '2026-07-02', 'the stamp is still the bare date' );

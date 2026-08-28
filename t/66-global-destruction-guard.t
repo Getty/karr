@@ -15,7 +15,7 @@ use App::karr::Git;
 # 53 GB RSS on a 62 GB machine, killable only from outside.
 #
 # The runaway was NOT in move's validation -- that ran and printed
-# "Status 'in-progress' requires --claim" correctly. It was in GLOBAL
+# "Status 'in-progress' requires a claim" correctly. It was in GLOBAL
 # DESTRUCTION afterwards: sync_before stashes an App::karr::SyncGuard on the
 # command object, the croak unwinds without releasing it, and the guard is
 # therefore only reaped once Perl has begun tearing the process down. Its
@@ -121,7 +121,7 @@ subtest 'a command that dies after sync_before terminates cleanly (with a remote
         unless $res;
 
     is $res->{exit}, 1, 'exits 1 (runtime failure) instead of hanging or dying on the cap';
-    like $res->{stderr}, qr/requires --claim/,
+    like $res->{stderr}, qr/requires a claim/,
         'the real validation error is what reaches STDERR';
     unlike $res->{stderr}, $RUNAWAY,
         'no FFI/global-destruction fallout on STDERR';
@@ -149,7 +149,7 @@ subtest 'same command without a remote is unchanged' => sub {
         unless $res;
 
     is $res->{exit}, 1, 'exits 1';
-    like $res->{stderr}, qr/requires --claim/, 'validation error on STDERR';
+    like $res->{stderr}, qr/requires a claim/, 'validation error on STDERR';
     unlike $res->{stderr}, $RUNAWAY, 'no FFI/global-destruction fallout';
 };
 

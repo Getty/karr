@@ -133,7 +133,7 @@ subtest 'a command that dies before writing anything pushes nothing' => sub {
     my $r = _run_karr( $repo, 'move', '1', 'in-progress' );
 
     is $r->{exit}, 1, 'exits 1';
-    like $r->{stderr}, qr/requires --claim/, 'the validation error surfaces';
+    like $r->{stderr}, qr/requires a claim/, 'the validation error surfaces';
     unlike $r->{stderr}, qr/Push (?:skipped|retry|failed)/,
         'an unwritten board produces no push output at all';
     like _remote_task( $bare, 1 ), qr/^status: backlog$/m,

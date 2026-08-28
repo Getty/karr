@@ -105,6 +105,12 @@ sub execute {
   # See the note in Cmd::Move: length, not truth, or the id "0" is read as no
   # id at all and answered with a usage error instead of "not found" (#239).
   my $id = $pos[0];
+  # No suggestion line here, deliberately (ticket k263). This guard fires only
+  # when the id is missing, and --claim is required on this command, so by the
+  # time it is reached the caller has typed nothing that could be quoted back:
+  # a suggestion would be `karr handoff ID --claim NAME`, which is the "Usage:"
+  # line again in placeholders -- the generic example k263 refuses, and the one
+  # line a `tail -1` would keep. The "Usage:" line is the actionable line here.
   die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n"
     unless defined $id && length $id;
 

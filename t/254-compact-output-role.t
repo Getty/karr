@@ -17,6 +17,12 @@
 # typo: "Unknown option: compact", the usage block, exit 2 (ADR 0002's usage-
 # error contract) -- instead of the old silent no-op.
 #
+# Since k263 that rejection reads bottom-up -- the usage block first and the
+# diagnostic last, where an agent reading `tail -n` will actually see it. An
+# unknown option is the one k263 shape that gets no suggestion line under it
+# (the only command that would run is the caller's own word deleted), so the
+# wording below is exactly what it always was.
+#
 # Four of the nine also gained a *new* rendering as part of the same ticket
 # (show, context, log, config show); the other five (board, list, metrics,
 # pick, dashboard) already had one and are unchanged by this ticket beyond
@@ -245,8 +251,10 @@ subtest 'a representative sample of the thirteen reject --compact loudly' => sub
     is( $rv->{stdout}, '', "karr $label ... --compact prints nothing to stdout" );
     like( $rv->{stderr}, qr/^Unknown option: compact$/m,
       "karr $label ... --compact: STDERR says so on its own line" );
+    unlike( $rv->{stderr}, qr/^  karr /m,
+      "karr $label ... --compact: and offers no command in its place" );
     like( $rv->{stderr}, qr/^USAGE: karr \Q$usage_cmd\E\b/m,
-      "karr $label ... --compact: the usage block follows" );
+      "karr $label ... --compact: the usage block is there too" );
   }
 
   # The rejection happens at option-parse time, before execute() ever runs --

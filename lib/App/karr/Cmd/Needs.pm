@@ -11,6 +11,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
 use App::karr::CrossBoard;
+use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
      'App::karr::Role::TaskMutation';
@@ -95,9 +96,17 @@ sub _overrides {
   my %map;
   for my $entry ( @{ $self->board // [] } ) {
     my ( $name, $path ) = $entry =~ /\A([^=]+)=(.+)\z/;
-    $self->usage_error(
-      qq{invalid --board "$entry" (expected NAME=PATH)} )
-      unless defined $name && length $path;
+    # The board name is salvaged out of what was typed wherever there is one --
+    # `--board other-repo` and `--board other-repo=` both name a board and only
+    # miss the path, so the line that would have worked can keep the name and
+    # leave PATH as the one placeholder (ticket k263).
+    unless ( defined $name && length $path ) {
+      my ($typed) = $entry =~ /\A([^=]+)/;
+      $self->usage_error(
+        qq{invalid --board "$entry" (expected NAME=PATH):\n}
+          . command_hint( 'needs', '--board',
+              ( defined $typed && length $typed ? $typed : 'NAME' ) . '=PATH' ) );
+    }
     $map{$name} = $path;
   }
   return \%map;
@@ -119,7 +128,11 @@ sub _cards {
   if ( defined $pos[0] && length $pos[0] ) {
     my @tasks;
     for my $id ( $self->parse_ids( $pos[0] ) ) {
-      my $task = $self->find_task($id) or die "Task $id not found\n";
+      # The id names no card, so nothing about this card can be asked -- what
+      # would have worked is the command that shows which ids exist (k263).
+      my $task = $self->find_task($id)
+        or die "Task $id not found on this board:\n"
+          . command_hint( 'list', '--compact' ) . "\n";
       push @tasks, $task;
     }
     return @tasks;
