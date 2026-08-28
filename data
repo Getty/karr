@@ -1,0 +1,52 @@
+---
+claimed_at: 2026-08-28T20:18:40Z
+claimed_by: paid-wide
+class: standard
+completed: 2026-08-28T20:18:40Z
+created: 2026-08-28T10:36:18Z
+id: 264
+priority: medium
+started: 2026-08-28T16:56:56Z
+status: done
+tags:
+- dx
+- errors
+- agents
+title: Finish the working-command sweep on the frequent commands
+updated: 2026-08-28T20:18:40Z
+---
+
+k263 gave the rare commands (move, handoff, needs, materialize, import, repair)
+error messages that end in the invocation that would have worked, built from the
+words the caller typed. It deliberately stopped there. Two messages with the same
+disease were left standing because they belong to the frequent commands:
+
+## What is left
+
+1. `Task $id not found` raised from `update_task_guarded`
+   (App::karr::Role::TaskMutation). Shared by move, edit, delete, archive and
+   handoff, so it could not be fixed inside k263 without pulling the frequent
+   commands in. `karr needs` got its own not-found line as part of k263 --
+   "Task 999 not found on this board:" followed by `karr list --compact` -- and
+   that is the shape this one should take too.
+
+2. `Unknown command: $unknown` + "Run 'karr --help' to see the available
+   commands." in App::karr. The way out is quoted inside prose rather than
+   spelled as a line to copy. It is already last, so this is content, not
+   placement.
+
+3. Whatever the same sweep turns up in list, show, create and edit -- read them
+   cold, the way an agent meets them.
+
+## Rules, unchanged from k263
+
+Real id, real status, the caller's own words. Only the value the caller still has
+to supply stays a placeholder, and only when at least one token in the line is
+real -- a suggestion that carries nothing the caller typed is a generic example
+and is not printed at all.
+
+The suggestion is the last line. App::karr::Error/command_hint renders it;
+App::karr::Error/clean_error keeps it through the batch runner's first-line
+reduction. Exit codes (ADR 0002) and --json payloads stay untouched.
+
+Implementiert (karr-board-worker), reviewt und committet als a56c9d0. Geteilter task_not_found-Renderer in Role::TaskMutation deckt move/edit/delete/archive/handoff+show ab; Unknown command endet auf 'karr --help'. Neuer t/264 (7 Subtests). Volle Suite grün: alle 221 Dateien PASS (t/173 nach OOM-bedingtem Retry ebenfalls grün).
