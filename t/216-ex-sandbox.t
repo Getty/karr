@@ -305,6 +305,22 @@ subtest 'ex/scripts/write-chain.pl is syntactically valid' => sub {
 };
 
 subtest 'ex/.gitignore matches exactly what is tracked vs. generated' => sub {
+  # This subtest checks a source-checkout invariant (what git tracks under
+  # ex/, as seen from $ROOT) -- not anything this test builds itself. Under
+  # `prove -l t/` from the repo root, $ROOT IS the source checkout, so
+  # `ls-files ex` lists the tracked files. Under `dzil test`, $ROOT is
+  # wherever dzil happened to run prove from (a .build/<hash>/... copy),
+  # which git sees as living inside the real repo but ignored by its
+  # top-level .gitignore (`.build/`) -- so `ls-files ex` from there returns
+  # nothing, and `check-ignore` blames the wrong rule. Detect that up front
+  # by asking whether a known tracked file is visible as tracked from
+  # $ROOT, and skip with a clear reason instead of failing on an environment
+  # this property was never about.
+  my @probe = _git_lines( 'git', '-C', $ROOT, 'ls-files', 'ex/setup.sh' );
+  plan skip_all =>
+    "ex/ not tracked relative to \$ROOT ($ROOT) -- source-tree invariant, only checked under `prove -l t/`"
+    unless @probe && $probe[0] eq 'ex/setup.sh';
+
   my @tracked = sort( _git_lines( 'git', '-C', $ROOT, 'ls-files', 'ex' ) );
   is_deeply(
     \@tracked,
