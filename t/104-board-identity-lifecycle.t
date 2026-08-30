@@ -4,10 +4,8 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 
 use App::karr::Git;
 use App::karr::BoardStore;
@@ -26,9 +24,6 @@ use App::karr::BoardStore;
 #     and karr sync --accept-foreign-board / karr sync --push are the two
 #     deliberate ways through
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
 sub _git_ok {
     my (@cmd) = @_;
     my $rc = system(@cmd);
@@ -43,20 +38,14 @@ sub _repo {
     return $repo;
 }
 
+# In-process runner (t/lib/TestKarr.pm): this file's own _run_karr never
+# chdirs into $dir -- it always ran karr from the test process's own cwd and
+# pointed it at the target with --dir, so '.' (a no-op chdir) plus the same
+# --dir argument keeps that exact shape. KARR_TEST_SUBPROC=1 restores the old
+# open3 path.
 sub _run_karr {
     my ( $dir, @argv ) = @_;
-    my $err = gensym;
-    my $pid = open3( my $in, my $out, $err,
-        $^X, "-I$ROOT/lib", $BIN, '--dir', $dir, @argv );
-    close $in;
-    my $stdout = do { local $/; <$out> };
-    my $stderr = do { local $/; <$err> };
-    waitpid $pid, 0;
-    return {
-        exit   => $? >> 8,
-        stdout => defined $stdout ? $stdout : '',
-        stderr => defined $stderr ? $stderr : '',
-    };
+    return run_karr( '.', '--dir', $dir, @argv );
 }
 
 sub board_id_of {

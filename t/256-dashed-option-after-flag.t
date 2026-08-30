@@ -4,8 +4,9 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
+use Cwd qw( abs_path );
 use IPC::Open3 qw( open3 );
 use Symbol qw( gensym );
 use JSON::MaybeXS qw( decode_json );
@@ -48,37 +49,13 @@ use JSON::MaybeXS qw( decode_json );
 # which one that consumed after every unrecognised token would.
 
 my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
 
-sub _run_karr {
-    my ( $cwd, @argv ) = @_;
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-
-    my $stderr = gensym;
-    my $pid = open3(
-        undef,
-        my $stdout_fh,
-        $stderr,
-        $^X,
-        "-I$ROOT/lib",
-        $BIN,
-        @argv,
-    );
-
-    my $stdout = do { local $/; <$stdout_fh> };
-    my $stderr_text = do { local $/; <$stderr> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-
-    return {
-        exit   => $exit,
-        stdout => defined $stdout ? $stdout : '',
-        stderr => defined $stderr_text ? $stderr_text : '',
-    };
-}
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) signature and
+# { exit, stdout, stderr } return as the open3 helper this file used to carry,
+# dispatched through the shared App::karr::Dispatch path. KARR_TEST_SUBPROC=1
+# restores the old open3 path. bin/karr-foundation is a separate binary with
+# no in-process runner, so _run_foundation below is unchanged.
+sub _run_karr { return run_karr(@_) }
 
 sub _run_foundation {
     my (@argv) = @_;

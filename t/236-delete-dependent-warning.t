@@ -4,10 +4,8 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr run_karr_stdin );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use JSON::MaybeXS qw( decode_json );
 
 use App::karr::Git;
@@ -36,34 +34,18 @@ use App::karr::Task;
 # sentence in the result object because a JSON consumer never reads STDERR, and
 # --quiet silencing the STDERR copy only.
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) signature and
+# { exit, stdout, stderr } return as the open3 helper this file used to carry,
+# dispatched through the shared App::karr::Dispatch path. This file's own
+# convention -- a leading SCALAR ref in @argv standing for the answer typed at
+# `karr delete`'s confirmation prompt -- still works, now routed through
+# run_karr_stdin. KARR_TEST_SUBPROC=1 restores the old open3 path.
 sub _run_karr {
     my ( $cwd, @argv ) = @_;
     my $stdin_text = ref $argv[0] eq 'SCALAR' ? ${ shift @argv } : undef;
-
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-
-    my $stderr = gensym;
-    my $pid = open3( my $stdin_fh, my $stdout_fh, $stderr,
-        $^X, "-I$ROOT/lib", $BIN, @argv );
-    print {$stdin_fh} $stdin_text if defined $stdin_text;
-    close $stdin_fh;
-
-    my $stdout      = do { local $/; <$stdout_fh> };
-    my $stderr_text = do { local $/; <$stderr> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-
-    return {
-        exit   => $exit,
-        stdout => defined $stdout      ? $stdout      : '',
-        stderr => defined $stderr_text ? $stderr_text : '',
-    };
+    return defined $stdin_text
+        ? run_karr_stdin( $cwd, $stdin_text, @argv )
+        : run_karr( $cwd, @argv );
 }
 
 # A fresh isolated temp repo per subtest, never the developer's real board.

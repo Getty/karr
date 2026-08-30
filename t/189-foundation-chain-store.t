@@ -4,12 +4,10 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use Config;
 use File::Temp qw( tempdir );
 use Path::Tiny qw( path );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use POSIX ();
 use Time::HiRes ();
 
@@ -41,9 +39,6 @@ use App::karr::Foundation::ChainStore;
 #      `karr get-refs` may still read them.
 #
 # Everything runs in throwaway repositories.
-
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
 
 sub init_repo {
     my $repo = tempdir( CLEANUP => 1 );
@@ -77,19 +72,6 @@ sub err_of {
     return $err;
 }
 
-sub run_karr {
-    my ( $cwd, @argv ) = @_;
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-    my $stderr = gensym;
-    my $pid = open3( undef, my $stdout_fh, $stderr, $^X, "-I$ROOT/lib", $BIN, @argv );
-    my $out = do { local $/; <$stdout_fh> };
-    my $err = do { local $/; <$stderr> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-    chdir $old or die "chdir $old: $!";
-    return { exit => $exit, stdout => $out // '', stderr => $err // '' };
-}
 
 # ---------------------------------------------------------------------------
 

@@ -4,10 +4,8 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 
 # Ticket #10: `karr board` (and bare `karr`, which routes through
 # App::karr::execute -> App::karr::Cmd::Board->new, App/karr.pm:230-237)
@@ -16,44 +14,17 @@ use Symbol qw( gensym );
 # subprocess) specifically to pin the bare-`karr --done` plumbing, which
 # t/37-board-render.t cannot reach since it drives Cmd::Board directly.
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
 sub _git_ok {
     my (@cmd) = @_;
     my $rc = system(@cmd);
     is($rc, 0, "@cmd");
 }
 
-sub _run_karr {
-    my ( $cwd, @argv ) = @_;
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-
-    my $stderr = gensym;
-    my $pid = open3(
-        undef,
-        my $stdout_fh,
-        $stderr,
-        $^X,
-        "-I$ROOT/lib",
-        $BIN,
-        @argv,
-    );
-
-    my $stdout = do { local $/; <$stdout_fh> };
-    my $stderr_text = do { local $/; <$stderr> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-
-    return {
-        exit   => $exit,
-        stdout => defined $stdout ? $stdout : '',
-        stderr => defined $stderr_text ? $stderr_text : '',
-    };
-}
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) signature and
+# { exit, stdout, stderr } return as the open3 helper this file used to carry,
+# dispatched through the shared App::karr::Dispatch path. KARR_TEST_SUBPROC=1
+# restores the old open3 path.
+sub _run_karr { return run_karr(@_) }
 
 sub _setup_repo {
     my $repo = tempdir( CLEANUP => 1 );

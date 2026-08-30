@@ -4,6 +4,7 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
 use Path::Tiny qw( path );
 use Cwd qw( abs_path getcwd );
@@ -63,8 +64,6 @@ sub run_bin {
         stderr => defined $err ? $err : '',
     };
 }
-
-sub run_karr { return run_bin( 'karr', @_ ) }
 
 sub new_board {
     my $repo = tempdir( CLEANUP => 1 );

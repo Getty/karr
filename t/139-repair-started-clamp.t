@@ -35,10 +35,8 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use JSON::MaybeXS qw( decode_json );
 use YAML::XS ();
 use Encode qw( encode_utf8 decode );
@@ -52,29 +50,11 @@ use App::karr::Task;
 binmode( Test::More->builder->$_, ':encoding(UTF-8)' )
   for qw( output failure_output todo_output );
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
-sub _run_karr {
-  my ( $cwd, @argv ) = @_;
-  my $old = getcwd();
-  chdir $cwd or die "chdir $cwd: $!";
-
-  my $stderr = gensym;
-  my $pid = open3( my $in, my $out, $stderr, $^X, "-I$ROOT/lib", $BIN, @argv );
-  close $in;
-  my $stdout      = do { local $/; <$out> };
-  my $stderr_text = do { local $/; <$stderr> };
-  waitpid( $pid, 0 );
-  my $exit = $? >> 8;
-
-  chdir $old or die "chdir $old: $!";
-  return {
-    exit   => $exit,
-    stdout => ( defined $stdout      ? $stdout      : '' ),
-    stderr => ( defined $stderr_text ? $stderr_text : '' ),
-  };
-}
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) signature and
+# { exit, stdout, stderr } return as the open3 helper this file used to carry,
+# dispatched through the shared App::karr::Dispatch path. KARR_TEST_SUBPROC=1
+# restores the old open3 path.
+sub _run_karr { return run_karr(@_) }
 
 # A repository of its own every time, and never a remote: `repair --yes`
 # rewrites refs and then pushes, and the board under test must not be able to

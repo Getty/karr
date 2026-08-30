@@ -23,11 +23,9 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
-use Cwd qw( abs_path getcwd );
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use IPC::Open3 qw( open3 );
 use JSON::MaybeXS qw( decode_json );
-use Symbol qw( gensym );
 use Time::Piece;
 use YAML::XS qw( Dump );
 
@@ -37,9 +35,6 @@ use App::karr::Task;
 use App::karr::Cmd::Pick;
 use App::karr::Cmd::List;
 use App::karr::Cmd::Context;
-
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
 
 # The exact card in the ticket: `blocked: false` (which Task normalises away
 # already, per #58) plus the two empty strings that survive it.
@@ -63,25 +58,6 @@ sub init_repo {
   system( 'git', '-C', $repo, 'config', 'user.name', 'Test User' ) == 0
     or BAIL_OUT('git config failed');
   return $repo;
-}
-
-sub run_karr {
-  my ( $cwd, @argv ) = @_;
-  my $old = getcwd();
-  chdir $cwd or die "chdir $cwd: $!";
-  my $stderr = gensym;
-  my $pid = open3( my $in, my $out, $stderr, $^X, "-I$ROOT/lib", $BIN, @argv );
-  close $in;
-  my $stdout = do { local $/; <$out> };
-  my $errtxt = do { local $/; <$stderr> };
-  waitpid( $pid, 0 );
-  my $exit = $? >> 8;
-  chdir $old or die "chdir $old: $!";
-  return {
-    exit   => $exit,
-    stdout => ( defined $stdout ? $stdout : '' ),
-    stderr => ( defined $errtxt ? $errtxt : '' ),
-  };
 }
 
 # A ref-backed board carrying one task built from a raw kanban-md document, so

@@ -4,10 +4,9 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
+use Cwd qw( abs_path );
 use Encode qw( encode_utf8 );
 
 # Regression tests for karr board tickets #71, #72, #74 and part of #76 -- four
@@ -44,43 +43,15 @@ use Encode qw( encode_utf8 );
 # rewriting argv) is precisely the one that cannot mangle a payload.
 
 my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
 
-sub _run_karr {
-    my ( $cwd, @argv ) = @_;
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-
-    my $stderr = gensym;
-    my $pid = open3(
-        undef,
-        my $stdout_fh,
-        $stderr,
-        $^X,
-        "-I$ROOT/lib",
-        $BIN,
-        @argv,
-    );
-
-    # Read both edges as bytes: App::karr::Encoding puts a :encoding(UTF-8)
-    # layer on the CLI's own STDOUT/STDERR, so what arrives here is octets and
-    # the non-ASCII assertion below is allowed to be about octets (t/70's
-    # rationale -- decoding what karr encoded is an identity round trip).
-    binmode $stdout_fh;
-    binmode $stderr;
-    my $stdout      = do { local $/; <$stdout_fh> };
-    my $stderr_text = do { local $/; <$stderr> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-
-    return {
-        exit   => $exit,
-        stdout => defined $stdout      ? $stdout      : '',
-        stderr => defined $stderr_text ? $stderr_text : '',
-    };
-}
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) signature and
+# { exit, stdout, stderr } return as the open3 helper this file used to carry,
+# dispatched through the shared App::karr::Dispatch path. Same octet contract
+# on both edges as before: App::karr::Encoding's :encoding(UTF-8) layer on
+# STDOUT/STDERR still runs inside dispatch, so the non-ASCII assertion below
+# is still about octets (t/70's rationale). KARR_TEST_SUBPROC=1 restores the
+# old open3 path.
+sub _run_karr { return run_karr(@_) }
 
 # A git repo with no remote (so nothing in here waits on transport) and no
 # board unless the caller asks for one.

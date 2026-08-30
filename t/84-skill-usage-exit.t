@@ -1,9 +1,8 @@
 use strict;
 use warnings;
 use Test::More;
-use Cwd qw( abs_path );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
+use lib 't/lib';
+use TestKarr ();
 
 # Ticket #76, the rows that live in App::karr::Cmd::Skill: an invalid value is
 # a usage error and must exit 2, not 1 (ADR 0002,
@@ -20,22 +19,13 @@ use Symbol qw( gensym );
 # Role::ExitCodes gains a usage_error helper (the rest of #76), each becomes a
 # one-line swap and this file keeps pinning the observable contract either way.
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
+# In-process runner (t/lib/TestKarr.pm): this file's own run_karr never
+# chdirs (there is no repository to isolate -- `skill` needs none), so '.' is
+# passed as the cwd, a no-op chdir that matches the un-isolated subprocess
+# this used to spawn. KARR_TEST_SUBPROC=1 restores the old open3 path.
 sub run_karr {
     my (@argv) = @_;
-    my $err_fh = gensym;
-    my $pid = open3( my $in, my $out_fh, $err_fh, $^X, "-I$ROOT/lib", $BIN, @argv );
-    close $in;
-    my $stdout = do { local $/; <$out_fh> };
-    my $stderr = do { local $/; <$err_fh> };
-    waitpid( $pid, 0 );
-    return {
-        exit   => $? >> 8,
-        stdout => $stdout // '',
-        stderr => $stderr // '',
-    };
+    return TestKarr::run_karr( '.', @argv );
 }
 
 subtest 'an unknown skill action is a usage error' => sub {

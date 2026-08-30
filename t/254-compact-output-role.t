@@ -68,10 +68,8 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr ();
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use JSON::MaybeXS qw( decode_json );
 use YAML::XS qw( Dump );
 
@@ -116,9 +114,6 @@ use App::karr::Cmd::Skill;
 use App::karr::Cmd::Sync;
 use App::karr::Cmd::Unlock;
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
 # ---------------------------------------------------------------- helpers --
 
 sub init_board {
@@ -153,27 +148,14 @@ sub run_execute {
   return ( $err, $out );
 }
 
+# In-process runner (t/lib/TestKarr.pm), wrapped to keep this file's own
+# NO_COLOR/KARR_NO_AUTO_FETCH env setup. KARR_TEST_SUBPROC=1 restores the old
+# open3 path.
 sub run_karr {
   my ( $cwd, @argv ) = @_;
-  my $old = getcwd();
-  chdir $cwd or die "chdir $cwd: $!";
-
   local $ENV{NO_COLOR}           = 1;
   local $ENV{KARR_NO_AUTO_FETCH} = 1;
-
-  my $stderr = gensym;
-  my $pid = open3( undef, my $stdout_fh, $stderr, $^X, "-I$ROOT/lib", $BIN, @argv );
-  my $stdout      = do { local $/; <$stdout_fh> };
-  my $stderr_text = do { local $/; <$stderr> };
-  waitpid( $pid, 0 );
-  my $exit = $? >> 8;
-
-  chdir $old or die "chdir $old: $!";
-  return {
-    exit   => $exit,
-    stdout => defined $stdout      ? $stdout      : '',
-    stderr => defined $stderr_text ? $stderr_text : '',
-  };
+  return TestKarr::run_karr( $cwd, @argv );
 }
 
 sub cli_setup_repo {

@@ -93,8 +93,15 @@ sub _run_inprocess {
 
     # Hand dispatch the octet argv the OS would have handed bin/karr, so its
     # decode_argv reverses it and the run is byte-identical to a subprocess in
-    # a UTF-8 locale.
-    my @octet_argv = map { to_octets("$_") } @argv;
+    # a UTF-8 locale. Only a character string (the utf8 flag on) is encoded --
+    # a caller that already built raw octets itself (to hand dispatch exactly
+    # the bytes a shell would have passed, mojibake fixtures included) has that
+    # payload passed through untouched, because encoding it again would be the
+    # very double-encode this boundary exists to prevent.
+    my @octet_argv = map {
+        my $v = "$_";
+        utf8::is_utf8($v) ? to_octets($v) : $v;
+    } @argv;
 
     my ( $out, $err ) = ( '', '' );
     my $exit;
@@ -104,11 +111,17 @@ sub _run_inprocess {
         open( STDOUT, '>', \$out ) or die "capture STDOUT: $!";
         open( STDERR, '>', \$err ) or die "capture STDERR: $!";
 
+        # Opened even when nothing was asked to be fed in: open3's parent
+        # closes an unused stdin pipe without writing to it, so the child sees
+        # a real, open, immediately-EOF handle -- never a plain undef read. A
+        # bare `local *STDIN;` here would leave the glob's filehandle slot
+        # empty, and a command that touches STDIN without expecting a payload
+        # (karr delete's confirmation prompt, answered by nobody) would hit
+        # "readline() on unopened filehandle" instead of the EOF it gets from
+        # a subprocess.
         local *STDIN;
-        if ( defined $stdin_ref ) {
-            my $in = defined $$stdin_ref ? $$stdin_ref : '';
-            open( STDIN, '<', \$in ) or die "feed STDIN: $!";
-        }
+        my $in = ( defined $stdin_ref && defined $$stdin_ref ) ? $$stdin_ref : '';
+        open( STDIN, '<', \$in ) or die "feed STDIN: $!";
 
         # Swap the delegating override for a throwing one, only here.
         local *CORE::GLOBAL::exit

@@ -4,10 +4,8 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr ();
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use Path::Tiny qw( path );
 use JSON::MaybeXS qw( decode_json );
 
@@ -43,32 +41,20 @@ use JSON::MaybeXS qw( decode_json );
 # into one of them: `skill install` creates files, and none of them may ever
 # land in the developer's own tree or home.
 
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
 my $tmp  = path( tempdir( CLEANUP => 1 ) );
 my $home = $tmp->child('home');
 $home->mkpath;
 
+# In-process runner (t/lib/TestKarr.pm), wrapped to keep this file's own env
+# setup: HOME redirected so `skill install` never lands in the developer's
+# real one, plus the two env vars every CLI test here has always pinned.
+# KARR_TEST_SUBPROC=1 restores the old open3 path.
 sub run_karr {
     my ( $cwd, @argv ) = @_;
-    my $old = getcwd();
-    chdir "$cwd" or die "chdir $cwd: $!";
-
     local $ENV{HOME}               = "$home";   # never the real one: this writes
     local $ENV{NO_COLOR}           = 1;
     local $ENV{KARR_NO_AUTO_FETCH} = 1;
-
-    my $err_fh = gensym;
-    my $pid = open3( my $in, my $out_fh, $err_fh, $^X, "-I$ROOT/lib", $BIN, @argv );
-    close $in;
-    my $stdout = do { local $/; <$out_fh> };
-    my $stderr = do { local $/; <$err_fh> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-    return { exit => $exit, stdout => $stdout // '', stderr => $stderr // '' };
+    return TestKarr::run_karr( $cwd, @argv );
 }
 
 sub git_repo {

@@ -4,11 +4,9 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
 use Path::Tiny qw( path );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use JSON::MaybeXS qw( decode_json );
 
 use App::karr::Git;
@@ -55,30 +53,6 @@ use App::karr::Foundation::Picker;
 #
 # Everything runs in throwaway repositories; the developer's own board is never
 # touched, and no agent is ever started.
-
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
-
-sub run_karr {
-    my ( $cwd, @argv ) = @_;
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-
-    my $errfh = gensym;
-    my $pid = open3( my $in, my $outfh, $errfh, $^X, "-I$ROOT/lib", $BIN, @argv );
-    close $in;
-    my $out = do { local $/; <$outfh> };
-    my $err = do { local $/; <$errfh> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-    return {
-        exit   => $exit,
-        stdout => defined $out ? $out : '',
-        stderr => defined $err ? $err : '',
-    };
-}
 
 # A named repository inside one throwaway work directory, so the board names
 # the test asserts on are readable instead of a tempdir's random syllables.

@@ -4,10 +4,9 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
+use Cwd qw( abs_path );
 use Path::Tiny qw( path );
 use JSON::MaybeXS qw( decode_json );
 use Encode qw( encode_utf8 decode FB_CROAK LEAVE_SRC );
@@ -38,34 +37,19 @@ binmode( Test::More->builder->$_, ':encoding(UTF-8)' )
   for qw( output failure_output todo_output );
 
 my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
 
 my $TITLE = "Fix \x{dc}nicode \x{2014} \x{e4}rger";
 my $BODY  = "Caf\x{e9} \x{2014} na\x{ef}ve";
 my $TAG   = "gr\x{fc}n";
 
-sub _run_karr {
-  my ( $cwd, @argv ) = @_;
-  my $old = getcwd();
-  chdir $cwd or die "chdir $cwd: $!";
-
-  my $stderr = gensym;
-  my $pid = open3( my $in, my $out, $stderr, $^X, "-I$ROOT/lib", $BIN, @argv );
-  close $in;
-  binmode $out;
-  binmode $stderr;
-  my $stdout      = do { local $/; <$out> };
-  my $stderr_text = do { local $/; <$stderr> };
-  waitpid( $pid, 0 );
-  my $exit = $? >> 8;
-
-  chdir $old or die "chdir $old: $!";
-  return {
-    exit   => $exit,
-    stdout => ( defined $stdout      ? $stdout      : '' ),
-    stderr => ( defined $stderr_text ? $stderr_text : '' ),
-  };
-}
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) signature and
+# { exit, stdout, stderr } return as the open3 helper this file used to carry,
+# dispatched through the shared App::karr::Dispatch path. The encode_utf8(...)
+# calls below hand it raw octets already; TestKarr passes an argv element
+# through untouched unless it still carries the utf8 flag, so this file's
+# whole point -- exact bytes at the argv edge -- still holds in-process.
+# KARR_TEST_SUBPROC=1 restores the old open3 path.
+sub _run_karr { return run_karr(@_) }
 
 sub _init_repo {
   my $repo = tempdir( CLEANUP => 1 );
@@ -264,12 +248,21 @@ subtest 'backup and restore preserve a non-ASCII board' => sub {
 subtest 'the two entry points install the boundary' => sub {
   # The boundary only exists if the scripts set it up; a command body doing it
   # for itself is exactly the per-call-site encoding #53 removed. Pinning the
-  # two call sites keeps a future refactor from quietly dropping one.
-  for my $script (qw( karr karr-foundation )) {
-    my $src = path($ROOT)->child( 'bin', $script )->slurp_utf8;
-    like( $src, qr/^enable_std_utf8\(\);/m, "bin/$script puts the UTF-8 layer on stdout/stderr" );
-    like( $src, qr/^decode_argv\(\);/m,     "bin/$script decodes \@ARGV" );
-  }
+  # call sites keeps a future refactor from quietly dropping one. bin/karr's
+  # own call site moved into App::karr::Dispatch (shared with the in-process
+  # test runner, t/lib/TestKarr.pm); bin/karr-foundation still does it inline.
+  my $dispatch_src = path($ROOT)->child(qw( lib App karr Dispatch.pm ))->slurp_utf8;
+  like( $dispatch_src, qr/^\s*enable_std_utf8\(\);/m,
+    'App::karr::Dispatch puts the UTF-8 layer on stdout/stderr' );
+  like( $dispatch_src, qr/^\s*decode_argv\(\);/m, 'App::karr::Dispatch decodes @ARGV' );
+
+  my $karr_src = path($ROOT)->child(qw( bin karr ))->slurp_utf8;
+  like( $karr_src, qr/^dispatch\(\@ARGV\);/m, 'bin/karr calls into that dispatch path' );
+
+  my $foundation_src = path($ROOT)->child(qw( bin karr-foundation ))->slurp_utf8;
+  like( $foundation_src, qr/^enable_std_utf8\(\);/m,
+    'bin/karr-foundation puts the UTF-8 layer on stdout/stderr' );
+  like( $foundation_src, qr/^decode_argv\(\);/m, 'bin/karr-foundation decodes @ARGV' );
 };
 
 subtest 'repair_mojibake only touches what is unambiguously double-encoded' => sub {

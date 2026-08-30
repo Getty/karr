@@ -4,16 +4,11 @@ use Test::More;
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
+use TestKarr qw( run_karr run_karr_stdin );
 use File::Temp qw( tempdir );
-use Cwd qw( abs_path getcwd );
-use IPC::Open3 qw( open3 );
-use Symbol qw( gensym );
 use Encode qw( encode_utf8 );
 
 use App::karr::Git;
-
-my $ROOT = abs_path('.');
-my $BIN  = "$ROOT/bin/karr";
 
 sub _git_ok {
     my (@cmd) = @_;
@@ -42,50 +37,12 @@ sub _default_branch {
     return $branch;
 }
 
-sub _run_karr {
-    my ( $cwd, @argv ) = @_;
-    return _run_karr_stdin( $cwd, undef, @argv );
-}
-
-# $stdin_text is what the child finds on standard input: undef for a call that
-# does not use it, a string for one that does -- the pipe is closed either way,
-# so `karr set-refs REF` without CONTENT sees a real payload or a real EOF and
-# never waits (#195).
-sub _run_karr_stdin {
-    my ( $cwd, $stdin_text, @argv ) = @_;
-    my $old = getcwd();
-    chdir $cwd or die "chdir $cwd: $!";
-
-    my $stderr = gensym;
-    my $pid = open3(
-        my $stdin_fh,
-        my $stdout_fh,
-        $stderr,
-        $^X,
-        "-I$ROOT/lib",
-        $BIN,
-        @argv,
-    );
-
-    if ( defined $stdin_text ) {
-        binmode $stdin_fh, ':raw';
-        print {$stdin_fh} $stdin_text;
-    }
-    close $stdin_fh;
-
-    my $stdout = do { local $/; <$stdout_fh> };
-    my $stderr_text = do { local $/; <$stderr> };
-    waitpid( $pid, 0 );
-    my $exit = $? >> 8;
-
-    chdir $old or die "chdir $old: $!";
-
-    return {
-        exit   => $exit,
-        stdout => defined $stdout ? $stdout : '',
-        stderr => defined $stderr_text ? $stderr_text : '',
-    };
-}
+# In-process runner (t/lib/TestKarr.pm): same ($cwd, @argv) / ($cwd, $stdin,
+# @argv) signatures and { exit, stdout, stderr } return as the open3 helpers
+# this file used to carry, dispatched through the shared App::karr::Dispatch
+# path. KARR_TEST_SUBPROC=1 restores the old open3 path.
+sub _run_karr { return run_karr(@_) }
+sub _run_karr_stdin { return run_karr_stdin(@_) }
 
 subtest 'git helper API normalizes refs and blocks protected namespaces' => sub {
     my $repo = tempdir( CLEANUP => 1 );
