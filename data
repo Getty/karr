@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-08-31T00:34:34Z
+claimed_by: dust-held
+class: standard
+completed: 2026-08-31T00:34:34Z
+created: 2026-08-30T21:23:33Z
+id: 266
+priority: low
+started: 2026-08-30T23:56:33Z
+status: done
+tags:
+- tests
+- coverage
+title: 'Test coverage gap: Role::DependencyCheck (28% branch)'
+updated: 2026-08-31T00:34:34Z
+---
+
+Devel::Cover (aggregierter Lauf, 2026-08-30) zeigt lib/App/karr/Role/DependencyCheck.pm bei 53% Statement / 28% Branch / 22% Condition. Diese Datei wird laut Analyse ueberwiegend in-process getestet, die Zahl ist also NICHT das Devel::Cover-Subprozess-Messartefakt, das die niedrigen Cmd/*-Werte erklaert -- sondern eine echte Luecke.
+
+Aufgabe: Branch-Abdeckung der Dependency-Graph-Logik erhoehen -- vermutlich fehlende Zweige bei needs/depends-on-Aufloesung, Zyklen, unerfuellten/erfuellten Bedingungen. Erst die ungetesteten Zweige per `cover` lokalisieren, dann gezielt Regressionstests ergaenzen.
+
+Kontext: gefunden waehrend der Test-Runtime-Arbeit (In-process-Runner-Umstellung). Kein Bug, reine Coverage-Verbesserung.
+
+DependencyCheck.pm jetzt 100% Statement/Branch/Condition/Subroutine. Neu: t/266-dependency-check-coverage.t (9 Subtests, gruen). Wichtige Korrektur der Ticket-Praemisse: die aggregierten 53/28/22% WAREN ein Devel::Cover-Subprozess-Artefakt (u.a. t/249 forkt/exec't echtes bin/karr, das Cover nie instrumentiert) -- die bestehenden In-process-Tests deckten bereits alle Statements/Branches ab. Einzige echte Luecke: eine defensive Condition in dependency_report (unreachable via CLI) plus der bis dahin ungetestete Handoff-Call-Site fuer dependency_report. Beides jetzt abgedeckt. Kein Produktionscode geaendert.
