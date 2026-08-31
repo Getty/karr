@@ -1,4 +1,4 @@
-{{$NEXT}}
+0.600     2026-08-31 01:16:28Z
 
     - Karr writes its own ticket ids as `kNNN` in prose from now on,
       never as a bare `#NNN`. A `#`-number reads as an issue on whichever
