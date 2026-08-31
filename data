@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-08-31T01:00:03Z
+created: 2026-08-31T00:57:53Z
+id: 267
+priority: high
+started: 2026-08-31T01:00:03Z
+status: done
+tags:
+- release
+- changes
+title: Changes {{$NEXT}} is missing the Git::Native 0.006 fetch-prune-offset entry
+updated: 2026-08-31T01:00:03Z
+---
+
+commit d03427f ("Require Git::Native 0.006 for the fetch prune offset") bumps cpanfile's Git::Native pin from 0.005 to 0.006 to fix a real memory-safety bug: on libgit2 1.9 the embedded callbacks struct grew from 120 to 128 bytes, so the old prune-offset constant (derived from libgit2 1.5) wrote the prune flag 8 bytes early, landing on the update_refs callback pointer libgit2 1.9 prefers over update_tips instead of git_fetch_options.prune. App::karr::Git::_fetch_refspecs reads the fetch Result's ->updated to decide what a sync moved, so this could misreport what a fetch changed.
+
+This is user-visible (cpanfile requirement bump + a real correctness/safety fix) and is not mentioned anywhere in the {{$NEXT}} section of Changes, unlike sibling commits from the same window (#257, #240, #228, #196) which explicitly note 'No Changes entry' with a reason. This one carries no such note -- looks like a plain oversight.
+
+Found during the pre-0.600-release audit (karr-release-checker), cross-checking git log 0.500..HEAD against Changes.
