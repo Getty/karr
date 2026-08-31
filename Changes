@@ -348,6 +348,16 @@
       detection is narrow enough to leave every real transport to libgit2
       (k208).
 
+    - `karr sync` reports what a fetch moved correctly against libgit2 1.9,
+      by requiring `Git::Native 0.006`. 0.006 takes `git_fetch_options.prune`
+      from `Git::Libgit2::fetch_options_prune_offset` rather than a constant
+      derived from libgit2 1.5; against 1.9 -- where the embedded callbacks
+      struct is 128 bytes, not 120 -- that constant put the prune value eight
+      bytes early, on the `update_refs` callback pointer 1.9 prefers over
+      `update_tips`. `App::karr::Git::_fetch_refspecs` reads the fetch
+      result's `updated` list to decide what a sync moved, so a fetch that
+      did report ref updates was the case that misread it.
+
     - Parallel writes and fresh clones stopped losing races (k172, k173,
       k181, k182, k183). Eight `karr create` at once handed id 8 to two
       cards, because a pull adopted a remote counter behind the local one;
