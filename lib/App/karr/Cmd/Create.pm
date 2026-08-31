@@ -1,7 +1,7 @@
 # ABSTRACT: Create a new task
 
 package App::karr::Cmd::Create;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

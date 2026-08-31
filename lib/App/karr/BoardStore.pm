@@ -1,7 +1,7 @@
 # ABSTRACT: Ref-backed board storage for karr
 
 package App::karr::BoardStore;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use Path::Tiny qw( path );
 use YAML::XS qw( DumpFile LoadFile );

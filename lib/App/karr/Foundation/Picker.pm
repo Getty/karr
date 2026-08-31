@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation ticket selection -- the one card a ticket-mode run is about
 
 package App::karr::Foundation::Picker;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use App::karr::Role::PickRules;
 

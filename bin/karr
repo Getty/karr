@@ -4,7 +4,7 @@
 
 use strict;
 use warnings;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use App::karr::SyncGuard;
 use App::karr::Dispatch qw( dispatch );
 

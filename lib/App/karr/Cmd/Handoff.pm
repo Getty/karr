@@ -1,7 +1,7 @@
 # ABSTRACT: Hand off a task for review
 
 package App::karr::Cmd::Handoff;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

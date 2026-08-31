@@ -1,7 +1,7 @@
 # ABSTRACT: Role providing sync lifecycle with retry and guard insurance
 
 package App::karr::Role::SyncLifecycle;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo::Role;
 use MooX::Options;
 # Loaded without importing, and every call below is qualified: a Moo::Role

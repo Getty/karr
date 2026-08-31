@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation chain executor -- picks a ready step, runs it, writes its state back
 
 package App::karr::Foundation::Executor;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use POSIX qw( strftime );
 use Sys::Hostname ();

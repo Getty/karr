@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation chain and run-log storage under refs/karr-foundation/*
 
 package App::karr::Foundation::ChainStore;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use POSIX qw( strftime );
 use Digest::MD5 qw( md5_hex );

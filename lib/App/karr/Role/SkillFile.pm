@@ -1,7 +1,7 @@
 # ABSTRACT: The one way karr finds and writes a bundled skill file
 
 package App::karr::Role::SkillFile;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo::Role;
 # All loaded without importing, for the reason spelled out in
 # App::karr::Role::Output: a Moo::Role composes every sub in its package into

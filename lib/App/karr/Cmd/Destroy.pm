@@ -1,7 +1,7 @@
 # ABSTRACT: Destroy the ref-backed karr board
 
 package App::karr::Cmd::Destroy;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

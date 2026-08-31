@@ -1,7 +1,7 @@
 # ABSTRACT: Sync karr board with remote
 
 package App::karr::Cmd::Sync;
-our $VERSION = '0.501';
+our $VERSION = '0.601';
 use Moo;
 use MooX::Cmd;
 use feature 'say';
