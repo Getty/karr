@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-09-01T19:59:51Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-01T19:59:51Z
+created: 2026-09-01T18:56:25Z
+id: 280
+priority: low
+started: 2026-09-01T19:59:51Z
+status: done
+tags:
+- parity
+- feature
+title: 'Decide: parent/subtask links (kanban-md --parent) or a documented non-goal'
+updated: 2026-09-01T19:59:51Z
+---
+
+kanban-md has hierarchical cards: `create --parent ID`, `edit --parent/--clear-parent`, `list --parent ID`, `pick --parent ID`, and `show` prints direct children with a done/total roll-up and rejects cycles. karr has none of it and no ticket ever asked for it; karr's answers to "this card relates to that one" are `depends_on` (ordering) and `needs` (cross-board).
+
+This ticket is the decision, not the feature. Options:
+
+1. Non-goal: CLAUDE.md scopes parity to "the board itself"; write the non-goal into CONTEXT.md (vocabulary: no Parent) and README's kanban-md interop section.
+2. Parity: frontmatter `parent`, cycle check shared with depends_on, show roll-up, list/pick filter. Sizeable; would come as its own epic with sub-tickets.
+
+Either way, verify what `karr import` does with a kanban-md card that carries `parent:`. Silently dropping the field on the round trip is a data-loss bug regardless of the decision.
+
+Checked 2026-09-01: parent already round-trips. Task.pm carries an =attr parent (predicate and clearer), it is in the frontmatter key list and written back, and karr delete warns about cards whose parent is the id being deleted. The data-loss check in this ticket is therefore already answered; what remains is the decision between option 1 (document the non-goal) and option 2 (the CLI surface).
