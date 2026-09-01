@@ -1,5 +1,28 @@
 {{$NEXT}}
 
+    - Documentation brought back in line with the CLI. README and the
+      bundled skill claimed `--json` on every board command; `create`,
+      `init`, `agent-name`, `sync` and the payload commands (`backup`,
+      `restore`, `destroy`, `set-refs`, `get-refs`) do not take it, and
+      both texts now say which (k268 adds it to the first three). The
+      skill still described commands materializing a temporary file view
+      while they run, which predates refs-first storage: commands read
+      and write the refs directly, and `karr materialize` is the only
+      thing that writes a file view. Its stored-card example gained the
+      frontmatter fences and `lock_timeout`. README's "what is built"
+      table said a chain could not be written from the CLI, two sections
+      after showing `karr-foundation plan` doing exactly that; that
+      table, the refs table and the option reference now name `plan` and
+      `--input`. `perldoc karr` was cited for per-command options it
+      never carried (`perldoc App::karr::Cmd::List` and its siblings are
+      where they live); README spells the name generator `agent-name` as
+      `karr --help` does, with `agentname` kept as the alias it is;
+      `karr --help` lists the root `--done` option; and CONTEXT.md
+      dropped a `--overview` option karr-foundation never had. `perldoc
+      karr` gained the `dashboard` command it had never listed, and
+      karr-foundation's exit-code notes named a `--deadline` option where
+      the flag is `--wait`.
+
 0.600     2026-08-31 01:16:28Z
 
     - Karr writes its own ticket ids as `kNNN` in prose from now on,

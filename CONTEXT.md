@@ -88,8 +88,8 @@ and `claude: true`, and `--force` does not override it. A parked backlog stays
 fully usable by hand; only automation is switched off.
 
 **Overview**:
-Foundation's read-only dashboard (`--status` / `--overview`, or the default when
-no agent is configured) — per board: status counts and what is
+Foundation's read-only dashboard (`--status`, or the default when no agent is
+configured) — per board: status counts and what is
 in-progress/claimed/blocked, plus which repos are locked (agent running) or in
 cooldown. Fires no agent.
 

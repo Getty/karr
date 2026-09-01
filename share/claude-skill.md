@@ -6,11 +6,14 @@ description: Use when picking up, claiming, handing off or creating agent ticket
 # karr — Kanban Assignment & Responsibility Registry
 
 Git-native kanban board for multi-agent workflows. Canonical board state lives in
-`refs/karr/*`, not in a checked-in `karr/` directory. Commands materialize a
-temporary task/config view only while they run.
+`refs/karr/*`, not in a checked-in `karr/` directory. Commands read and write the
+refs directly; nothing is written to the work tree unless you ask for the file
+view with `karr materialize`.
 
-`--json` is available on every command with an alternate rendering. `--compact`
-is not -- exactly nine render one: `board`, `config`, `context`, `dashboard`,
+`--json` is taken by every command that reports on the board. Not by `create`,
+`init` and `agent-name` (not yet), and not by the payload and transport commands
+`backup`, `restore`, `destroy`, `set-refs`, `get-refs` and `sync`. `--compact`
+is rarer -- exactly nine render one: `board`, `config`, `context`, `dashboard`,
 `list`, `log`, `metrics`, `pick`, `show`. Anywhere else it answers
 `Unknown option: compact` with the usage and exit 2, rather than accepting the
 flag and ignoring it.
@@ -519,28 +522,33 @@ it back off the board (`karr show ID` → `Claimed:`, or `karr pick`'s own
 ## Stored task format
 
 ```markdown
-id: 1
-title: Set up CI pipeline
-status: backlog
-priority: high
+---
 class: standard
 created: 2026-03-12T10:00:00Z
-updated: 2026-03-12T10:00:00Z
+id: 1
+priority: high
+status: backlog
 tags:
   - devops
   - needs:other-repo#7
+title: Set up CI pipeline
+updated: 2026-03-12T10:00:00Z
+---
 
 Optional body with more detail.
 ```
+
+Keys are written in alphabetical order; the lifecycle stamps (`started`,
+`claimed_at`, `completed`) appear once the card reaches that point.
 
 Cross-board dependencies ride in `tags` (`needs:BOARD#ID`,
 `escalated-from:BOARD#ID`) rather than in a frontmatter field of their own:
 kanban-md marshals a card from its own struct and would drop an unmodelled key
 the first time it writes, while `tags` is modelled on both sides.
 
-Tasks are stored under `refs/karr/tasks/*/data`. During command execution `karr`
-materializes the same Markdown shape into a temporary task directory, so this
-format still matters when reading or generating tasks programmatically.
+Tasks are stored under `refs/karr/tasks/*/data` in exactly this shape, and
+`karr materialize` writes the same documents out as files under `tasks/`, so
+this is the format to read or generate when working on cards programmatically.
 
 ## Config refs
 
@@ -560,6 +568,7 @@ statuses:
 priorities: [low, medium, high, critical]
 classes: [expedite, fixed-date, standard, intangible]
 claim_timeout: 1h
+lock_timeout: 5m
 defaults:
   status: backlog
   priority: medium

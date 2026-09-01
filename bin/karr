@@ -175,6 +175,11 @@ Soft-deletes tasks by moving them to the archived status.
 
 Shows the grouped board view.
 
+=item * L<App::karr::Cmd::Dashboard>
+
+Shows a multi-board overview of every karr board found under a directory
+tree, without touching any of them.
+
 =item * L<App::karr::Cmd::Pick>
 
 Finds the next suitable task and claims it for an agent.

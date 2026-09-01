@@ -42,7 +42,7 @@ karr board
 Claim and progress work:
 
 ```bash
-NAME=$(karr agentname)
+NAME=$(karr agent-name)
 karr pick --claim "$NAME" --move in-progress
 karr handoff 1 --claim "$NAME" --note "Ready for review" --timestamp
 ```
@@ -84,7 +84,7 @@ Where the pieces live, and which of them travel:
 | `agents.state`, beside `config.yml` | this machine | foundation |
 | `assignment.yml`, beside `config.yml` — which agents may work which repository, in order | this machine | the coordination agent (or you) |
 | `refs/karr/config` → `foundation.enabled` | **the board — syncs** | `karr disable` / `karr enable` |
-| `refs/karr-foundation/*` in the hub — the chain, its run logs, the question mailbox | **the fleet — syncs** | `karr-foundation chain` / `ask` / `answer` |
+| `refs/karr-foundation/*` in the hub — the chain, its run logs, the question mailbox | **the fleet — syncs** | `karr-foundation plan` / `chain` / `ask` / `answer` |
 
 The four `<repo>` files are machine-local and belong in `.gitignore`. `karr
 init` does not put them there — it only ignores the materialized file view
@@ -155,7 +155,7 @@ the card with `karr pick`'s own eligibility and ranking (not terminal, not
 blocked, not held by a live claim; class, then priority, then id) and tells the
 agent twice: as a closing sentence in `$PROMPT` naming the id, and as
 `$KARR_TASK` for a template that wants the bare number. It does **not** claim
-the card — the claim is the agent's work session (`karr agentname`), and the
+the card — the claim is the agent's work session (`karr agent-name`), and the
 board's `.karr.lock` already keeps everyone else out for the length of the run.
 
 See what the next tick would do without doing it:
@@ -844,7 +844,7 @@ wanted" as a line of output, with the operator as the planner.
 | `kind: plan` steps | **still not executed** — recognised and left pending, because a plan step asks for a new plan and the executor executes plans. It is one of the four deviations that call the coordination agent |
 | the coordination agent / planner | built — `role: coordinator` on an agent definition, called once at the end of a tick for the deviations it met, writing the assignment, chains and questions |
 | routing: the assignment (`assignment.yml`) | built — repository to an ordered agent list with `WAIT`; looked up in the hot path, no AI in it |
-| writing a chain from the CLI | not built — a chain is written through `App::karr::Foundation::ChainStore`, which is also how the coordination agent is told to write one |
+| writing a chain from the CLI | built — `karr-foundation plan` takes one YAML or JSON document on stdin (or `--input PATH`), validates it whole and replaces the chain in the hub; `--dry-run` checks without writing, `--force` replaces a chain that still has a running step. `App::karr::Foundation::ChainStore->write_chain` underneath is the same path, and the one the coordination agent uses |
 | `escalate_to_ai` | handed to the coordination agent where one is marked; recorded and left waiting where none is |
 | cross-board links in a chain | built — the `ticket_links` fact measures the far cards for a precheck (`settled` / `open` / `missing`); resolving stays with `karr needs --resolve` |
 
@@ -893,7 +893,7 @@ re-read afterwards — what it wrote is what the **next** tick runs.
 | `--verbose` | log lines and agent output on the terminal, agent descriptions in `--status` |
 | `--force` | run regardless of board state; on `answer`, replace an existing answer |
 | `--command CMD` | one agent command for every board, overriding each `.karr` |
-| `ask` / `answer` / `chain` | the hub commands (`--context`, `--options`, `--default`, `--policy`, `--wait`, `--step`; `--note`) |
+| `ask` / `answer` / `chain` / `plan` | the hub commands — `ask` takes `--context`, `--options`, `--default`, `--policy`, `--wait` and `--step`; `answer` takes `--note`; `plan` takes `--input PATH` |
 
 Exit codes follow the same contract as `karr`: `0` the tick finished, `1` a
 runtime failure (no repos, unparsable config, a hub command with no hub), `2` a
@@ -1127,7 +1127,7 @@ Important refs:
 | `karr context` | generate agent-facing board summary |
 | `karr log` | inspect per-agent or per-task activity |
 | `karr metrics` | throughput, lead/cycle time, flow efficiency off the cards' lifecycle stamps |
-| `karr agentname` | generate short claim names (a new one every call - capture it once, see below) |
+| `karr agent-name` | generate short claim names (a new one every call — capture it once, see below); `karr agentname` is the same command |
 
 ### Skills and helper refs
 
@@ -1142,9 +1142,12 @@ Important refs:
 
 ### Output and exit codes
 
-Every board command takes `--json` for machine-readable output. `karr list
---json` emits the full card payload — frontmatter plus body — so reading a
-whole set of tickets is one call rather than one `karr show` per id.
+`--json` gives machine-readable output on every command that reports on the
+board. The exceptions are `create`, `init` and `agent-name`, which do not take
+it yet, and the commands whose output is a payload or a transport rather than
+a record: `backup`, `restore`, `destroy`, `set-refs`, `get-refs` and `sync`.
+`karr list --json` emits the full card payload — frontmatter plus body — so
+reading a whole set of tickets is one call rather than one `karr show` per id.
 
 `--compact` is the terse plaintext rendering, and only the nine commands that
 have one take it: `board`, `config`, `context`, `dashboard`, `list`, `log`,
@@ -1159,13 +1162,15 @@ scripting the CLI (`docs/adr/0002-exit-code-contract.md`):
 | `1` | runtime failure — task id not found, board missing, Git or sync failed, a destructive command refused for want of `--yes`, or a batch that committed partial work with at least one item failing |
 | `2` | usage error — unknown command or option, invalid option value, surplus or missing positional argument |
 
-Per-command options are not listed here; `karr --help`, `karr <cmd> --help` and
-`perldoc karr` carry them in full.
+Per-command options are not listed here. `karr <cmd> --help` carries them in
+full (`karr <cmd> -h` is the one-line-per-option form), as does the POD of each
+command module — `perldoc App::karr::Cmd::List` and its siblings. `perldoc karr`
+is the command-by-command map.
 
 ## Multi-agent workflow
 
 ```bash
-NAME=$(karr agentname)
+NAME=$(karr agent-name)
 
 # pick the best available task
 karr pick --claim "$NAME" --status todo --move in-progress

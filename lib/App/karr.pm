@@ -276,6 +276,7 @@ sub _print_help {
 
   $out .= "\n" . colored("OPTIONS:", 'bold') . "\n";
   $out .= "  --dir PATH   Starting path for Git repository discovery\n";
+  $out .= "  --done       Bare karr: include the board's final column (karr board --done)\n";
   $out .= "  --json       JSON output (most commands)\n";
   # Named in full rather than "(list, board)": --compact is declared by
   # App::karr::Role::CompactOutput, which exactly these nine commands compose,
