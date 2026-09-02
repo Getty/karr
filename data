@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-09-02T02:12:39Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:35:50Z
+created: 2026-09-01T18:54:59Z
+id: 268
+priority: high
+started: 2026-09-01T19:55:40Z
+status: done
+tags:
+- bug
+- json
+- cli
+- ux
+title: 'create: --json is an unknown option, and init and agent-name have none either'
+updated: 2026-09-02T23:35:50Z
+---
+
+`karr create "x" --json` prints the usage block, "Unknown option: json" and exits 2. README.md ("Output and exit codes") promises `--json` for every board command, and create is the one call where an agent needs the answer machine-readable: the new id is what every following move/edit/handoff takes. Today the id has to be scraped out of `Created task 1: First task`.
+
+## Repro
+
+    git init t && cd t && karr init --name t
+    karr create "First" --json      # usage + "Unknown option: json", exit 2
+
+## What to build
+
+- `create --json` emits the created card in the shape `karr show --json` uses (frontmatter plus body, one object) so a caller can pipe it into the next step. With `--json` nothing else goes to stdout.
+- `agent-name --json` (`{"name":"..."}`) and `init --json` are the other two commands without it that a script meets. `backup`/`restore`/`destroy`/`set-refs`/`get-refs` stay out of scope: their output is a payload, not a record.
+- Compose Role::Output like the other commands do rather than a bespoke printer; it already carries the JSON printers.
+
+Exit codes unchanged (ADR 0002). Changes entry under {{$NEXT}}, tests in t/.
+
+Exact list of commands without --json today: create, init, sync, backup, restore, destroy, set-refs, get-refs, agent-name. README (Output and exit codes) and the skill now say so instead of claiming every command takes it; this ticket closes create, init and agent-name, and both texts need the sentence adjusted when it lands.
+
+Pointers: Role::Output carries the --json option and the printers; Cmd::Show's JSON is the card shape to emit; Cmd::Init's execute is where init reports the board name and the .gitignore entries it added or left alone, and {"board":{"name":...},"gitignore":[...]} is enough of a payload there. Plain output stays as it is without --json. Acceptance: karr create x --json | jq .id prints the new id, and the sync progress lines stay on STDERR so the JSON decodes whole.
+
+2026-09-02 02:12 Done on branch k268-282-in-progress-batch (f75d4ac): --json on create/init/agent-name; t/135 updated for create's new ->json. Ready for review.
