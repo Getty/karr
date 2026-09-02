@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-09-02T16:48:09Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:37:05Z
+created: 2026-09-01T18:56:32Z
+id: 281
+priority: high
+started: 2026-09-01T23:41:38Z
+status: done
+tags:
+- feature
+- claims
+- ux
+- multi-agent
+title: Remember the claim name locally so --claim can default to it
+updated: 2026-09-02T23:37:05Z
+---
+
+Every claim-taking call (`move --claim`, `handoff --claim`, `pick --claim`, `edit --claim`, `list --claimed-by`) wants the same NAME, and the house rules already warn about the trap: `karr agentname` returns a new name each call, so an agent that mints one at move time and another at handoff time no longer matches its own claim. The name lives nowhere but in the caller's shell variable.
+
+Proposal (Getty, 2026-09-01): karr remembers, locally and never in a remote ref, the name it is claiming as, and `--claim` defaults to it when omitted.
+
+## Constraints to design against
+
+- Local only: nothing under refs/karr/* and nothing that sync pushes. Candidates: `git config --local karr.claim` (per checkout), a file under `.git/karr/`, or an env var.
+- A human and an agent routinely share one checkout (ADR 0001, role-qualified identity): a per-checkout value alone would make the human's `karr move` claim as the agent. ADR 0001 chose an env var (`KARR_ROLE`) precisely because it propagates into the nested karr calls an agent makes, which a file cannot tell apart. So probably: `KARR_CLAIM` (env, per process tree) first, then a per-checkout default for interactive use, and `--claim` on the command line beats both. karr-foundation's Runner already sets `KARR_ROLE`/`KARR_TASK` for the agent process and knows the run's name; it would set `KARR_CLAIM` too.
+- `karr agentname` grows a way to set it (`karr agentname --set`, or a `karr whoami`/`karr claim-as NAME` pair; name it after reading CONTEXT.md, Claim vs Assignee vs Lock).
+- Statuses that require a claim (`require_claim`) are satisfied by the default; the k263 messages that end in `--claim NAME` should then say that the default is unset and how to set it.
+- `--release` and steals are unaffected. `show --me` keeps meaning the log identity (role/email), not the claim name: two different things, keep them apart in CONTEXT.md.
+- The skill (`share/claude-skill.md` and its hardlinked copy under .claude/skills) and README's multi-agent section describe the `NAME=$(karr agentname)` dance; update both together.
+
+Deliver a design note first (ADR under docs/adr/), then the implementation. Changes entry.
+
+Pointers: pick --claim is required => 1 today, and the default is what lifts that. Foundation/Runner.pm sets KARR_TASK around line 162 through to_octets_for_env; KARR_CLAIM goes through the same boundary (Encoding.pm owns the env crossing). The require_claim check sits in Role::TaskMutation/apply_status_change and is where the default is consulted.
+
+2026-09-02 16:48 Done on branch k281-remembered-claim: ADR 0005 (57fb6a0) + implementation (01f9663). KARR_CLAIM per-process carrier, agent-name=checkout name (+--unique), pick no longer requires --claim, foundation exports KARR_CLAIM, docs+Changes. Full suite green (1776 tests). Ready for review.
