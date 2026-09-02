@@ -1,5 +1,9 @@
 {{$NEXT}}
 
+    - `view` is now an alias for `show`: `karr view ID` (and every show
+      form -- `view`, `view --me`, `view --json`, `view --compact`)
+      behaves exactly like `karr show` (k283).
+
     - The claim name an agent works under is carried per process in the
       `KARR_CLAIM` environment variable: every command that takes `--claim`
       (`move`, `handoff`, `pick`, `edit`, `create`) and `list --claimed-by`

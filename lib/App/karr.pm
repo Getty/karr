@@ -214,6 +214,7 @@ my %COMMAND_ALIASES = (
   'set-refs'   => 'setrefs',
   'get-refs'   => 'getrefs',
   'agent-name' => 'agentname',
+  'view'       => 'show',
 );
 
 around _build_command_commands => sub {
