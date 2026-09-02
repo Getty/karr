@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-09-02T02:13:38Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:44Z
+created: 2026-09-01T18:56:03Z
+id: 277
+priority: low
+started: 2026-09-01T23:15:06Z
+status: done
+tags:
+- parity
+- cli
+- feature
+title: Shell completion (bash, zsh, fish) as kanban-md offers it
+updated: 2026-09-02T23:36:44Z
+---
+
+kanban-md: `source <(kanban-md completion bash)`, `kanban-md completion zsh > "${fpath[1]}/_kanban-md"`, `kanban-md completion fish | source`. karr has nothing; with 30 commands and their option names an interactive user types blind.
+
+## What to build
+
+`karr completion bash|zsh|fish` printing a static completion script generated from the command table in App::karr and each command's options (MooX::Options exposes them): command names, hyphenated option names and, where cheap, the fixed value lists (`--sort`, default priorities). Dynamic completion of task ids is optional. No new runtime dependency unless it is already in cpanfile. Document in README (Installation) and `karr --help`. Changes entry.
+
+Pointers: @COMMANDS and %COMMAND_ALIASES in lib/App/karr.pm are the command table; MooX::Options exposes each command class's declared options (its _options_data), which is where the hyphenated names and value types come from. Keep the generated script static: no karr call at completion time.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (c0ef458): karr completion bash|zsh|fish. NB initial impl was broken (scalar-context sort -> no command names; zsh missing root options), both fixed; t/277 is now a real regression test. Ready for review.
