@@ -1,0 +1,33 @@
+---
+claimed_at: 2026-09-02T02:13:18Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:25Z
+created: 2026-09-01T18:55:35Z
+id: 273
+priority: medium
+started: 2026-09-01T23:30:36Z
+status: done
+tags:
+- parity
+- cli
+title: edit cannot change --class or --estimate and has no --clear-due
+updated: 2026-09-02T23:36:25Z
+---
+
+`karr create` takes `--class` and `--estimate`; `karr edit` takes neither, and the only way to clear a due date is to rewrite the card by hand (materialize, edit the file, import). kanban-md's edit has `--class`, `--estimate`, `--clear-due`.
+
+The class matters most: `karr pick` orders candidates by class of service before priority (expedite > fixed-date > standard > intangible, k233), so a card that turns out to be an expedite after creation cannot be promoted, and a fixed-date card whose date went away cannot drop back.
+
+## What to build
+
+- `edit --class CLASS`, validated against the board's classes with the same message and exit 2 as create.
+- `edit --estimate TEXT`.
+- `edit --clear-due` (usage error together with `--due`).
+- kanban-md additionally has `--started/--clear-started` and `--completed/--clear-completed`; out of scope unless they fall out of the same code path. Note the decision at handoff.
+
+The batch form `edit 1,2,3 --class expedite` follows from Role::TaskMutation; make sure the activity log records the field. Changes entry, tests.
+
+Pointers: Task.pm already carries due and estimate as rw attributes with predicate and clearer, and class with a default of standard, so no card-format change is needed. Cmd::Create validates class through Config->validate_class (around line 202); Cmd::Edit's option validation gets the same call. The field writes go through Role::TaskMutation like --priority does, which is what puts them in the activity log. Follow Cmd::Edit's existing --due handling for the pattern and the batch behaviour.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (ef8aef8): edit --class/--estimate/--clear-due. Ready for review.
