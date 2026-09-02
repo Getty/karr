@@ -1,0 +1,20 @@
+---
+claimed_at: 2026-09-02T02:13:51Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:58Z
+created: 2026-09-01T18:56:17Z
+id: 279
+priority: low
+started: 2026-09-01T23:14:44Z
+status: done
+tags:
+- parity
+- cli
+title: list --group-by and board --group-by
+updated: 2026-09-02T23:36:58Z
+---
+
+kanban-md: `list --group-by assignee|tag|class|priority|status` and `board --group-by`. karr has neither. Low priority (`--sort` covers most reads and agents use `--json`), but it is the last filter/sort gap against kanban-md's list; k237 and k252 took the rest. Grouped output: a heading per group with the same rows below. `--json` either unchanged (grouping as a rendering concern) or an object keyed by group; decide and document. Changes entry, tests.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (c0ef458): list/board --group-by. Ready for review.
