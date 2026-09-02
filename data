@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-09-02T02:13:11Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:18Z
+created: 2026-09-01T18:55:28Z
+id: 272
+priority: medium
+started: 2026-09-01T19:56:09Z
+status: done
+tags:
+- cli
+- ux
+- parity
+title: karr --version is an unknown option
+updated: 2026-09-02T23:36:18Z
+---
+
+    karr --version    # "Unknown option: version", exit 2
+
+Every .pm and bin/karr carry `our $VERSION`, `karr skill check` compares versions, bug reports ask for one, and kanban-md's binary answers `--version`. karr has no way to print its own.
+
+## What to build
+
+`karr --version` prints `karr <version>` on stdout and exits 0. The flag only, no `version` subcommand: it is what cobra offers and what people type. Keep the parsing in App::karr next to `--dir`/`--help`, list it under OPTIONS in `karr --help`, and make sure it works through the Docker alias (`docker run ... karr --version`). Changes entry, test.
+
+Pointers: lib/App/karr.pm. option done (around line 185) is the model for a root option, _print_help (around line 255) for the OPTIONS block, and the argv scan near line 328 is what lets a root option precede the command. The number is $App::karr::VERSION. t/131-help-column-alignment.t shows how the root command is driven from a test without a board.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (c0ef458): karr --version. Ready for review.
