@@ -1,0 +1,17 @@
+---
+class: standard
+completed: 2026-09-02T23:37:19Z
+created: 2026-09-02T23:26:00Z
+id: 283
+priority: low
+started: 2026-09-02T23:37:19Z
+status: done
+tags:
+- cli
+- ux
+- parity
+title: view as an alias for show
+updated: 2026-09-02T23:37:19Z
+---
+
+More people reach for 'view' than 'show'. Add 'view' as an alias for the show command via %COMMAND_ALIASES (same mechanism as agentname/getrefs/setrefs), so karr view ID behaves exactly like karr show. Implemented; merged to main.
