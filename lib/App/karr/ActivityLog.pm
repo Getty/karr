@@ -108,6 +108,16 @@ has role => (
 # about one extra ref per 80 mutating commands.
 use constant SEGMENT_MAX_BYTES => 8192;
 
+# The one source for the action vocabulary of the board activity log. Every
+# entry is written either by a command's log_action (the command's own name,
+# hyphenated -- create, move, edit, delete, archive, handoff, needs) or by the
+# explicit 'pick' of C<karr pick> (Role::BoardAccess/append_log), so this is
+# exactly the set that can appear in refs/karr/log/*. C<karr log --action>
+# validates against it and prints it in the usage error, instead of keeping a
+# second hand-maintained list that drifts from what the commands actually write
+# (ticket #278).
+use constant ACTIONS => qw( archive create delete edit handoff move needs pick );
+
 =attr segment_max_bytes
 
 How large (in characters) the active log segment may grow before the next entry
