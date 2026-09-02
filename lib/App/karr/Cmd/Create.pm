@@ -9,15 +9,19 @@ use MooX::Options (
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::DependencyArgs;
+use App::karr::Role::Output;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::CrossBoard;
+use App::karr::Error qw( user_error command_hint );
+use Time::Piece;
 
 # The set-time half only (ticket #137). A card that does not exist yet cannot be
 # taken up, so create never has a dependency warning to emit and must not
-# inherit the emitting half -- which is also the half that would require a
-# --json create has not got.
-with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyArgs';
+# inherit the emitting half -- the half that would also require --quiet, which
+# create does not take (ticket #137).
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyArgs',
+     'App::karr::Role::Output';
 
 =head1 SYNOPSIS
 
@@ -73,6 +77,19 @@ L<App::karr::CrossBoard>.
 =item * C<--body>
 
 Adds Markdown body text below the YAML frontmatter.
+
+=item * C<--claim>
+
+Claim the new task for an agent, stamping C<claimed_by> and C<claimed_at>
+exactly as C<< karr move --claim >> does. A status the board's
+C<require_claim> list covers is refused without it, with the invocation that
+would have worked as the last line of the error.
+
+=item * C<--json>
+
+Emit the created card in the same shape C<karr show --json> uses -- frontmatter
+plus body, one object -- and nothing else on stdout, so a caller can pipe the
+new id into the next step.
 
 =back
 
@@ -155,6 +172,12 @@ option body => (
   doc => 'Task description',
 );
 
+option claim => (
+  is => 'ro',
+  format => 's',
+  doc => 'Claim task for an agent',
+);
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
@@ -202,6 +225,25 @@ sub execute {
   $config->validate_class( $self->class )       if defined $self->class;
   App::karr::Config->validate_due( $self->due ) if defined $self->due;
 
+  # A card that lands in a require_claim column with no owner is the state
+  # `karr move` refuses to create (Role::TaskMutation/apply_status_change), and
+  # create must not be the door that walks around it (ticket #270). The default
+  # status is deliberately not consulted: a board whose default column needs a
+  # claim is a board that says so, and create without --status keeps its
+  # historical behaviour. The suggestion is the caller's own command line with
+  # --claim added, the k263 shape.
+  if ( defined $self->status
+      && $self->store->status_requires_claim($self->status)
+      && !( defined $self->claim && length $self->claim ) )
+  {
+    # A local, not "$self->status" inside the string: that would interpolate
+    # the object and leave the literal text "->status" behind it.
+    my $status = $self->status;
+    user_error(
+        "Status '$status' requires a claim:\n",
+        command_hint( 'create', $title, '--status', $status, '--claim', 'NAME' ) );
+  }
+
   # Set-time dependency validation (ticket #124), under the same #54 rule.
   # A self-reference is not expressible here: the new id does not exist until
   # it is allocated below, and every dependency must already exist, so no
@@ -248,12 +290,28 @@ sub execute {
   # length, not truth: --body 0 is a body (ticket #78).
   $task_args{body}       = $self->body if defined $self->body && length $self->body;
 
+  # Claim stamping, the same two fields and the same UTC instant `karr move
+  # --claim` writes (ticket #270). There is no shared helper to call: move,
+  # handoff, pick and edit all inline these two lines, and a single-use
+  # abstraction would be worse than the copy.
+  if ( defined $self->claim && length $self->claim ) {
+    $task_args{claimed_by} = $self->claim;
+    $task_args{claimed_at} = gmtime->datetime . 'Z';
+  }
+
   my $task = App::karr::Task->new(%task_args);
   $self->save_task($task);
 
   $self->sync_after;
 
-  printf "Created task %d: %s\n", $task->id, $task->title;
+  # --json emits the card in the same shape `karr show --json` uses and nothing
+  # else on stdout, so a caller can pipe the new id into the next step (ticket
+  # #268). Sync progress already goes to STDERR, so the JSON stream stays clean.
+  if ($self->json) {
+    $self->print_json( $task->to_json_hash );
+  } else {
+    printf "Created task %d: %s\n", $task->id, $task->title;
+  }
 }
 
 1;

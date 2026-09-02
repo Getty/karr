@@ -12,12 +12,14 @@ use App::karr::Error qw( user_error clean_error );
 use App::karr::Config;
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::CliArgs;
+use App::karr::Role::Output;
 use App::karr::Role::SkillFile;
 
 # SkillFile: _skill_content and _write_skill, shared with `karr skill`, which
 # installs the same file --claude-skill installs (tickets #145, #146).
 with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SkillFile';
 with 'App::karr::Role::CliArgs';
+with 'App::karr::Role::Output';
 
 =head1 SYNOPSIS
 
@@ -69,6 +71,12 @@ file L<App::karr::Cmd::Skill> installs for the C<claude-code> agent, and written
 the same way: B<in place>, keeping the inode of a F<SKILL.md> that is already
 there, so one that is a link of a hardlink chain shared across projects stays
 part of that chain.
+
+=item * C<--json>
+
+Emit the initialized board as one JSON object -- C<board.name> and the
+C<.gitignore> entries this run added for the file view -- and nothing else on
+stdout, so a caller can script the next step off the board name.
 
 =back
 
@@ -152,7 +160,7 @@ sub execute {
   # make every other clone read this board as a foreign one.
   $store->ensure_board_id;
 
-  print "Initialized karr board in refs/karr/\n";
+  print "Initialized karr board in refs/karr/\n" unless $self->json;
 
   # Completing a half-board is a different event from creating one, and the
   # user has to be told which one just happened: the tasks that were already
@@ -161,12 +169,14 @@ sub execute {
   if ( !$born_here ) {
     my @ids   = $store->git->list_task_refs;   # returns through sort: no scalar context
     my $tasks = scalar @ids;
-    print $tasks == 1
-      ? "Completed a half-board: the 1 task ref already here was kept.\n"
-      : "Completed a half-board: the $tasks task refs already here were kept.\n";
-    print "Left refs/karr/meta/encoding unstamped, so those refs keep being read the way\n"
-      . "they were written; 'karr repair' says whether they need migrating.\n"
-      if $store->git->board_is_legacy_encoded;
+    unless ($self->json) {
+      print $tasks == 1
+        ? "Completed a half-board: the 1 task ref already here was kept.\n"
+        : "Completed a half-board: the $tasks task refs already here were kept.\n";
+      print "Left refs/karr/meta/encoding unstamped, so those refs keep being read the way\n"
+        . "they were written; 'karr repair' says whether they need migrating.\n"
+        if $store->git->board_is_legacy_encoded;
+    }
   }
 
   # The materialized file view (config.yml + tasks/) is a disposable view of the
@@ -181,20 +191,30 @@ sub execute {
   # materialize` refuses to write, for that very reason (tickets #48, #89). Say
   # nothing rather than something untrue.
   my @owned = $store->project_owned_view_paths($root);
+  my @ignored;
   if (@owned) {
     print "Left .gitignore alone: git already tracks content at "
       . join( ', ', @owned ) . ".\n"
       . "Those paths belong to the project, not to karr's file view, so karr is "
-      . "not\nclaiming them here.\n";
+      . "not\nclaiming them here.\n"
+      unless $self->json;
   }
   else {
-    my @ignored = $store->ensure_gitignore( $root->stringify );
+    @ignored = $store->ensure_gitignore( $root->stringify );
     print "Added .gitignore entries for the file view: " . join( ', ', @ignored ) . "\n"
-      if @ignored;
+      if @ignored && !$self->json;
   }
 
   if ($self->claude_skill) {
     $self->_install_claude_skill($root);
+  }
+
+  # --json reports the board name and the .gitignore entries this run added,
+  # and nothing else on stdout (ticket #268). The remote-probe warning above
+  # goes to STDERR, so the JSON stream stays clean.
+  if ($self->json) {
+    $self->print_json(
+      { board => { name => $effective->{board}{name} }, gitignore => \@ignored } );
   }
 }
 
@@ -291,7 +311,7 @@ sub _install_claude_skill {
   # put in a different tree than the one the caller stands in, and
   # ".claude/skills/..." is true of every tree at once. `karr skill install`
   # printed the same non-answer and was fixed with it (#226, point 3).
-  print "Installed Claude Code skill to $skill_file\n";
+  print "Installed Claude Code skill to $skill_file\n" unless $self->json;
 }
 
 1;

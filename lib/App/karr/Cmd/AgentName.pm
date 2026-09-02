@@ -9,11 +9,13 @@ use MooX::Options (
 );
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
+use App::karr::Role::Output;
 
 # Unknown option / bad option value exits 2, not 1 (ADR 0002 exit-code
 # contract). This board-less command has no BoardDiscovery to inherit it from.
 with 'App::karr::Role::CliArgs';
 with 'App::karr::Role::ExitCodes';
+with 'App::karr::Role::Output';
 
 =head1 SYNOPSIS
 
@@ -71,6 +73,18 @@ the rightful owner and is not. Callers that need a stable identity should
 supply their own name and not go through this command, which exists to suggest
 a name, not to remember one.
 
+=head1 OPTIONS
+
+=over 4
+
+=item * C<--json>
+
+Emit the generated name as one JSON object -- C<{"name":"..."}> -- and nothing
+else on stdout, so a caller can capture the name without trimming a trailing
+newline.
+
+=back
+
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::Pick>, L<App::karr::Cmd::Handoff>,
@@ -83,7 +97,11 @@ sub execute {
 
   my @words = $self->_load_words;
   my $name = $words[rand @words] . '-' . $words[rand @words];
-  print "$name\n";
+  if ($self->json) {
+    $self->print_json( { name => $name } );
+  } else {
+    print "$name\n";
+  }
 }
 
 sub _load_words {
