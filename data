@@ -1,0 +1,38 @@
+---
+claimed_at: 2026-09-02T02:12:58Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:04Z
+created: 2026-09-01T18:55:13Z
+id: 270
+priority: high
+started: 2026-09-01T19:55:47Z
+status: done
+tags:
+- bug
+- claims
+- parity
+- cli
+title: create --status in-progress bypasses the claim requirement, and create has
+  no --claim
+updated: 2026-09-02T23:36:04Z
+---
+
+`karr move 3 in-progress` refuses without a claim ("Status 'in-progress' requires a claim"), because the board's `require_claim` statuses are enforced in Role::TaskMutation/apply_status_change. `karr create "x" --status in-progress` takes the same status and creates a card in progress that nobody holds: Cmd::Create never consults `status_requires_claim`. kanban-md's create takes `--claim` (doc: "claim task for an agent (use 'agent-name' to generate)"); karr's does not, so the only correct sequence today is create, then move with --claim: two round trips for one intent.
+
+## Repro
+
+    karr create x --status in-progress                        # Created task 2: x  (unclaimed, in progress)
+    karr create y --status todo && karr move 3 in-progress    # refused, needs --claim
+
+## What to build
+
+- `create --claim NAME`: stamps claimed_by/claimed_at exactly as `move --claim` does (same helper, not a copy) and writes the activity-log entry under that name.
+- `create --status S` where S requires a claim and no `--claim` was given is refused with the k263-shaped message, last line the working command: `karr create x --status in-progress --claim NAME`.
+- The default status (backlog) is unaffected; a board with `require_claim` empty behaves as today.
+
+Tests in t/, Changes entry.
+
+Pointers: Cmd::Create validates status, priority, class and due around line 200 (validate_status and friends); the require_claim check belongs right there, through $store->status_requires_claim, the same method Role::TaskMutation/apply_status_change consults. Claim stamping is whatever move --claim does (claimed_by and claimed_at through Role::ClaimTimeout); reuse it, do not copy it. The activity-log entry for create carries only the git identity today; with --claim its agent field is the claim name, as move's entry is.
+
+2026-09-02 02:12 Done on branch k268-282-in-progress-batch (f75d4ac): create --claim + require_claim enforcement. This broke pre-existing t/40, now updated. Ready for review.
