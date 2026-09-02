@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-09-02T02:13:04Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:11Z
+created: 2026-09-01T18:55:21Z
+id: 271
+priority: medium
+started: 2026-09-01T19:55:54Z
+status: done
+tags:
+- bug
+- cli
+- ux
+title: 'list: an unknown --status or --priority value prints an empty list and exits
+  0'
+updated: 2026-09-02T23:36:11Z
+---
+
+    karr list --status bogus      # header, "0 task(s)", exit 0
+    karr list --priority bogus    # same
+    karr list --class bogus       # "Usage error: unknown class ... (valid: ...)", exit 2  (k235)
+
+A typo in the filter looks exactly like an empty board, and an agent reading `0 task(s)` concludes there is nothing to do. `move` already validates the same value ("invalid status "bogus" (valid: backlog, todo, ...)", exit 2), `--class` got the same treatment in k235 and `--sort` validates too, so the rule and the wording exist; `--status` and `--priority` on list are the two filters that still skip it.
+
+## What to build
+
+Validate every element of the comma-separated `--status` and `--priority` lists against the board's config (statuses and priorities, plus `archived`) before filtering; refuse the unknown one with the existing "invalid status/priority ... (valid: ...)" line and exit 2. Same check for `pick --status` and `pick --move` if they lack it (verify first). Changes entry, tests.
+
+Pointers: App::karr::Config validate_status and validate_priority (Cmd::Create calls them around line 200, Cmd::Move for the target status). Cmd::List validates --class in _validate_options (around line 384); --status and --priority go in the same place, element by element after the comma split. archived is a valid --status value although it is not one of the board's configured columns (Config->ARCHIVED_STATUS).
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (c0ef458): list/pick reject unknown --status/--priority (exit 2). Ready for review.
