@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-09-02T02:13:31Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:38Z
+created: 2026-09-01T18:55:49Z
+id: 275
+priority: medium
+started: 2026-09-01T23:14:38Z
+status: done
+tags:
+- ux
+- output
+- cli
+title: list shows no claim holder, and "0 task(s)" hides that every card is done
+updated: 2026-09-02T23:36:38Z
+---
+
+Two things the table view withholds that `board` shows:
+
+1. `karr board` writes `@bob` behind a held card; `karr list` prints `#1 in-progress First task [high, blocked]` and nothing about who holds it. kanban-md's table has ID, STATUS, PRIORITY, TITLE, CLAIMED, TAGS, DUE. An agent choosing what to touch has to go through `--json` to learn that a card is taken.
+
+2. On this board today `karr list` prints only `0 task(s)`; `karr board` says `263 tasks (263 done hidden)`. The list line reads as an empty board.
+
+## What to build
+
+- Table: show the claim (`@bob` in the meta bracket, or a CLAIMED column; pick what keeps rows under 80 columns; tags are opt-in via `board --tags`, follow that precedent if a column is too wide). Whether `--compact` grows `@bob` is the decision `board --compact` already made; check it and stay consistent.
+- Footer: when the default filter hid finished cards, say so: `0 task(s) (263 done hidden; --status done to include)`. Only when something was hidden; `--json` untouched.
+
+Changes entry, tests against the fixtures list already has.
+
+Pointers: Cmd::List renders in the printf block around lines 306-324 (the [priority, blocked] meta bracket); Cmd::Board's @NAME rendering is around lines 223-235. Rule to keep, from CONTEXT.md under Claim: a claim on a terminal card is provenance, not a lease, so board shows no claimant there and leaves it out of its count. list must use the same live-claim test (Role::ClaimTimeout/claim_held) rather than printing claimed_by verbatim. The hidden-done count is what Board computes for its footer; share that computation instead of counting a second time.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (c0ef458): list shows claim holder + hidden-done footer count. Ready for review.
