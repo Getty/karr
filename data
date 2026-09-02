@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-09-02T02:13:57Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:37:12Z
+created: 2026-09-01T18:56:50Z
+id: 282
+priority: low
+started: 2026-09-01T19:56:16Z
+status: done
+tags:
+- parity
+- output
+title: A --no-color flag beside the NO_COLOR variable
+updated: 2026-09-02T23:37:12Z
+---
+
+board and dashboard colour when stdout is a terminal and `NO_COLOR` is unset. kanban-md also takes `--no-color`. A root option `--no-color` next to `--dir` that disables colour for the one call is cheap and is what a user types when a pager mangles escapes. Both renderers carry the same test (`-t STDOUT && !$ENV{NO_COLOR}`) as a copy; move it into one place while adding the flag. Changes entry.
+
+Pointers: Cmd::Board around line 203 and Cmd::Dashboard around line 249 each hold a copy of the colour test. The root option goes next to option done in lib/App/karr.pm and has to reach the command the way --dir does (see the argv handling there). Acceptance: output under --no-color is byte-identical to output under NO_COLOR=1.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (c0ef458): --no-color flag beside NO_COLOR. Ready for review.
