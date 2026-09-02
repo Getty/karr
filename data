@@ -1,0 +1,45 @@
+---
+claimed_at: 2026-09-02T02:12:46Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:35:57Z
+created: 2026-09-01T18:55:06Z
+id: 269
+priority: high
+started: 2026-09-01T23:09:57Z
+status: done
+tags:
+- ux
+- claims
+- cli
+- delete
+title: '"Task N is claimed by X" names the holder but not the way out; delete has
+  no --claim'
+updated: 2026-09-02T23:35:57Z
+---
+
+`karr edit 1 --block "waiting"` on a card bob holds answers
+
+    Task 1 is claimed by bob
+    1 of 1 ids failed
+
+and stops. kanban-md says at the same spot: `task #1 is claimed by "bob" (expires in 59m). If this is you, add: --claim bob`. karr's line is bare on purpose: the comment above the claim check in Role::ClaimTimeout explains that `karr delete` has no `--claim` option, so a `--claim X` hint would be unfollowable for one of its callers (move, edit, handoff, delete), and the wording was left as `karr handoff` always had it.
+
+That is a workaround for a gap, not a resolution. Today the only way to delete a claimed card is `karr edit 1 --release` first (which needs no claim, see below), then `karr delete 1 --yes`, and nothing tells the caller so.
+
+## What to build
+
+1. `karr delete --claim NAME`, and `karr archive --claim NAME` while there (kanban-md's archive takes it; the guard in Role::ClaimTimeout is shared).
+2. Then the refusal ends in the working command in k263's shape: built from the caller's own words, real id, last line:
+
+       Task 1 is claimed by bob:
+         karr edit 1 --block waiting --claim bob
+
+   For a caller that is not bob the honest line is the release, `karr edit 1 --release`; say that too (both lines, or a message that names both).
+3. Note the asymmetry while there: `karr edit 1 --release` succeeds with no `--claim` at all, and `karr edit 1 --claim carol` silently takes the card off bob. Whether release/steal stay unguarded is a deliberate choice (kanban-md is the same); record it in the POD of the claim check so the next reader does not file it as a bug. But the refusal must not pretend the card is unreachable when it is a release away.
+
+Cover move, edit, handoff, delete and archive in t/. Exit codes unchanged. Changes entry.
+
+Pointers: the check is the die 'Task %d is claimed by %s' in Role::ClaimTimeout, with the long comment above it that explains the bare wording; the suggestion renderer is App::karr::Error/command_hint with claim_hint_tokens on Role::TaskMutation (k263), and the batch runner keeps the hint through clean_error. Acceptance: karr delete 1 --yes on a card bob holds ends on the line karr delete 1 --yes --claim bob; karr edit 1 --block waiting ends on karr edit 1 --block waiting --claim bob; both also name karr edit 1 --release as the other way out; exit codes stay 1, --json keeps its single-line error field.
+
+2026-09-02 02:12 Done on branch k268-282-in-progress-batch (d51b3fa): claim refusal now names the release door; delete --claim. Ready for review.
