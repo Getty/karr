@@ -11,9 +11,10 @@ use Term::ANSIColor qw( colored );
 # command_hint as a method on the root. Called fully qualified below instead.
 use App::karr::Error ();
 use App::karr::Role::BoardAccess;
+use App::karr::Role::Color;
 use App::karr::Cmd::Board;
 
-with 'App::karr::Role::BoardAccess';
+with 'App::karr::Role::BoardAccess', 'App::karr::Role::Color';
 
 =synopsis
 
@@ -187,6 +188,16 @@ option done => (
   doc => 'Include the board\'s final column in the default board view',
 );
 
+# The --no-color option is provided by App::karr::Role::Color (composed
+# above), so it is a single, shared declaration usable both here on the root
+# (`karr --no-color CMD`) and on the two renderers that colour their output
+# (`karr board --no-color`, `karr dashboard --no-color`).
+
+option version => (
+  is  => 'ro',
+  doc => 'Print the karr version and exit',
+);
+
 # MooX::Cmd derives a command name from the class basename, so
 # App::karr::Cmd::SetRefs is only ever spelled "setrefs" -- the documented
 # dashed forms need registering as extra keys in the command table.
@@ -247,7 +258,20 @@ my @COMMANDS = (
   [ skill     => 'Install/update agent skills' ],
   [ 'set-refs' => 'Store helper payloads in a Git ref' ],
   [ 'get-refs' => 'Fetch and print helper payloads from a Git ref' ],
+  [ completion => 'Generate shell completion scripts' ],
 );
+
+# The command table `karr completion` generates from: every command with its
+# description, aliases included. Completion needs the same table help prints,
+# so it is exposed here rather than re-derived in the command.
+sub command_table {
+  my %desc = map { $_->[0] => $_->[1] } @COMMANDS;
+  my @out  = @COMMANDS;
+  for my $alias (keys %COMMAND_ALIASES) {
+    push @out, [ $COMMAND_ALIASES{$alias}, $desc{$alias} ];
+  }
+  return @out;
+}
 
 sub _print_help {
   my ($self_or_class, $code) = @_;
@@ -277,6 +301,8 @@ sub _print_help {
   $out .= "\n" . colored("OPTIONS:", 'bold') . "\n";
   $out .= "  --dir PATH   Starting path for Git repository discovery\n";
   $out .= "  --done       Bare karr: include the board's final column (karr board --done)\n";
+  $out .= "  --no-color   Disable colour output for this invocation\n";
+  $out .= "  --version    Print the karr version and exit\n";
   $out .= "  --json       JSON output (most commands)\n";
   # Named in full rather than "(list, board)": --compact is declared by
   # App::karr::Role::CompactOutput, which exactly these nine commands compose,
@@ -323,6 +349,13 @@ around options_short_usage => sub { $_[1]->_print_help($_[2]) };
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
 
+  # `karr --version` answers before anything else: no board, no repository,
+  # no subcommand is needed for it.
+  if ($self->version) {
+    print "karr $VERSION\n";
+    exit 0;
+  }
+
   # A leftover positional here means MooX::Cmd could not dispatch it to any
   # App::karr::Cmd::* subcommand: it is an unknown command, not a request for
   # the default board view. MooX::Cmd echoes already-parsed option flags AND
@@ -358,6 +391,9 @@ sub execute {
     done      => $self->done,
   );
   $board_args{dir} = $self->dir if $self->has_dir;
+  # The default Board is constructed directly (no command_chain to adopt
+  # --no-color from), so forward the root's own decision explicitly.
+  $board_args{color} = 0 if defined $self->color && !$self->color;
   App::karr::Cmd::Board->new(%board_args)->execute($args_ref, $chain_ref);
 }
 

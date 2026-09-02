@@ -5,11 +5,12 @@ our $VERSION = '0.601';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr list [--status LIST] [--priority LIST] [--archived] [--sort FIELD] [--limit N] [options]',
+  usage_string => 'USAGE: karr list [--status LIST] [--priority LIST] [--archived] [--sort FIELD] [--limit N] [--group-by FIELD] [options]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::CompactOutput;
+use App::karr::Board;
 # For --unclaimed, and for nothing else: claim_held is the claim test
 # App::karr::Role::PickRules/pickable applies, so the free cards this command
 # lists are the free cards `karr pick` hands out (ticket #252). The role is
@@ -57,6 +58,13 @@ C<list> excludes only C<archived> and still shows finished work. That is a
 deliberate difference, not an oversight: C<karr list> is the agent's "what is
 open" view.
 
+The table shows a live claim as C<@name> in the meta bracket, using the same
+test C<--unclaimed> and C<karr pick> apply: an expired claim is not shown,
+and neither is one on a finished card, where it is provenance rather than a
+lease (see L<App::karr::Cmd::Board>). When the default filter hid finished
+cards, the footer says so -- C<0 task(s) (263 done hidden; --status done to
+include)> -- with the same count C<karr board>'s footer prints.
+
 =head1 FILTERS AND SORTING
 
 =over 4
@@ -64,7 +72,13 @@ open" view.
 =item * C<--status>, C<--priority>
 
 Accept comma-separated lists and only return tasks matching one of the
-requested values.
+requested values. Every element is checked against the board's config before
+anything is filtered: a status or priority the board does not know is a usage
+error (exit C<2>) naming the ones it does know, the same answer C<karr create
+--status>/C<--priority> gives -- kanban-md compares the strings and prints an
+empty list instead, which reads like "no such work" when the truth is "no such
+status". C<--status> additionally accepts C<archived>, which is a real status
+karr hardcodes even on a board that does not configure a column for it.
 
 =item * C<--archived>
 
@@ -167,6 +181,22 @@ question: C<--last N> is the N most recent by time, C<--limit N> is the head
 of whatever C<--sort> just produced. C<karr list --sort updated --reverse
 --limit 5> is how this command spells the former.
 
+=item * C<--group-by>
+
+Groups the table under a heading per group, with the same rows below. The
+field is one of C<assignee>, C<tag>, C<class>, C<priority>, C<status>; any
+other value is a usage error (exit C<2>), the same answer C<--sort> gives an
+unknown field. Group order follows the board config for C<status>,
+C<priority> and C<class>, and the alphabet for C<assignee> and C<tag>; within
+a group the rows keep the C<--sort> order. A task without an assignee lands
+in C<(unassigned)>, one without tags in C<(untagged)>, and a task with
+several tags appears in each of its tag groups -- the same key rules
+kanban-md's C<GroupBy> applies (internal/board/group.go).
+
+Grouping is a rendering concern: C<--json> and C<--compact> win over it, so
+C<--group-by> changes only the table, exactly as C<--tags> changes only
+C<karr board>'s table.
+
 =back
 
 Filters run first, then the sort, then C<--limit>. That is kanban-md's order
@@ -268,19 +298,46 @@ option limit => (
   doc => 'Show at most N tasks after filtering and sorting (0 = no limit)',
 );
 
+# The complete set of --group-by keys, in the order the usage message lists
+# them. Single source for the option doc, the usage message, and the
+# validation. The same five kanban-md's GroupBy takes
+# (internal/board/group.go).
+my @GROUP_FIELDS = qw( assignee tag class priority status );
+
+option group_by => (
+  is => 'ro',
+  format => 's',
+  doc => 'Group by: ' . join(', ', @GROUP_FIELDS),
+);
+
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
   # "0 task(s)" and `[]` are answers about a board; a repository with no board
   # has to say that instead of borrowing them (#135).
   $self->require_local_board;
   $self->_validate_options;
-  my @tasks = $self->_load_tasks;
+  # The pre-filter list is kept for the footer's hidden-done count: the
+  # default view hides the board's terminal statuses, and the footer has to
+  # say how many cards that filter withheld -- a count over the filtered list
+  # would be "how many of what I already see are done", which is zero by
+  # construction.
+  my @all_tasks = $self->_load_tasks;
+  # One window for the whole run, read once here rather than per card: the
+  # claim test re-reads claim_timeout for every card otherwise, and a board
+  # that changes its timeout mid-list would answer with two different notions
+  # of "held" on one screen. Read only when something will actually test a
+  # claim -- the --unclaimed filter, or a card with a claim to render -- so a
+  # claim-free board's plain list never pays for the parse (ticket #252).
+  my $timeout;
+  if ( $self->unclaimed || grep { $_->has_claimed_by } @all_tasks ) {
+    $timeout = $self->claim_timeout_secs;
+  }
   # Filter, then sort, then cut. kanban-md's board.List does the three in that
   # order (internal/board/board.go) and the order is the whole point of the
   # third: cutting before the sort would keep an arbitrary N and then order
   # those, so `--sort priority -n 5` would answer with five tasks that are not
   # the five most urgent ones.
-  @tasks = $self->_filter(\@tasks);
+  my @tasks = $self->_filter( \@all_tasks, $timeout );
   @tasks = $self->_sort(\@tasks);
   @tasks = $self->_limit(\@tasks);
 
@@ -305,23 +362,64 @@ sub execute {
 
   printf "%-5s %10s %s\n", 'ID', 'STATUS', 'TITLE';
   printf "%s\n", '-' x 72;
-  for my $t (@tasks) {
-    my @meta;
-    push @meta, $t->priority if defined $t->priority && length $t->priority;
-    # An `assignee: ""` from kanban-md satisfies the predicate but names
-    # nobody, and printing it gave every imported card a bare "@" in its meta
-    # list. Empty means absent here as it does in pick (ticket #59).
-    push @meta, '@' . $t->assignee if $t->has_assignee && length $t->assignee;
-    push @meta, 'blocked' if $t->has_blocked;
-    my $title = $t->title;
-    $title .= ' [' . join(', ', @meta) . ']' if @meta;
-
-    printf "#%-4u %10s %s\n",
-      $t->id,
-      $t->status,
-      $title;
+  my $board = App::karr::Board->new( store => $self->store );
+  if ($self->group_by) {
+    my %groups;
+    for my $t (@tasks) {
+      push @{ $groups{$_} }, $t for $board->group_keys( $t, $self->group_by );
+    }
+    for my $key ( $board->group_order( \%groups, $self->group_by ) ) {
+      print "\n## $key\n";
+      $self->_render_row( $_, $timeout ) for @{ $groups{$key} };
+    }
+  } else {
+    $self->_render_row( $_, $timeout ) for @tasks;
   }
-  printf "\n%d task(s)\n", scalar @tasks;
+
+  my $footer = scalar(@tasks) . ' task(s)';
+  # The default view hides the board's terminal statuses; when that filter hid
+  # something, the footer says so and names the column -- the same count
+  # `karr board`'s footer prints, computed by the same helper (ticket #275).
+  # The gate is the default filter itself: --status and --archived replace it,
+  # so nothing was hidden by it, and the hint would be a lie.
+  if ( !$self->status && !$self->archived ) {
+    my $final_status = $board->final_status;
+    my $hidden = defined $final_status ? $board->hidden_done_count( \@all_tasks ) : 0;
+    if ($hidden) {
+      $footer .= " ($hidden $final_status hidden; --status $final_status to include)";
+    }
+  }
+  print "\n$footer\n";
+}
+
+# One table row. Extracted from execute so the grouped view prints exactly the
+# rows the flat view does (ticket #279).
+sub _render_row {
+  my ( $self, $t, $timeout ) = @_;
+  my @meta;
+  push @meta, $t->priority if defined $t->priority && length $t->priority;
+  # An `assignee: ""` from kanban-md satisfies the predicate but names
+  # nobody, and printing it gave every imported card a bare "@" in its meta
+  # list. Empty means absent here as it does in pick (ticket #59).
+  push @meta, '@' . $t->assignee if $t->has_assignee && length $t->assignee;
+  # A claim is only worth showing while the work is still live, and which
+  # columns count as finished is the board's decision -- a board imported from
+  # kanban-md can end in `shipped`, and a claim on a finished card is
+  # provenance, not a lease (CONTEXT.md). claim_held is the same test
+  # --unclaimed and pick apply, so the table cannot disagree with either about
+  # who holds a card (ticket #275).
+  if ( $self->claim_held( $t, $timeout )
+    && !$self->store->is_terminal_status( $t->status ) ) {
+    push @meta, '@' . $t->claimed_by;
+  }
+  push @meta, 'blocked' if $t->has_blocked;
+  my $title = $t->title;
+  $title .= ' [' . join(', ', @meta) . ']' if @meta;
+
+  printf "#%-4u %10s %s\n",
+    $t->id,
+    $t->status,
+    $title;
 }
 
 # Every usage error this command can raise that does not need a task in hand,
@@ -374,6 +472,17 @@ sub _validate_options {
   $self->usage_error( sprintf '--limit must be 0 or greater (got %d)', $self->limit )
     if $self->limit < 0;
 
+  # --group-by is a rendering key, validated like --sort: an unknown field is
+  # a usage error (exit 2) rather than a silent "no grouping happened". The
+  # accepted set is the same five kanban-md's GroupBy takes
+  # (internal/board/group.go).
+  if ( defined $self->group_by ) {
+    my $field = $self->group_by;
+    user_error( "Usage: karr list --group-by ",
+      join('|', @GROUP_FIELDS), " (got '$field')" )
+      unless grep { $_ eq $field } @GROUP_FIELDS;
+  }
+
   # A class the board does not configure is a usage error, naming the classes
   # that exist -- the same answer `create --class` gives and the same answer
   # --sort gives an unknown field. Deliberate divergence from kanban-md, whose
@@ -382,6 +491,20 @@ sub _validate_options {
   # when the truth is "no such class". Validating needs the board's config, so
   # this one sits after require_local_board rather than before it.
   $self->config->validate_class( $self->class ) if defined $self->class;
+
+  # --status and --priority are comma-separated lists, and every element is a
+  # value the board must know -- a typo in one of them used to print an empty
+  # list and exit 0, which reads as "no such work" when the truth is "no such
+  # status" (ticket #271). Same answer --class gives above and `create`/`move`
+  # give the same value. The status filter accepts `archived` even on a board
+  # that does not configure it (App::karr::Config/validate_status_filter); the
+  # priority filter is the plain L<App::karr::Config/validate_priority>.
+  if ( defined $self->status ) {
+    $self->config->validate_status_filter($_) for split /,/, $self->status;
+  }
+  if ( defined $self->priority ) {
+    $self->config->validate_priority($_) for split /,/, $self->priority;
+  }
 }
 
 sub _load_tasks {
@@ -390,7 +513,7 @@ sub _load_tasks {
 }
 
 sub _filter {
-  my ($self, $tasks) = @_;
+  my ($self, $tasks, $timeout) = @_;
   my @filtered = @$tasks;
 
   # Which statuses were asked for, if any. --archived is a status filter and
@@ -440,8 +563,9 @@ sub _filter {
   # Claim only, as kanban-md's IsUnclaimed is: pickable goes on to exclude
   # blocked and terminal cards, and neither is a statement about who holds the
   # card. --blocked --unclaimed is a real triage query here, not an empty one.
+  # The window was read once in execute and is passed in, so the filter and
+  # the table's claim display cannot judge the same run against two timeouts.
   if ($self->unclaimed) {
-    my $timeout = $self->claim_timeout_secs;
     @filtered = grep { !$self->claim_held( $_, $timeout ) } @filtered;
   }
   # Plain equality against the card's class, which App::karr::Task always has

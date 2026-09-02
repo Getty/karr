@@ -346,6 +346,11 @@ sub _usage_error {
     $field, defined $value ? qq{"$value"} : '(none)', $detail;
 }
 
+# The status kanban-md calls "archived": always terminal, and the one name it
+# hardcodes (internal/config/config.go, ArchivedStatus). Declared above the
+# validators because validate_status_filter names it.
+use constant ARCHIVED_STATUS => 'archived';
+
 sub validate_status {
   my ($self, $value) = @_;
   my @statuses = $self->statuses;
@@ -359,6 +364,27 @@ Dies unless the value is one of the board's configured statuses, returning the
 value otherwise so it can be used inline.
 
     $task->status( $config->validate_status($wanted) );
+
+=cut
+
+sub validate_status_filter {
+  my ($self, $value) = @_;
+  my @valid = $self->statuses;
+  push @valid, ARCHIVED_STATUS unless grep { $_ eq ARCHIVED_STATUS } @valid;
+  return $value if defined $value && grep { $_ eq $value } @valid;
+  _usage_error( 'status', $value, 'valid: ' . join(', ', @valid) );
+}
+
+=method validate_status_filter
+
+Dies unless the value is one of the board's configured statuses or C<archived>,
+returning the value otherwise so it can be used inline. The one extra name is
+L</ARCHIVED_STATUS>: it is a real status karr hardcodes, so a C<--status>
+filter may name it even on a board that does not configure a column for it
+(ticket #271). L</validate_status> stays the stricter check for a status a task
+is moved to.
+
+    $config->validate_status_filter($wanted);
 
 =cut
 
@@ -522,10 +548,6 @@ sub _has_duplicates {
   my %seen;
   return scalar grep { $seen{$_}++ } @_;
 }
-
-# The status kanban-md calls "archived": always terminal, and the one name it
-# hardcodes (internal/config/config.go, ArchivedStatus).
-use constant ARCHIVED_STATUS => 'archived';
 
 # The class of service that is ranked by its date rather than by its priority
 # (internal/board/pick.go, sortPickCandidates). Class names otherwise mean

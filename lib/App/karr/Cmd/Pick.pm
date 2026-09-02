@@ -183,6 +183,16 @@ sub execute {
   App::karr::Config->from_merged($ec)->validate_status($self->move)
     if defined $self->move;
 
+  # --status is a comma-separated list of source statuses, and every element is
+  # a status the board must know -- a typo used to be answered with "No available
+  # tasks to pick." and exit 0, which reads as "no work" when the truth is "no
+  # such status" (ticket #271). The filter form accepts `archived` the way
+  # `list --status` does (App::karr::Config/validate_status_filter).
+  if ( defined $self->status ) {
+    App::karr::Config->from_merged($ec)->validate_status_filter($_)
+      for split /,/, $self->status;
+  }
+
   # A ranking, not a decision. Every one of these is re-read and re-tested under
   # its own lock before anything is written (see EXCLUSIVITY above).
   #

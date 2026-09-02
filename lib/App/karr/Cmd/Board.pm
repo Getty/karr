@@ -5,17 +5,20 @@ our $VERSION = '0.601';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (
-  usage_string => 'USAGE: karr board [--json] [--compact] [--tags] [--done]',
+  usage_string => 'USAGE: karr board [--json] [--compact] [--tags] [--done] [--group-by FIELD]',
 );
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::CompactOutput;
+use App::karr::Role::Color;
+use App::karr::Board;
 use App::karr::Task;
 use App::karr::Config;
+use App::karr::Error qw( user_error );
 use Term::ANSIColor qw( colored );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::CompactOutput';
+     'App::karr::Role::CompactOutput', 'App::karr::Role::Color';
 
 option tags => (
   is => 'ro',
@@ -27,6 +30,18 @@ option done => (
   doc => 'Include the board\'s final column (hidden by default)',
 );
 
+# The complete set of --group-by keys, in the order the usage message lists
+# them. Single source for the option doc, the usage message, and the
+# validation. The same five kanban-md's GroupBy takes
+# (internal/board/group.go).
+my @GROUP_FIELDS = qw( assignee tag class priority status );
+
+option group_by => (
+  is => 'ro',
+  format => 's',
+  doc => 'Group by: ' . join(', ', @GROUP_FIELDS),
+);
+
 =head1 SYNOPSIS
 
     karr board
@@ -34,6 +49,7 @@ option done => (
     karr board --compact
     karr board --json
     karr board --done
+    karr board --group-by assignee
 
 =head1 DESCRIPTION
 
@@ -41,8 +57,9 @@ Renders a board-oriented summary grouped by status. The default output is a
 compact, Markdown-flavoured plaintext board: the board name as an C<#> heading,
 each status as a C<##> section, and one C<- id | title | meta...> line per task.
 This stays readable when piped, redirected, diffed, or pasted. Colour is added
-only when standard output is a terminal (and C<NO_COLOR> is unset). Compact and
-JSON modes remain available for automation and scripting.
+only when standard output is a terminal, C<NO_COLOR> is unset, and C<--no-color>
+was not given. Compact and JSON modes remain available for automation and
+scripting.
 
 Archived tasks are not part of any of those renderings: they are left out of the
 columns, out of the cards, and out of every number in the footer, in all output
@@ -86,6 +103,25 @@ Emits the board name, total task count, and a structured C<columns> array with
 per-column task lists. The final column is always present with its real count,
 but carries an empty C<tasks> list unless C<--done> is given.
 
+=item * C<--group-by>
+
+Replaces the status sections with one section per group, the same card rows
+below each heading. The field is one of C<assignee>, C<tag>, C<class>,
+C<priority>, C<status>; any other value is a usage error (exit C<2>). Group
+order follows the board config for C<status>, C<priority> and C<class>, and
+the alphabet for C<assignee> and C<tag>; a card without an assignee lands in
+C<(unassigned)>, one without tags in C<(untagged)>, and a card with several
+tags appears in each of its tag groups -- the same key rules kanban-md's
+C<GroupBy> applies (internal/board/group.go) and the same answers C<karr list
+--group-by> uses, so the two commands cannot drift.
+
+The rows are the flat view's rows, so the board's finished column is withheld
+here exactly as the status sections withhold it -- C<--done> reveals it -- and
+the footer and its hidden-count hint are unchanged.
+
+Grouping is a rendering concern: C<--json> and C<--compact> win over it, so
+C<--group-by> changes only the table, exactly as C<--tags> does.
+
 =back
 
 =head1 SEE ALSO
@@ -118,6 +154,7 @@ sub execute {
   # byte-identical to a board that simply has no cards (#135). No sync -- see
   # App::karr::Role::BoardDiscovery/require_local_board.
   $self->require_local_board;
+  $self->_validate_options;
 
   my $ec = $self->store->effective_config;
 
@@ -199,8 +236,9 @@ sub execute {
   my $board_name = $ec->{board}{name} // 'Kanban Board';
 
   # Colour only when writing to a real terminal — piped or redirected output
-  # stays clean plaintext so the board diffs, greps, and pastes cleanly.
-  my $color = -t STDOUT && !$ENV{NO_COLOR};
+  # stays clean plaintext so the board diffs, greps, and pastes cleanly. The
+  # tty/NO_COLOR/--no-color decision lives in App::karr::Role::Color.
+  my $color = $self->_want_color;
   my $c = sub {
     my ($text, $spec) = @_;
     return $color ? colored($text, $spec) : $text;
@@ -217,41 +255,35 @@ sub execute {
     $self->done || !$self->store->is_terminal_status($_)
   } @statuses;
 
-  for my $status (@display_statuses) {
-    my $tasks  = $by_status{$status} // [];
-    my $label  = join ' ', map { ucfirst } split /-/, $status;
-    my $accent = $STATUS_COLOR{$status} // 'white';
-    print "\n", $c->("## $label", "bold $accent"), "\n";
+  my $board = App::karr::Board->new( store => $self->store );
 
-    for my $t (@$tasks) {
-      my @meta;
-      if ($t->priority && $t->priority ne 'medium') {
-        push @meta, $c->('priority:' . $t->priority, $PRIORITY_COLOR{$t->priority} // 'white');
-      }
-      # A claim is only worth showing while the work is still live, and which
-      # columns count as finished is the board's decision -- a board imported
-      # from kanban-md can end in `shipped`, and every finished card there
-      # still carried its claimant into the board (ticket #98, following #67).
-      if ($t->has_claimed_by && !$self->store->is_terminal_status($t->status)) {
-        push @meta, $c->('@' . $t->claimed_by, 'cyan');
-      }
-      if ($t->has_blocked) {
-        my $reason = $t->has_block_reason ? $t->block_reason : undef;
-        $reason = substr($reason, 0, 40) . '...' if defined $reason && length $reason > 43;
-        push @meta, $c->(
-          defined $reason && length $reason ? "blocked:$reason" : 'blocked', 'bold red');
-      }
-      if ($t->has_due) {
-        push @meta, $c->('due:' . $t->due, 'yellow');
-      }
-
-      my $line = join ' ', $c->('-', 'bright_black'), $t->id, $sep, $t->title;
-      $line .= " $sep " . join(" $sep ", @meta) if @meta;
-      print $line, "\n";
-
-      if ($self->tags && @{$t->tags}) {
-        print '  ', $c->(join(' ', map { "#$_" } @{$t->tags}), 'bright_black'), "\n";
-      }
+  if ($self->group_by) {
+    # --group-by replaces the status sections with one section per group, the
+    # same card rows below each heading. The group keys and their order come
+    # from App::karr::Board, the same answers `karr list --group-by` uses, so
+    # the two commands cannot drift (ticket #279).
+    #
+    # The rows are the flat view's rows, so the finished column is withheld
+    # here exactly as the status sections withhold it: a grouped view that
+    # printed the done cards while its footer said "(N done hidden)" would
+    # disagree with its own total in both directions at once. --done reveals
+    # them, as it does in the flat view.
+    my %groups;
+    for my $t (@tasks) {
+      next if !$self->done && $self->store->is_terminal_status( $t->status );
+      push @{ $groups{$_} }, $t for $board->group_keys( $t, $self->group_by );
+    }
+    for my $key ( $board->group_order( \%groups, $self->group_by ) ) {
+      print "\n", $c->("## $key", 'bold'), "\n";
+      $self->_render_card( $_, $c, $sep ) for @{ $groups{$key} };
+    }
+  } else {
+    for my $status (@display_statuses) {
+      my $tasks  = $by_status{$status} // [];
+      my $label  = join ' ', map { ucfirst } split /-/, $status;
+      my $accent = $STATUS_COLOR{$status} // 'white';
+      print "\n", $c->("## $label", "bold $accent"), "\n";
+      $self->_render_card( $_, $c, $sep ) for @$tasks;
     }
   }
 
@@ -265,16 +297,69 @@ sub execute {
   my $claimed = grep { $_->has_claimed_by && !$self->store->is_terminal_status($_->status) } @tasks;
   # At most one status left in @statuses is terminal once `archived` is gone,
   # and it is the column @display_statuses withheld. The hint names it, so it
-  # reads "(3 shipped hidden)" on a board that calls it that.
-  my ($final_status) = grep { $self->store->is_terminal_status($_) } @statuses;
+  # reads "(3 shipped hidden)" on a board that calls it that. The count is
+  # App::karr::Board's, the same one `karr list`'s footer prints (ticket #275).
+  my $final_status = $board->final_status;
   my $hidden = ( defined $final_status && !$self->done )
-    ? scalar @{ $by_status{$final_status} // [] } : 0;
+    ? $board->hidden_done_count( \@tasks ) : 0;
   my $total_label = scalar(@tasks) . ' tasks';
   $total_label .= " ($hidden $final_status hidden)" if $hidden;
   my @summary = ( $total_label );
   push @summary, "$claimed claimed" if $claimed;
   push @summary, "$blocked blocked" if $blocked;
   print "\n", $c->(join('  ', @summary), 'bold'), "\n";
+}
+
+# One card row. Extracted from execute so the grouped view prints exactly the
+# rows the status view does (ticket #279).
+sub _render_card {
+  my ( $self, $t, $c, $sep ) = @_;
+  my @meta;
+  if ($t->priority && $t->priority ne 'medium') {
+    push @meta, $c->('priority:' . $t->priority, $PRIORITY_COLOR{$t->priority} // 'white');
+  }
+  # A claim is only worth showing while the work is still live, and which
+  # columns count as finished is the board's decision -- a board imported
+  # from kanban-md can end in `shipped`, and every finished card there
+  # still carried its claimant into the board (ticket #98, following #67).
+  if ($t->has_claimed_by && !$self->store->is_terminal_status($t->status)) {
+    push @meta, $c->('@' . $t->claimed_by, 'cyan');
+  }
+  if ($t->has_blocked) {
+    my $reason = $t->has_block_reason ? $t->block_reason : undef;
+    $reason = substr($reason, 0, 40) . '...' if defined $reason && length $reason > 43;
+    push @meta, $c->(
+      defined $reason && length $reason ? "blocked:$reason" : 'blocked', 'bold red');
+  }
+  if ($t->has_due) {
+    push @meta, $c->('due:' . $t->due, 'yellow');
+  }
+
+  my $line = join ' ', $c->('-', 'bright_black'), $t->id, $sep, $t->title;
+  $line .= " $sep " . join(" $sep ", @meta) if @meta;
+  print $line, "\n";
+
+  if ($self->tags && @{$t->tags}) {
+    print '  ', $c->(join(' ', map { "#$_" } @{$t->tags}), 'bright_black'), "\n";
+  }
+}
+
+# The one usage error this command can raise that does not need a task in
+# hand, decided before the first ref is read: whether an invocation is well
+# formed is not a question about what happens to be on the board.
+sub _validate_options {
+  my ($self) = @_;
+
+  # --group-by is a rendering key, validated like `karr list --sort`: an
+  # unknown field is a usage error (exit 2) rather than a silent "no grouping
+  # happened". The accepted set is the same five kanban-md's GroupBy takes
+  # (internal/board/group.go).
+  if ( defined $self->group_by ) {
+    my $field = $self->group_by;
+    user_error( "Usage: karr board --group-by ",
+      join('|', @GROUP_FIELDS), " (got '$field')" )
+      unless grep { $_ eq $field } @GROUP_FIELDS;
+  }
 }
 
 1;
