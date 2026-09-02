@@ -19,12 +19,14 @@ use App::karr::Board;
 # half -- belongs to the mutating commands; `list` writes nothing and never
 # calls it.
 use App::karr::Role::ClaimTimeout;
+use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::Error qw( user_error );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout';
+     'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout',
+     'App::karr::Role::ClaimDefault';
 
 =head1 SYNOPSIS
 
@@ -549,8 +551,14 @@ sub _filter {
       grep { $_ eq $self->tag } @{$t->tags};
     } @filtered;
   }
-  if ($self->claimed_by) {
-    @filtered = grep { $_->has_claimed_by && $_->claimed_by eq $self->claimed_by } @filtered;
+  # --claimed-by defaults to KARR_CLAIM when omitted (ADR 0005), so an agent
+  # that exported it sees its own cards from a bare `karr list`. --unclaimed asks
+  # the opposite question and wins outright: the env default is suppressed under
+  # it, and an explicit --claimed-by alongside --unclaimed was already rejected
+  # as a usage error above, so this only steps aside for the env-supplied value.
+  my $claimed_by = $self->unclaimed ? undef : $self->resolved_claimed_by;
+  if ( defined $claimed_by && length $claimed_by ) {
+    @filtered = grep { $_->has_claimed_by && $_->claimed_by eq $claimed_by } @filtered;
   }
   # The claim test itself is App::karr::Role::ClaimTimeout/claim_held -- the
   # one App::karr::Role::PickRules/pickable applies -- so this list and `karr

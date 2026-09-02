@@ -102,12 +102,15 @@ subtest 'create --status in-progress without --claim is refused, k263 shape' => 
     my $rv = _run_karr( $repo, 'create', 'No claim', '--status', 'in-progress' );
     is( $rv->{exit}, 1, 'exit 1, a runtime refusal (ADR 0002)' )
         or diag $rv->{stdout} . $rv->{stderr};
-    like( $rv->{stderr}, qr/^Status 'in-progress' requires a claim:$/m,
-        'the wording names the status and the missing value' );
+    like( $rv->{stderr},
+        qr/^Status 'in-progress' requires a claim, and KARR_CLAIM is unset:$/m,
+        'the wording names the status, the missing value, and the empty env (ADR 0005)' );
+    like( $rv->{stderr}, qr/^  export KARR_CLAIM=\$\(karr agent-name\)/m,
+        'and the once-per-session export is named too' );
 
     my @lines = _lines( $rv->{stderr} );
     is( $lines[-1], "  karr create 'No claim' --status in-progress --claim NAME",
-        'the invocation that would have worked is the last line' )
+        'the invocation that would have worked is still the last line' )
         or diag $rv->{stderr};
 
     # Nothing was created: the refusal happens before an id is allocated.

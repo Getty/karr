@@ -12,14 +12,17 @@ use App::karr::Role::Output;
 use App::karr::Role::CompactOutput;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::PickRules;
+use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::Lock;
+use App::karr::Error ();
 use Time::Piece;
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
      'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout',
-     'App::karr::Role::DependencyCheck', 'App::karr::Role::PickRules';
+     'App::karr::Role::DependencyCheck', 'App::karr::Role::PickRules',
+     'App::karr::Role::ClaimDefault';
 
 =head1 SYNOPSIS
 
@@ -144,8 +147,7 @@ L<App::karr::Cmd::AgentName>, L<App::karr::Cmd::Unlock>
 option claim => (
   is => 'ro',
   format => 's',
-  required => 1,
-  doc => 'Agent name to claim the task for',
+  doc => 'Agent name to claim the task for (defaults to KARR_CLAIM)',
 );
 
 option status => (
@@ -168,6 +170,16 @@ option tags => (
 
 sub execute {
   my ($self, $args_ref, $chain_ref) = @_;
+
+  # --claim was `required => 1` before ADR 0005; KARR_CLAIM now fills it when the
+  # flag is omitted. pick has to claim under some name, so when neither supplies
+  # one this is a usage error (exit 2, as the old required was) naming both ways.
+  # Before sync_before, so an invalid invocation fails without a network round
+  # trip, the way an option-parse error always did.
+  my $claim = $self->resolved_claim;
+  $self->usage_error(
+      App::karr::Error::mandatory_claim_message( 'pick', 'pick', '--claim', 'NAME' ) )
+    unless defined $claim && length $claim;
 
   $self->sync_before;
   $self->require_board;
@@ -218,7 +230,7 @@ sub execute {
     # Not the 1h _parse_timeout falls back to on its own: see LOCK EXPIRY.
     ttl => $self->_parse_timeout($ec->{lock_timeout}, App::karr::Lock->DEFAULT_TTL),
   );
-  my $email = $self->git->git_user_email || $self->claim;
+  my $email = $self->git->git_user_email || $claim;
 
   my $picked;
   for my $candidate (@tasks) {
@@ -245,7 +257,7 @@ sub execute {
   # SyncGuard behind it. The lock release above is the same story -- publishing
   # a lock and then deleting it locally left the ref on the remote forever (#45).
   $self->append_log($self->git,
-    agent   => $self->claim,
+    agent   => $claim,
     action  => 'pick',
     task_id => $picked->id,
     detail  => $picked->status,
@@ -260,7 +272,7 @@ sub execute {
     return;
   }
 
-  printf "Picked task %d: %s (claimed by %s)\n", $picked->id, $picked->title, $self->claim;
+  printf "Picked task %d: %s (claimed by %s)\n", $picked->id, $picked->title, $claim;
 
   # Everything below is the detail block, and --compact is the instruction not
   # to print it. Until #251 this command composed App::karr::Role::Output, took
@@ -353,7 +365,7 @@ sub _claim_under_lock {
     my ($oid, $task) = $self->store->find_task_with_oid($id);
     return (0) unless $self->pickable($task, %$filter);
 
-    $task->claimed_by($self->claim);
+    $task->claimed_by($self->resolved_claim);
     $task->claimed_at(gmtime->datetime . 'Z');
 
     # Outside the --move branch, and before it: on a pick the *claim* is the

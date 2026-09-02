@@ -10,15 +10,17 @@ use MooX::Options (
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
+use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
+use App::karr::Error ();
 use Time::Piece;
 
 # TaskMutation composes Role::ClaimTimeout, which is where check_claim comes
 # from; handoff no longer names it separately because it no longer applies the
 # claim rule on its own terms.
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::TaskMutation';
+     'App::karr::Role::TaskMutation', 'App::karr::Role::ClaimDefault';
 
 =head1 SYNOPSIS
 
@@ -40,8 +42,10 @@ blocker, and optionally release the claim after the handoff.
 
 =item * C<--claim>
 
-Required. Identifies the agent performing the handoff and is validated against
-the current claim unless that claim has expired.
+Identifies the agent performing the handoff and is validated against the
+current claim unless that claim has expired. Defaults to C<KARR_CLAIM> when the
+flag is omitted (ADR 0005); a handoff with neither the flag nor that variable
+set is a usage error naming both ways to supply it.
 
 =item * C<--note>, C<--timestamp>
 
@@ -66,8 +70,7 @@ L<App::karr::Cmd::Edit>, L<App::karr::Cmd::Log>
 option claim => (
   is => 'ro',
   format => 's',
-  required => 1,
-  doc => 'Agent name claiming the task',
+  doc => 'Agent name claiming the task (defaults to KARR_CLAIM)',
 );
 
 option note => (
@@ -114,6 +117,15 @@ sub execute {
   die "Usage: karr handoff ID --claim NAME [--note TEXT] [--block REASON] [--release]\n"
     unless defined $id && length $id;
 
+  # --claim was `required => 1` before ADR 0005; now KARR_CLAIM fills it when the
+  # flag is omitted. A handoff still needs a claim, so when neither supplies one
+  # this is a usage error (exit 2, as the old required was) that names both ways.
+  my $claim = $self->resolved_claim;
+  $self->usage_error(
+      App::karr::Error::mandatory_claim_message(
+          'handoff', 'handoff', $id, '--claim', 'NAME' ) )
+    unless defined $claim && length $claim;
+
   # The status a handoff lands in: the board's review column when it has one,
   # the derived last non-terminal column when it does not -- a literal
   # C<review> here made handoff unusable on any board without that column
@@ -132,16 +144,16 @@ sub execute {
 
     # The one claim-ownership rule, shared with move/edit/delete/archive rather
     # than reimplemented here.
-    $self->check_claim($task, $self->claim);
+    $self->check_claim($task, $claim);
 
     # And the one status-change path, so the handoff obeys the same
     # require_claim, status validation and lifecycle stamps as `karr move`
     # (tickets #54, #55, #68). --claim is required on this command, so a target
     # status flagged require_claim is always satisfied.
-    $self->apply_status_change($task, $target, $self->claim);
+    $self->apply_status_change($task, $target, $claim);
 
     # Refresh claim
-    $task->claimed_by($self->claim);
+    $task->claimed_by($claim);
     $task->claimed_at(gmtime->datetime . 'Z');
 
     # Block if requested. length, not truth: --block 0 is a reason (ticket #153,

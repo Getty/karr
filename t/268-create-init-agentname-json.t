@@ -94,7 +94,8 @@ subtest 'agent-name --json emits {"name":"..."} and nothing else' => sub {
 
     my $data = eval { decode_json( $rv->{stdout} ) };
     is( ref $data, 'HASH', 'one JSON object' ) or diag $rv->{stdout};
-    like( $data->{name}, qr/\A[a-z]+-[a-z]+\z/, 'name is the two-word hyphenated shape' );
+    like( $data->{name}, qr/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/,
+        'name is a claim-safe checkout token (ADR 0005)' );
     is( scalar keys %$data, 1, 'and nothing but the name' );
     is( $rv->{stderr}, '', 'nothing on stderr' ) or diag $rv->{stderr};
 };
@@ -150,8 +151,8 @@ subtest 'the plaintext forms are unchanged' => sub {
 
     my $name = _run_karr( $repo, 'agent-name' );
     is( $name->{exit}, 0, 'agent-name without --json succeeds' );
-    like( $name->{stdout}, qr/\A[a-z]+-[a-z]+\n\z/,
-        'the bare name line is exactly as before' );
+    like( $name->{stdout}, qr/\A[a-z0-9]+(?:-[a-z0-9]+)*\n\z/,
+        'the bare name line is a claim-safe checkout token (ADR 0005)' );
 
     my $repo2 = _bare_repo();
     my $init  = _run_karr( $repo2, 'init', '--name', 'Plain Board' );

@@ -517,22 +517,31 @@ written before karr 0.403, which stamped `started`/`completed` as a bare
 `YYYY-MM-DD` that reads as midnight; on such a board an average printed to the
 hour is finer than the data underneath it.
 
-### Agent name
+### Agent name and the claim name
+
+Claims are matched by name: `--claim NAME` stamps it, `handoff`/`pick` check it,
+`list --claimed-by` and `log --agent` select on it — so every claiming call in a
+session must use the *same* name. Set it once and let the commands default to it:
 
 ```bash
-NAME=$(karr agent-name)                       # mint once, reuse everywhere
-karr pick --claim "$NAME" --move in-progress
-karr handoff ID --claim "$NAME" --note "Implementation complete"
+export KARR_CLAIM=$(karr agent-name)          # the checkout's name, e.g. "karr"
+karr pick --status todo --move in-progress    # no --claim needed
+karr handoff ID --note "Implementation complete"
+karr list --claimed-by "$KARR_CLAIM"
 ```
 
-Every `karr agent-name` call mints a **new** name and remembers it nowhere, so
-`--claim "$(karr agent-name)"` written a second time claims under one name and
-hands off under another — while the first claim is live the handoff is refused,
-and once it has expired it silently re-stamps the card with a name nobody holds.
-Capture the name once into a shell variable and pass that same variable to every
-later `--claim`, `--claimed-by` and `log --agent`. If it was never captured, read
-it back off the board (`karr show ID` → `Claimed:`, or `karr pick`'s own
-`(claimed by NAME)`) rather than minting a fresh one.
+`karr agent-name` returns the checkout's own directory name (sanitised to a
+claim-safe token), stable across calls, so `KARR_CLAIM` stays the same all
+session. `KARR_CLAIM` is per process — each agent's own, never shared through a
+file — so it is safe with several agents at once. The alternative is to pass
+`--claim NAME` on every call explicitly; an explicit `--claim` always overrides
+`KARR_CLAIM`.
+
+Run several agents on one board by giving each **its own worktree** — their
+directory names already differ, so their claim names do too. Several agents in
+the **same** directory need distinct names: `export KARR_CLAIM=$(karr agent-name
+--unique)` appends a short suffix (`karr-8fa`). A `require_claim` column refused
+with neither `--claim` nor `KARR_CLAIM` set names both ways to fix it.
 
 ## Stored task format
 
@@ -619,21 +628,21 @@ is kept separately in `refs/karr/meta/next-id`.
 ## Multi-agent workflow
 
 ```bash
-# 1. Generate agent name and pick task
-NAME=$(karr agent-name)
-karr pick --claim $NAME --status todo --move in-progress
+# 1. Name yourself once; every claiming call then defaults to it
+export KARR_CLAIM=$(karr agent-name)         # the checkout's name; --unique in a shared dir
+karr pick --status todo --move in-progress
 
 # 2. Work on task...
 
 # 3. Hand off for review
-karr handoff ID --claim $NAME --note "Implementation complete" --timestamp
+karr handoff ID --note "Implementation complete" --timestamp
 
 # 4. Or: release and mark done directly
 karr edit ID --release
 karr move ID done
 ```
 
-Claims expire after the configured timeout (default: 1h). Statuses with `require_claim: true` enforce that moves include `--claim`.
+Claims expire after the configured timeout (default: 1h). Statuses with `require_claim: true` enforce a claim on the move — satisfied by an explicit `--claim` or by `KARR_CLAIM`.
 
 Perl remains the primary local installation path, but a Docker alias around
 `raudssus/karr:latest` or `raudssus/karr:user` works with the same commands when

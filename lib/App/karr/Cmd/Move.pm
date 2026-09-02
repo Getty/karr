@@ -10,6 +10,7 @@ use MooX::Options (
 use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
+use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
 use Time::Piece;
@@ -20,7 +21,7 @@ use JSON::MaybeXS ();
 use App::karr::Error qw( command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::TaskMutation';
+     'App::karr::Role::TaskMutation', 'App::karr::Role::ClaimDefault';
 
 =head1 SYNOPSIS
 
@@ -200,7 +201,8 @@ sub execute {
     my $task = $self->update_task_guarded($id, sub {
       my ($task) = @_;
 
-      $self->check_claim($task, $self->claim);
+      my $claim = $self->resolved_claim;
+      $self->check_claim($task, $claim);
 
       my $task_new_status = $new_status;
 
@@ -250,15 +252,15 @@ sub execute {
       # blocks this command is a question about the card, not about the work,
       # and kanban-md asks it in the same order.
       $unchanged = $task->status eq $task_new_status
-        && !( defined $self->claim && length $self->claim );
+        && !( defined $claim && length $claim );
       return $self->no_change if $unchanged;
 
-      if ($self->claim) {
-        $task->claimed_by($self->claim);
+      if ( defined $claim && length $claim ) {
+        $task->claimed_by($claim);
         $task->claimed_at(gmtime->datetime . 'Z');
       }
 
-      $old_status = $self->apply_status_change($task, $task_new_status, $self->claim);
+      $old_status = $self->apply_status_change($task, $task_new_status, $claim);
     });
 
     if ($unchanged) {

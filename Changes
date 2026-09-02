@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - The claim name an agent works under is carried per process in the
+      `KARR_CLAIM` environment variable: every command that takes `--claim`
+      (`move`, `handoff`, `pick`, `edit`, `create`) and `list --claimed-by`
+      defaults to it when the flag is omitted, so an agent names itself once
+      (`export KARR_CLAIM=$(karr agent-name)`) instead of threading the name
+      through every call and no longer mismatches its own claim at handoff.
+      An explicit `--claim` still wins, and `pick --claim` is no longer
+      required. `karr agent-name` now returns the checkout's own directory
+      name -- stable, meaningful, distinct per worktree -- rather than a
+      random word, with `--unique` for several agents sharing one directory;
+      a `require_claim` refusal names both `--claim` and `KARR_CLAIM`; and
+      karr-foundation exports `KARR_CLAIM` per run. See ADR 0005 (k281).
+
     - `create`, `init` and `agent-name` gained `--json`: create emits the
       created card in the `karr show --json` shape, and init and
       agent-name emit their result as JSON, so a script no longer parses

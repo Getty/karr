@@ -465,8 +465,8 @@ sub apply_status_change {
     # and the status this call already has -- see claim_hint_tokens for why the
     # command name comes from the consumer.
     App::karr::Error::user_error(
-        "Status '$new_status' requires a claim:\n",
-        App::karr::Error::command_hint( $self->claim_hint_tokens( $task, $new_status ) ) )
+        App::karr::Error::require_claim_message(
+            $new_status, $self->claim_hint_tokens( $task, $new_status ) ) )
         if $self->store->status_requires_claim($new_status)
         && !( defined $claimant && length $claimant )
         && !$task->has_claimed_by;

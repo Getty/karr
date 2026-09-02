@@ -11,6 +11,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::Output;
 use App::karr::Role::TaskMutation;
 use App::karr::Role::DependencyArgs;
+use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::CrossBoard;
@@ -23,7 +24,8 @@ use Time::Piece;
 # split the two; before that the set-time helpers arrived through TaskMutation
 # by accident of them sharing a role.
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
-     'App::karr::Role::TaskMutation', 'App::karr::Role::DependencyArgs';
+     'App::karr::Role::TaskMutation', 'App::karr::Role::DependencyArgs',
+     'App::karr::Role::ClaimDefault';
 
 =head1 SYNOPSIS
 
@@ -430,12 +432,17 @@ sub execute {
     my $task = $self->update_task_guarded($id, sub {
       my ($task) = @_;
 
+      # The effective claim: --claim when given, else KARR_CLAIM (ADR 0005).
+      # --claim/--release mutual exclusion above stays on the explicit flag, so
+      # an env-default claim never turns a plain --release into a usage error.
+      my $claim = $self->resolved_claim;
+
       # --release is the one edit that may act on somebody else's claim: it
       # exists precisely to break a claim a crashed agent left behind, and it
       # is karr's only way out of one before the timeout. Everything else has
       # to own the claim, or find it expired. Same carve-out as kanban-md's
       # validateEditClaim (cmd/edit.go).
-      $self->check_claim($task, $self->claim) unless $self->release;
+      $self->check_claim($task, $claim) unless $self->release;
 
       # Clear the claim BEFORE the status change so the require_claim guard
       # in apply_status_change sees the post-release state: --release sets up
@@ -454,7 +461,7 @@ sub execute {
       # reason (ticket #153, extending ticket #78's rule from --body to its
       # siblings).
       $task->title($self->title)       if defined $self->title && length $self->title;
-      $self->apply_status_change($task, $self->status, $self->claim) if defined $self->status && length $self->status;
+      $self->apply_status_change($task, $self->status, $claim) if defined $self->status && length $self->status;
       $task->priority($self->priority) if defined $self->priority && length $self->priority;
       $task->assignee($self->assignee) if defined $self->assignee && length $self->assignee;
       $task->due($self->due)           if defined $self->due && length $self->due;
@@ -502,8 +509,8 @@ sub execute {
       App::karr::CrossBoard->add_needs( $task, $add_needs )       if $add_needs;
       App::karr::CrossBoard->remove_needs( $task, $remove_needs ) if $remove_needs;
 
-      if (defined $self->claim && length $self->claim) {
-        $task->claimed_by($self->claim);
+      if (defined $claim && length $claim) {
+        $task->claimed_by($claim);
         $task->claimed_at(gmtime->datetime . 'Z');
       }
 

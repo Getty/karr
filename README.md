@@ -42,9 +42,9 @@ karr board
 Claim and progress work:
 
 ```bash
-NAME=$(karr agent-name)
-karr pick --claim "$NAME" --move in-progress
-karr handoff 1 --claim "$NAME" --note "Ready for review" --timestamp
+export KARR_CLAIM=$(karr agent-name)     # name yourself once; commands default to it
+karr pick --move in-progress
+karr handoff 1 --note "Ready for review" --timestamp
 ```
 
 Protect yourself before destructive operations:
@@ -1140,7 +1140,7 @@ Important refs:
 | `karr context` | generate agent-facing board summary |
 | `karr log` | inspect per-agent or per-task activity |
 | `karr metrics` | throughput, lead/cycle time, flow efficiency off the cards' lifecycle stamps |
-| `karr agent-name` | generate short claim names (a new one every call — capture it once, see below); `karr agentname` is the same command |
+| `karr agent-name` | the checkout's own name, for `KARR_CLAIM` or `--claim` (`--unique` adds a suffix when several agents share a directory); `karr agentname` is the same command |
 
 ### Skills and helper refs
 
@@ -1185,24 +1185,31 @@ is the command-by-command map.
 ## Multi-agent workflow
 
 ```bash
-NAME=$(karr agent-name)
+export KARR_CLAIM=$(karr agent-name)     # name yourself once; every claiming call defaults to it
 
 # pick the best available task
-karr pick --claim "$NAME" --status todo --move in-progress
+karr pick --status todo --move in-progress
 
 # inspect board state
 karr board
-karr list --claimed-by "$NAME"
+karr list --claimed-by "$KARR_CLAIM"
 
 # hand off to review
-karr handoff 1 --claim "$NAME" --note "Implementation complete" --timestamp
+karr handoff 1 --note "Implementation complete" --timestamp
 
 # inspect activity trail
-karr log --agent "$NAME"
+karr log --agent "$KARR_CLAIM"
 
 # re-orient: the task I most recently acted on
 karr show --me
 ```
+
+`KARR_CLAIM` is the claim name every claiming command (`move`, `handoff`, `pick`,
+`edit`, `create`, `list --claimed-by`) falls back to when `--claim` is omitted;
+an explicit `--claim` overrides it. It is carried per process, not stored, so
+concurrent agents never share one — run several on a board by giving each its own
+worktree (their `agent-name`s differ), or `karr agent-name --unique` for several
+in one directory. `karr agent-name` is the checkout's own directory name.
 
 `pick` respects blocked state, claim timeout, and class-of-service ordering:
 

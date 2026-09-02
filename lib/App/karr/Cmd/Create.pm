@@ -10,10 +10,11 @@ use MooX::Options (
 use App::karr::Role::BoardAccess;
 use App::karr::Role::DependencyArgs;
 use App::karr::Role::Output;
+use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::CrossBoard;
-use App::karr::Error qw( user_error command_hint );
+use App::karr::Error qw( user_error require_claim_message );
 use Time::Piece;
 
 # The set-time half only (ticket #137). A card that does not exist yet cannot be
@@ -21,7 +22,7 @@ use Time::Piece;
 # inherit the emitting half -- the half that would also require --quiet, which
 # create does not take (ticket #137).
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyArgs',
-     'App::karr::Role::Output';
+     'App::karr::Role::Output', 'App::karr::Role::ClaimDefault';
 
 =head1 SYNOPSIS
 
@@ -234,14 +235,13 @@ sub execute {
   # --claim added, the k263 shape.
   if ( defined $self->status
       && $self->store->status_requires_claim($self->status)
-      && !( defined $self->claim && length $self->claim ) )
+      && !( defined $self->resolved_claim && length $self->resolved_claim ) )
   {
     # A local, not "$self->status" inside the string: that would interpolate
     # the object and leave the literal text "->status" behind it.
     my $status = $self->status;
-    user_error(
-        "Status '$status' requires a claim:\n",
-        command_hint( 'create', $title, '--status', $status, '--claim', 'NAME' ) );
+    user_error( require_claim_message(
+        $status, 'create', $title, '--status', $status, '--claim', 'NAME' ) );
   }
 
   # Set-time dependency validation (ticket #124), under the same #54 rule.
@@ -294,8 +294,9 @@ sub execute {
   # --claim` writes (ticket #270). There is no shared helper to call: move,
   # handoff, pick and edit all inline these two lines, and a single-use
   # abstraction would be worse than the copy.
-  if ( defined $self->claim && length $self->claim ) {
-    $task_args{claimed_by} = $self->claim;
+  my $claim = $self->resolved_claim;
+  if ( defined $claim && length $claim ) {
+    $task_args{claimed_by} = $claim;
     $task_args{claimed_at} = gmtime->datetime . 'Z';
   }
 
