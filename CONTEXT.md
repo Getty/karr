@@ -107,6 +107,15 @@ via `--claim`, stored in `claimed_by` and in the **Activity log** entry's
 `agent` field. Distinct from **Identity**: a single Identity may run under many
 Claim names over time.
 
+**Parent / Subtask**:
+Deliberately *not* a concept. kanban-md's hierarchical cards (`--parent`) are a
+documented non-goal: karr's answers to "this card relates to that one" are
+`depends_on` (local ordering) and `needs` (cross-board). The `parent` field
+round-trips through `karr import` unchanged — no data loss — but no karr
+command sets, filters, renders or sorts it (see `Task.pm`), so a kanban-md board
+that needs hierarchy keeps it in kanban-md.
+_Avoid_: "parent"/"subtask" as karr vocabulary.
+
 ## Relationships
 
 - An **Agent** holds at most one **Claim** on a **Task** at a time; the Claim

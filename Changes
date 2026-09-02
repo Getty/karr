@@ -1,5 +1,56 @@
 {{$NEXT}}
 
+    - `create`, `init` and `agent-name` gained `--json`: create emits the
+      created card in the `karr show --json` shape, and init and
+      agent-name emit their result as JSON, so a script no longer parses
+      human text (k268).
+
+    - A claim-taking command that refuses a card held by someone else now
+      names the way out -- release the claim or wait for `claim_timeout`
+      -- not just the holder. `delete` gained `--claim NAME` so an agent
+      can delete its own claimed card without stealing it; a card held by
+      anybody else is still refused (k269).
+
+    - `create --status` into a `require_claim` column no longer bypasses
+      the claim rule: `create` gained `--claim NAME`, and creating a card
+      straight into such a column without one is refused with the command
+      line that would work (k270).
+
+    - `list` and `pick` reject an unknown `--status` or `--priority`
+      value with a usage error that names the configured values, instead
+      of printing an empty list and exiting 0 (k271).
+
+    - `karr --version` prints the version and exits, before any board or
+      repository lookup (k272).
+
+    - `edit` can now change `--class` and `--estimate`, and gained
+      `--clear-due` to drop a due date (k273).
+
+    - `show` takes the `ID[,ID,...]` batch form the other task commands
+      accept, printing the cards one after another (`--json` as an
+      array); a missing id inside the batch is reported while the others
+      still print, and the command exits 1 (k274).
+
+    - `list` shows the claim holder per card, and its footer reports how
+      many done cards are hidden, so a `0 task(s)` line no longer hides a
+      board whose every card is done (k275).
+
+    - `karr completion bash|zsh|fish` prints a static shell completion
+      script generated from the command and option tables; it never calls
+      `karr` at completion time (k277).
+
+    - `log` gained `--since` and `--action` to filter the activity log by
+      time and by action (k278).
+
+    - `list` and `board` gained `--group-by FIELD`, grouping the rendered
+      rows under a heading per group; `--json` and `--compact` win over
+      it, so it changes only the table (k279).
+
+    - A `--no-color` flag sits beside the `NO_COLOR` variable, available
+      both as `karr --no-color board` and `karr board --no-color`; colour
+      is on only when stdout is a terminal, `NO_COLOR` is unset, and
+      neither disabled it (k282).
+
     - Documentation brought back in line with the CLI. README and the
       bundled skill claimed `--json` on every board command; `create`,
       `init`, `agent-name`, `sync` and the payload commands (`backup`,
@@ -22,6 +73,13 @@
       karr` gained the `dashboard` command it had never listed, and
       karr-foundation's exit-code notes named a `--deadline` option where
       the flag is `--wait`.
+
+    - Parent/subtask links (kanban-md's `--parent`) are a documented
+      non-goal, not a gap: the `parent` field round-trips through
+      `karr import` unchanged, but no karr command sets, filters,
+      renders or sorts it. Relatedness between cards is `depends_on`
+      (local ordering) and `needs` (cross-board). CONTEXT.md and
+      README's stored-task-shape section now say so (k280).
 
 0.600     2026-08-31 01:16:28Z
 

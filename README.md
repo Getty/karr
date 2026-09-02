@@ -974,6 +974,19 @@ setup.
 cpanm App::karr
 ```
 
+### Shell completion
+
+`karr completion` prints a static completion script for your shell:
+
+```bash
+source <(karr completion bash)               # bash, this session
+karr completion zsh > "${fpath[1]}/_karr"    # zsh, once
+karr completion fish | source                # fish, this session
+```
+
+The script embeds the command and option names and never calls `karr` at
+completion time, so it keeps working where the board is not reachable.
+
 ### Docker
 
 The published images are:
@@ -1143,11 +1156,13 @@ Important refs:
 ### Output and exit codes
 
 `--json` gives machine-readable output on every command that reports on the
-board. The exceptions are `create`, `init` and `agent-name`, which do not take
-it yet, and the commands whose output is a payload or a transport rather than
-a record: `backup`, `restore`, `destroy`, `set-refs`, `get-refs` and `sync`.
-`karr list --json` emits the full card payload — frontmatter plus body — so
-reading a whole set of tickets is one call rather than one `karr show` per id.
+board. The exceptions are the commands whose output is a payload or a transport
+rather than a record: `backup`, `restore`, `destroy`, `set-refs`, `get-refs`
+and `sync`. `karr list --json` emits the full card payload — frontmatter plus
+body — so reading a whole set of tickets is one call rather than one `karr
+show` per id. `karr create --json` emits the new card in the same shape, so a
+caller can pipe the new id into the next step; `karr init --json` and `karr
+agent-name --json` report the board name and the generated name respectively.
 
 `--compact` is the terse plaintext rendering, and only the nine commands that
 have one take it: `board`, `config`, `context`, `dashboard`, `list`, `log`,
@@ -1312,6 +1327,12 @@ Task description here.
 Keys are written in alphabetical order, and the lifecycle stamps (`started`,
 `claimed_at`, `completed`) appear once the card reaches that point — so a card
 still sitting in `backlog` carries fewer keys than the one above.
+
+One field karr deliberately does not serve is `parent` (kanban-md's hierarchy
+links): it round-trips through `karr import` unchanged, but no karr command
+sets, filters, renders or sorts it. Relatedness between cards is expressed with
+`depends_on` (local ordering) and `needs` (cross-board) — parent/subtask is a
+documented non-goal, not a gap.
 
 That makes the format easy to inspect, script, and reuse from Perl code.
 

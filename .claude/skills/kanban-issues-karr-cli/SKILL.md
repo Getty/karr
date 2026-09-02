@@ -10,9 +10,9 @@ Git-native kanban board for multi-agent workflows. Canonical board state lives i
 refs directly; nothing is written to the work tree unless you ask for the file
 view with `karr materialize`.
 
-`--json` is taken by every command that reports on the board. Not by `create`,
-`init` and `agent-name` (not yet), and not by the payload and transport commands
-`backup`, `restore`, `destroy`, `set-refs`, `get-refs` and `sync`. `--compact`
+`--json` is taken by every command that reports on the board. Not by the payload
+and transport commands `backup`, `restore`, `destroy`, `set-refs`, `get-refs`
+and `sync`. `--compact`
 is rarer -- exactly nine render one: `board`, `config`, `context`, `dashboard`,
 `list`, `log`, `metrics`, `pick`, `show`. Anywhere else it answers
 `Unknown option: compact` with the usage and exit 2, rather than accepting the
@@ -56,6 +56,8 @@ karr create --title "Title" --assignee NAME --due 2026-03-15
 karr create "Ship it" --depends-on 2,3       # ids of tasks this one depends on; each must exist on this board
 karr create "Wait for the fix" --needs other-repo#7   # waits on a card in ANOTHER repository of the fleet
 karr create "Fix the thing" --escalated-from home#5   # the card raised in that other repository
+karr create "Start now" --status in-progress --claim NAME   # claim at creation; a require_claim status refuses without --claim
+karr create "New card" --json                # the new card as JSON, so the id can be piped into the next step
 ```
 
 ### List tasks
@@ -355,6 +357,19 @@ For Docker-wrapped usage, prefer the `raudssus/karr:latest` alias that mounts
 the current project at `/work` and uses `/home/karr` as `HOME`, so the image
 can drop privileges to the owner of the mounted workspace without breaking
 access to Git config or agent skill directories.
+
+### Shell completion
+
+```bash
+karr completion bash                         # print a bash completion script
+karr completion zsh > "${fpath[1]}/_karr"    # install for zsh
+karr completion fish | source                # load for the current fish session
+```
+
+The generated script is static -- it embeds the command and option names and
+never calls `karr` at completion time, so it works even where the board is not
+reachable. Board-specific values (statuses, tags, task ids) are per-board
+configuration and are deliberately not completed.
 
 ### Sync
 
