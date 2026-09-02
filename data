@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-09-02T02:13:45Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:51Z
+created: 2026-09-01T18:56:10Z
+id: 278
+priority: low
+started: 2026-09-01T19:56:02Z
+status: done
+tags:
+- parity
+- log
+title: log lacks --since and --action
+updated: 2026-09-02T23:36:51Z
+---
+
+kanban-md's log takes `--since YYYY-MM-DD`, `--limit`, `--action create|move|edit|delete|block|unblock` and `--task`. karr's has `--agent`, `--task`, `--last`. Missing: `--since` (entries after a date) and `--action` (filter by kind). karr's log also records handoff, pick and claim events, so `--action` takes karr's own set and the usage error lists it. Changes entry, tests.
+
+Pointers: Cmd::Log and ActivityLog.pm. The action vocabulary is whatever the writers pass as action => (grep lib for it: create, move, edit, delete, archive, block, unblock, claim, release, handoff, pick, ...). List it in the usage error from one place rather than a second hand-kept list.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (f6a6486): log --since/--action. Ready for review.
