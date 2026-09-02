@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-09-02T02:13:25Z
+claimed_by: plus-silk
+class: standard
+completed: 2026-09-02T23:36:31Z
+created: 2026-09-01T18:55:42Z
+id: 274
+priority: medium
+started: 2026-09-01T19:56:24Z
+status: done
+tags:
+- cli
+- ux
+title: show is the only task command without the ID,ID form, and says "Task 1,2 not
+  found"
+updated: 2026-09-02T23:36:31Z
+---
+
+move, edit, delete, archive, unlock and needs all take `ID[,ID,...]`. `karr show 1,2` answers
+
+    Task 1,2 not found on this board:
+      karr list --compact
+
+which is a lie about the board, and `karr show 1 2` is "unexpected extra argument". An agent that wants three cards in full runs show three times or reaches for `list --json` and filters.
+
+## What to build
+
+`show ID[,ID,...]` printing the cards one after another: JSON an array (as list does), text separated by a blank line, compact one line each. `--me/--last/--agent` remain exclusive with positional ids. If show is meant to stay single instead, the answer is a usage error (exit 2) whose last line is the working command; prefer the batch, the plumbing exists. Changes entry, tests.
+
+Pointers: Role::BoardAccess/parse_ids is the shared ID[,ID,...] splitter the batch commands use; Cmd::Show takes one positional today. Cmd::Needs is the read-mostly command that already takes the list form, compare it. One id not found inside a batch: report it, still print the others, exit 1, the batch rule of ADR 0002.
+
+2026-09-02 02:13 Done on branch k268-282-in-progress-batch (e4321cb): show ID[,ID,...] batch form; partial batch exits 1 per ADR 0002. Ready for review.
