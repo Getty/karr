@@ -1,0 +1,44 @@
+---
+claimed_at: 2026-09-03T03:13:16Z
+claimed_by: karr
+class: standard
+completed: 2026-09-03T03:13:16Z
+created: 2026-09-01T18:55:56Z
+id: 276
+priority: medium
+started: 2026-09-03T02:39:52Z
+status: done
+tags:
+- ux
+- cli
+- output
+title: 'Per-command --help is raw MooX::Options: underscored option names, whitespace
+  lines, --usage/--man noise'
+updated: 2026-09-03T03:13:16Z
+---
+
+`karr --help` is hand-formatted; `karr <cmd> --help` is MooX::Options' long format:
+
+    --claimed_by: String
+        Filter by claim owner
+    ...
+                                                                            (two lines of spaces)
+    --usage:
+        show a short help message
+    -h: ...  --help: ...  --man: ...
+
+Three problems for a reader, and for an agent that pipes through head/tail (k263):
+
+1. Option names print with underscores (`--claimed_by`, `--not_blocked`, `--add_tag`, `--append_body`, `--depends_on`, `--claude_skill`, `--new_board`, `--accept_foreign_board`, `--write_to`, `--hide_no_board`) while the USAGE line right above them, README.md and the skill spell them with hyphens. Both spellings parse, but the help contradicts the docs one screen apart.
+2. Two lines of trailing whitespace before the --usage block.
+3. `--usage`, `-h`, `--help`, `--man` take four entries on every command, and `--dir`/`--quiet` repeat on all of them.
+
+`karr <cmd> -h` (the compact format) is already much better: one line per option, `--claim=String`.
+
+## What to build
+
+Make `--help` render the compact form, or a house renderer over the option metadata that prints hyphenated names one per line with the root options in a trailing OPTIONS block like the top-level help. MooX::Options' `usage_string`, per-option `format`, and its help hooks are the knobs; check whether an existing flag already emits hyphens before writing a renderer. The USAGE line stays. Listing the board's values for `--priority`/`--status`/`--class` when a board is found is nice, not required. Changes entry; the tests that snapshot help output need updating.
+
+Also karr-foundation --help: the same MooX::Options long format, with --dry_run spelled with an underscore while README and the transcripts write --dry-run. Cover it in the same sweep.
+
+Pointers: every Cmd declares use MooX::Options (usage_string => ...); Role::ExitCodes buffers STDERR around new_with_options and prints the diagnostic after the usage block (k263), so a renderer change must keep that ordering. Tests that pin help output: t/131-help-column-alignment.t (root), t/81-error-messages.t, t/256-dashed-option-after-flag.t, t/263-error-shows-working-command.t.
