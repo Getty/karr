@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - Per-command `karr <cmd> --help` (and `karr <cmd> -h`) now renders
+      karr's own compact one-line-per-option block: option names are
+      hyphenated (`--claimed-by`, `--add-tag`, `--append-body`,
+      `--depends-on`, `--claude-skill`, `--new-board`,
+      `--accept-foreign-board`, `--write-to`, `--hide-no-board`), the
+      built-in `--usage/-h/--help/--man` rows and the two blank lines
+      around them are gone, and the shared `--dir` and `--quiet` options
+      are suppressed so each page lists only what differs between commands.
+      `karr-foundation --help` does the same for `--dry-run`. `-h` and
+      `--help` are now the same page (k276).
+
     - `view` is now an alias for `show`: `karr view ID` (and every show
       form -- `view`, `view --me`, `view --json`, `view --compact`)
       behaves exactly like `karr show` (k283).

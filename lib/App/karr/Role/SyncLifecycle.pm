@@ -14,6 +14,10 @@ use App::karr::SyncGuard;
 option quiet => (
     is  => 'ro',
     doc => 'Suppress sync progress and retry messages (errors are still shown)',
+    # Every syncing command carries --quiet. Per-command help suppresses it for
+    # the same reason --dir is hidden (ticket k276): the page should list what
+    # is interesting about THIS command, and --quiet is the same on all of them.
+    hidden => 1,
 );
 
 # Holds the SyncGuard for the duration of a command so its DESTROY-insurance
