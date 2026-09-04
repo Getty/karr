@@ -1177,10 +1177,12 @@ scripting the CLI (`docs/adr/0002-exit-code-contract.md`):
 | `1` | runtime failure — task id not found, board missing, Git or sync failed, a destructive command refused for want of `--yes`, or a batch that committed partial work with at least one item failing |
 | `2` | usage error — unknown command or option, invalid option value, surplus or missing positional argument |
 
-Per-command options are not listed here. `karr <cmd> --help` carries them in
-full (`karr <cmd> -h` is the one-line-per-option form), as does the POD of each
-command module — `perldoc App::karr::Cmd::List` and its siblings. `perldoc karr`
-is the command-by-command map.
+Per-command options are not listed here. `karr <cmd> --help` (and `karr <cmd>
+-h`) carries them as one option per line, hyphenated to match what the user
+types and the USAGE line a screen above it, with the board-level `--dir` and
+the syncing `--quiet` suppressed, as does the POD of each command module —
+`perldoc App::karr::Cmd::List` and its siblings. `perldoc karr` is the
+command-by-command map.
 
 ## Multi-agent workflow
 
