@@ -1,0 +1,41 @@
+---
+class: standard
+created: 2026-09-05T10:50:10Z
+id: 284
+priority: medium
+status: backlog
+tags:
+- cli
+- multi-agent
+title: agent-name liefert den Boardnamen statt einen frischen Namen zu muenzen (0.601)
+updated: 2026-09-05T10:50:10Z
+---
+
+Gefunden 2026-09-05 waehrend eines Multi-Agent-Durchgangs ueber die DBIO-Familie (dbio-mssql-Lauf), vom Koordinator reproduziert.
+
+BEFUND: karr 0.601, drei Aufrufe hintereinander im Repo dbio-mssql:
+
+    $ karr agent-name
+    dbio-mssql
+    $ karr agent-name
+    dbio-mssql
+    $ karr agent-name
+    dbio-mssql
+
+Der Skill (kanban-issues-karr-cli, Abschnitt 'Agent name') beschreibt das Gegenteil und baut ausdruecklich darauf auf:
+
+    Every `karr agent-name` call mints a **new** name and remembers it nowhere, so
+    `--claim "$(karr agent-name)"` written a second time claims under one name and
+    hands off under another -- while the first claim is live the handoff is refused,
+    und once it has expired it silently re-stamps the card with a name nobody holds.
+    Capture the name once into a shell variable ...
+
+Die ganze dort beschriebene Vorsichtsmassnahme ergibt nur Sinn, wenn jeder Aufruf einen neuen Namen liefert. Tut er das nicht, sondern gibt er stabil den Boardnamen zurueck, dann ist das Verhalten sogar BEQUEMER (der Name ist von selbst stabil) -- aber der Skill beschreibt eine Gefahr, die es nicht gibt, und ein Agent, der ihm folgt, baut eine Variable, die er nicht braucht.
+
+ZU KLAEREN -- welches von beiden ist der Fehler:
+(a) Das Verhalten ist Absicht (in 0.601 geaendert): dann gehoert der Skill-Abschnitt umgeschrieben, und zwar in ALLEN Repos, in die er gehardlinkt ist (aktuell 77).
+(b) Das Verhalten ist ein Regress: dann muenzt agent-name wieder, und der Skill stimmt.
+
+Praktische Folge heute: mehrere Agenten auf demselben Board claimen unter demselben Namen. Fuer die DBIO-Laeufe war das harmlos, weil pro Board immer nur ein Agent lief. Auf einem Board mit echter Parallelitaet waere es das nicht -- zwei Agenten koennten sich gegenseitig die Claims ueberschreiben, und claim_timeout/require_claim verlieren ihren Sinn.
+
+Reproduziert mit karr 0.601 auf einem Board mit board.name = 'DBIO-MSSQL'.
