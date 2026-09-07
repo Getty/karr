@@ -210,7 +210,9 @@ C<< karr create --needs >> / C<--escalated-from> and C<< karr edit
 
 =item * L<App::karr::Cmd::AgentName>
 
-Generates short random agent names for multi-agent workflows.
+Prints the claim name for this checkout -- its directory name, stable per
+worktree -- for C<< export KARR_CLAIM=$(karr agent-name) >>; C<--unique>
+tells apart several agents started in one directory.
 
 =item * L<App::karr::Cmd::Sync>
 

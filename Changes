@@ -11,6 +11,10 @@
       reports an install that lacks a reference file as outdated and
       `update` adds it (k285).
 
+    - `karr --help` and the `karr` POD no longer describe `agent-name` as
+      generating a random name; it prints the checkout's claim name, as it
+      has since k281 (k287).
+
     - Per-command `karr <cmd> --help` (and `karr <cmd> -h`) now renders
       karr's own compact one-line-per-option block: option names are
       hyphenated (`--claimed-by`, `--add-tag`, `--append-body`,
