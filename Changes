@@ -11,19 +11,6 @@
       reports an install that lacks a reference file as outdated and
       `update` adds it (k285).
 
-    - `karr --help` and the `karr` POD no longer describe `agent-name` as
-      generating a random name; it prints the checkout's claim name, as it
-      has since k281 (k287).
-
-    - `karr create` no longer stamps the remembered claim (`KARR_CLAIM`) on
-      every card it creates: the environment name is used only when
-      `--status` puts the card into a `require_claim` column, i.e. when the
-      card is being started right there. A card filed into the backlog
-      under an exported `KARR_CLAIM` used to carry the filer's claim and
-      was skipped by every other agent's `pick` and `list --unclaimed`
-      until `claim_timeout`. An explicit `--claim` still stamps on any
-      status (k286).
-
     - Per-command `karr <cmd> --help` (and `karr <cmd> -h`) now renders
       karr's own compact one-line-per-option block: option names are
       hyphenated (`--claimed-by`, `--add-tag`, `--append-body`,
@@ -41,8 +28,10 @@
 
     - The claim name an agent works under is carried per process in the
       `KARR_CLAIM` environment variable: every command that takes `--claim`
-      (`move`, `handoff`, `pick`, `edit`, `create`) and `list --claimed-by`
-      defaults to it when the flag is omitted, so an agent names itself once
+      (`move`, `handoff`, `pick`, `edit`, and `create` when `--status` names
+      a `require_claim` column -- a card filed into the backlog stays
+      unclaimed for whoever picks it next) and `list --claimed-by` defaults
+      to it when the flag is omitted, so an agent names itself once
       (`export KARR_CLAIM=$(karr agent-name)`) instead of threading the name
       through every call and no longer mismatches its own claim at handoff.
       An explicit `--claim` still wins, and `pick --claim` is no longer
@@ -50,7 +39,8 @@
       name -- stable, meaningful, distinct per worktree -- rather than a
       random word, with `--unique` for several agents sharing one directory;
       a `require_claim` refusal names both `--claim` and `KARR_CLAIM`; and
-      karr-foundation exports `KARR_CLAIM` per run. See ADR 0005 (k281).
+      karr-foundation exports `KARR_CLAIM` per run. See ADR 0005 (k281,
+      k286).
 
     - `create`, `init` and `agent-name` gained `--json`: create emits the
       created card in the `karr show --json` shape, and init and
