@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-09-07T19:04:23Z
+claimed_by: karr
+class: standard
+completed: 2026-09-07T19:04:23Z
+created: 2026-09-07T14:02:10Z
+id: 287
+priority: low
+started: 2026-09-07T15:07:48Z
+status: done
+tags:
+- cli
+title: karr --help beschreibt agent-name noch als 'Generate a random agent name'
+updated: 2026-09-07T19:04:23Z
+---
+
+Seit k281 (ADR 0005) liefert agent-name den Checkout-Namen, stabil pro Worktree. Die Kommandozeile in `karr --help` sagt weiter "Generate a random agent name" -- ein Agent, der die Hilfe statt des Skills liest, baut die alte Vorsicht (Name einmal muenzen und durchreichen) wieder ein. Gefunden bei k285.
+
+2026-09-07 15:07 Hilfetabelle in lib/App/karr.pm und POD in bin/karr sagen jetzt: druckt den Claim-Namen des Checkouts (KARR_CLAIM, --unique). Changes-Eintrag drin. Nicht committed.
