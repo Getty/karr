@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-09-07T19:03:42Z
+claimed_by: karr
+class: standard
+completed: 2026-09-07T19:03:42Z
+created: 2026-09-05T10:50:10Z
+id: 284
+priority: medium
+started: 2026-09-07T19:03:42Z
+status: done
+tags:
+- cli
+- multi-agent
+title: agent-name liefert den Boardnamen statt einen frischen Namen zu muenzen (0.601)
+updated: 2026-09-07T19:03:42Z
+---
+
+Gefunden 2026-09-05 waehrend eines Multi-Agent-Durchgangs ueber die DBIO-Familie (dbio-mssql-Lauf), vom Koordinator reproduziert.
+
+BEFUND: karr 0.601, drei Aufrufe hintereinander im Repo dbio-mssql:
+
+    $ karr agent-name
+    dbio-mssql
+    $ karr agent-name
+    dbio-mssql
+    $ karr agent-name
+    dbio-mssql
+
+Der Skill (kanban-issues-karr-cli, Abschnitt 'Agent name') beschreibt das Gegenteil und baut ausdruecklich darauf auf:
+
+    Every `karr agent-name` call mints a **new** name and remembers it nowhere, so
+    `--claim "$(karr agent-name)"` written a second time claims under one name and
+    hands off under another -- while the first claim is live the handoff is refused,
+    und once it has expired it silently re-stamps the card with a name nobody holds.
+    Capture the name once into a shell variable ...
+
+Die ganze dort beschriebene Vorsichtsmassnahme ergibt nur Sinn, wenn jeder Aufruf einen neuen Namen liefert. Tut er das nicht, sondern gibt er stabil den Boardnamen zurueck, dann ist das Verhalten sogar BEQUEMER (der Name ist von selbst stabil) -- aber der Skill beschreibt eine Gefahr, die es nicht gibt, und ein Agent, der ihm folgt, baut eine Variable, die er nicht braucht.
+
+ZU KLAEREN -- welches von beiden ist der Fehler:
+(a) Das Verhalten ist Absicht (in 0.601 geaendert): dann gehoert der Skill-Abschnitt umgeschrieben, und zwar in ALLEN Repos, in die er gehardlinkt ist (aktuell 77).
+(b) Das Verhalten ist ein Regress: dann muenzt agent-name wieder, und der Skill stimmt.
+
+Praktische Folge heute: mehrere Agenten auf demselben Board claimen unter demselben Namen. Fuer die DBIO-Laeufe war das harmlos, weil pro Board immer nur ein Agent lief. Auf einem Board mit echter Parallelitaet waere es das nicht -- zwei Agenten koennten sich gegenseitig die Claims ueberschreiben, und claim_timeout/require_claim verlieren ihren Sinn.
+
+Reproduziert mit karr 0.601 auf einem Board mit board.name = 'DBIO-MSSQL'.
+
+2026-09-07 14:02 k285 hat den Skill-Abschnitt neu geschrieben: SKILL.md beschreibt jetzt KARR_CLAIM plus agent-name als Checkout-Name (ADR 0005), also Variante (a). Die Verteilung in die gehardlinkten Repos bleibt manage-skills sync / karr skill update.
+
+2026-09-07 19:03 Entschieden: (a). ADR 0005 macht den Checkout-Namen zur Absicht (stabil pro Worktree, --unique fuer mehrere Agenten in einem Verzeichnis), k285 hat den Skill-Abschnitt entsprechend neu geschrieben, k287 die --help-Zeile. Die Verteilung in die gehardlinkten Repos laeuft ueber manage-skills sync bzw. karr skill update mit der naechsten Version.
