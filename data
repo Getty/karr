@@ -1,0 +1,20 @@
+---
+claimed_at: 2026-09-07T19:57:02Z
+claimed_by: karr
+class: standard
+completed: 2026-09-07T19:57:02Z
+created: 2026-09-07T16:14:52Z
+id: 288
+priority: low
+started: 2026-09-07T19:56:41Z
+status: done
+tags:
+- tests
+title: 't/270 loescht KARR_CLAIM nicht aus %ENV: Refusal-Subtest faellt bei exportiertem
+  KARR_CLAIM in der Entwickler-Shell'
+updated: 2026-09-07T19:57:02Z
+---
+
+Gefunden vom Board-Worker bei k286: t/270-create-claim-require-claim.t prueft die require_claim-Abweisung ohne --claim, raeumt aber KARR_CLAIM nicht aus %ENV. Ein Entwickler mit `export KARR_CLAIM=...` in der Shell (wie der Skill es verlangt) sieht dort einen falschen Fehlschlag, weil der Env-Claim die Abweisung befriedigt. t/286 loescht die Variable in seinem Refusal-Subtest explizit; t/270 sollte dasselbe tun (oder beide ueber einen gemeinsamen local %ENV-Block).
+
+2026-09-07 19:56 Systemisch statt pro Datei geloest: t/lib/TestEnv.pm loescht KARR_CLAIM beim Laden, TestGit und TestKarr ziehen es. Unter KARR_CLAIM=leaked-name fielen vorher ueber 30 Dateien, jetzt volle Suite PASS (238/1825).
