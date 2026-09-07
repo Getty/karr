@@ -183,9 +183,11 @@ Agent/skill/rule material lives under `.claude/`:
   and edit a shared one via `cat > .claude/skills/<skill>/SKILL.md` (its
   `references/*.md` are linked the same way) — **not** the
   `Edit`/`Write` tools or `sed -i`, which mint a new inode and break the shared
-  hardlink; see skill `manage-skills`. `kanban-issues-karr-cli` is a copy of
-  `share/kanban-issues-karr-cli/` (what `karr skill install` ships: `SKILL.md`
-  plus `references/*.md`) — change both, keep every file identical (t/62).
+  hardlink; see skill `manage-skills`. `kanban-issues-karr-cli` is hardlinked
+  file-for-file to `share/kanban-issues-karr-cli/` (what `karr skill install`
+  ships: `SKILL.md` plus `references/*.md`), so editing one edits the other —
+  as long as the edit keeps the inode. A new file under either directory has to
+  be linked into the other by hand: `ln <canonical> <other>` (t/62).
 
 Two more documents carry decisions rather than instructions:
 - `CONTEXT.md` — the domain vocabulary (Claim vs. Assignee vs. Lock, Activity
