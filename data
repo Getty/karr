@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-09-07T19:04:10Z
+claimed_by: karr
+class: standard
+completed: 2026-09-07T19:04:10Z
+created: 2026-09-07T14:01:08Z
+id: 286
+priority: medium
+started: 2026-09-07T16:00:47Z
+status: done
+tags:
+- cli
+- multi-agent
+title: create stempelt bei gesetztem KARR_CLAIM jede neue Karte mit dem Claim, auch
+  im Backlog
+updated: 2026-09-07T19:04:10Z
+---
+
+Reproduziert mit karr 0.601 in einem Scratch-Repo:
+
+    export KARR_CLAIM=agent-x
+    karr create "backlog card" --json          # -> claimed_by: agent-x, status: backlog
+    KARR_CLAIM=agent-y karr list --unclaimed   # zeigt die Karte NICHT
+
+Cmd::Create nimmt resolved_claim (Role::ClaimDefault) fuer jede Karte, nicht nur wenn --status eine require_claim-Spalte nennt. Folge im Multi-Agent-Betrieb: ein Agent, der KARR_CLAIM exportiert hat (wie der Skill es als ersten Schritt verlangt) und einen gefundenen Bug als Karte ablegt, haelt diese Karte bis claim_timeout (1h) -- pick und list --unclaimed anderer Agenten uebergehen sie so lange. Workaround, den der Skill seit k285 nennt: `KARR_CLAIM= karr create ...` (leerer Wert zaehlt als nicht gesetzt, verifiziert) oder `karr edit ID --release` danach.
+
+Zu entscheiden: soll create den Claim nur aus KARR_CLAIM ziehen, wenn --status eine require_claim-Spalte nennt (oder --claim explizit gegeben ist)? ADR 0005 sagt "every command that takes --claim", meint aber das Arbeiten an einer Karte, nicht das Ablegen einer Karte fuer andere. Gefunden bei k285.
+
+2026-09-07 16:14 Fix in Cmd::Create: KARR_CLAIM nur bei --status in einer require_claim-Spalte, explizites --claim weiter auf jedem Status. t/286 pinnt beide Seiten plus das Symptom (list --unclaimed eines anderen Agenten). Skill, Rules, Changes, ADR 0005 und Role::ClaimDefault-POD nachgezogen. prove -l t/: 238 Dateien, 1825 Tests, PASS. Nicht committed.
