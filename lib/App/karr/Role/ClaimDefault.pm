@@ -17,7 +17,10 @@ takes C<--claim> (L<App::karr::Cmd::Move>, L<App::karr::Cmd::Handoff>,
 L<App::karr::Cmd::Pick>, L<App::karr::Cmd::Edit>, L<App::karr::Cmd::Create>) and
 C<karr list --claimed-by> (L<App::karr::Cmd::List>) defaults to C<$KARR_CLAIM>
 when the flag is omitted. An explicit value on the command line always wins;
-there is no silent fallback to anything else.
+there is no silent fallback to anything else. C<create> is the one narrower
+consumer: it reads the default only when C<--status> names a column that
+requires a claim (ticket #286), so a card filed for whoever picks it next
+stays unclaimed.
 
 The seven C<option claim> / C<option claimed_by> declarations differ in wording
 and in whether they were C<required> (pick and handoff were), so they are left

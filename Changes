@@ -15,6 +15,15 @@
       generating a random name; it prints the checkout's claim name, as it
       has since k281 (k287).
 
+    - `karr create` no longer stamps the remembered claim (`KARR_CLAIM`) on
+      every card it creates: the environment name is used only when
+      `--status` puts the card into a `require_claim` column, i.e. when the
+      card is being started right there. A card filed into the backlog
+      under an exported `KARR_CLAIM` used to carry the filer's claim and
+      was skipped by every other agent's `pick` and `list --unclaimed`
+      until `claim_timeout`. An explicit `--claim` still stamps on any
+      status (k286).
+
     - Per-command `karr <cmd> --help` (and `karr <cmd> -h`) now renders
       karr's own compact one-line-per-option block: option names are
       hyphenated (`--claimed-by`, `--add-tag`, `--append-body`,

@@ -41,6 +41,16 @@ which wins over nothing. There is no silent fallback: with neither set, a
 `require_claim` column still refuses (see below). A human or agent that wants a
 one-off different claim just names it on the line.
 
+`create` takes the default more narrowly (k286): `KARR_CLAIM` is used only
+when `--status` names a `require_claim` column -- the card is being started
+right there, and that is also the one case the guard below consults the
+environment. A card filed into the backlog or `todo` carries no claim from
+the environment: a Claim is a lease held *while working* the card
+(CONTEXT.md), and a card filed for others is not being worked. Under the
+plain rule every bug an agent filed was invisible to every other agent's
+`pick` and `list --unclaimed` for `claim_timeout`. An explicit `--claim`
+still stamps on any status.
+
 ## The value: `agent-name` is the checkout, not a random word
 
 `karr agent-name` returns the **current worktree's root directory name**,

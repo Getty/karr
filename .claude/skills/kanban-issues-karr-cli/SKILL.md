@@ -67,10 +67,9 @@ karr create "Ship it" --depends-on 2,3           # board-local dependency; ids m
 karr create "New card" --json                    # the card as JSON: pipe the id onward
 ```
 
-Bugs found on the way become cards, not silent fixes. With `KARR_CLAIM`
-exported the new card carries your claim and is out of `pick` and
-`--unclaimed` until `claim_timeout` — file a card for someone else with
-`KARR_CLAIM= karr create …`, or release it right after (`karr edit 13 --release`).
+Bugs found on the way become cards, not silent fixes. A new card is unclaimed
+unless `--status` puts it into a `require_claim` column (you are starting it)
+or `--claim` says who holds it.
 
 ## Output flags
 

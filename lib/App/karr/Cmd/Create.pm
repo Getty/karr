@@ -86,6 +86,17 @@ exactly as C<< karr move --claim >> does. A status the board's
 C<require_claim> list covers is refused without it, with the invocation that
 would have worked as the last line of the error.
 
+C<KARR_CLAIM> (ADR 0005) stands in for the flag only when C<--status> names a
+column that requires a claim -- the card is being started right now, and the
+remembered claim is what satisfies that refusal and is then written. Without
+C<--status>, or with one that needs no claim, the environment is not consulted
+and the card is filed unclaimed: a Claim is a lease held while working a card,
+and a card filed into the backlog for whoever picks it next is not being
+worked. Before ticket #286 the filer's remembered claim landed on every card,
+which hid a freshly filed bug from every other agent's C<karr pick> and
+C<< karr list --unclaimed >> until C<claim_timeout> ran out. An explicit
+C<--claim> stamps the claim on any status.
+
 =item * C<--json>
 
 Emit the created card in the same shape C<karr show --json> uses -- frontmatter
@@ -233,8 +244,15 @@ sub execute {
   # claim is a board that says so, and create without --status keeps its
   # historical behaviour. The suggestion is the caller's own command line with
   # --claim added, the k263 shape.
-  if ( defined $self->status
-      && $self->store->status_requires_claim($self->status)
+  #
+  # The same test is what lets KARR_CLAIM onto the card at all (ticket #286):
+  # a column that demands a claim is one the card is being started in, and
+  # that is the only create where the remembered claim means what a Claim is.
+  # Held in a local so the guard here and the stamp below cannot disagree --
+  # the env claim satisfies the guard exactly when it is then written.
+  my $starts_work = defined $self->status
+      && $self->store->status_requires_claim($self->status);
+  if ( $starts_work
       && !( defined $self->resolved_claim && length $self->resolved_claim ) )
   {
     # A local, not "$self->status" inside the string: that would interpolate
@@ -294,7 +312,17 @@ sub execute {
   # --claim` writes (ticket #270). There is no shared helper to call: move,
   # handoff, pick and edit all inline these two lines, and a single-use
   # abstraction would be worse than the copy.
-  my $claim = $self->resolved_claim;
+  #
+  # Which claim: an explicit --claim on any status; KARR_CLAIM only when the
+  # card is being started in a require_claim column, the case the guard above
+  # just let through on its strength (ticket #286). A Claim is an active lease
+  # held while working a card (CONTEXT.md), and a card filed into the backlog
+  # for whoever picks it next is not being worked -- so the filer's remembered
+  # claim, which the skill has every agent export first thing, stays off it.
+  # Before #286 resolved_claim was taken unconditionally, and a bug filed by
+  # one agent was invisible to every other agent's `pick` and `list
+  # --unclaimed` until claim_timeout ran out.
+  my $claim = $starts_work ? $self->resolved_claim : $self->claim;
   if ( defined $claim && length $claim ) {
     $task_args{claimed_by} = $claim;
     $task_args{claimed_at} = gmtime->datetime . 'Z';

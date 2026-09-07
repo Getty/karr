@@ -6,8 +6,10 @@ Claims are matched by name: `--claim` stamps it, `handoff` and `pick` check
 it, `list --claimed-by` and `log --agent` select on it. Every command taking
 `--claim` (`create`, `move`, `edit`, `pick`, `handoff`, `delete`, `archive`)
 and `list --claimed-by` defaults to `KARR_CLAIM`; an explicit `--claim NAME`
-wins over it. karr writes the name nowhere — it is per process, so concurrent
-agents never see each other's.
+wins over it. `create` is narrower: it takes `KARR_CLAIM` only when `--status`
+names a `require_claim` column, so a card filed for others stays unclaimed.
+karr writes the name nowhere — it is per process, so concurrent agents never
+see each other's.
 
 ```bash
 export KARR_CLAIM=$(karr agent-name)            # the worktree's root directory name, sanitised: "karr", "graphify-fix"

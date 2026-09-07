@@ -14,7 +14,7 @@ karr create "Wait for the fix" --needs other-repo#7     # waits on a card in ano
 karr create "Fix the thing" --escalated-from home#5     # the card raised in that other repository
 karr create "Start now" --status in-progress            # claimed as $KARR_CLAIM; a require_claim status refuses without a claim
 karr create "Start now" --status in-progress --claim NAME
-KARR_CLAIM= karr create "For someone else"             # no claim: an exported KARR_CLAIM is stamped on any status
+karr create "For someone else"                         # unclaimed: KARR_CLAIM is used only for a require_claim status
 karr create "New card" --json                           # the card as JSON, so the id can be piped on
 ```
 
