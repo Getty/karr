@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - The bundled agent skill `kanban-issues-karr-cli` is a directory now: a
+      short `SKILL.md` -- name yourself with `KARR_CLAIM`, read the board,
+      work a card, create a card, the output flags -- plus `references/*.md`
+      an agent loads only when it needs them (cards, queries, claims,
+      cross-board, config, storage, setup). The one-file skill had grown to
+      666 lines and went into the context whole on every trigger. `karr
+      skill install`/`check`/`update` and `karr init --claude-skill` ship
+      the whole directory, each file written in place as before; `check`
+      reports an install that lacks a reference file as outdated and
+      `update` adds it (k285).
+
     - Per-command `karr <cmd> --help` (and `karr <cmd> -h`) now renders
       karr's own compact one-line-per-option block: option names are
       hyphenated (`--claimed-by`, `--add-tag`, `--append-body`,

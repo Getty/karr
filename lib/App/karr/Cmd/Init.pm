@@ -15,8 +15,9 @@ use App::karr::Role::CliArgs;
 use App::karr::Role::Output;
 use App::karr::Role::SkillFile;
 
-# SkillFile: _skill_content and _write_skill, shared with `karr skill`, which
-# installs the same file --claude-skill installs (tickets #145, #146).
+# SkillFile: _skill_files and _write_skill_files, shared with `karr skill`,
+# which installs the same directory --claude-skill installs (tickets #145,
+# #146, #285).
 with 'App::karr::Role::BoardDiscovery', 'App::karr::Role::SkillFile';
 with 'App::karr::Role::CliArgs';
 with 'App::karr::Role::Output';
@@ -66,11 +67,12 @@ it is for (#95).
 
 =item * C<--claude-skill>
 
-Copies the bundled skill file to F<.claude/skills/kanban-issues-karr-cli/SKILL.md> -- the same
-file L<App::karr::Cmd::Skill> installs for the C<claude-code> agent, and written
-the same way: B<in place>, keeping the inode of a F<SKILL.md> that is already
-there, so one that is a link of a hardlink chain shared across projects stays
-part of that chain.
+Copies the bundled skill to F<.claude/skills/kanban-issues-karr-cli/> --
+F<SKILL.md> plus F<references/*.md>, the same directory
+L<App::karr::Cmd::Skill> installs for the C<claude-code> agent, and written
+the same way: each file B<in place>, keeping the inode of a F<SKILL.md> that
+is already there, so one that is a link of a hardlink chain shared across
+projects stays part of that chain.
 
 =item * C<--json>
 
@@ -284,28 +286,30 @@ sub _install_claude_skill {
   my $skill_dir = $root->child('.claude/skills/kanban-issues-karr-cli');
   # An unwritable .claude is the project's layout, not a karr bug: Path::Tiny
   # would otherwise report this file and line at the user (#77). Kept here
-  # rather than left to the mkpath inside _write_skill, which would report the
-  # same failure as "Could not write .../SKILL.md": at that point nothing has
+  # rather than left to the mkpath inside _write_skill_files, which would report
+  # the same failure as "Could not write .../SKILL.md": at that point nothing has
   # been written and nothing could be, because the directory is what karr could
   # not create. Saying so is this command's own contract (t/120).
   eval { $skill_dir->mkpath; 1 }
     or user_error( "Could not create $skill_dir: ", clean_error($@) );
 
   # Also App::karr::Role::SkillFile's, since ticket #146: finding the bundled
-  # file was a second copy of `karr skill`'s _skill_content, identical to it
+  # skill was a second copy of `karr skill`'s _skill_content, identical to it
   # except for the one $INC key that told the development fallback which
-  # command's source tree to look next to.
-  my $skill_content = $self->_skill_content;
-  # Through App::karr::Role::SkillFile, not spew_utf8: this is the same file
-  # `karr skill install --agent claude-code` writes, and in a checkout wired up
-  # by manage-skills it is one link of a hardlink chain. spew_utf8 renames a
-  # temp file over the target, which breaks this project out of that chain and
-  # leaves every other one on the old inode with the old text -- the bug fixed
-  # in `karr skill` as ticket #142 and left standing here until #145. The role
-  # is also where the read-only fallback and its warning live, so there is one
-  # description of how a skill file gets written rather than two that drift.
+  # command's source tree to look next to. Since #285 the skill is a directory
+  # (SKILL.md plus references/*.md) and _skill_files is the whole of it.
+  my %skill_files = $self->_skill_files;
+  # Through App::karr::Role::SkillFile, not spew_utf8: this is the same
+  # directory `karr skill install --agent claude-code` writes, and in a
+  # checkout wired up by manage-skills its SKILL.md is one link of a hardlink
+  # chain. spew_utf8 renames a temp file over the target, which breaks this
+  # project out of that chain and leaves every other one on the old inode with
+  # the old text -- the bug fixed in `karr skill` as ticket #142 and left
+  # standing here until #145. The role is also where the read-only fallback
+  # and its warning live, so there is one description of how a skill gets
+  # written rather than two that drift.
+  $self->_write_skill_files( $skill_dir, \%skill_files );
   my $skill_file = $skill_dir->child('SKILL.md');
-  $self->_write_skill( $skill_file, $skill_content );
   # The path it wrote, not the fixed relative string it used to print: this
   # installs into the root of the repository being initialized, which --dir can
   # put in a different tree than the one the caller stands in, and

@@ -1260,10 +1260,15 @@ at a step, a run log or a question.
 ## Skills
 
 The distribution ships a bundled agent skill, `kanban-issues-karr-cli`, that
-can be installed locally in a repo (as
-`.claude/skills/kanban-issues-karr-cli/SKILL.md`) or globally in the current
-home directory. A project still holding the older `.claude/skills/karr/` keeps
-it untouched — nothing removes it for you, so delete it after updating.
+can be installed locally in a repo (as `.claude/skills/kanban-issues-karr-cli/`)
+or globally in the current home directory. The skill is a directory: a short
+`SKILL.md` with the daily loop (name yourself with `KARR_CLAIM`, read the
+board, work a card, create a card) and `references/*.md` an agent loads only
+when it needs them — every option of the card commands, queries, claims and
+locks, cross-board dependencies, config, storage and setup. `install` writes
+all of it, `check` reports an install missing a reference file as outdated,
+and `update` adds it. A project still holding the older `.claude/skills/karr/`
+keeps it untouched — nothing removes it for you, so delete it after updating.
 
 ```bash
 karr skill install
