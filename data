@@ -1,0 +1,23 @@
+---
+claimed_at: 2026-09-07T19:03:56Z
+claimed_by: karr
+class: standard
+completed: 2026-09-07T19:03:56Z
+created: 2026-09-07T13:54:22Z
+id: 285
+priority: high
+started: 2026-09-07T19:03:56Z
+status: done
+tags:
+- skill
+- cli
+title: Skill kanban-issues-karr-cli in schlanke SKILL.md plus references/ aufteilen;
+  karr skill shippt das Verzeichnis
+updated: 2026-09-07T19:03:56Z
+---
+
+SKILL.md ist 666 Zeilen / 30 KB und wird bei jedem Trigger komplett geladen. Ziel: SKILL.md haelt nur KARR_CLAIM, Board lesen, Karte bearbeiten (pick/move/edit/handoff/done), Karte anlegen, Output-Flags und eine Tabelle, welche references/*.md wann zu lesen ist. Alles andere wandert nach references/ (cards, queries, claims, cross-board, config, storage, setup).
+
+Folge fuer das Shipping: share/claude-skill.md ist eine Datei; karr skill install/check/update und karr init --claude-skill muessen ein Verzeichnis (SKILL.md + references/*.md) ausliefern, in place pro Datei. t/62 (Sync share <-> .claude), t/136 (Command-Coverage) und die uebrigen skill-Tests pinnen das alte Layout.
+
+2026-09-07 14:32 Fertig, nicht committed. SKILL.md 666 -> 93 Zeilen, sieben references/*.md (cards, queries, claims, cross-board, config, storage, setup), share/kanban-issues-karr-cli/ identisch (t/62 prueft jede Datei). Role::SkillFile/Cmd::Skill/Cmd::Init shippen das Verzeichnis, t/285 pinnt install/check/update/init. prove -l t/: 237 Dateien, 1819 Tests, PASS. Nebenfunde: k286 (create claimt jede Karte bei gesetztem KARR_CLAIM), k287 (--help-Zeile zu agent-name veraltet). Konsumenten kubernetes-ocp und dbio-postgresql-ev per manage-skills sync nachgezogen.
