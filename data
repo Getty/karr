@@ -1,0 +1,33 @@
+---
+class: standard
+created: 2026-09-07T22:36:03Z
+id: 289
+priority: high
+status: backlog
+tags:
+- skill
+- release
+title: Release karr so the directory-shaped skill reaches the fleet
+updated: 2026-09-11T01:09:37Z
+---
+
+The bundled skill grew from a single share/claude-skill.md into the directory
+share/kanban-issues-karr-cli/ (SKILL.md + 7 references/*.md). That layout only
+exists in this checkout.
+
+The installed karr 0.601 still ships the old single file: its sharedir
+/home/getty/perl5/lib/perl5/auto/share/dist/App-karr/ holds claude-skill.md and
+nothing else. So `karr skill install` and `karr skill update` currently hand a
+repository the OLD skill -- for the ~90 fleet repos that would be a downgrade,
+and `karr skill check` reports "outdated" even against a checkout-current copy.
+
+Until a release ships share/kanban-issues-karr-cli/, the only working
+distribution path into the fleet is `manage-skills link kanban-issues-karr-cli`
+from the karr checkout.
+
+Done when a released App-karr installs the directory and `karr skill check` in
+a fleet repo linked to this checkout answers current.
+
+2026-09-11 00:45 Skill kanban-issues-karr-cli um Sektion 'Create a card on another repository's board' erweitert (commit 0098df1) -- geht mit diesem Release an die Fleet. Build verifiziert: gebauter ShareDir traegt die Verzeichnis-Skill (SKILL.md + 7 references), alte claude-skill.md ist raus. Alles release-bereit; Release auf Wunsch des Maintainers zurueckgehalten (2026-09-11).
+
+2026-09-11 01:09 Update: Commit ist jetzt 0abf440 (0098df1 wurde geamendet). Die Sektion gibt jetzt vor, ein noch nicht ausgechecktes Remote-Board als GESCHWISTER des aktuellen Checkouts zu klonen (nie im Working Tree, sonst Vermischung), benannt nach dem Board -- reine Skill-Doku, kein Feature (Maintainer-Entscheid).
