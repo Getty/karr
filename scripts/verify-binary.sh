@@ -12,7 +12,7 @@ export PAR_GLOBAL_TEMP="$(mktemp -d)"
 for cmd in init create list show move edit delete board dashboard pick unlock \
            archive handoff needs metrics log config context agent-name skill \
            materialize import repair sync backup restore destroy \
-           set-refs get-refs disable enable; do
+           set-refs get-refs disable enable completion; do
   "$BIN" "$cmd" --help >/dev/null || { echo "FAIL: subcommand $cmd" >&2; exit 1; }
 done
 echo "trap1 (subcommand classes): OK"
@@ -28,6 +28,9 @@ work=$(mktemp -d)
   "$BIN" move "$id" in-progress --claim smoke
   "$BIN" handoff "$id" --claim smoke --note ok
   "$BIN" backup > board.yaml && test -s board.yaml
+  "$BIN" restore --yes --input board.yaml
+  "$BIN" list --compact
+  "$BIN" destroy --yes
 )
 echo "trap2 (libgit2 board flow): OK"
 echo "verify: OK"
