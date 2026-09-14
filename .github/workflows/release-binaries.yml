@@ -1,0 +1,75 @@
+name: release-binaries
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build and attach assets to (dry-run)
+        required: true
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: perl:5.40-bookworm
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Install system build deps
+        run: apt-get update && apt-get install -y cmake build-essential git jq
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      - name: Fix safe.directory
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - name: Install Perl deps (Alien share build + PAR::Packer)
+        env:
+          ALIEN_INSTALL_TYPE: share
+        run: |
+          cpanm --notest --installdeps .
+          cpanm --notest Alien::Libgit2 Git::Libgit2 Git::Native
+          cpanm --notest PAR::Packer
+      - name: Compute version
+        id: v
+        run: echo "v=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Build binary
+        env:
+          KARR_BIN_OUT: karr-${{ steps.v.outputs.v }}-linux-${{ matrix.arch }}
+        run: ./scripts/build-binary.sh
+      - name: Verify binary
+        run: ./scripts/verify-binary.sh "karr-${{ steps.v.outputs.v }}-linux-${{ matrix.arch }}"
+      - name: Record runtime libs
+        run: |
+          LG=$(perl -MAlien::Libgit2 -e 'print +(Alien::Libgit2->dynamic_libs)[0]')
+          ldd "$LG" | tee runtime-libs-${{ matrix.arch }}.txt
+      - name: Package
+        id: pkg
+        run: |
+          base="karr-${{ steps.v.outputs.v }}-linux-${{ matrix.arch }}"
+          mkdir -p "pkg/$base"
+          cp "$base" "pkg/$base/karr"
+          cp LICENSE "pkg/$base/LICENSE"
+          printf 'karr %s (linux-%s)\nRuntime libs required on target: libssl libcrypto libssh2 libz libzstd\nhttps://github.com/Getty/karr\n' \
+            "${{ steps.v.outputs.v }}" "${{ matrix.arch }}" > "pkg/$base/README"
+          tar -C pkg -czf "$base.tar.gz" "$base"
+          sha256sum "$base" > "$base.sha256"
+          sha256sum "$base.tar.gz" > "$base.tar.gz.sha256"
+      - name: Upload assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="karr-${{ steps.v.outputs.v }}-linux-${{ matrix.arch }}"
+          gh release upload "$TAG" \
+            "$base" "$base.sha256" \
+            "$base.tar.gz" "$base.tar.gz.sha256" \
+            --clobber --repo "$GITHUB_REPOSITORY"
