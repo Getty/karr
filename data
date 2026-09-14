@@ -1,0 +1,39 @@
+---
+claimed_at: 2026-09-14T16:07:47Z
+claimed_by: karr
+class: standard
+completed: 2026-09-14T16:07:47Z
+created: 2026-09-14T15:33:37Z
+id: 291
+priority: low
+started: 2026-09-14T15:45:12Z
+status: done
+tags:
+- sync
+- performance
+- design
+title: 'move/edit/handoff: --no-fetch / lazy-sync-Modus erwaegen (Multi-Board-Timeouts)'
+updated: 2026-09-14T16:07:47Z
+---
+
+Aus History-Audit ~/tmp/karr_audit/REPORT.md (F2/B1). Quelle: Bash-Calls aus
+fremden Repos (dbio-Familie), NICHT aus dev/karr.
+
+Beobachtung: In Multi-Board-Setups laufen move/edit/handoff/create teils in den
+120s/300s-Bash-Timeout und landen im Background. Im aktuellen Code verifiziert:
+es gibt keinen --no-fetch / --local-only / --offline Modus; SyncLifecycle
+synct inline (sync_before/sync_after).
+
+WICHTIG -- noch NICHT reproduziert: Die vom Report vermuteten Ursachen (Repo
+ohne Remote, aber fetch/push wird versucht; DateiLocke ueber karr-foundation;
+grosse Bodies beim Serialisieren) sind unbelegte Hypothesen aus einem fremden
+Setup. Erster Schritt = reproduzieren, ob der Sync selbst haengt oder nur die
+Latenz aufsummiert.
+
+Kein Bug -- fehlendes Feature / Design-Frage. Optionen laut Report:
+  - --no-fetch/--local-only fuer move/edit/handoff (nur lokal auf Refs schreiben,
+    kein fetch/push; spaeter explizit karr sync --pull mergen)
+  - Lazy-Sync statt inline
+Erst Design-Entscheidung, dann ggf. an karr-ref-worker delegieren.
+
+Implementiert: --local-only in Role/SyncLifecycle (ueberspringt fetch UND push) fuer alle schreibenden Commands. Befund: KEIN no-remote-Bug (sync no-op ohne Remote); Problem ist unerreichbares KONFIGURIERTES Remote -> 120s inline. Regressionstest t/291. Volle Suite gruen. Review bestanden. Hinweis: --local-only bewusst SICHTBAR in --help (nicht hidden wie --quiet), da Discovery-Escape-Hatch. Code noch uncommitted.
