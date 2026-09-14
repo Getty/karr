@@ -1,0 +1,37 @@
+---
+claimed_at: 2026-09-14T16:07:31Z
+claimed_by: karr
+class: standard
+completed: 2026-09-14T16:07:31Z
+created: 2026-09-14T15:33:28Z
+id: 290
+priority: low
+started: 2026-09-14T15:37:52Z
+status: done
+tags:
+- ux
+- list
+title: 'list: Hint bei ungueltigem --status blocked auf --blocked verweisen'
+updated: 2026-09-14T16:07:31Z
+---
+
+Aus History-Audit ~/tmp/karr_audit/REPORT.md (F3).
+
+Beobachtung (im aktuellen Code verifiziert):
+  $ karr list --status blocked
+  Usage error: invalid status "blocked" (valid: backlog, todo, in-progress, review, done, archived)
+  exit 2
+
+Kein Bug -- korrekte Ablehnung eines ungueltigen Statuswerts. Aber "blocked" ist
+ein bekanntes Flag-Konzept (karr list --blocked), kein Status. Agenten tappen
+reproduzierbar in die Falle.
+
+Vorschlag (reine UX-Politur, optional): Wenn ein ungueltiger --status-Wert einem
+bekannten Filter-Flag entspricht (blocked/not-blocked), einen Hint an die
+Usage-Meldung haengen, z.B.:
+  Status "blocked" is not a status. Use `karr list --blocked` for the filter.
+
+Scope: nur die Fehlermeldung in Cmd/List (Statuswert-Validierung). Kein
+Verhaltenswechsel, Exit-Code bleibt 2.
+
+Implementiert: Hint bei --status blocked/not-blocked verweist auf --blocked/--not-blocked; reitet nur auf echter Ablehnung (Board koennte Status "blocked" konfigurieren). command_hint-Helper, POD ASCII. Regressionstest t/290. Volle Suite gruen (1832 Tests). Orchestrator-Review bestanden. Code noch uncommitted im Working Tree.
