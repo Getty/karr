@@ -974,6 +974,18 @@ setup.
 cpanm App::karr
 ```
 
+### Binary (no Perl needed)
+
+Prebuilt Linux binaries are attached to each
+[GitHub release](https://github.com/Getty/karr/releases):
+`karr-<version>-linux-x86_64` and `karr-<version>-linux-arm64`, each as a raw
+executable and a `.tar.gz`, with a `.sha256` beside it. Download, verify with
+`sha256sum -c`, `chmod +x`, and run — no Perl or CPAN needed. The target needs
+the usual system libraries `libssl`, `libcrypto`, `libssh2`, `libz`, and
+`libzstd` (present on any normal Linux). The binary is ~23 MB and bundles its
+own Perl, so it starts a little slower than the CPAN install (~450 ms vs
+~300 ms); it is for distribution convenience, not speed.
+
 ### Shell completion
 
 `karr completion` prints a static completion script for your shell:

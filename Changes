@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Prebuilt single-file Linux binaries (x86_64 and arm64) are now attached
+      to each GitHub release, raw and as a `.tar.gz` with a `.sha256`, built
+      with PAR::Packer so `karr` runs with no Perl or CPAN install. It bundles
+      its own Perl; distribution convenience only, not faster than the CPAN
+      install.
+
     - `--local-only` on any writing command (`move`, `edit`, `handoff`,
       `create`, and every other command that syncs) writes to the board's
       local `refs/karr/*` and skips both the fetch and the push, so a
