@@ -1,5 +1,10 @@
 {{$NEXT}}
 
+    - `karr list --status blocked` (and `--status not-blocked`) still exits 2
+      -- neither is a status -- but the usage error now names the filter flag
+      that was meant: `karr list --blocked` / `--not-blocked`. Any other
+      invalid `--status` value keeps the plain `(valid: ...)` message (k290).
+
     - The bundled agent skill `kanban-issues-karr-cli` is a directory now: a
       short `SKILL.md` -- name yourself with `KARR_CLAIM`, read the board,
       work a card, create a card, create one on another repository's board,

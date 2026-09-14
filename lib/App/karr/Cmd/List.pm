@@ -22,7 +22,7 @@ use App::karr::Role::ClaimTimeout;
 use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
-use App::karr::Error qw( user_error );
+use App::karr::Error qw( user_error command_hint );
 
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
      'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout',
@@ -80,7 +80,10 @@ error (exit C<2>) naming the ones it does know, the same answer C<karr create
 --status>/C<--priority> gives -- kanban-md compares the strings and prints an
 empty list instead, which reads like "no such work" when the truth is "no such
 status". C<--status> additionally accepts C<archived>, which is a real status
-karr hardcodes even on a board that does not configure a column for it.
+karr hardcodes even on a board that does not configure a column for it. When the
+rejected value is C<blocked> or C<not-blocked> -- filter flags, not statuses --
+the message also names C<karr list --blocked>/C<--not-blocked>, the trap an
+agent reaching for C<--status> falls into (ticket k290).
 
 =item * C<--archived>
 
@@ -424,6 +427,15 @@ sub _render_row {
     $title;
 }
 
+# The filter flags an invalid --status value is really reaching for. "blocked"
+# and "not-blocked" read like statuses but are the --blocked/--not-blocked
+# filters, and agents type `--status blocked` reproducibly (ticket k290). Maps
+# the bare value to the flag that was meant, so the rejection can name it.
+my %FILTER_FLAG_FOR = (
+  'blocked'     => '--blocked',
+  'not-blocked' => '--not-blocked',
+);
+
 # Every usage error this command can raise that does not need a task in hand,
 # decided in one place before the first ref is read: whether an invocation is
 # well formed is not a question about what happens to be on the board, and an
@@ -502,7 +514,20 @@ sub _validate_options {
   # that does not configure it (App::karr::Config/validate_status_filter); the
   # priority filter is the plain L<App::karr::Config/validate_priority>.
   if ( defined $self->status ) {
-    $self->config->validate_status_filter($_) for split /,/, $self->status;
+    for my $value ( split /,/, $self->status ) {
+      # The hint rides on the rejection, not in front of it: a board could in
+      # principle configure a status literally named `blocked`, so validate
+      # first and only reach for the flag when the value is genuinely refused.
+      # When the refused value is one of the filter-flag concepts, append the
+      # invocation that was meant (ticket k290, k263's answer-goes-last rule);
+      # every other invalid value keeps the plain `(valid: ...)` message.
+      eval { $self->config->validate_status_filter($value); 1 } and next;
+      my $err  = $@;
+      my $flag = $FILTER_FLAG_FOR{$value} or die $err;
+      chomp $err;
+      die $err . qq{ -- "$value" is a filter flag, not a status:\n}
+        . command_hint( 'list', $flag ) . "\n";
+    }
   }
   if ( defined $self->priority ) {
     $self->config->validate_priority($_) for split /,/, $self->priority;
