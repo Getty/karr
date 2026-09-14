@@ -1,5 +1,14 @@
 {{$NEXT}}
 
+    - `--local-only` on any writing command (`move`, `edit`, `handoff`,
+      `create`, and every other command that syncs) writes to the board's
+      local `refs/karr/*` and skips both the fetch and the push, so a
+      mutation cannot block in the caller's timeout on an unreachable or
+      silent configured remote. The refs are canonical local board state;
+      `karr sync` publishes them once the remote is reachable again. Without
+      the flag the fetch and push run exactly as before, and a board with no
+      remote already syncs as a no-op either way (k291).
+
     - `karr list --status blocked` (and `--status not-blocked`) still exits 2
       -- neither is a status -- but the usage error now names the filter flag
       that was meant: `karr list --blocked` / `--not-blocked`. Any other
