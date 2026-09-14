@@ -28,7 +28,7 @@ jobs:
       - name: Install system build deps
         run: |
           apt-get update
-          apt-get install -y cmake build-essential git jq curl
+          apt-get install -y cmake build-essential git jq curl pkg-config libssh2-1-dev libssl-dev zlib1g-dev libzstd-dev
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
             | tee /usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null
           chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
