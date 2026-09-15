@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-09-15T18:15:36Z
+claimed_by: karr
+class: standard
+completed: 2026-09-15T18:15:36Z
+created: 2026-09-14T23:16:45Z
+id: 292
+priority: medium
+started: 2026-09-15T18:15:36Z
+status: done
+tags:
+- release
+- binary
+- ci
+title: Ship karr binary at release (linux x86_64/arm64)
+updated: 2026-09-15T18:15:36Z
+---
+
+Prebuilt pp binaries (raw + .tar.gz + sha256) for linux x86_64 and arm64, attached to each GitHub release. Implemented on branch binary-release; see docs/superpowers/specs and plans dated 2026-09-14. Outstanding: CI dry-run then merge.
