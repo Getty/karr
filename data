@@ -1,0 +1,17 @@
+---
+claimed_at: 2026-09-15T18:53:07Z
+claimed_by: karr
+class: standard
+completed: 2026-09-15T18:53:07Z
+created: 2026-09-15T18:42:21Z
+id: 293
+priority: low
+started: 2026-09-15T18:44:57Z
+status: done
+tags:
+- ci
+- binary
+- hardening
+title: 'release-binaries: harden minors (tag-injection via env, runtime-lib assert)'
+updated: 2026-09-15T18:53:07Z
+---
