@@ -26,7 +26,13 @@ for m in Cpanel::JSON::XS JSON::XS JSON::PP; do
   perl -M"$m" -e1 >/dev/null 2>&1 && json_mods+=("-M" "$m")
 done
 
+# -I lib: put the checkout's lib/ on @INC so the -M 'App::karr::**' glob (and
+# bin/karr's own `use App::karr::*`) resolve even when karr itself is not
+# installed -- e.g. a fresh CI container that only installed the deps. Without
+# it the glob finds nothing and the packed binary dies at startup on the first
+# missing App::karr::* module.
 PAR_VERBATIM=1 pp -o "$OUT" \
+  -I lib \
   -M 'App::karr::**' -M 'App::karr::Cmd::**' \
   -M YAML::XS \
   -M JSON::MaybeXS "${json_mods[@]}" \
