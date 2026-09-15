@@ -28,7 +28,14 @@ jobs:
       - name: Install system build deps
         run: |
           apt-get update
-          apt-get install -y cmake build-essential git jq curl pkg-config libssh2-1-dev libssl-dev zlib1g-dev libzstd-dev
+          apt-get install -y cmake build-essential git jq curl pkg-config libssh2-1-dev libssl-dev zlib1g-dev libzstd-dev libarchive-tools
+          # cpanm's GNU tar chokes on the LIBARCHIVE.xattr.com.apple.provenance
+          # pax headers in macOS-packed CPAN tarballs (Cpanel::JSON::XS,
+          # Alien::Build, FFI::Platypus) and reports "Failed to unpack: no
+          # directory". bsdtar (libarchive) reads those headers natively; shadow
+          # `tar` with it on PATH so cpanm unpacks every distribution cleanly.
+          printf '#!/bin/sh\nexec /usr/bin/bsdtar "$@"\n' > /usr/local/bin/tar
+          chmod +x /usr/local/bin/tar
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
             | tee /usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null
           chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
