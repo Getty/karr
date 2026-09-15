@@ -18,9 +18,24 @@ RUN ALIEN_INSTALL_TYPE=system cpanm --notest Alien::FFI
 # self-contained — the slim runtime has no system libgit2 to dynamically link.
 ENV ALIEN_INSTALL_TYPE=share
 
-RUN cpanm --notest --installdeps /tmp/karr-src \
-    && cpanm --notest /tmp/karr-src \
-    && rm -rf /tmp/karr-src
+# Install karr itself. As a Dist::Zilla dist, a dzil-BUILT tree (what
+# `dzil release` feeds here via [@Author::GETTY::Docker]) already has a generated
+# Makefile.PL and installs with `cpanm .`; the raw git checkout (what CI feeds)
+# has only dist.ini, so build it with dzil first. DZIL_DOCKER_API_SKIP keeps that
+# inner `dzil build` from trying to build a Docker image inside this image build.
+# Runtime deps come from cpanfile either way.
+RUN set -eux; \
+    cd /tmp/karr-src; \
+    cpanm --notest --installdeps .; \
+    if [ -f dist.ini ]; then \
+        cpanm --notest Dist::Zilla; \
+        dzil authordeps --missing | cpanm --notest; \
+        DZIL_DOCKER_API_SKIP=1 dzil build --in /tmp/karr-built; \
+        cpanm --notest /tmp/karr-built; \
+    else \
+        cpanm --notest .; \
+    fi; \
+    cd /; rm -rf /tmp/karr-src /tmp/karr-built
 
 FROM perl:5.40-slim AS runtime-base
 
