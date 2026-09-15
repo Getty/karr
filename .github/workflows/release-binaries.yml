@@ -43,18 +43,19 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install Perl deps (Alien share build + PAR::Packer)
         env:
-          ALIEN_INSTALL_TYPE: share
-          # macOS-packed CPAN tarballs (Cpanel::JSON::XS, Alien::Build,
-          # FFI::Platypus) carry a com.apple.provenance xattr in a LIBARCHIVE pax
-          # header; GNU tar's non-zero exit on that unknown keyword makes cpanm
-          # report "Failed to unpack: no directory" and the dep chain bails before
-          # the libgit2 build. TAR_OPTIONS silences the keyword for every tar call
-          # cpanm makes, keeping the exit status clean -- no PATH shadow, so none
-          # of bsdtar's old-style-flag or xattr-restore pitfalls.
+          # TAR_OPTIONS silences GNU tar's warning on the com.apple.provenance
+          # LIBARCHIVE pax header some CPAN tarballs carry, keeping tar's output
+          # clean (cosmetic; not the cause of any failure).
           TAR_OPTIONS: "--warning=no-unknown-keyword"
         run: |
+          # ALIEN_INSTALL_TYPE=share must apply to libgit2 ONLY. Build-tool
+          # aliens like Alien::cmake3 must stay `system` so they use the
+          # apt-installed cmake -- forcing them to share rebuilds cmake from
+          # source and fails. So install Alien::cmake3 first (system), then set
+          # share inline for just the libgit2 aliens so it doesn't leak.
+          cpanm --notest Alien::cmake3
+          ALIEN_INSTALL_TYPE=share cpanm --notest Alien::Libgit2 Git::Libgit2 Git::Native
           cpanm --notest --installdeps .
-          cpanm --notest Alien::Libgit2 Git::Libgit2 Git::Native
           cpanm --notest PAR::Packer
       - name: Compute version
         id: v
