@@ -28,16 +28,7 @@ jobs:
       - name: Install system build deps
         run: |
           apt-get update
-          apt-get install -y cmake build-essential git jq curl pkg-config libssh2-1-dev libssl-dev zlib1g-dev libzstd-dev libarchive-tools
-          # macOS-packed CPAN tarballs (Cpanel::JSON::XS, Alien::Build,
-          # FFI::Platypus) carry a com.apple.provenance xattr in a LIBARCHIVE
-          # pax header. GNU tar warns and exits non-zero; bsdtar tries to restore
-          # the xattr, fails on Linux, and also exits non-zero -- either way cpanm
-          # reads the non-zero exit as "Failed to unpack: no directory" and the
-          # dep chain bails before the libgit2 build. Shadow `tar` with bsdtar and
-          # --no-xattrs so it reads the headers but skips the pointless restore.
-          printf '#!/bin/sh\nexec /usr/bin/bsdtar --no-xattrs "$@"\n' > /usr/local/bin/tar
-          chmod +x /usr/local/bin/tar
+          apt-get install -y cmake build-essential git jq curl pkg-config libssh2-1-dev libssl-dev zlib1g-dev libzstd-dev
           curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
             | tee /usr/share/keyrings/githubcli-archive-keyring.gpg >/dev/null
           chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
@@ -53,6 +44,14 @@ jobs:
       - name: Install Perl deps (Alien share build + PAR::Packer)
         env:
           ALIEN_INSTALL_TYPE: share
+          # macOS-packed CPAN tarballs (Cpanel::JSON::XS, Alien::Build,
+          # FFI::Platypus) carry a com.apple.provenance xattr in a LIBARCHIVE pax
+          # header; GNU tar's non-zero exit on that unknown keyword makes cpanm
+          # report "Failed to unpack: no directory" and the dep chain bails before
+          # the libgit2 build. TAR_OPTIONS silences the keyword for every tar call
+          # cpanm makes, keeping the exit status clean -- no PATH shadow, so none
+          # of bsdtar's old-style-flag or xattr-restore pitfalls.
+          TAR_OPTIONS: "--warning=no-unknown-keyword"
         run: |
           cpanm --notest --installdeps .
           cpanm --notest Alien::Libgit2 Git::Libgit2 Git::Native
