@@ -102,6 +102,43 @@ for each of the 32 commands is the cheap trap-1 probe (forces the class to load,
 no side effects); pair it with one real init→create→list→move→handoff→backup→
 restore→destroy flow to prove libgit2/FFI end-to-end.
 
+## Building in a fresh container (CI), not the dev box
+
+On the dev box the build works because `~/perl5` already has karr and all its
+deps installed. A CI container (e.g. `perl:5.40-bookworm`) is a clean slate,
+which exposes three traps the dev box hides — all found by karr's
+`release-binaries.yml` dry-run, all now baked into `scripts/build-binary.sh` and
+that workflow:
+
+1. **`pp` needs `-I lib`.** `bin/karr` does `use App::karr::SyncGuard` with no
+   `use lib`, and the `-M 'App::karr::**'` glob resolves against `@INC`. In a
+   container that installed only the *deps* (karr itself is not installed), the
+   glob finds nothing and the packed binary dies at startup: `Can't locate
+   App/karr/SyncGuard.pm`. Add `-I lib` so the checkout's `lib/` is on `@INC`
+   for the scan.
+
+2. **The container has no `-dev` headers.** `Alien::Libgit2`'s share build is
+   `-DUSE_SSH=ON -DUSE_HTTPS=OpenSSL`, so libgit2's cmake needs libssh2 + openssl
+   + zlib + zstd *dev* headers, which `perl:*-bookworm` (buildpack-deps) does not
+   carry for libssh2. Missing them, cmake aborts `LIBSSH2 not found` and nothing
+   is built. `apt-get install -y pkg-config libssh2-1-dev libssl-dev zlib1g-dev
+   libzstd-dev`.
+
+3. **`ALIEN_INSTALL_TYPE=share` must scope to libgit2 only.** Setting it for the
+   whole dep install forces *build-tool* aliens like `Alien::cmake3` to build
+   cmake from source (and fail) instead of using the apt cmake. Install
+   `Alien::cmake3` first (no env var → `system`, uses apt cmake), then set
+   `ALIEN_INSTALL_TYPE=share` inline for just the `Alien::Libgit2 Git::Libgit2
+   Git::Native` cpanm call so it does not leak.
+
+Cosmetic, not a blocker: some CPAN tarballs (Cpanel::JSON::XS, Alien::Build,
+FFI::Platypus) are packed on macOS and carry a `com.apple.provenance` xattr in a
+LIBARCHIVE pax header; GNU tar warns `Ignoring unknown extended header keyword`.
+`TAR_OPTIONS=--warning=no-unknown-keyword` silences it. (During bring-up those
+warnings masked a *transient CPAN mirror outage* — 404s on the dep tarballs —
+that looked like a tar bug but was not; if unpack fails with `gzip: unexpected
+end of file`, suspect the mirror, not tar.)
+
 ## Two build-breakers the static scanner won't warn about
 Both produce a binary that packs clean, and `perl -c` on the sources passes, yet
 every command dies at startup.
