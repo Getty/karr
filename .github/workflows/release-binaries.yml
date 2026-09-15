@@ -84,7 +84,7 @@ jobs:
           # libc/loader family), so a new transitive link dependency can't
           # silently ship a binary that dies on a clean target with a missing .so.
           undocumented=$(ldd "$LG" | awk '{print $1}' \
-            | grep -E '\.so' | sed -E 's/\.so.*//' | sort -u \
+            | grep -E '\.so' | sed -E 's|.*/||; s/\.so.*//' | sort -u \
             | grep -vixE 'libssl|libcrypto|libssh2|libz|libzstd|libc|libm|libpthread|libdl|librt|libgcc_s|ld-linux.*|linux-vdso' \
             || true)
           if [ -n "$undocumented" ]; then
