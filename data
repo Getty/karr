@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-09-16T00:55:42Z
+claimed_by: karr
+class: standard
+completed: 2026-09-16T00:55:42Z
+created: 2026-09-15T20:43:34Z
+id: 294
+priority: high
+started: 2026-09-16T00:55:42Z
+status: done
+tags:
+- ci
+- simpici
+- docker
+title: CI auf SimpiCI umgestellt (Provider + .cicd Docker)
+updated: 2026-09-16T00:55:42Z
+---
+
+Provider .simpici-apt-Option (pluginbundle 0.322) + karr .cicd. Dry-run auf Branch simpici-ci laeuft (run 35021337249).
+
+Offenes Follow-up: Full-Handover (dist.ini [@Author::GETTY::Docker] raus, CI pusht semver-Tags auf release-Tag). Jetzt bewusst additiv gelassen.
+
+Docker geloest: Dockerfile macht dzil build+cpanm bei rohem Checkout (else-Zweig cpanm . unveraendert fuer Release). Lokal bewiesen: image baut, karr 0.601 laeuft, board-flow ok.
+
+Provider braucht 2 weitere Ergaenzungen (b9ab21c lokal): DZIL_DOCKER_API_SKIP + .simpici-perl. Muss neu publiziert werden bevor karr-CI gruen wird.
+
+CI-Infra komplett bewiesen (1906 Tests/242 Files liefen, 5.36-5.44). Einziger Fehler: t/220-dashboard.t root-sensitiv (CI-Container=root umgeht chmod 0000). Latenter Test-Bug, wird root-aware gemacht.
+
+GRUEN: run 35038788065 success. build/image ok (4m43s, beide targets), test 5.36-5.44 alle ok (~11min je), publish korrekt skipped (branch). Kein DOCKERHUB_TOKEN-secret -> main-merge pusht nichts. Bereit fuer merge.
