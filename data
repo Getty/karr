@@ -1,0 +1,42 @@
+---
+claimed_at: 2026-09-18T17:28:25Z
+claimed_by: karr
+class: standard
+completed: 2026-09-18T17:28:25Z
+created: 2026-09-18T05:06:36Z
+id: 295
+priority: medium
+started: 2026-09-18T16:46:57Z
+status: done
+tags:
+- investigation
+- board
+- blocked
+title: 'Investigate: tasks can be ''done'' while still flagged blocked (invisible
+  on board)'
+updated: 2026-09-18T17:28:25Z
+---
+
+Observed 2026-09-18 on a downstream board (File::SOPS): three tasks sat in status=done yet still carried the blocked flag. The board footer read "N blocked" while listing nothing, because done tasks are hidden by default -- so the blocked ones were invisible until:
+  karr list --blocked --status done --limit 0
+
+Each affected task also held an EXPIRED claim by "debt-send" (claimed ~2026-08-23); --unblock overrode those claims cleanly.
+
+Questions to analyse in karr:
+1. Is blocked ever set (or left) automatically at the transition into done, or does done simply not clear an existing blocked flag? i.e. behaviour to fix vs. stale worker state.
+2. Should the board summary surface blocked tasks that are hidden by status (e.g. "3 blocked (2 in done)"), so a done+blocked combination cannot stay invisible?
+
+Possible directions (not decided):
+- clear blocked automatically when a task moves to done, or
+- refuse to mark done while blocked, or
+- at minimum make the "N blocked" footer count discoverable/broken out by status.
+
+Reference: this is a meta-observation, no karr-repo code touched yet.
+
+Maintainer-Entscheid (2026-09-18): Richtung (a), generalisiert auf alle terminalen Status. Beim Uebergang in einen Status mit is_terminal_status (done/archived/board-konfiguriert) wird blocked automatisch geloescht. Richtung (b) verworfen. Footer-Aufschluesselung (c) offen als optionaler Zusatz.
+
+KORREKTUR des vorigen Eintrags: Maintainer waehlt Richtung (B), NICHT (a). Grund: block_reason-Text steht nicht im Activity-Log (log_task_write speichert nur action/actor/status), Loeschen beim done wuerde ihn unwiederbringlich vernichten und die #223/#224-Provenance-Konvention verletzen. Umsetzung: Board-Footer zaehlt nur nicht-terminale Tasks als aktiv blocked (analog zum claimed-Zaehler Board.pm:297) und schluesselt versteckte auf: 'N blocked (M in done)'. Reines Rendering, block_reason bleibt erhalten, fixt auch bereits feststeckende Boards.
+
+Scope-Erweiterung (Maintainer-Entscheid 2026-09-18): #295 umfasst jetzt auch 'karr context'. context zaehlte terminale blocked-Karten bislang bewusst mit (kanban-md-Paritaet, #229 rollte 85f6e9f zurueck). Entscheidung: Prinzip 'terminal != aktiver Blocker' gilt durchgaengig -> context schliesst terminale aus Header-Count und blocked-Sektion aus, konsistent mit seinem bereits terminal-freien active/in-progress. Bewusste Divergenz von kanban-md; der geteilte Sentinel-Block kann bei co-bespielten Boards abweichende blocked-Zahlen tragen -- akzeptiert. Wird per Code-Kommentar/POD-Umschrift + ADR festgehalten, damit es nicht wie 85f6e9f zurueckgedreht wird. block_reason bleibt als Provenance erhalten.
+
+Umgesetzt (Richtung B + context): terminale Karten zaehlen nirgends mehr als aktiver Blocker. Board-Footer (aktiver Zaehler ohne terminale, versteckte als 'M in done' aufgeschluesselt), karr context (Header-Count + blocked-Sektion + --json + --compact), plus Re-Revert-Schutz: Kommentar/POD in Context.pm umgeschrieben und ADR 0006 (bewusste Divergenz von kanban-md, #229 superseded). block_reason bleibt ueberall als Provenance erhalten, --status done findet ihn weiter. list/board-json/metrics waren schon korrekt. Tests: t/295 neu, t/229 auf die neue Entscheidung umgestellt; 57 Tests im board/context/list-Umfang gruen. Changes-Eintrag unter NEXT. NICHT committet -- wartet auf Maintainer.
