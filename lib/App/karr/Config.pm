@@ -379,7 +379,7 @@ sub validate_status_filter {
 
 Dies unless the value is one of the board's configured statuses or C<archived>,
 returning the value otherwise so it can be used inline. The one extra name is
-L</ARCHIVED_STATUS>: it is a real status karr hardcodes, so a C<--status>
+C<ARCHIVED_STATUS>: it is a real status karr hardcodes, so a C<--status>
 filter may name it even on a board that does not configure a column for it
 (ticket #271). L</validate_status> stays the stricter check for a status a task
 is moved to.
