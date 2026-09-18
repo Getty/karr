@@ -1,0 +1,19 @@
+---
+claimed_at: 2026-09-18T23:02:19Z
+claimed_by: karr
+class: standard
+completed: 2026-09-18T23:02:19Z
+created: 2026-09-18T22:52:22Z
+id: 300
+priority: medium
+started: 2026-09-18T23:02:19Z
+status: done
+tags:
+- pod
+title: 'Config.pm: dead L</ARCHIVED_STATUS> link in validate_status_filter POD'
+updated: 2026-09-18T23:02:27Z
+---
+
+The =method validate_status_filter POD links L</ARCHIVED_STATUS>, but ARCHIVED_STATUS is a use-constant, not a documented =method/=attr, so the link resolves to nothing even after weaving. Surfaced by scripts/podcheck.pl. Fix: plain C<ARCHIVED_STATUS>.
+
+committed 502fa58
