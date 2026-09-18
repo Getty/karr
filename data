@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-09-18T23:01:24Z
+claimed_by: karr
+class: standard
+completed: 2026-09-18T23:01:24Z
+created: 2026-09-18T17:58:10Z
+id: 296
+priority: low
+started: 2026-09-18T18:18:30Z
+status: done
+tags:
+- docs
+- changes
+title: 'Changes: cite k292 on the prebuilt-binaries {{$NEXT}} bullet'
+updated: 2026-09-18T23:01:31Z
+---
+
+Pre-release audit finding (0.600 -> 0.601). Every other bullet in the current {{$NEXT}} section ends with its ticket citation, e.g. (k295), (k291), (k281, k286). The "Prebuilt single-file Linux binaries (x86_64 and arm64) are now attached to each GitHub release..." bullet describes the feature shipped by k292 (Ship karr binary at release) but cites no ticket at all -- the only bullet in the section missing one. Add "(k292)" at the end of that bullet to match house convention. Not a functional issue, purely a Changes formatting gap.
+
+Audit-Praemisse invertiert: Changes referenziert KEINE karr-Tickets -- Maintainer-Regel, refs nur in Commit-Messages. Der k292-Ref war falsch und ist reverted (Changes netto unveraendert). Offen/pending: bestehende (kNNN) aus Changes strippen? Scope-Entscheidung (nur NEXT-Block vs. auch released History) beim Maintainer.
+
+committed 7540a5f
