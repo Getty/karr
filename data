@@ -1,0 +1,32 @@
+---
+claimed_at: 2026-09-18T23:01:38Z
+claimed_by: karr
+class: standard
+completed: 2026-09-18T23:01:38Z
+created: 2026-09-18T17:58:21Z
+id: 297
+priority: low
+started: 2026-09-18T18:18:45Z
+status: done
+tags:
+- pod
+- docs
+title: 'POD: App::karr::Board''s store attribute and App::karr''s command_table method
+  are undocumented'
+updated: 2026-09-18T23:01:45Z
+---
+
+Pre-release audit finding (0.600 -> 0.601). Two real POD gaps found while scanning lib/ for public attrs/methods missing =attr/=method:
+
+  - lib/App/karr/Board.pm: `has store => ( is => "ro", required => 1 );` (line 8) has zero POD anywhere in the file -- no =attr, no DESCRIPTION mention. The class only documents its four methods (final_status, hidden_done_count, group_keys, group_order).
+  - lib/App/karr.pm: `command_table` (line 268) is a cross-class API surface -- App::karr::Cmd::Completion calls it, per the code comment above it ("exposed here rather than re-derived in the command") -- but has no =method block.
+
+Minor/optional, not included above: lib/App/karr/Role/BoardDiscovery.pm documents its five attrs (git_root, store, git, config, role) as DESCRIPTION =item bullets rather than individual =attr blocks -- a style deviation from the usual inline convention, but they are documented in substance, so lower priority. lib/App/karr/Cmd/Move.pm overrides claim_hint_tokens with an explanatory code comment instead of POD; the base contract is already documented via =method in App::karr::Role::TaskMutation, so this is the lowest priority of the four.
+
+Hand to karr-pod-writer.
+
+delegated to karr-pod-writer (Board.pm store attr, App::karr command_table)
+
+POD ergaenzt: =attr store (Board.pm), =method command_table (App/karr.pm). Verifiziert: POD-only, perl -c OK, ASCII-only. Optionale Punkte (BoardDiscovery, Move.pm) bewusst ausgelassen.
+
+committed ddac9d5
