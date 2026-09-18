@@ -1,0 +1,21 @@
+---
+claimed_at: 2026-09-18T23:02:05Z
+claimed_by: karr
+class: standard
+completed: 2026-09-18T23:02:05Z
+created: 2026-09-18T22:52:14Z
+id: 299
+priority: medium
+started: 2026-09-18T23:02:05Z
+status: done
+tags:
+- pod
+- tooling
+title: 'scripts/podcheck.pl: pre-weave source POD check for the [@Author::GETTY] weaver
+  directives'
+updated: 2026-09-18T23:02:12Z
+---
+
+Plain podchecker on a source .pm trips over the weaver directives (=attr/=method/=synopsis...) as 'Unknown directive', and on L</...> links into them as 'unresolved', because those become standard POD only after Pod::Weaver at build time -- which is why the canonical check (PodSyntaxTests/Test::Pod) runs against the built dist. podcheck.pl applies the same directive->head mapping in memory (line-for-line, so error lines still point at source) then runs Pod::Checker, so source POD and dead internal links (which Test::Pod never checks) can be verified without a full dzil build.
+
+committed 1975fc6
