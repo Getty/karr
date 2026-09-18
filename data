@@ -1,0 +1,31 @@
+---
+claimed_at: 2026-09-18T23:01:52Z
+claimed_by: karr
+class: standard
+completed: 2026-09-18T23:01:52Z
+created: 2026-09-18T17:58:53Z
+id: 298
+priority: low
+started: 2026-09-18T18:18:37Z
+status: done
+tags:
+- cpanfile
+- docs
+title: 'cpanfile: declare core modules actually used but missing from the file'
+updated: 2026-09-18T23:01:58Z
+---
+
+Pre-release audit finding (0.600 -> 0.601). cpanfile already lists several core modules explicitly (Errno, POSIX, Sys::Hostname, Time::HiRes, IO::Select, IO::Handle, Encode, Scalar::Util) even though they ship with Perl -- that is this project's own convention for completeness. Six more core modules are used directly in lib/ but are not in cpanfile, breaking that consistency:
+
+  - Carp (lib/App/karr/Task.pm)
+  - Digest::MD5 (lib/App/karr/Foundation.pm, lib/App/karr/Foundation/ChainStore.pm)
+  - Exporter (lib/App/karr/AgentName.pm, Error.pm, Dispatch.pm, Encoding.pm)
+  - Fcntl (lib/App/karr/Foundation/Agents.pm, Foundation/State.pm)
+  - IPC::Open3 (lib/App/karr/Git.pm)
+  - Symbol (lib/App/karr/Git.pm)
+
+Not an installability blocker (all ship with every Perl, and dzil build already completes cleanly via Prereqs::FromCPANfile), but add requires lines for these six, alphabetically among the existing core-module entries, for consistency with the stated house rule that every actually-used runtime dep is declared.
+
+cpanfile: 6 benutzte-aber-fehlende Core-Module deklariert (Carp, Digest::MD5, Exporter, Fcntl, IPC::Open3, Symbol). Verifiziert: cpanfile parst, alle 6 present.
+
+committed 26eebaa3
