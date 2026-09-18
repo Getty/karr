@@ -274,6 +274,20 @@ sub command_table {
   return @out;
 }
 
+=method command_table
+
+    my @rows = App::karr->command_table;
+
+The full command list as two-element arrayrefs of name and description --
+the same C<@COMMANDS> data C<_print_help> renders for C<karr --help>, plus
+one extra row per entry in the internal alias table (C<set-refs>,
+C<get-refs>, C<agent-name>, C<view>) under the spelling MooX::Cmd actually
+dispatches commands on. Exposed here so L<App::karr::Cmd::Completion> can
+read the same table rather than keeping its own copy, when generating the
+static bash/zsh/fish completion scripts.
+
+=cut
+
 sub _print_help {
   my ($self_or_class, $code) = @_;
   $code //= 0;

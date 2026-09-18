@@ -7,6 +7,15 @@ use App::karr::Config;
 
 has store => ( is => 'ro', required => 1 );
 
+=attr store
+
+The L<App::karr::BoardStore> this board's computations run against --
+C<final_status> and C<hidden_done_count> read the board's status list from
+it, and C<group_order> reads its config-derived status, priority, and class
+ordering. Required.
+
+=cut
+
 has _config => (
   is      => 'lazy',
   builder => sub {
