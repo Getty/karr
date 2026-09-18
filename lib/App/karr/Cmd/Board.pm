@@ -291,7 +291,6 @@ sub execute {
   # without its archive (see the top) -- so the total says how many cards are
   # on this board, and `blocked` how many of those are stuck, rather than
   # either number silently including work that was filed away.
-  my $blocked = grep { $_->has_blocked } @tasks;
   # Same test as the per-card `@claimant` token above, so the footer can never
   # count a claim the board itself does not show.
   my $claimed = grep { $_->has_claimed_by && !$self->store->is_terminal_status($_->status) } @tasks;
@@ -302,11 +301,24 @@ sub execute {
   my $final_status = $board->final_status;
   my $hidden = ( defined $final_status && !$self->done )
     ? $board->hidden_done_count( \@tasks ) : 0;
+  # Count only live blocked cards as blocked -- the same terminal-status test
+  # the claimed count uses, so the number matches the blocked cards the board
+  # actually shows and a dead card cannot linger as a perpetual blocker. A card
+  # blocked in the withheld final column is not lost: its block_reason stays put
+  # as provenance (#223/#224) and the annotation below surfaces it as
+  # "(M in <final>)" so a done+blocked card cannot stay invisible (ticket #295).
+  my $blocked = grep { $_->has_blocked && !$self->store->is_terminal_status($_->status) } @tasks;
+  my $blocked_hidden = ( defined $final_status && !$self->done )
+    ? scalar grep { $_->has_blocked && $_->status eq $final_status } @tasks : 0;
   my $total_label = scalar(@tasks) . ' tasks';
   $total_label .= " ($hidden $final_status hidden)" if $hidden;
   my @summary = ( $total_label );
   push @summary, "$claimed claimed" if $claimed;
-  push @summary, "$blocked blocked" if $blocked;
+  if ( $blocked || $blocked_hidden ) {
+    my $blocked_label = "$blocked blocked";
+    $blocked_label .= " ($blocked_hidden in $final_status)" if $blocked_hidden;
+    push @summary, $blocked_label;
+  }
   print "\n", $c->(join('  ', @summary), 'bold'), "\n";
 }
 

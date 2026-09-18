@@ -1,5 +1,16 @@
 {{$NEXT}}
 
+    - A card left blocked in a terminal status (`done`/`archived`) no longer
+      counts as an active blocker. `karr board`'s footer counts only live
+      blocked cards, matching its claimed count, and breaks any hidden ones out
+      as `N blocked (M in done)` so a done+blocked card cannot stay invisible.
+      `karr context` applies the same rule to its blocked count and Blocked
+      section -- a deliberate divergence from kanban-md, which counts them, so a
+      shared context block can now hold a different blocked number (see
+      docs/adr/0006). In both cases the flag and its `block_reason` are left
+      untouched and stay reachable with `karr list --blocked --status done`
+      (k295).
+
     - Prebuilt single-file Linux binaries (x86_64 and arm64) are now attached
       to each GitHub release, raw and as a `.tar.gz` with a `.sha256`, built
       with PAR::Packer so `karr` runs with no Perl or CPAN install. It bundles
