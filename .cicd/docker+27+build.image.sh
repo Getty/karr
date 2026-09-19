@@ -12,9 +12,9 @@ test -n "$repo"
 build() {
   # $1 = Dockerfile target, $2 = full image:tag
   if docker info 2>&1 | grep -qi podman; then
-    DOCKER_BUILDKIT=0 docker build --file Dockerfile --target "$1" --tag "$2" .
+    DOCKER_BUILDKIT=0 docker build --file Dockerfile --build-arg KARR_SRC=checkout --target "$1" --tag "$2" .
   else
-    docker build --file Dockerfile --target "$1" --tag "$2" .
+    docker build --file Dockerfile --build-arg KARR_SRC=checkout --target "$1" --tag "$2" .
   fi
 }
 
