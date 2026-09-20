@@ -978,9 +978,10 @@ cpanm App::karr
 
 Prebuilt Linux binaries are attached to each
 [GitHub release](https://github.com/Getty/karr/releases):
-`karr-<version>-linux-x86_64` and `karr-<version>-linux-arm64`, each as a raw
-executable and a `.tar.gz`, with a `.sha256` beside it. Download, verify with
-`sha256sum -c`, `chmod +x`, and run — no Perl or CPAN needed. The target needs
+`karr-<version>-linux-x86_64` and `karr-<version>-linux-aarch64`, each as a raw
+executable and a `.tar.gz`; a single `karr-<version>-checksums.txt` covers them
+all. Download, verify with `sha256sum -c`, `chmod +x`, and run — no Perl or CPAN
+needed. The target needs
 the usual system libraries `libssl`, `libcrypto`, `libssh2`, `libz`, and
 `libzstd` (present on any normal Linux). The binary is ~23 MB and bundles its
 own Perl, so it starts a little slower than the CPAN install (~450 ms vs

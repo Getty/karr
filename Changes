@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - Release-asset names are tidied. The arm64 binary and tarball are now named
+      `...-linux-aarch64` (was `-linux-arm64`) to match the `x86_64` naming, and
+      the per-file `.sha256` sidecars are replaced by a single
+      `karr-<version>-checksums.txt` (verify with `sha256sum -c`) covering every
+      asset. The raw binary and the `.tar.gz` are both still shipped per arch.
+
 0.601     2026-09-19 23:43:42Z
 
     - A card left blocked in a terminal status (`done`/`archived`) no longer

@@ -17,7 +17,7 @@ jobs:
         include:
           - arch: x86_64
             runner: ubuntu-latest
-          - arch: arm64
+          - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     container:
@@ -103,14 +103,36 @@ jobs:
           printf 'karr %s (linux-%s)\nRuntime libs required on target: libssl libcrypto libssh2 libz libzstd\nhttps://github.com/Getty/karr\n' \
             "$V" "$ARCH" > "pkg/$BASE/README"
           tar -C pkg -czf "$BASE.tar.gz" "$BASE"
-          sha256sum "$BASE" > "$BASE.sha256"
-          sha256sum "$BASE.tar.gz" > "$BASE.tar.gz.sha256"
       - name: Upload assets to the release
+        # Per-arch: the raw binary and the .tar.gz. A single checksums file over
+        # all archs cannot be written here (each matrix job sees only its own
+        # arch); the `checksums` job below builds it once both have uploaded.
         env:
           GH_TOKEN: ${{ github.token }}
           BASE: ${{ steps.v.outputs.base }}
         run: |
           gh release upload "$TAG" \
-            "$BASE" "$BASE.sha256" \
-            "$BASE.tar.gz" "$BASE.tar.gz.sha256" \
+            "$BASE" "$BASE.tar.gz" \
             --clobber --repo "$GITHUB_REPOSITORY"
+  checksums:
+    # One SHA256SUMS-style file over every arch's assets (gh/goreleaser style),
+    # in place of a .sha256 beside each asset. Runs after both build jobs so all
+    # four assets are already attached; downloads them back and hashes them.
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: Build and upload one checksums file
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${TAG#v}"
+          out="karr-$v-checksums.txt"
+          mkdir dl
+          # The `-linux-` glob matches the binaries and tarballs but never the
+          # checksums file itself, so a re-run does not hash its own output.
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern 'karr-*-linux-*' --dir dl
+          ( cd dl && sha256sum karr-*-linux-* ) > "$out"
+          gh release upload "$TAG" "$out" --clobber --repo "$GITHUB_REPOSITORY"
