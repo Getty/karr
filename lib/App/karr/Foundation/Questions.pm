@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation question mailbox under refs/karr-foundation/questions/*
 
 package App::karr::Foundation::Questions;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo;
 use POSIX qw( strftime );
 use Try::Tiny;

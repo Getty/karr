@@ -1,7 +1,7 @@
 # ABSTRACT: Role providing option-aware CLI positional-argument parsing
 
 package App::karr::Role::CliArgs;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo::Role;
 
 =head1 DESCRIPTION

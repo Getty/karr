@@ -1,7 +1,7 @@
 # ABSTRACT: Turn internal errors into one clean user-facing line
 
 package App::karr::Error;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use strict;
 use warnings;
 use Scalar::Util qw( blessed );

@@ -1,7 +1,7 @@
 # ABSTRACT: Multi-board overview of every karr board under a directory tree
 
 package App::karr::Cmd::Dashboard;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

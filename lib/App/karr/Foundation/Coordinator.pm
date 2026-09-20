@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation's judgement layer -- the coordination agent, called only on deviation
 
 package App::karr::Foundation::Coordinator;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo;
 use POSIX qw( strftime );
 use Path::Tiny;

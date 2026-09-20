@@ -1,7 +1,7 @@
 # ABSTRACT: Show flow metrics: throughput, lead/cycle time, flow efficiency, aging work
 
 package App::karr::Cmd::Metrics;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

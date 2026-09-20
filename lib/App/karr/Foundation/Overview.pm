@@ -1,7 +1,7 @@
 # ABSTRACT: karr-foundation read-only overview -- multi-board status dashboard
 
 package App::karr::Foundation::Overview;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo;
 use Time::Piece;
 use Try::Tiny;

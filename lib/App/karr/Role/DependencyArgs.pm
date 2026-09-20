@@ -1,7 +1,7 @@
 # ABSTRACT: Turn the dependency ids a command was given into validated numbers
 
 package App::karr::Role::DependencyArgs;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo::Role;
 
 # What this role calls on its consumer (ticket #128's rule): usage_error from

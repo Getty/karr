@@ -1,7 +1,7 @@
 # ABSTRACT: Shared colour decision for the renderers that colour their output
 
 package App::karr::Role::Color;
-our $VERSION = '0.601';
+our $VERSION = '0.602';
 use Moo::Role;
 use MooX::Options;
 
