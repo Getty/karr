@@ -1,4 +1,4 @@
-{{$NEXT}}
+0.601     2026-09-19 23:43:42Z
 
     - A card left blocked in a terminal status (`done`/`archived`) no longer
       counts as an active blocker. `karr board`'s footer counts only live
