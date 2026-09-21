@@ -1,0 +1,29 @@
+---
+claimed_at: 2026-09-21T21:38:45Z
+claimed_by: karr
+class: standard
+completed: 2026-09-21T21:38:45Z
+created: 2026-09-21T19:19:36Z
+id: 301
+priority: high
+started: 2026-09-21T19:19:48Z
+status: done
+tags:
+- cli
+- parsing
+title: k-Prefix-Notation als Ticket-ID akzeptieren (k30 == 30)
+updated: 2026-09-21T21:38:45Z
+---
+
+Ticket-Referenzen sollen in der Hausnotation kNNN akzeptiert werden, ueberall wo bisher eine reine Zahl als lokale Task-ID erwartet wird. Also `karr show k30` == `karr show 30`.
+
+Blast-Radius (lokale Task-ID-Eingaenge):
+- parse_ids (Role/BoardAccess): deckt move/edit/delete/archive/show/unlock/needs zentral ab
+- Handoff: nimmt pos[0] direkt, nicht ueber parse_ids
+- Context: nimmt Positional-ID direkt
+- parse_dependency_ids (Role/DependencyArgs): --depends-on etc., Regex \A[0-9]+\z
+- CrossBoard board#id: id-Seite ist eine lokale ID der anderen Karte
+
+Design: ein zentraler Normalizer, der ein fuehrendes [kK] direkt vor Ziffern strippt (k30 -> 30, K30 -> 30). Tokens die nicht [kK]+Ziffern sind bleiben unveraendert und scheitern wie bisher. Regressionstest hinterlassen.
+
+Implementiert am CLI-ID-Rand: neuer normalize_task_id (Role/BoardAccess) strippt fuehrendes k/K vor reinen Ziffern; genutzt von parse_ids (move/edit/delete/archive/show/unlock/needs), Handoff, parse_dependency_ids (--depends-on/--add-depends-on) und CrossBoard board#id. Ref-Layer bleibt numerisch. Regressionstest t/301 (6 subtests) + Changes-Eintrag. Gezielte Tests gruen (t/301, 127, 04, 32, 192, 100, 124, 215). Arbeitsbaum noch nicht committet -- wartet auf Maintainer-Freigabe.
