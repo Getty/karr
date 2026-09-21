@@ -107,7 +107,9 @@ sub execute {
   my @pos = $self->positional_args($args_ref);
   # See the note in Cmd::Move: length, not truth, or the id "0" is read as no
   # id at all and answered with a usage error instead of "not found" (#239).
-  my $id = $pos[0];
+  # normalize_task_id accepts the house kNNN spelling (k30 == 30) here, the way
+  # parse_ids does for the batch commands, and leaves undef/"0" untouched.
+  my $id = $self->normalize_task_id($pos[0]);
   # No suggestion line here, deliberately (ticket k263). This guard fires only
   # when the id is missing, and --claim is required on this command, so by the
   # time it is reached the caller has typed nothing that could be quoted back:

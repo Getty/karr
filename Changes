@@ -1,5 +1,12 @@
 {{$NEXT}}
 
+    - Local task ids accept the house `kNNN` spelling: `karr show k30` names the
+      same card as `karr show 30`, and a leading `k`/`K` works anywhere a bare
+      number does -- move, edit, delete, archive, unlock, handoff, needs, show,
+      mixed batches (`k30,31,K32`), the `--depends-on`/`--add-depends-on` flags
+      and the id side of a cross-board `BOARD#ID` reference. Any other token is
+      left untouched and still fails as before.
+
     - Release-asset names are tidied. The arm64 binary and tarball are now named
       `...-linux-aarch64` (was `-linux-arm64`) to match the `x86_64` naming, and
       the per-file `.sha256` sidecars are replaced by a single
