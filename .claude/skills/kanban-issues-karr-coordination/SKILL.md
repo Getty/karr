@@ -76,6 +76,11 @@ karr create "Ship it" --depends-on 2,3           # board-local dependency; ids m
 karr create "New card" --json                    # the card as JSON: pipe the id onward
 ```
 
+Waiting for another project's release is not a card, and no reason to keep
+one open or blocked: the dependency pin (`cpanfile`, `package.json`, …) set to
+the version in that project's tree — its next release — already says it. Close
+the card once the work is committed.
+
 Bugs found on the way become cards, not silent fixes. A new card is unclaimed
 unless `--status` puts it into a `require_claim` column (you are starting it)
 or `--claim` says who holds it.
