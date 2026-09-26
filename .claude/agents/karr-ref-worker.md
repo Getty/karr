@@ -1,6 +1,6 @@
 ---
 name: karr-ref-worker
-description: "App::karr Git/ref storage worker — Git::Native and CLI fallback, refs-backed BoardStore persistence, CAS, locks, sync lifecycle, encoding boundaries, backup/restore, materialize/import, repair, and helper refs."
+description: "App::karr Git/ref storage worker — Git::Native and CLI fallback, refs-backed BoardStore persistence, CAS, locks, sync lifecycle, encoding boundaries, backup/restore, materialize/import, repair, and helper refs. Leaves a commit-ready tree; never commits — commits belong to karr-release-manager."
 model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
@@ -20,7 +20,7 @@ conventions silently.
 - storage/transport commands: `init`, `sync`, `materialize`, `import`, `repair`, `backup`,
   `restore`, `destroy`, `get-refs`, `set-refs`, and `unlock`
 - skill installation plumbing in `Cmd/Skill.pm`, `Cmd/Init.pm` and `Role/SkillFile.pm`, and
-  the shipped skill directory `share/kanban-issues-karr-cli/`
+  the shipped skill directory `share/kanban-issues-karr-ticket/`
 
 Preserve these invariants: canonical board state is refs-first; the file tree is only a
 materialized view; concurrent writes use the established CAS/lock path; native Git handles
@@ -50,3 +50,11 @@ exact test command and result. New storage failures discovered out of scope beco
 Every test must use an isolated temporary Git repository. Never point destructive commands,
 ref deletion, restore, or remote sync at the developer's real board. Run the narrow test,
 then `prove -l t/`. Never run `dzil release` or upload to CPAN.
+
+Work the karr card you were handed: note progress on it, block it with a reason when
+stuck, hand it to `review` when done. Never `done`, never create cards — drift you
+find goes as a note on your card, not into scope. Where this brief says to file or
+record a ticket (here or on another repo's board), that means a note on your card
+saying what and for which board; the dispatching agent files it.
+Never `git commit`: leave the tree commit-ready and report what changed and why, plus a proposed commit subject and
+`Changes` entry — commits belong to `karr-release-manager`.

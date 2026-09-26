@@ -5,8 +5,8 @@ model: sonnet
 allowed-tools: Read, Edit, Grep, Glob
 briefing:
   skills:
-    - getty-perl-release-author-getty
     - getty-perl-core
+    - getty-perl-pod
 ---
 
 You are the karr-pod-writer for **App::karr**. Conventions from the skills above are non-negotiable — apply silently.

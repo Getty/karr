@@ -25,7 +25,7 @@ the rules file). Agents in this repo (skills force-loaded via `briefing.skills`)
 | karr-foundation: discovery, drain loops, per-repo lock/state, cooldown, auto-blocking, `disable`/`enable` | `karr-foundation-worker` |
 | Behavior-relevant code spanning those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
 | Write/extend tests under `t/` | `karr-test-writer` |
-| Pre-release audit (Changes, cpanfile, dist.ini, version) | `karr-release-checker` |
+| Commits, `Changes`, card → done, pre-release audit | `karr-release-manager` |
 | POD (`=attr`/`=method`, `# ABSTRACT`) | `karr-pod-writer` |
 
 Take the narrowest domain worker that fits; each names the other two in its boundaries section
@@ -33,7 +33,7 @@ and hands a misrouted task back rather than solving it from the wrong context.
 
 **Dogfood:** karr tracks its own work on its own board (`refs/karr/*`). Use `karr list --compact`
 / `karr board` for open work and file bugs found here as tickets. Full surface: skill
-`kanban-issues-karr-cli`.
+`kanban-issues-karr-coordination`.
 
 ## Reference: kanban-md
 
@@ -176,15 +176,15 @@ Agent/skill/rule material lives under `.claude/`:
 - `rules/karr-rules.md` — house rules, auto-loaded (discipline, delegation, coordination, release)
 - `agents/karr-*.md` — the project agent fleet (briefing-aware; skills force-loaded at spawn)
 - `skills/` — seven skills. Five are shared across repositories via manage-skills
-  hardlinks (`kanban-issues-karr-cli`, `getty-perl-core`, `getty-perl-moo`,
+  hardlinks (`kanban-issues-karr-coordination`, `getty-perl-core`, `getty-perl-moo`,
   `getty-perl-release-author-getty`, `perl-release-dist-ini`); two are local to
   this repository (`karr-foundation-cli`, `perl-file-sharedir`). `ls -li
   .claude/skills/*/SKILL.md` tells them apart by link count. Don't rename them,
   and edit a shared one via `cat > .claude/skills/<skill>/SKILL.md` (its
   `references/*.md` are linked the same way) — **not** the
   `Edit`/`Write` tools or `sed -i`, which mint a new inode and break the shared
-  hardlink; see skill `manage-skills`. `kanban-issues-karr-cli` is hardlinked
-  file-for-file to `share/kanban-issues-karr-cli/` (what `karr skill install`
+  hardlink; see skill `manage-skills`. `kanban-issues-karr-coordination` is hardlinked
+  file-for-file to `share/kanban-issues-karr-coordination/` (what `karr skill install`
   ships: `SKILL.md` plus `references/*.md`), so editing one edits the other —
   as long as the edit keeps the inode. A new file under either directory has to
   be linked into the other by hand: `ln <canonical> <other>` (t/62).

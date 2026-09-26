@@ -7,7 +7,7 @@ briefing:
   skills:
     - getty-perl-core
     - getty-perl-moo
-    - kanban-issues-karr-cli
+    - kanban-issues-karr-ticket
 ---
 
 You are the karr-test-writer for **App::karr**. Conventions from the skills above are non-negotiable — apply silently.

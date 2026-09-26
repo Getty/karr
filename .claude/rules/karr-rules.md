@@ -29,7 +29,7 @@ Depends on whether the Agent/Task tool is available to you.
 
 - **You can spawn subagents** (orchestrating main agent): Do NOT touch behavior-relevant karr
   code yourself — delegate to the domain worker below. Your lane: coordinate, inspect, plan, review diffs,
-  run tests, manage git, edit non-behavioral docs. Why: only the `karr-*` agents get their skills
+  run tests, edit non-behavioral docs. Why: only the `karr-*` agents get their skills
   force-loaded via `briefing.skills`; you get no briefing and would touch internals with too
   little context. Specialist lanes:
 
@@ -40,7 +40,7 @@ Depends on whether the Agent/Task tool is available to you.
   | karr-foundation: multi-board discovery, overview, agent command resolution, drain loops, `.karr.lock`/`.karr.state`, cooldown, stall detection, auto-blocking, `disable`/`enable` | `karr-foundation-worker` |
   | Behavior-relevant code that spans those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
   | Write/extend tests under `t/` | `karr-test-writer` |
-  | Pre-release audit (Changes, cpanfile, dist.ini, version) | `karr-release-checker` |
+  | Commits, `Changes`, card → done, pre-release audit | `karr-release-manager` |
   | POD (`=attr`/`=method`, ABSTRACT) | `karr-pod-writer` |
 
   Pick the narrowest domain worker that covers the task — they brief on one domain instead of
@@ -53,6 +53,9 @@ Depends on whether the Agent/Task tool is available to you.
 
 Behavior-relevant = CLI command logic (`Cmd/*`), refs-backed storage (`BoardStore`, `Git`,
 `Lock`, `SyncGuard`), `Task`/`Config` parsing and writing, sync lifecycle, tests.
+
+**Only `karr-release-manager` commits.** A worker leaves a commit-ready tree and hands its card
+to `review`; you then dispatch `karr-release-manager` to cut the commit and close the card.
 
 ## Coordination — karr board (dogfood, always in scope)
 
@@ -69,7 +72,7 @@ tool *and* the workflow, so use it; don't invoke a skill first, just run it:
   unclaimed, so others can pick it
 
 Bugs found while dogfooding become tickets on this board. Full command surface (pick / context /
-set-refs / multi-agent): skill `kanban-issues-karr-cli`.
+set-refs / multi-agent): skill `kanban-issues-karr-coordination`.
 
 ## Release — never without permission
 

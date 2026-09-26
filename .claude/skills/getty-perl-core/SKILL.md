@@ -1,6 +1,6 @@
 ---
 name: getty-perl-core
-description: "Load on any Perl edit in a Getty project — module loading, attributes, errors, strings, control flow, cpanfile, Changes, and the house choices that differ from Perl defaults."
+description: "Load on any Perl edit in a Getty project — module loading, attributes, errors, strings, control flow, cpanfile, per-file $VERSION, and the house choices that differ from Perl defaults."
 ---
 
 # Perl Core — Getty House Rules
@@ -54,6 +54,31 @@ The rule is "always on", never "leave them out". Omitting them from a class is c
 - Bare subs are fine in **non-class utility modules** imported as functions. Once a file says `use Moose`/`use Moo`, every `sub` is a method.
 
 Why: bare subs hide what the call needs, can't be overridden or mocked, and force every caller to thread state by hand.
+
+### Dispatch through the invocant, never a hardcoded class name
+
+Route a class's own methods, and every collaborator it reaches for, through the invocant — never through a literal package name. Perl passes the invocant as the first argument for both `Foo->method` and `$obj->method`, so a class name is itself a valid invocant: `$self` simply *is* `$class` when nothing is instantiated. Going through it costs nothing even for a never-instantiated class, and it is the one thing that lets a subclass override the behaviour — a literal `Some::Package->helper(...)` nails the call to that exact package, and no override or mock can reach it.
+
+- **A method on the same class:** `$self->value_to_bytes($v)`, never `My::Value->value_to_bytes($v)` from inside `My::Value`.
+- **A collaborator in another class:** name the class once in an overridable resolver, then dispatch through it — never a literal at the call site.
+
+```perl
+package My::Pipe;
+
+sub backend_class { 'My::Backend::Age' }        # override point, named once
+
+sub decrypt {
+  my ( $self, %arg ) = @_;
+  my $key = $self->backend_class->unwrap( $arg{header} );  # not My::Backend::Age->unwrap
+  return $self->_finish( $key );                           # not My::Pipe->_finish
+}
+
+package My::Pipe::Vault;
+use parent -norequire, 'My::Pipe';
+sub backend_class { 'My::Backend::Vault' }       # a subclass swaps it; the pipeline follows
+```
+
+This holds for class-method-only modules too: write every method's first line as `my ( $self, ... ) = @_;` and dispatch through `$self` whether or not the class is ever instantiated. The module becomes subclassable for free, and callers that write `Thing->do(...)` keep working unchanged.
 
 ## Errors
 
@@ -129,17 +154,30 @@ cpanm --info Module::Name | tail -1
 
 Getty-authored (non-exhaustive): `Langertha`, `IO::K8s`, `Kubernetes::REST`, `WWW::Crawl4AI`, `Net::Async::Crawl4AI`, `Net::Async::WebSearch`, `Catalyst::Plugin::ChainedURI`, `Locale::Simple`, `DBIO::*`, `WWW::Zitadel`, `WWW::PayPal`, `WWW::Chain`.
 
-## Changelog (the Changes file)
+## Every file carries its own `$VERSION`
 
-Every distribution ships a `Changes` file with a `{{$NEXT}}` token at the top (Dist::Zilla's `[NextRelease]` fills it at release time).
+**Each module under `lib/` and each Perl executable under `bin/` needs its own
+`our $VERSION = '...';`**, set to the version that will be released NEXT — one
+higher than what is on CPAN (or higher). A Perl source file without a `$VERSION`
+ships versionless and breaks consumers that pin against it. Bash and other
+non-Perl executables are still installed from `bin/`, but are deliberately
+excluded from the PPI-based version rewrite.
 
-- **Add a bullet under `{{$NEXT}}` in the SAME commit as any user-facing change** — new bindings, behaviour changes, bug fixes, deprecations. If a CPAN consumer would notice, it belongs there.
-- **Measured against the last RELEASE, not the last commit.** "Would a consumer notice?" is asked against the version on CPAN. Something broken *and* fixed while unreleased was never visible to anyone and gets no bullet, however many commits it cost — a dependency floor corrected before it shipped, a rename that never left the branch, a bug the new test found. A changelog is the difference between two releases, not a work log.
-- **Before the FIRST release there is no "no longer".** A distribution with nothing on CPAN has a `{{$NEXT}}` that says what the thing IS, not how it came to be. "no longer", "used to", "previously", "instead of" are wrong by construction there — the reader has never seen the old behaviour. Write that block as one document when the release is cut, not bullet by bullet along the way.
-- **Match the existing style:** two-space indent, `  - ` bullets, wrap near 78 columns, present-tense imperative ("New binding X", "Fix Y on macOS").
-- **One topic, one bullet, one to three lines** — touching an area again rewrites the bullet that is already there instead of adding a second. Wording and length: `getty-git-commit-style`.
-- **Skip pure dev-tooling noise** — skill hardlinks, editor config, internal CI refactors. A CI fix that unbreaks the build for everyone IS worth a line.
-- **Never hand-edit the version line or timestamp** — `[NextRelease]` owns those.
+**Only the FIRST `our $VERSION` in a file gets rewritten.** RewriteVersion::Transitional
+and BumpVersionAfterRelease both stop after the first match, so a file holding two
+packages leaves the second one frozen at whatever version it was written with —
+while MetaProvides::Update happily reports the real release version. The result is
+a distribution whose META and whose code disagree, silently, for as many releases
+as it takes someone to notice.
+
+So: **one package per file.** If you find several `package` statements in one file,
+split them out before releasing.
+
+**Executables belong in `bin/`, never `script/`.** The bundle sets no `ExecDir`, so
+Dist::Zilla's default of `bin` applies: files under `script/` are not installed as
+executables, and a Perl executable there has no `$VERSION` rewrite. A distribution
+with a `script/` directory should have it renamed to `bin/` — otherwise none of
+the executable handling takes effect.
 
 ## Forbidden
 

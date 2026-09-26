@@ -1,6 +1,6 @@
 ---
 name: karr-board-worker
-description: "App::karr board-domain worker — task/config semantics, lifecycle rules, activity log, ordinary board commands, filtering, rendering, context, and metrics. Use for behavior that does not primarily concern Git transport, ref persistence, locking, sync, or karr-foundation."
+description: "App::karr board-domain worker — task/config semantics, lifecycle rules, activity log, ordinary board commands, filtering, rendering, context, and metrics. Use for behavior that does not primarily concern Git transport, ref persistence, locking, sync, or karr-foundation. Leaves a commit-ready tree; never commits — commits belong to karr-release-manager."
 model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
@@ -47,3 +47,11 @@ drift; do not expand the assigned ticket.
 Tests must use temporary repositories and must never mutate the developer's real board.
 Run the smallest relevant test first, then `prove -l t/`. Never run `dzil release` or upload
 to CPAN.
+
+Work the karr card you were handed: note progress on it, block it with a reason when
+stuck, hand it to `review` when done. Never `done`, never create cards — drift you
+find goes as a note on your card, not into scope. Where this brief says to file or
+record a ticket (here or on another repo's board), that means a note on your card
+saying what and for which board; the dispatching agent files it.
+Never `git commit`: leave the tree commit-ready and report what changed and why, plus a proposed commit subject and
+`Changes` entry — commits belong to `karr-release-manager`.
