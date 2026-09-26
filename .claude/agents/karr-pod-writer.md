@@ -2,7 +2,7 @@
 name: karr-pod-writer
 description: "Write/improve POD for App::karr following [@Author::GETTY] PodWeaver conventions — inline =attr/=method/=opt after the code, # ABSTRACT on every .pm, no manual NAME/VERSION/AUTHOR sections."
 model: sonnet
-allowed-tools: Read, Edit, Grep, Glob
+disallowedTools: Write, NotebookEdit, Bash
 briefing:
   skills:
     - getty-perl-core
