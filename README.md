@@ -1219,9 +1219,11 @@ karr log --agent "$KARR_CLAIM"
 karr show --me
 ```
 
-`KARR_CLAIM` is the claim name every claiming command (`move`, `handoff`, `pick`,
-`edit`, `create`, `list --claimed-by`) falls back to when `--claim` is omitted;
-an explicit `--claim` overrides it. It is carried per process, not stored, so
+`KARR_CLAIM` is the claim name `pick`, `handoff` and `list --claimed-by` fall
+back to when `--claim` is omitted. `create`, `move` and `edit` fall back to it
+only when the card ends up in a `require_claim` column, so a card filed into the
+backlog, promoted to `todo` or given a note stays free to pick. An explicit
+`--claim` overrides it everywhere. It is carried per process, not stored, so
 concurrent agents never share one — run several on a board by giving each its own
 worktree (their `agent-name`s differ), or `karr agent-name --unique` for several
 in one directory. `karr agent-name` is the checkout's own directory name.

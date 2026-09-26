@@ -93,6 +93,14 @@ of those two pairs contradicts itself, so C<--claim> with C<--release> and
 C<--block> with C<--unblock> are rejected as usage errors (exit 2) before any
 task is read.
 
+C<KARR_CLAIM> (ADR 0005) stands in for C<--claim> only when the card ends up
+in a column the board's C<require_claim> list covers. That column is the
+C<--status> given, or the card's current status when C<--status> is omitted.
+A note, a tag or a C<--status todo> on a card in a column that needs no claim
+therefore leaves the card unclaimed. C<--release> never claims, whatever
+C<KARR_CLAIM> holds. An explicit C<--claim> stamps the claim on any status
+(ticket #303).
+
 =item * Tag management
 
 C<--add-tag> and C<--remove-tag> accept comma-separated lists.
@@ -432,17 +440,17 @@ sub execute {
     my $task = $self->update_task_guarded($id, sub {
       my ($task) = @_;
 
-      # The effective claim: --claim when given, else KARR_CLAIM (ADR 0005).
-      # --claim/--release mutual exclusion above stays on the explicit flag, so
-      # an env-default claim never turns a plain --release into a usage error.
-      my $claim = $self->resolved_claim;
-
       # --release is the one edit that may act on somebody else's claim: it
       # exists precisely to break a claim a crashed agent left behind, and it
       # is karr's only way out of one before the timeout. Everything else has
       # to own the claim, or find it expired. Same carve-out as kanban-md's
       # validateEditClaim (cmd/edit.go).
-      $self->check_claim($task, $claim) unless $self->release;
+      #
+      # The owner asked about is who the caller is: --claim, else KARR_CLAIM
+      # (ADR 0005). That is an identity, not a stamp, so a note on a card the
+      # caller holds is let through in any column. What gets written is
+      # decided separately below.
+      $self->check_claim($task, $self->resolved_claim) unless $self->release;
 
       # Clear the claim BEFORE the status change so the require_claim guard
       # in apply_status_change sees the post-release state: --release sets up
@@ -455,6 +463,23 @@ sub execute {
         $task->clear_claimed_by;
         $task->clear_claimed_at;
       }
+
+      # The claim this edit writes (ticket #303, the #286 rule create
+      # follows): an explicit --claim on any status, KARR_CLAIM only when the
+      # card ends up in a require_claim column -- the --status it is given,
+      # else the one it already has. Without the narrowing, every edit stamped
+      # the caller's env name. `edit ID -a note` on a backlog card took it out
+      # of every other agent's `pick` and `list --unclaimed`, and a plain
+      # `--release` put back the claim it had just cleared.
+      #
+      # --release never claims. An explicit --claim with it was refused above,
+      # so what this drops is only the env default. Passed to
+      # apply_status_change as well, so `--release --status in-progress` meets
+      # the #150 refusal instead of being satisfied by the env name.
+      my $claim = $self->release ? undef
+        : $self->resolved_claim_for(
+            ( defined $self->status && length $self->status )
+              ? $self->status : $task->status );
 
       # length, not truth: a literal "0" is a meaningful title, status,
       # priority, assignee, due, class, estimate, body, append, tag or block

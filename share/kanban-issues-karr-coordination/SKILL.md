@@ -19,7 +19,9 @@ export KARR_CLAIM=$(karr agent-name)     # the checkout's directory name, e.g. "
 
 Claims are matched by name: `--claim` stamps it, `handoff` checks it,
 `list --claimed-by` selects on it. Every command that takes `--claim` defaults
-to `KARR_CLAIM`, so export it once per session and leave `--claim` off. An
+to `KARR_CLAIM`, so export it once per session and leave `--claim` off. `create`,
+`move` and `edit` use it only when the card ends up in a `require_claim` column:
+filing a card, promoting it to `todo` or adding a note leaves it free. An
 explicit `--claim NAME` still wins. Agents in separate worktrees already differ
 by name; several agents in the **same** directory take
 `karr agent-name --unique` (`karr-8fa`).

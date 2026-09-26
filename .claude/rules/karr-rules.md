@@ -66,10 +66,10 @@ tool *and* the workflow, so use it; don't invoke a skill first, just run it:
 - `karr create "Title" --priority high --tags a,b --body '…'` — new ticket
 - `karr edit ID -a "note"` · `--claim NAME` · `--block "why"` — update
 - `karr move ID in-progress --claim NAME` — start · `karr handoff ID --claim NAME --note "…"` — to review
-- `export KARR_CLAIM=$(karr agent-name)` — name yourself **once** per session; every `--claim`
-  (move, handoff, pick, edit, create) and `list --claimed-by` then defaults to it, so the handoff
-  matches the claim. A card you `create` without starting it (`--status in-progress`) stays
-  unclaimed, so others can pick it
+- `export KARR_CLAIM=$(karr agent-name)` — name yourself **once** per session; `pick`, `handoff`
+  and `list --claimed-by` then default to it, so the handoff matches the claim. `create`, `move`
+  and `edit` take it only when the card ends up in a `require_claim` column (`in-progress`,
+  `review`): a card you file, promote to `todo` or annotate stays unclaimed, so others can pick it
 
 Bugs found while dogfooding become tickets on this board. Full command surface (pick / context /
 set-refs / multi-agent): skill `kanban-issues-karr-coordination`.

@@ -1,5 +1,12 @@
 {{$NEXT}}
 
+    - With `KARR_CLAIM` exported, `karr edit` and `karr move` no longer claim
+      every card they touch; the env name is written only when the card ends
+      up in a `require_claim` status (the rule `create` already follows). A
+      note, a tag or a backlog -> todo promotion leaves the card free to pick.
+      `edit --release` no longer claims the card back. An explicit `--claim`
+      still stamps on any status.
+
     - The bundled agent skill `kanban-issues-karr-cli` is split in two:
       `kanban-issues-karr-coordination` (reading a board, picking, creating and
       routing cards, config, sync) and `kanban-issues-karr-ticket` (working the
