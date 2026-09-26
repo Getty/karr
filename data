@@ -1,0 +1,32 @@
+---
+class: standard
+created: 2026-09-26T13:33:07Z
+depends_on:
+- 304
+id: 306
+priority: medium
+status: backlog
+tags:
+- feature
+- claims
+- pick
+- foundation
+- config
+title: 'Held-back status: backlog is not pickable and holds no claim'
+updated: 2026-09-26T13:33:07Z
+---
+
+Maintainer decision (2026-09-26): three stages with distinct meaning.
+
+- backlog: filed and held back, used for sorting. Nobody takes it automatically.
+- todo: released, should happen soon. pick and karr-foundation may take it.
+- claim (in-progress): "we are doing it now".
+
+Promoting backlog -> todo must be easy and must NOT claim (that is k304) -- todo is the pool somebody claims from.
+
+Design:
+- A per-status flag in config next to require_claim, not the hardcoded name "backlog" (boards imported from kanban-md name statuses differently, k67). Set on backlog in default_config -- config is stored sparse over the defaults, so every board on the default status list gets it at once; boards with their own list opt in. Behaviour change -> Changes entry. Flag name still to be chosen; goes into CONTEXT.md. Check kanban-md ignores the unknown per-status key.
+- A card in a held-back status: not pickable (PickRules/pickable without --status, so both karr pick and Foundation::Picker), not actionable for foundation (a board with only backlog left is drained), cannot hold a claim (edit --claim / create --claim refuse), and a move into it releases the claim.
+- backlog -> in-progress --claim X directly stays allowed: the claim lands on in-progress. No transition rules.
+- Open: what pick --status backlog does (refuse, or only with --move to a claimable status).
+- Promotion backlog -> todo is the maintainer's call by default, not the coordinator agent's, or the hold is gone again.
