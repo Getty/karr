@@ -16,7 +16,7 @@ my-dist/
   share/           ← convention, configurable
     templates/
     schema.json
-    kanban-issues-karr-cli/
+    kanban-issues-karr-coordination/
   dist.ini
 ```
 
@@ -131,25 +131,30 @@ sub default_config_path {
 
 ```
 share/
-  kanban-issues-karr-cli/
+  kanban-issues-karr-coordination/
     SKILL.md
     references/*.md
+  kanban-issues-karr-ticket/
+    SKILL.md
 ```
 
 ```perl
-# In init/install command: copy the directory, every file written in place --
-# spew_utf8 renames a temp file over the target and would break a SKILL.md
-# that is one link of a hardlink chain (manage-skills) out of that chain.
+# In init/install command: copy each skill directory, every file written in
+# place -- spew_utf8 renames a temp file over the target and would break a
+# SKILL.md that is one link of a hardlink chain (manage-skills) out of that
+# chain. The skill names are listed once, in one place.
 my $share = find_share_dir();  # with fallback
-my $src   = $share->child('kanban-issues-karr-cli');
-my $dst   = path('.claude/skills/kanban-issues-karr-cli');
-$src->visit(sub {
-  my ($p) = @_;
-  return unless $p->is_file && $p->basename =~ /\.md\z/;
-  my $target = $dst->child( $p->relative($src) );
-  $target->parent->mkpath;
-  $target->append_utf8( { truncate => 1 }, $p->slurp_utf8 );
-}, { recurse => 1 });
+for my $name (qw( kanban-issues-karr-coordination kanban-issues-karr-ticket )) {
+  my $src = $share->child($name);
+  my $dst = path('.claude/skills')->child($name);
+  $src->visit(sub {
+    my ($p) = @_;
+    return unless $p->is_file && $p->basename =~ /\.md\z/;
+    my $target = $dst->child( $p->relative($src) );
+    $target->parent->mkpath;
+    $target->append_utf8( { truncate => 1 }, $p->slurp_utf8 );
+  }, { recurse => 1 });
+}
 ```
 
 ### Ship JSON schemas (like OpenAPI-Modern)

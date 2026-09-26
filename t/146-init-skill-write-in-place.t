@@ -12,7 +12,7 @@ use App::karr::Cmd::Skill;
 
 # Ticket #145: the half of ticket #142 that was left standing one command over.
 #
-# `karr init --claude-skill` installs .claude/skills/kanban-issues-karr-cli/SKILL.md -- the very
+# `karr init --claude-skill` installs .claude/skills/kanban-issues-karr-ticket/SKILL.md -- the very
 # file `karr skill install --agent claude-code` installs -- and did it with the
 # spew_utf8 that #142 removed from Cmd::Skill. spew_utf8 writes a temp file and
 # renames it over the target, so the path comes back on a *new* inode. A
@@ -45,11 +45,11 @@ sub ident {
     return { dev => $st[0], ino => $st[1], nlink => $st[3] };
 }
 
-# A project root whose .claude/skills/kanban-issues-karr-cli/SKILL.md is already hardlinked to a
+# A project root whose .claude/skills/kanban-issues-karr-ticket/SKILL.md is already hardlinked to a
 # second path, i.e. the manage-skills situation this ticket is about.
 sub chained_install {
     my ( $root, $content ) = @_;
-    my $installed = path($root)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
+    my $installed = path($root)->child('.claude/skills/kanban-issues-karr-ticket/SKILL.md');
     $installed->parent->mkpath;
     $installed->spew_utf8($content);
     my $elsewhere = path($root)->child('elsewhere/SKILL.md');
@@ -58,14 +58,17 @@ sub chained_install {
     return ( $installed, $elsewhere );
 }
 
-# Run _install_claude_skill against a share dir we control, with its
+# Run _install_claude_skill against a share dir we control -- holding the
+# ticket skill only; the coordination skill falls through to this checkout's
+# share/, which the per-skill lookup allows and which these subtests do not
+# look at -- with its
 # "Installed ..." line and any warnings captured rather than dumped into the
 # TAP stream.
 sub install_into {
     my ( $root, $content ) = @_;
     # The #285 layout: a directory with SKILL.md and references/ under it.
     my $share = path( tempdir( CLEANUP => 1 ) );
-    my $skill = $share->child('kanban-issues-karr-cli');
+    my $skill = $share->child('kanban-issues-karr-ticket');
     $skill->child('references')->mkpath;
     $skill->child('SKILL.md')->spew_utf8($content);
     $skill->child('references/extra.md')->spew_utf8($REF);
@@ -176,7 +179,7 @@ subtest 'a missing reference is added while SKILL.md keeps its inode' => sub {
 subtest 'the content is encoded exactly once' => sub {
     my $dir = tempdir( CLEANUP => 1 );
     install_into( $dir, $NEW );
-    my $installed = path($dir)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
+    my $installed = path($dir)->child('.claude/skills/kanban-issues-karr-ticket/SKILL.md');
 
     my $raw = do {
         open my $fh, '<:raw', "$installed" or die "open $installed: $!";
@@ -190,7 +193,7 @@ subtest 'the content is encoded exactly once' => sub {
 
 subtest 'a project without .claude yet still gets the skill installed' => sub {
     my $dir = tempdir( CLEANUP => 1 );
-    my $installed = path($dir)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
+    my $installed = path($dir)->child('.claude/skills/kanban-issues-karr-ticket/SKILL.md');
     ok( !$installed->exists, 'nothing there to begin with' );
 
     my $r = install_into( $dir, $NEW );
@@ -270,7 +273,7 @@ subtest 'karr init --claude-skill through the real CLI keeps the inode' => sub {
     # reads a skill we control rather than an installed App::karr's (t/65 has
     # the long version of why this matters).
     my $share_lib = path( tempdir( CLEANUP => 1 ) );
-    my $share_dir = $share_lib->child(qw( auto share dist App-karr kanban-issues-karr-cli ));
+    my $share_dir = $share_lib->child(qw( auto share dist App-karr kanban-issues-karr-ticket ));
     $share_dir->child('references')->mkpath;
     $share_dir->child('SKILL.md')->spew_utf8($NEW);
     $share_dir->child('references/extra.md')->spew_utf8($REF);

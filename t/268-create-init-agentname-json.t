@@ -137,8 +137,10 @@ subtest 'init --json --claude-skill still installs, silently' => sub {
     unlike( $rv->{stdout}, qr/Installed Claude Code skill/,
         'the install confirmation is not on stdout' );
 
-    my $skill = path($repo)->child('.claude/skills/kanban-issues-karr-cli/SKILL.md');
-    ok( -f $skill, 'the skill file was still written' );
+    for my $name (qw( kanban-issues-karr-coordination kanban-issues-karr-ticket )) {
+        my $skill = path($repo)->child(".claude/skills/$name/SKILL.md");
+        ok( -f $skill, "the $name skill file was still written" );
+    }
 };
 
 subtest 'the plaintext forms are unchanged' => sub {

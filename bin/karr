@@ -127,8 +127,9 @@ Generates a compact board summary for embedding into files such as F<AGENTS.md>.
 
 =item * L<App::karr::Cmd::Skill>
 
-Installs, checks, updates, or prints the bundled skill file for Claude Code,
-Codex, and Cursor.
+Installs, checks, updates, or prints the bundled skills
+(C<kanban-issues-karr-coordination> and C<kanban-issues-karr-ticket>) for
+Claude Code, Codex, and Cursor.
 
 =back
 
