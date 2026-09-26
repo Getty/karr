@@ -1,0 +1,50 @@
+---
+claimed_at: 2026-09-26T23:27:22Z
+claimed_by: karr
+class: standard
+completed: 2026-09-26T23:27:14Z
+created: 2026-09-26T13:33:07Z
+depends_on:
+- 304
+id: 306
+priority: medium
+started: 2026-09-26T22:10:48Z
+status: done
+tags:
+- feature
+- claims
+- pick
+- foundation
+- config
+title: 'Held-back status: backlog is not pickable and holds no claim'
+updated: 2026-09-26T23:27:22Z
+---
+
+Maintainer decision (2026-09-26): three stages with distinct meaning.
+
+- backlog: filed and held back, used for sorting. Nobody takes it automatically.
+- todo: released, should happen soon. pick and karr-foundation may take it.
+- claim (in-progress): "we are doing it now".
+
+Promoting backlog -> todo must be easy and must NOT claim (that is k304) -- todo is the pool somebody claims from.
+
+Design:
+- A per-status flag in config next to require_claim, not the hardcoded name "backlog" (boards imported from kanban-md name statuses differently, k67). Set on backlog in default_config -- config is stored sparse over the defaults, so every board on the default status list gets it at once; boards with their own list opt in. Behaviour change -> Changes entry. Flag name still to be chosen; goes into CONTEXT.md. Check kanban-md ignores the unknown per-status key.
+- A card in a held-back status: not pickable (PickRules/pickable without --status, so both karr pick and Foundation::Picker), not actionable for foundation (a board with only backlog left is drained), cannot hold a claim (edit --claim / create --claim refuse), and a move into it releases the claim.
+- backlog -> in-progress --claim X directly stays allowed: the claim lands on in-progress. No transition rules.
+- Open: what pick --status backlog does (refuse, or only with --move to a claimable status).
+- Promotion backlog -> todo is the maintainer's call by default, not the coordinator agent's, or the hold is gone again.
+
+Decision (maintainer, 2026-09-27): no config flag. The held-back status is the status named 'backlog', hardcoded -- a board without such a column behaves as before. Reason: a per-status key kanban-md does not know is dropped when kanban-md rewrites config.yml, so a materialize -> kanban-md -> import round trip would silently lose the hold (#87 class). pick --status that includes backlog is refused (usage error, exit 2) pointing at 'karr move ID todo'. Flag can be added later if a board needs another name.
+
+2026-09-26 22:48 Started: reading PickRules, TaskMutation, Move/Edit/Create/Pick, Foundation _task_states/_is_actionable and Executor board_actionable. Plan: predicate is_held_back_status in App::karr::Config (+ BoardStore wrapper), used by PickRules::pickable, Pick option guards, TaskMutation (claim refusal + release on move into backlog), Create, Foundation snapshot.
+
+2026-09-26 22:54 Implemented: Config::is_held_back_status (+HELD_BACK_STATUS, promotion_status) with BoardStore wrapper; PickRules::pickable returns 0 for backlog; pick --status/--move backlog usage errors; TaskMutation::check_held_back_claim + release on move into backlog; Edit/Create refusals; Foundation _task_states held_back + _is_actionable. New t/306-backlog-held-back.t green, red against old lib (except the 3 stays-true guards). Next: fix existing tests broken by create->pick default-backlog.
+
+2026-09-26 23:11 Existing tests updated to the new intent (create/seed into todo where the test is about pick, claims or foundation work; t/31 now asserts backlog is not actionable; t/224/t/286/t/303 rewritten where they asserted a claim on backlog). MockStore gains is_held_back_status. Docs: CONTEXT.md Backlog entry, Changes, README, skills (claims.md, cards.md, coordination SKILL.md; inodes kept), foundation DEFAULT_PROMPT + coordinator MUST-NOT line. Running full suite next.
+
+2026-09-26 23:18 Also found (not in scope, for the dispatcher): karr list --unclaimed still lists backlog cards -- they carry no claim -- so 'list --unclaimed --not-blocked' is no longer exactly the set pick hands out (t/252 pins that on a board without backlog cards). The skill already scopes 'free to take' to --status todo. A legacy claim already sitting on a backlog card is left alone (not released, still shown by karr board as claimed) per the minimal-legacy decision.
+
+2026-09-26 23:18 Done. Predicate: App::karr::Config::is_held_back_status (constant HELD_BACK_STATUS => 'backlog', only true where the board configures the column; class call answers for the default board) + promotion_status (first non-terminal status after backlog, used in every hint), wrapped by App::karr::BoardStore::is_held_back_status. Callers: PickRules::pickable (0 for backlog regardless of filters -> karr pick and Foundation::Picker); karr pick --status containing backlog and --move backlog are usage errors (exit 2); TaskMutation::check_held_back_claim refuses a claim into/on backlog (exit 1, Error::held_back_claim_message), called by apply_status_change (before the same-status shortcut) and by edit for the no --status case; create has its own check before id allocation; apply_status_change's reopen release now also fires on any move into backlog (logged as the move, like a reopen); Foundation _task_states carries held_back, _is_actionable returns 0 for it (drained/skip/on_drained/board_actionable follow). Tests: new t/306-backlog-held-back.t (18 subtests; red against the old lib except the 3 stays-true guards); 20 existing tests updated to create/seed in todo or to assert the new refusal; MockStore gains the wrapper. Docs: CONTEXT.md Backlog entry, Changes, README, POD (Pick/Move/Edit/Create/PickRules/TaskMutation/ClaimDefault/Config/BoardStore/Error/Foundation/Picker/Executor), coordination skill SKILL.md + claims.md + cards.md (inodes kept), foundation DEFAULT_PROMPT and coordinator MUST-NOT. prove -lr t/: 246 files, 1885 tests, PASS, no skips. podcheck OK. Not committed.
+
+2026-09-26 23:27 Committed 6721735: k306: backlog is held back -- not pickable, not actionable, holds no claim
