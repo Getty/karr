@@ -8,7 +8,8 @@ use Scalar::Util qw( blessed );
 use Exporter qw( import );
 
 our @EXPORT_OK = qw( user_error clean_error is_usage_error command_hint
-  original_argv set_original_argv require_claim_message mandatory_claim_message );
+  original_argv set_original_argv require_claim_message mandatory_claim_message
+  held_back_claim_message );
 
 =head1 SYNOPSIS
 
@@ -300,6 +301,31 @@ The counterpart of L</require_claim_message> for a command that always needs a
 claim -- C<pick> and C<handoff>, whose C<--claim> was C<required> before ADR
 0005 let C<KARR_CLAIM> fill it. Raised only when neither the flag nor the
 environment supplied one.
+
+=cut
+
+# The other side of require_claim_message (ticket k306): a column that refuses
+# a claim rather than one that demands it. No KARR_CLAIM line here -- the env
+# default is never written into backlog (App::karr::Role::ClaimDefault), so
+# only an explicit --claim reaches this, and the way out is the one command
+# that takes the card out of the column.
+sub held_back_claim_message {
+  my ( $status, @hint_tokens ) = @_;
+  return "Status '$status' holds no claim -- promote the card first and claim it there:\n"
+    . command_hint(@hint_tokens);
+}
+
+=method held_back_claim_message
+
+    user_error( held_back_claim_message( 'backlog',
+        'move', $id, 'todo', '--claim', $claim ) );
+
+The refusal raised when a claim would land on a card in the board's held-back
+status (L<App::karr::Config/is_held_back_status>): C<create --claim> into
+backlog, C<edit --claim> on a card that is or ends up there, C<move ID backlog
+--claim>. Exit 1, like the C<require_claim> refusal it mirrors; the last line
+is the invocation that would have worked, which promotes the card and claims it
+in one step.
 
 =cut
 

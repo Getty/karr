@@ -113,6 +113,12 @@ C<$status> is the card's status after the command: the C<create --status>,
 the C<move> target, or the C<edit --status> (the card's current status when
 that is omitted). An undefined C<$status> leaves only the explicit flag.
 
+Whether the column takes the claim is not this method's question. C<backlog>
+holds none (ticket k306): the environment never reaches it here, since it
+needs no claim, and an explicit flag resolved for it is refused by the caller
+(L<App::karr::Role::TaskMutation/check_held_back_claim>, and C<karr create>'s
+own check).
+
 =cut
 
 sub resolved_claim_for {

@@ -437,7 +437,8 @@ subtest 'the CLI wires --unclaimed and its exit code (ADR 0002)' => sub {
 
   is $run->( 'init', '--name', 'Unclaimed Board' )->{exit}, 0, 'setup: karr init exits 0';
   is $run->( 'create', '--title', 'free' )->{exit},    0, 'setup: task 1';
-  is $run->( 'create', '--title', 'held' )->{exit},    0, 'setup: task 2';
+  # In todo: a backlog card holds no claim (ticket k306).
+  is $run->( 'create', '--title', 'held', '--status', 'todo' )->{exit}, 0, 'setup: task 2';
   is $run->( 'create', '--title', 'blocked' )->{exit}, 0, 'setup: task 3';
   is $run->( 'edit', '2', '--claim', 'agent-fox' )->{exit}, 0, 'setup: task 2 claimed';
   is $run->( 'edit', '3', '--block', 'waiting' )->{exit},   0, 'setup: task 3 blocked';

@@ -39,6 +39,12 @@ Moving a finished task back into a working column releases the claim the card
 still carried, unless C<--claim> names the agent taking it up
 (L<App::karr::Role::TaskMutation/apply_status_change>).
 
+Moving a task into C<backlog> releases its claim from any column: backlog is
+held back and holds no claim (L<App::karr::Config/is_held_back_status>).
+Moving a card out of backlog is its promotion -- C<backlog> to C<todo> puts it
+in the pool C<karr pick> takes from, and C<< karr move ID in-progress --claim
+NAME >> takes it up directly.
+
 Moving a task to the status it already has changes nothing and therefore writes
 nothing: the card keeps its C<updated> stamp, no activity-log entry is
 appended, and the command reports C<Task N is already at STATUS> and exits 0 --
@@ -72,7 +78,8 @@ C<KARR_CLAIM> (ADR 0005) stands in for the flag only when the destination is
 in the board's C<require_claim> list. A card moved into a column that needs no
 claim, for example backlog to C<todo>, gets nothing from the environment and
 stays free for someone else to pick up. An explicit C<--claim> stamps the
-claim on any destination (ticket #304).
+claim on any destination (ticket #304) but C<backlog>, where it is refused
+(exit 1) with the C<karr move ID todo --claim NAME> that would have worked.
 
 =back
 

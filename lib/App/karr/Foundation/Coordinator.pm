@@ -596,6 +596,8 @@ WHAT YOU MUST NOT DO
     is the assignment's job and the assignment is local.
   - Lift a block on a card. A cross-board link is a fact and 'blocked' is a
     decision: 'karr needs --resolve' or a person makes it.
+  - Plan a card that sits in backlog, or move one out of it. Backlog is held
+    back on purpose; promoting a card to todo is the maintainer's call.
   - Plan two agents into one repository at the same time. One agent per
     repository is the fleet's one hard rule; concurrency is across
     repositories.

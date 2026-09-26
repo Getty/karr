@@ -620,6 +620,66 @@ through C<karr import> of a kanban-md F<config.yml>.
 
 =cut
 
+# The status a card is held back in (ticket k306): filed, sorted, and taken by
+# nobody until someone promotes it. The name itself, not a per-status flag:
+# kanban-md drops a status key it does not know when it rewrites config.yml, so
+# a flag would not survive a materialize -> kanban-md -> import round trip, and
+# the hold would be gone without a word (the #87 class of loss).
+use constant HELD_BACK_STATUS => 'backlog';
+
+sub is_held_back_status {
+  my ($self, $status) = @_;
+  return 0 unless defined $status && $status eq HELD_BACK_STATUS;
+  # No instance: the default board, which has the column.
+  return 1 unless ref $self;
+  return ( grep { $_ eq $status } $self->statuses ) ? 1 : 0;
+}
+
+=method is_held_back_status
+
+    if ($config->is_held_back_status($task->status)) {
+        # filed and held back: not pickable, not actionable, holds no claim
+    }
+
+Returns true for C<backlog> on a board that configures a C<backlog> column,
+false for every other status. A held-back card is never handed out by C<karr
+pick> or karr-foundation, whatever filter is given
+(L<App::karr::Role::PickRules/pickable>), cannot gain a claim, and loses the
+claim it carries when it is moved into the column
+(L<App::karr::Role::TaskMutation/apply_status_change>). Promoting it -- to
+L</promotion_status> -- is what releases it to be worked.
+
+The name is fixed rather than configured: kanban-md drops a status key it does
+not know when it rewrites F<config.yml>, so a per-status flag would be lost on
+a round trip through it. A board without a C<backlog> column holds nothing
+back and behaves as it always has. Called on the class it answers for the
+default board, the convention L</is_terminal_status> follows.
+
+=cut
+
+sub promotion_status {
+  my ($self) = @_;
+  $self = $self->from_merged( $self->default_config ) unless ref $self;
+  my @statuses = $self->statuses;
+  my ($at) = grep { $self->is_held_back_status( $statuses[$_] ) } 0 .. $#statuses;
+  return undef unless defined $at;
+  my %terminal = map { $_ => 1 } $self->terminal_statuses;
+  my ($next) = grep { !$terminal{$_} } @statuses[ $at + 1 .. $#statuses ];
+  return $next;
+}
+
+=method promotion_status
+
+    my $to = $config->promotion_status;   # 'todo' on the default board
+
+The column a held-back card is promoted to: the first non-terminal status after
+C<backlog> in the board's order. It is what the refusals around a held-back
+card name as the way out (C<karr move ID todo>), taken from the board so a
+board that calls that column C<ready> is told C<ready>. Returns C<undef> on a
+board with no C<backlog> column, or none after it that is still open.
+
+=cut
+
 sub handoff_status {
   my ($self) = @_;
   # Asked on the class there is no board to derive from, so answer for the

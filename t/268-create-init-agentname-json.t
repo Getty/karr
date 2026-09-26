@@ -65,7 +65,8 @@ subtest 'create --json emits the show-shape card and nothing else' => sub {
 subtest 'create --json --claim carries the claim fields' => sub {
     my $repo = _board_repo();
 
-    my $rv = _run_karr( $repo, 'create', 'Claimed', '--claim', 'fox-1', '--json' );
+    # --status todo: the default backlog holds no claim (ticket k306).
+    my $rv = _run_karr( $repo, 'create', 'Claimed', '--status', 'todo', '--claim', 'fox-1', '--json' );
     is( $rv->{exit}, 0, 'create --json --claim succeeds' ) or diag $rv->{stderr};
 
     my $data = eval { decode_json( $rv->{stdout} ) };

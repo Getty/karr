@@ -58,6 +58,12 @@ Columns with `require_claim` (`in-progress`, `review` on a default board)
 refuse a move without a claim. A claim expires after `claim_timeout` (default
 1h) and the card is free again; `pick` skips blocked cards and live claims.
 
+`backlog` is held back: `pick` and karr-foundation never take a card from it
+(`pick --status backlog` exits 2), and it holds no claim (`--claim` there is
+refused; moving a card into it releases the claim). `todo` is the pool.
+Promoting a card out of backlog (`karr move ID todo`) is the maintainer's
+call, not a coordinating agent's: leave backlog alone unless told to promote.
+
 Life cycle with subagents: you claim and hand the id out → the worker notes on
 the card and hands it to `review` → whoever commits the work moves it to
 `done`, naming the commit. A subagent in the same directory gets the same
@@ -81,9 +87,9 @@ one open or blocked: the dependency pin (`cpanfile`, `package.json`, …) set to
 the version in that project's tree — its next release — already says it. Close
 the card once the work is committed.
 
-Bugs found on the way become cards, not silent fixes. A new card is unclaimed
-unless `--status` puts it into a `require_claim` column (you are starting it)
-or `--claim` says who holds it.
+Bugs found on the way become cards, not silent fixes. A new card lands in
+`backlog`, unclaimed, unless `--status` puts it elsewhere: into a
+`require_claim` column when you are starting it, with the claim that needs.
 
 ## Create a card on another repository's board
 

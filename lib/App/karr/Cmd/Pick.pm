@@ -56,6 +56,16 @@ If C<--status> is omitted, tasks in the board's terminal statuses are excluded
 -- its final configured status and C<archived>, which on the default board
 means C<done> and C<archived>.
 
+=item * C<backlog> is held back
+
+A card in C<backlog> is never picked, whatever the options say: backlog is
+where a card is filed and held until someone promotes it, and C<todo> is the
+pool that is picked from (L<App::karr::Config/is_held_back_status>). A
+C<--status> list that names C<backlog> is refused as a usage error (exit 2)
+pointing at C<karr move ID todo>, rather than answered with "No available
+tasks", which would read as "no work". A board without a C<backlog> column
+holds nothing back.
+
 =item * Claim timeout
 
 Already claimed tasks are ignored unless their claim timestamp has expired
@@ -85,6 +95,8 @@ deadline stops being ranked by urgency instead.
 =item * C<--move>
 
 Optionally updates the picked task to a new status such as C<in-progress>.
+C<--move backlog> is refused as a usage error (exit 2): pick claims the card it
+moves, and a card in backlog holds no claim.
 
 =back
 
@@ -203,6 +215,28 @@ sub execute {
   if ( defined $self->status ) {
     App::karr::Config->from_merged($ec)->validate_status_filter($_)
       for split /,/, $self->status;
+  }
+
+  # Backlog is held back (ticket k306): no card in it is ever pickable, so a
+  # --status naming it could only ever answer "nothing to pick" -- which reads
+  # as "no work" when the truth is "that work is held back". Refused as a usage
+  # error instead, pointing at the promotion that makes a card pickable. And --move
+  # into it is refused on the same ground from the other side: pick claims the
+  # card it moves, and a card in backlog holds no claim.
+  my $config = App::karr::Config->from_merged($ec);
+  my ($held) = grep { $config->is_held_back_status($_) } split /,/, $self->status // '';
+  $self->usage_error( "$held is held back and never picked -- promote a card to pick it:\n"
+      . App::karr::Error::command_hint( 'move', 'ID', $config->promotion_status // 'STATUS' ) )
+    if defined $held;
+  if ( defined $self->move && $config->is_held_back_status( $self->move ) ) {
+    my ($claims_in) = grep { $config->status_requires_claim($_) } $config->statuses;
+    my $move = $self->move;
+    $self->usage_error(
+      "--move $move would leave the picked card in $move, which holds no claim"
+        . ( defined $claims_in
+          ? ":\n" . App::karr::Error::command_hint( 'pick', '--move', $claims_in,
+              ( defined $self->claim && length $self->claim ? ( '--claim', $self->claim ) : () ) )
+          : '' ) );
   }
 
   # A ranking, not a decision. Every one of these is re-read and re-tested under

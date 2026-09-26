@@ -18,8 +18,25 @@ ends where the work resumes: a Task leaving a terminal status for a working one
 has `claimed_by`/`claimed_at` cleared, unless the reopening command names a
 claimant itself (`move ID todo --claim NAME`, `handoff`), in which case that
 agent holds it. `done` → `archived` keeps the name — archiving does not resume
-anything.
+anything. A Task in **Backlog** holds no Claim: moving one there releases it.
 _Avoid_: owner, lock (the advisory ref lock is a separate mechanism).
+
+**Backlog**:
+The held-back column. A **Task** filed into `backlog` — `create`'s default
+status — is sorted there and taken by nobody: `karr pick` and **Foundation**
+never hand it out (`pick --status backlog` is refused), a board with nothing but
+backlog left counts as drained, and it cannot hold a **Claim** — `--claim` onto
+it is refused, and a move into it releases the one the Task carried. Three
+stages, three meanings: *backlog* is filed and held back, *todo* is released for
+work — the pool `pick` and foundation take from — and a **Claim** says the Task
+is being worked now. Moving a Task out of backlog is its *promotion*, and it is the
+maintainer's call by default, not a coordinating agent's: an agent that
+promotes on its own lifts the very hold backlog exists for. The status is
+recognised by its name, not by a config flag — kanban-md drops a status key it
+does not know, so a flag would not survive a round trip through it — and a
+board without a `backlog` column holds nothing back.
+_Avoid_: "releasing" a Task for promoting it (release is what happens to a
+**Claim**); "parked" for a backlog Task (a parked board is a **Disabled board**).
 
 **Assignee**:
 The intended doer of a **Task** (`assignee`), set by a human/planner. Distinct

@@ -1,11 +1,25 @@
 {{$NEXT}}
 
+    - `backlog` is now held back. `karr pick` and `karr-foundation` never take
+      a card from it, whatever the filters, and a board with only backlog
+      cards left counts as drained (skipped while unchanged, `on_drained`
+      runs, `board_actionable=no`). `karr pick --status` naming `backlog`, and
+      `pick --move backlog`, are refused as usage errors (exit 2) pointing at
+      `karr move ID todo`. A card in backlog holds no claim: an explicit
+      `--claim` onto it is refused by `create` (the default status included),
+      `edit` and `move` (exit 1), and a move into backlog -- `move` or
+      `edit --status` -- releases the claim the card carried. `todo` is the
+      pool that is picked from; `move ID in-progress --claim NAME` still takes
+      a backlog card up directly. The bundled skills and foundation's agent
+      prompts say that promoting out of backlog is the maintainer's call. A
+      board without a `backlog` column is unaffected.
+
     - With `KARR_CLAIM` exported, `karr edit` and `karr move` no longer claim
       every card they touch; the env name is written only when the card ends
       up in a `require_claim` status (the rule `create` already follows). A
       note, a tag or a backlog -> todo promotion leaves the card free to pick.
       `edit --release` no longer claims the card back. An explicit `--claim`
-      still stamps on any status.
+      still stamps on any status but `backlog` (see above).
 
     - `karr-foundation` treats a card as finished when it is in the board's
       own final status (or archived), not only `done`/`archived`. A board

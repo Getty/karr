@@ -43,6 +43,7 @@ Claim and progress work:
 
 ```bash
 export KARR_CLAIM=$(karr agent-name)     # name yourself once; commands default to it
+karr move 1 todo                         # promote: a new card waits in backlog, held back
 karr pick --move in-progress
 karr handoff 1 --note "Ready for review" --timestamp
 ```
@@ -151,8 +152,8 @@ max_attempts: 2
 ```
 
 `mode: ticket` is one agent run about **one card foundation names**. It picks
-the card with `karr pick`'s own eligibility and ranking (not terminal, not
-blocked, not held by a live claim; class, then priority, then id) and tells the
+the card with `karr pick`'s own eligibility and ranking (not terminal, not in
+backlog, not blocked, not held by a live claim; class, then priority, then id) and tells the
 agent twice: as a closing sentence in `$PROMPT` naming the id, and as
 `$KARR_TASK` for a template that wants the bare number. It does **not** claim
 the card — the claim is the agent's work session (`karr agent-name`), and the
@@ -280,8 +281,8 @@ back to it; executing the chain is a command of its own (case 5).
 
 ### Case 3: `on_drained` — the hook karr deliberately does not understand
 
-When a board has drained — no actionable task left, everything done, archived
-or blocked — foundation can run one command in it:
+When a board has drained — no actionable task left, everything done, archived,
+blocked or held back in backlog — foundation can run one command in it:
 
 ```yaml
 # /srv/gate/.karr
@@ -1222,11 +1223,20 @@ karr show --me
 `KARR_CLAIM` is the claim name `pick`, `handoff` and `list --claimed-by` fall
 back to when `--claim` is omitted. `create`, `move` and `edit` fall back to it
 only when the card ends up in a `require_claim` column, so a card filed into the
-backlog, promoted to `todo` or given a note stays free to pick. An explicit
-`--claim` overrides it everywhere. It is carried per process, not stored, so
+backlog, promoted to `todo` or given a note stays unclaimed. An explicit
+`--claim` overrides it everywhere, except that a card in `backlog` holds no claim
+at all. It is carried per process, not stored, so
 concurrent agents never share one — run several on a board by giving each its own
 worktree (their `agent-name`s differ), or `karr agent-name --unique` for several
 in one directory. `karr agent-name` is the checkout's own directory name.
+
+`backlog` is held back: a card filed there waits until the maintainer promotes
+it (`karr move ID todo`), and `todo` is the pool agents pick from. `pick` and
+karr-foundation never take a backlog card (`pick --status backlog` is refused,
+exit 2), a backlog card holds no claim (`--claim` onto it is refused, and a move
+into it releases the claim), and a board with only backlog left counts as
+drained. `karr move ID in-progress --claim NAME` still takes a backlog card up
+directly.
 
 `pick` respects blocked state, claim timeout, and class-of-service ordering:
 

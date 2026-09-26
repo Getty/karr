@@ -49,6 +49,13 @@ sub pickable {
 
     my $timeout = defined $filter{timeout} ? $filter{timeout} : $self->claim_timeout_secs;
 
+    # Held back, whatever the filters say (ticket k306): backlog is where a
+    # card is filed and sorted, and nobody takes it until someone promotes it.
+    # Outside the filter branch below on purpose -- a --status that names
+    # backlog is refused by karr pick before it gets here, and an in-process
+    # caller that passes one anyway must not get a backlog card out of it.
+    return 0 if $self->store->is_held_back_status( $task->status );
+
     if ( $filter{statuses} ) {
         my %allowed = map { $_ => 1 } @{ $filter{statuses} };
         return 0 unless $allowed{ $task->status };
@@ -93,9 +100,11 @@ sub pickable {
     $self->pickable( $task, timeout => $secs, statuses => \@s, tags => \@t );
 
 True when C<$task> is available to be picked right now. In order: it exists;
-its status is in C<statuses> if that filter was given, and is not one of the
-board's terminal statuses if it was not (the board's own final column and
-C<archived>, never a hardcoded C<done>); it is not held by a claim that is
+it is not held back in C<backlog> (L<App::karr::Config/is_held_back_status>),
+whatever the filters say; its status is in C<statuses> if that filter was
+given, and is not one of the board's terminal statuses if it was not (the
+board's own final column and C<archived>, never a hardcoded C<done>); it is
+not held by a claim that is
 still live under C<timeout>, where C<claimed_by> set to the empty string is
 kanban-md for "unclaimed"; it is not blocked; and it carries at least one of
 C<tags> if that filter was given.
@@ -108,8 +117,8 @@ C<claim_timeout: 0s> never expires a claim, so every claimed card stays
 unpickable until the claim is released. C<statuses> and C<tags> are
 already-split lists, not the comma-separated option strings -- splitting
 belongs to the command that owns the option. An absent (or empty) filter is
-not the same as an empty list: no C<statuses> means "anything but terminal",
-C<< statuses => [] >> means nothing qualifies.
+not the same as an empty list: no C<statuses> means "anything but terminal"
+(and never backlog), C<< statuses => [] >> means nothing qualifies.
 
 The claim half of the test is L<App::karr::Role::ClaimTimeout/claim_held>,
 called rather than restated: C<karr list --unclaimed> asks that same method

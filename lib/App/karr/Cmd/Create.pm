@@ -14,7 +14,7 @@ use App::karr::Role::ClaimDefault;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::CrossBoard;
-use App::karr::Error qw( user_error require_claim_message );
+use App::karr::Error qw( user_error require_claim_message held_back_claim_message );
 use Time::Piece;
 
 # The set-time half only (ticket #137). A card that does not exist yet cannot be
@@ -95,7 +95,9 @@ and a card filed into the backlog for whoever picks it next is not being
 worked. Before ticket #286 the filer's remembered claim landed on every card,
 which hid a freshly filed bug from every other agent's C<karr pick> and
 C<< karr list --unclaimed >> until C<claim_timeout> ran out. An explicit
-C<--claim> stamps the claim on any status.
+C<--claim> stamps the claim on any status but C<backlog> -- the default one --
+which holds no claim: there it is refused (exit 1) before an id is allocated,
+and the last line of the error is the same create with C<--status todo>.
 
 =item * C<--json>
 
@@ -263,6 +265,15 @@ sub execute {
         $status, 'create', $title, '--status', $status, '--claim', 'NAME' ) );
   }
 
+  # The mirror image (ticket k306): a card filed into backlog -- the default
+  # status included -- is held back and holds no claim, so an explicit --claim
+  # there is refused before an id is allocated. KARR_CLAIM never gets this far:
+  # resolved_claim_for leaves it off a column that needs no claim.
+  my $status = $self->status // $defaults->{status} // 'backlog';
+  user_error( held_back_claim_message( $status,
+      'create', $title, '--status', $config->promotion_status // 'STATUS', '--claim', $claim ) )
+    if defined $claim && length $claim && $config->is_held_back_status($status);
+
   # Set-time dependency validation (ticket #124), under the same #54 rule.
   # A self-reference is not expressible here: the new id does not exist until
   # it is allocated below, and every dependency must already exist, so no
@@ -290,7 +301,7 @@ sub execute {
   my %task_args = (
     id       => $self->allocate_next_id,
     title    => $title,
-    status   => $self->status   // $defaults->{status}   // 'backlog',
+    status   => $status,
     priority => $self->priority // $defaults->{priority}  // 'medium',
     class    => $self->class    // $defaults->{class}     // 'standard',
   );

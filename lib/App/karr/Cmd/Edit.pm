@@ -99,7 +99,10 @@ C<--status> given, or the card's current status when C<--status> is omitted.
 A note, a tag or a C<--status todo> on a card in a column that needs no claim
 therefore leaves the card unclaimed. C<--release> never claims, whatever
 C<KARR_CLAIM> holds. An explicit C<--claim> stamps the claim on any status
-(ticket #303).
+(ticket #303) but C<backlog>: a card that is, or ends up, in backlog holds no
+claim, so C<--claim> there is refused (exit 1) and names C<karr move ID todo
+--claim NAME> as the way out. C<--status backlog> releases the claim the card
+carried, the way C<karr move ID backlog> does.
 
 =item * Tag management
 
@@ -476,10 +479,15 @@ sub execute {
       # so what this drops is only the env default. Passed to
       # apply_status_change as well, so `--release --status in-progress` meets
       # the #150 refusal instead of being satisfied by the env name.
-      my $claim = $self->release ? undef
-        : $self->resolved_claim_for(
-            ( defined $self->status && length $self->status )
-              ? $self->status : $task->status );
+      my $ends_in = ( defined $self->status && length $self->status )
+        ? $self->status : $task->status;
+      my $claim = $self->release ? undef : $self->resolved_claim_for($ends_in);
+
+      # A card that is, or ends up, in backlog cannot gain a claim (ticket
+      # k306). apply_status_change asks the same for --status; this is the
+      # half it never sees -- `edit ID --claim X` on a card already there.
+      # Before any field is touched, so the refusal writes nothing.
+      $self->check_held_back_claim( $task, $ends_in, $claim );
 
       # length, not truth: a literal "0" is a meaningful title, status,
       # priority, assignee, due, class, estimate, body, append, tag or block

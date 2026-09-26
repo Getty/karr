@@ -99,6 +99,7 @@ the board has none to give. Eligibility is
 L<App::karr::Role::PickRules/pickable> with C<--status> and C<--tags> absent --
 the same call C<karr pick> makes, not a mirror of it: not in a terminal status
 (the board's own final column and C<archived>, not a hardcoded C<done>), not
+held back in C<backlog> (L<App::karr::Config/is_held_back_status>), not
 blocked, and not held by a live claim, where a claim past the board's
 C<claim_timeout> no longer blocks anybody here either. Ranking is
 L<App::karr::Role::PickRules/pick_rank>: class of service, then priority, then

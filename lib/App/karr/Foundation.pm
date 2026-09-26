@@ -52,10 +52,16 @@ with 'App::karr::Role::CliArgs';
 
 # Instruction handed to a synthesized agent command via the $PROMPT variable
 # when neither the .karr file nor the config overrides it.
+#
+# The backlog sentence is there because "the next actionable task" is the
+# phrase an agent with an empty `karr pick` goes looking for work under, and a
+# backlog card promoted by that agent is a hold that no longer holds (k306):
+# moving a card out of backlog is the maintainer's call.
 our $DEFAULT_PROMPT =
     'Use the karr-coordinator skill: pick the next actionable task on this '
   . 'board, complete it, and move it forward. If you cannot proceed, block '
-  . 'the task with a reason.';
+  . 'the task with a reason. Leave cards in backlog where they are: moving '
+  . 'one to todo is the maintainer\'s call.';
 
 # The same, for a ticket-mode run. It cannot be $DEFAULT_PROMPT: that one opens
 # by telling the agent to pick its own work, which is the one thing a run that
@@ -905,7 +911,10 @@ about how long a release gate may.
 
 B<Drained> is a fact about the board, not a name for an outcome: no actionable
 task is left on it -- everything is in the board's own final status (or
-archived), or blocked. That is deliberately the same question C<--force> and
+archived), held back in C<backlog>, or blocked. A backlog card waits for a
+person to promote it, not for an agent (L<App::karr::Config/is_held_back_status>),
+so a board with only backlog left is drained, is skipped while it does not
+change, and runs C<on_drained>. That is deliberately the same question C<--force> and
 C<< on_idle: always-run >> are answers to, and it is the only one that stays
 meaningful across the run modes. A drain that ends in a C<common-error> does
 not count: a rate-limited agent leaves a board that looks exactly like one it
@@ -2235,10 +2244,13 @@ sub _skip_disabled {
 # ---------------------------------------------------------------------------
 
 # A task is actionable when there is still work in it: not terminal on its
-# board and not blocked. Terminal is the snapshot's own verdict, taken from the
-# board's configured statuses when _task_states read it (its final status plus
-# `archived`, #67) -- a board whose last column is `shipped` is drained when
-# everything on it is shipped, and has no `done` to wait for (#305).
+# board, not held back in backlog, and not blocked. Terminal is the snapshot's
+# own verdict, taken from the board's configured statuses when _task_states
+# read it (its final status plus `archived`, #67) -- a board whose last column
+# is `shipped` is drained when everything on it is shipped, and has no `done`
+# to wait for (#305). Held back is the board's verdict the same way (k306): a
+# backlog card waits for someone to promote it, not for an agent, so a board
+# with nothing but backlog left is drained.
 #
 # This is not `karr pick` eligibility, and deliberately does not ask the claim:
 # the drain's own agent claims the card it works on, and that card has to stay
@@ -2248,10 +2260,12 @@ sub _is_actionable {
   return 0 unless $st;
   return 0 if $st->{blocked};
   return 0 if $st->{terminal};
+  return 0 if $st->{held_back};
   return 1;
 }
 
-# Snapshot every task as id => { status, claimed_by, updated, blocked, terminal }.
+# Snapshot every task as
+# id => { status, claimed_by, updated, blocked, terminal, held_back }.
 sub _task_states {
   my ( $self, $repo ) = @_;
   my $git = App::karr::Git->new( dir => "$repo" );
@@ -2266,6 +2280,7 @@ sub _task_states {
       updated    => $t->updated,
       blocked    => ( $t->has_blocked ? 1 : 0 ),
       terminal   => ( $store->is_terminal_status( $t->status ) ? 1 : 0 ),
+      held_back  => ( $store->is_held_back_status( $t->status ) ? 1 : 0 ),
     };
   }
   return %states;

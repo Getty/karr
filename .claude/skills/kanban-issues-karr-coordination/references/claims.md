@@ -9,7 +9,9 @@ and `list --claimed-by` defaults to `KARR_CLAIM`; an explicit `--claim NAME`
 wins over it. `create`, `move` and `edit` are narrower: they take `KARR_CLAIM`
 only when the card ends up in a `require_claim` column, so a card filed,
 promoted to `todo` or annotated for others stays unclaimed. `edit --release`
-never claims.
+never claims. `backlog` holds no claim at all: an explicit `--claim` onto a
+backlog card is refused (exit 1, naming `karr move ID todo --claim NAME`), and
+moving a card into backlog releases the claim it carried.
 karr writes the name nowhere — it is per process, so concurrent agents never
 see each other's.
 
@@ -39,8 +41,10 @@ karr pick --compact                              # stop after the "Picked task .
 karr pick --json                                 # the full card either way
 ```
 
-Atomic: finds and claims in one step, under a lock ref. Skips blocked cards
-and live claims; warns about unfinished dependencies but hands the card over.
+Atomic: finds and claims in one step, under a lock ref. Skips blocked cards,
+live claims and every card in `backlog` — held back until the maintainer
+promotes it to `todo`; `--status backlog` and `--move backlog` are refused
+(exit 2). Warns about unfinished dependencies but hands the card over.
 Order: class of service first (`expedite` > `fixed-date` > `standard` >
 `intangible`; two `fixed-date` cards compare due dates before priority), then
 priority.

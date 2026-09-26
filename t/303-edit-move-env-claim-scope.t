@@ -29,7 +29,8 @@ use App::karr::Git;
 #
 #   * KARR_CLAIM is written only when the card ends in a require_claim status
 #     (the move destination; edit's --status, else the card's current one)
-#   * an explicit --claim stamps on any status
+#   * an explicit --claim stamps on any status but backlog, which holds no
+#     claim at all (ticket k306, t/306-backlog-held-back.t)
 #   * --release never claims; --release with an explicit --claim is a usage
 #     error (exit 2)
 #   * the env name still identifies the caller for check_claim, so a card
@@ -175,14 +176,21 @@ subtest 'edit -a on a card the caller holds: allowed, and the claim stays' => su
     is( $task->claimed_by, 'me', 'still held under the env name' );
 };
 
-subtest 'edit with an explicit --claim stamps on a backlog card' => sub {
+subtest 'edit with an explicit --claim stamps on a todo card, not on a backlog one' => sub {
     my $repo = _board_repo();
     _backlog_card( $repo, 'Reserved' );
     local $ENV{KARR_CLAIM} = 'me';
 
+    # backlog holds no claim at all (ticket k306), explicit or not.
     my $rv = _run_karr( $repo, 'edit', '1', '--claim', 'other' );
-    is( $rv->{exit}, 0, 'edit --claim succeeds' ) or diag $rv->{stderr};
-    is( _task($repo)->claimed_by, 'other', 'the explicit flag stamps on any status' );
+    is( $rv->{exit}, 1, 'edit --claim on the backlog card is refused' );
+    ok( !_task($repo)->has_claimed_by, 'and nothing was stamped' );
+
+    is( _run_karr( $repo, 'move', '1', 'todo' )->{exit}, 0, 'setup: promoted to todo' );
+    $rv = _run_karr( $repo, 'edit', '1', '--claim', 'other' );
+    is( $rv->{exit}, 0, 'edit --claim succeeds in todo' ) or diag $rv->{stderr};
+    is( _task($repo)->claimed_by, 'other',
+        'the explicit flag stamps on a status that needs no claim' );
 };
 
 #### move (ticket #304)

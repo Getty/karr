@@ -104,9 +104,11 @@ subtest '_is_actionable' => sub {
   my $f = App::karr::Foundation->new;
   ok   $f->_is_actionable({ status => 'todo' }),                 'todo actionable';
   ok   $f->_is_actionable({ status => 'in-progress' }),          'in-progress actionable';
-  ok   $f->_is_actionable({ status => 'backlog' }),              'backlog actionable';
-  # Terminal is the snapshot's verdict, made by _task_states against the
-  # board's own statuses (#305) -- a hand-built snapshot has to carry it.
+  # Terminal and held back are the snapshot's verdicts, made by _task_states
+  # against the board's own statuses (#305, k306) -- a hand-built snapshot has
+  # to carry them.
+  ok ! $f->_is_actionable({ status => 'backlog', held_back => 1 }),
+    'backlog not actionable: held back until someone promotes it';
   ok ! $f->_is_actionable({ status => 'done', terminal => 1 }),     'done not actionable';
   ok ! $f->_is_actionable({ status => 'archived', terminal => 1 }), 'archived not actionable';
   ok   $f->_is_actionable({ status => 'in-progress', claimed_by => 'a' }),

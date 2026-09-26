@@ -193,6 +193,21 @@ status, or C<archived>.
 
 =cut
 
+sub is_held_back_status {
+    my ($self, $status_name) = @_;
+    return App::karr::Config->from_merged( $self->effective_config )
+        ->is_held_back_status($status_name);
+}
+
+=method is_held_back_status
+
+Returns true if the status is this board's held-back one -- C<backlog>, where
+the board has that column (L<App::karr::Config/is_held_back_status>).
+
+    next if $store->is_held_back_status($task->status);   # nobody takes it
+
+=cut
+
 sub foundation_enabled {
     my ($self) = @_;
     return App::karr::Config->from_merged( $self->effective_config )

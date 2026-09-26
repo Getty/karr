@@ -82,7 +82,7 @@ execution. This class is where execution lives, so this is where the facts come
 from (L</facts_for>). The vocabulary is small, and everything about a board
 comes off B<one> board read:
 
-    board_actionable    yes | no     any card not in one of the board's terminal statuses and not blocked
+    board_actionable    yes | no     any card not in a terminal status, not in backlog, not blocked
     ticket_status       the status of the step's own ticket
     ticket_blocked      yes | no
     ticket_claimed      the claim name on it, or the empty string
