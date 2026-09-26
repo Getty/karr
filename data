@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-09-26T01:10:19Z
+claimed_by: karr-worker
+class: standard
+completed: 2026-09-26T01:10:19Z
+created: 2026-09-26T00:35:32Z
+id: 302
+priority: high
+started: 2026-09-26T00:35:43Z
+status: done
+tags:
+- skill
+- share
+title: 'karr skill: install/check/update the ticket+coordination skill pair instead
+  of kanban-issues-karr-cli'
+updated: 2026-09-26T01:10:19Z
+---
+
+The kanban-issues-karr-cli skill is split into share/kanban-issues-karr-ticket/ (worker: one handed card) and share/kanban-issues-karr-coordination/ (everything else, with references/). karr skill install/check/update, skill show and init --claude-skill must handle both skills; install/update removes a leftover kanban-issues-karr-cli directory in the target. Remove share/kanban-issues-karr-cli/ and .claude/skills/kanban-issues-karr-cli/, adapt POD/README/CLAUDE.md, tests (t/62 et al.), Changes.
+
+2026-09-26 00:37 Plan: SkillFile role owns _skill_names (ticket, coordination) and _retired_skill_names (kanban-issues-karr-cli); per-skill lookup/content/files; _remove_retired_skills(base). skill install/update remove the retired dir (status 'removed'), check reports it 'stale' and exits 1 like outdated (ADR 0002: runtime failure, not usage). JSON entries gain a 'skill' key. show takes optional NAME, default all SKILL.md in order; --json is an array of {skill, content}.
+
+2026-09-26 00:58 Also found (pre-existing, not touched): t/135-dependency-check-requires.t fails on unmodified HEAD too (DependencyArgs requires list). t/216-ex-sandbox.t fails the ex/webapp, docs-site, fleet-hub ignore checks in this worktree (ex/.gitignore uses dir-only patterns checked before the dirs exist). Also: references/setup.md of the coordination skill is hardlinked in the main checkout and across repos; a git merge or checkout rewrites it on a new inode, so re-apply it via cat or manage-skills sync after landing.
+
+2026-09-26 00:58 Done. SkillFile role owns _skill_names (coordination, ticket) and _retired_skill_names (kanban-issues-karr-cli); lookup, content and files per skill (File::ShareDir, then checkout); _remove_retired_skills. skill install and update write the pair and remove a leftover kanban-issues-karr-cli dir (status removed with path, text and json); update treats the retired dir as an install, so update alone migrates. check reports the retired dir stale, a missing pair member of an installed agent outdated, exit 1 on either (ADR 0002). show takes optional NAME: default both SKILL.md joined by a blank line, NAME selects one, unknown NAME is a usage error exit 2; json is always an array of skill/content objects. install/check/update json entries gain a skill key. init --claude-skill installs both, removes the retired dir and prints a Removed line (init json unchanged). Retired dirs removed from share and .claude/skills (staged); POD, README, CLAUDE.md, perl-file-sharedir skill and coordination setup.md updated. Tests: 12 files adapted, new t/302-skill-retired-cli-dir.t. Skill-related 19 files, 179 tests PASS. Full prove -l t/: 243 files, 1849 tests, 2 failing files, both pre-existing and unrelated (t/135, t/216, see note).
+
+2026-09-26 01:10 Committed 5c5c737: karr skill install/check/update/show and init --claude-skill handle the kanban-issues-karr-coordination + kanban-issues-karr-ticket pair, remove the retired kanban-issues-karr-cli directory (check reports it stale), new t/302-skill-retired-cli-dir.t. Full prove -l t/: 243 files, 1849 tests, only the pre-existing t/135 and t/216 failures.
