@@ -1,0 +1,30 @@
+---
+class: standard
+completed: 2026-09-26T13:54:36Z
+created: 2026-09-26T04:52:47Z
+id: 303
+priority: high
+started: 2026-09-26T13:33:19Z
+status: done
+tags:
+- bug
+- claims
+title: edit --release re-claims from KARR_CLAIM
+updated: 2026-09-26T13:58:54Z
+---
+
+Found by an agent on the skilletor board (App-karr 0.601, installed under ~/perl5): with `KARR_CLAIM` exported, `karr edit ID --release` does not release. lib/App/karr/Cmd/Edit.pm clears the claim in the `if ($self->release)` block (~354-357), but the later `if (defined $claim && length $claim)` block (~412-414) runs unconditionally, and `$claim` falls back to the `KARR_CLAIM` default – so the card ends up claimed again by the caller, with a fresh `claimed_at`.
+
+Repro: `export KARR_CLAIM=me; karr move N in-progress; karr edit N --release; karr show N` → still `claimed_by: me`. Workaround: `env -u KARR_CLAIM karr edit N --release`.
+
+Fix: skip the claim block when `--release` is set (an explicit `--claim` together with `--release` should be a usage error, or release must win); test with KARR_CLAIM exported.
+
+Scope is wider than --release (reproduced on 0.602 in a scratch repo): with KARR_CLAIM exported, EVERY karr edit claims the card -- 'edit N -a note' on a backlog card leaves it claimed_by the caller, 'edit N --status todo' too, and --release re-claims. Every agent note following the house rules (karr edit ID -a ...) takes the card away from pick/list --unclaimed for claim_timeout. Rule to apply (same as k286 for create, ADR 0005): KARR_CLAIM defaults only when the card ends in a require_claim status; an explicit --claim still stamps on any status; --release never claims (--release with --claim = usage error). Sibling bug for move filed separately.
+
+Fixed in the working tree (not committed). edit now resolves the claim it writes through the new App::karr::Role::ClaimDefault::resolved_claim_for(STATUS): an explicit --claim stamps on any status, and KARR_CLAIM stamps only when the card ends in a require_claim status (--status if given, otherwise the current status). --release never claims: the env default is dropped, and no claimant is passed to apply_status_change, so --release --status in-progress now hits the #150 refusal instead of being satisfied by the env name. --release with an explicit --claim stays a usage error (exit 2). check_claim still receives resolved_claim, which identifies the caller, so a note on your own card works in any column. Create now uses the same helper, so the rule is written in one place. The ADR 0005 k286 paragraph now covers move and edit. Test: t/303-edit-move-env-claim-scope.t, 13 subtests: 8 fail against the HEAD code, all pass now. 23 related test files pass; the full suite was not run (per the orchestrator).
+
+Drift for the dispatcher to decide or file (not in scope here): (1) Docs still say that every claiming command defaults to KARR_CLAIM: README.md ~1222, share/kanban-issues-karr-coordination/SKILL.md ~22, share/kanban-issues-karr-coordination/references/claims.md ~8-10 (a shared hardlink with 93 links; its note on narrower commands names only create), .claude/rules/karr-rules.md ~69, and the CONTEXT.md entries 'Claim name' and 'KARR_CLAIM'. The CONTEXT.md Claim entry is still accurate. (2) By the rule as specified, edit -a on an in-progress card that has no claim (for example right after edit --release) claims it from KARR_CLAIM, because the card ends in a require_claim status. (3) The require_claim refusal for edit --release --status in-progress while KARR_CLAIM is set still prints the export KARR_CLAIM line as a way out, which does not help in that case. This message shape predates this change.
+
+Ready for review: edit takes KARR_CLAIM only when the card ends in a require_claim status. --release never claims, and --release with --claim is exit 2. Rule in Role::ClaimDefault::resolved_claim_for, shared with move and create. prove -l t/303-edit-move-env-claim-scope.t: PASS (13/13).
+
+2026-09-26 13:54 Committed in a89a245: k303/k304: KARR_CLAIM claims only in require_claim columns on edit and move
