@@ -1162,7 +1162,7 @@ Important refs:
 | `karr skill install` | install bundled skills for Claude Code, Codex, or Cursor |
 | `karr skill check` | detect outdated installed skills |
 | `karr skill update` | refresh installed skills |
-| `karr skill show` | print the bundled skill to stdout |
+| `karr skill show [NAME]` | print the bundled skills' `SKILL.md` (or one of them) to stdout |
 | `karr set-refs` | store shared non-task payloads in allowed refs |
 | `karr get-refs` | fetch helper payloads back out |
 
@@ -1272,16 +1272,29 @@ at a step, a run log or a question.
 
 ## Skills
 
-The distribution ships a bundled agent skill, `kanban-issues-karr-cli`, that
-can be installed locally in a repo (as `.claude/skills/kanban-issues-karr-cli/`)
-or globally in the current home directory. The skill is a directory: a short
-`SKILL.md` with the daily loop (name yourself with `KARR_CLAIM`, read the
-board, work a card, create a card) and `references/*.md` an agent loads only
-when it needs them — every option of the card commands, queries, claims and
-locks, cross-board dependencies, config, storage and setup. `install` writes
-all of it, `check` reports an install missing a reference file as outdated,
-and `update` adds it. A project still holding the older `.claude/skills/karr/`
-keeps it untouched — nothing removes it for you, so delete it after updating.
+The distribution ships two bundled agent skills that can be installed locally
+in a repo (under `.claude/skills/`) or globally in the current home directory:
+
+- `kanban-issues-karr-coordination` — reading a board, picking, claiming and
+  creating cards, handing them to subagents, filing on another repository's
+  board, configuring and syncing karr. A short `SKILL.md` plus
+  `references/*.md` an agent loads only when it needs them — every option of
+  the card commands, queries, claims and locks, cross-board dependencies,
+  config, storage and setup.
+- `kanban-issues-karr-ticket` — for an agent that was handed one card: read
+  it, note progress, block it, hand it to review.
+
+Every `karr skill` action handles both as one set. `install` writes all of
+it, `check` reports a skill missing a file (or missing while the other is
+installed) as outdated and exits 1, and `update` writes what is missing or
+differs. `show` prints both `SKILL.md` files, or the one named.
+
+Earlier releases shipped the single skill `kanban-issues-karr-cli` these two
+replace. `install` and `update` remove a leftover `kanban-issues-karr-cli/`
+directory and say so, and `check` reports it as `stale` — so `karr skill
+update` alone migrates an old install. A project still holding the even older
+`.claude/skills/karr/` keeps it untouched — nothing removes that one for you,
+so delete it after updating.
 
 ```bash
 karr skill install
@@ -1290,6 +1303,7 @@ karr skill install --agent codex --global --force
 karr skill check --global
 karr skill update
 karr skill show
+karr skill show kanban-issues-karr-ticket
 ```
 
 Supported targets:

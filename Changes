@@ -1,5 +1,18 @@
 {{$NEXT}}
 
+    - The bundled agent skill `kanban-issues-karr-cli` is split in two:
+      `kanban-issues-karr-coordination` (reading a board, picking, creating and
+      routing cards, config, sync) and `kanban-issues-karr-ticket` (working the
+      one card an agent was handed). `karr skill install`, `check` and `update`
+      and `karr init --claude-skill` handle both as one set; every result line
+      and `--json` entry now names its skill. A leftover
+      `kanban-issues-karr-cli/` directory is removed by `install`, `update` and
+      `init --claude-skill` (reported as `removed`), and `check` reports it as
+      `stale` and exits 1, so `karr skill update` alone migrates an old
+      install. `karr skill show` prints both `SKILL.md` files, or only the one
+      named (`karr skill show kanban-issues-karr-ticket`); its `--json` output
+      is now an array of `{skill, content}` objects instead of one `{content}`.
+
     - Local task ids accept the house `kNNN` spelling: `karr show k30` names the
       same card as `karr show 30`, and a leading `k`/`K` works anywhere a bare
       number does -- move, edit, delete, archive, unlock, handoff, needs, show,

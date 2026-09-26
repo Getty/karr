@@ -175,17 +175,20 @@ ticket while it claimed the board held the live status.
 Agent/skill/rule material lives under `.claude/`:
 - `rules/karr-rules.md` — house rules, auto-loaded (discipline, delegation, coordination, release)
 - `agents/karr-*.md` — the project agent fleet (briefing-aware; skills force-loaded at spawn)
-- `skills/` — seven skills. Five are shared across repositories via manage-skills
-  hardlinks (`kanban-issues-karr-coordination`, `getty-perl-core`, `getty-perl-moo`,
+- `skills/` — eight skills. Six are shared across repositories via manage-skills
+  hardlinks (`kanban-issues-karr-coordination`, `kanban-issues-karr-ticket`,
+  `getty-perl-core`, `getty-perl-moo`,
   `getty-perl-release-author-getty`, `perl-release-dist-ini`); two are local to
   this repository (`karr-foundation-cli`, `perl-file-sharedir`). `ls -li
   .claude/skills/*/SKILL.md` tells them apart by link count. Don't rename them,
   and edit a shared one via `cat > .claude/skills/<skill>/SKILL.md` (its
   `references/*.md` are linked the same way) — **not** the
   `Edit`/`Write` tools or `sed -i`, which mint a new inode and break the shared
-  hardlink; see skill `manage-skills`. `kanban-issues-karr-coordination` is hardlinked
-  file-for-file to `share/kanban-issues-karr-coordination/` (what `karr skill install`
-  ships: `SKILL.md` plus `references/*.md`), so editing one edits the other —
+  hardlink; see skill `manage-skills`. `kanban-issues-karr-coordination` and
+  `kanban-issues-karr-ticket` are each hardlinked file-for-file to their
+  directory under `share/` (`share/kanban-issues-karr-coordination/`,
+  `share/kanban-issues-karr-ticket/` — what `karr skill install` ships:
+  `SKILL.md` plus `references/*.md`), so editing one edits the other —
   as long as the edit keeps the inode. A new file under either directory has to
   be linked into the other by hand: `ln <canonical> <other>` (t/62).
 
