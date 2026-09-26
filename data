@@ -1,0 +1,33 @@
+---
+class: standard
+completed: 2026-09-26T13:54:58Z
+created: 2026-09-26T13:32:37Z
+id: 304
+priority: high
+started: 2026-09-26T13:33:26Z
+status: done
+tags:
+- bug
+- claims
+title: move stamps KARR_CLAIM on columns that need no claim
+updated: 2026-09-26T13:59:02Z
+---
+
+With KARR_CLAIM exported (which the house rules tell every session to do), `karr move ID todo` claims the card for the caller. Reproduced on 0.602 in a scratch repo:
+
+    $ KARR_CLAIM=promoter karr move 1 todo
+    Moved task 1: backlog -> todo
+    $ karr show 1        -> Status: todo / Claimed: promoter
+    $ karr list --unclaimed --status todo   -> 0 task(s)
+
+Cause: Cmd/Move.pm resolves the claim via Role::ClaimDefault resolved_claim (~204) and stamps it whenever defined (~258), whatever the destination status.
+
+Why it matters: promoting a card from backlog to todo is meant to *release* it to the pool so someone else can claim it. Today whoever promotes owns every promoted card for claim_timeout, and pick / list --unclaimed do not see them.
+
+Fix: the k286 rule create already follows (ADR 0005) -- KARR_CLAIM is the default only when the destination has require_claim. An explicit --claim still stamps on any status (that is how an expired claim is taken over, `move ID <same status> --claim NAME`). Extend the ADR 0005 paragraph to cover move. Test with KARR_CLAIM exported. Sibling of k303 (edit).
+
+Fixed in the working tree (not committed), together with k303. move resolves the claim it writes through App::karr::Role::ClaimDefault::resolved_claim_for(destination) after --next/--prev picks the target, so the check happens inside the guarded callback. An explicit --claim stamps on any destination (same-status takeover unchanged). KARR_CLAIM stamps only into a require_claim column. check_claim still gets resolved_claim, which identifies the caller. Side effects: a same-status move to todo with only the env name is now a no-op (exit 0, nothing written). A reopen from done into todo with KARR_CLAIM set now releases the claim (#224) instead of stamping the env name. The ADR 0005 k286 paragraph now covers move. Test: t/303-edit-move-env-claim-scope.t (move subtests: todo stays unclaimed and is visible to list --unclaimed; --next into todo; in-progress claims from env; todo --claim X stamps; same-status no-op; reopen releases). Drift: moving a claimed card to a column without require_claim (for example in-progress to todo) keeps the existing claim, as before. Cards claimed in backlog/todo by this bug keep their claim until claim_timeout. Docs drift is listed on k303.
+
+Ready for review: move takes KARR_CLAIM only into a require_claim destination, and an explicit --claim still stamps anywhere. Same helper as k303. prove -l t/303-edit-move-env-claim-scope.t: PASS (13/13).
+
+2026-09-26 13:55 Committed in a89a245: k303/k304: KARR_CLAIM claims only in require_claim columns on edit and move
