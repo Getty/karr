@@ -1,0 +1,26 @@
+---
+class: standard
+completed: 2026-09-26T13:55:51Z
+created: 2026-09-26T13:49:53Z
+id: 307
+priority: medium
+started: 2026-09-26T13:50:04Z
+status: done
+tags:
+- bug
+- tests
+title: t/135 still expects the pre-k301 DependencyArgs requires
+updated: 2026-09-26T13:59:16Z
+---
+
+Full suite fails on HEAD (fe50d10), reproduced in a clean worktree: t/135-dependency-check-requires.t subtest 5, "App::karr::Role::DependencyArgs declares exactly the expected requires" -- got normalize_task_id, expected usage_error.
+
+k301 (08a9936) added normalize_task_id to Role/DependencyArgs.pm requires, correctly: the role calls $self->normalize_task_id (line ~66). The %REQUIRED table in t/135 was not updated. The code is right, the test expectation is stale.
+
+Fix: add normalize_task_id to the expected DependencyArgs requires in t/135. No lib change.
+
+2026-09-26 13:51 Fixed: added normalize_task_id to the App::karr::Role::DependencyArgs entry in t/135's %REQUIRED table (k301 correctly added it to the role's requires; the test table was stale). Comment updated in the same style, naming k301. No lib/ change. Ran prove -l t/135-dependency-check-requires.t t/140-dependency-role-split.t t/301-k-prefix-task-id.t -- all pass (17 tests, 0 failures).
+
+Done: t/135's %REQUIRED table now lists normalize_task_id under App::karr::Role::DependencyArgs, matching the requires k301 added to the role. Only t/135-dependency-check-requires.t touched, nothing under lib/. Verified with prove -l t/135-dependency-check-requires.t t/140-dependency-role-split.t t/301-k-prefix-task-id.t -- all pass.
+
+2026-09-26 13:55 Committed in 314c97a: k307: fix stale DependencyArgs requires expectation in t/135
