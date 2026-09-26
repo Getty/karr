@@ -1,0 +1,26 @@
+---
+class: standard
+completed: 2026-09-26T13:55:28Z
+created: 2026-09-26T13:32:51Z
+id: 305
+priority: medium
+started: 2026-09-26T13:33:33Z
+status: done
+tags:
+- bug
+- foundation
+title: foundation _is_actionable hardcodes done/archived as terminal
+updated: 2026-09-26T13:59:09Z
+---
+
+lib/App/karr/Foundation.pm _is_actionable (~2239) decides terminal by `$status eq 'done' || $status eq 'archived'` instead of the board's own terminal statuses (BoardStore/Config is_terminal_status: the final configured status plus archived -- the k67 rule PickRules already follows). On a board that ends in e.g. `shipped`, every shipped card counts as actionable forever: _has_actionable_tasks never says drained, so the "no board change and no actionable tasks" skip never fires and a drain runs to its iteration cap. Callers: _has_actionable_tasks, _stuck_tasks, the drain loop, _ticket_moved, Foundation/Executor.pm (~1028).
+
+Out of scope, deliberately: _is_actionable ignoring claims is NOT a bug -- "actionable" is not "pickable". _stuck_tasks and the drain loop need the agent's own claimed in-progress card to stay actionable. Only the comment "Mirrors `karr pick` eligibility" is wrong and should say what it actually is.
+
+Done when: terminal comes from the board config (snapshot in _task_states carries what is needed), the comment is accurate, and a test with a custom final status (`shipped`) proves a board with only shipped/archived cards is drained.
+
+Fix: _task_states now puts terminal => 0|1 into each snapshot, decided by $store->is_terminal_status (the board's final status + archived, k67 -- same call PickRules uses; effective_config is cached per store, so one config read per snapshot). _is_actionable reads $st->{terminal} instead of comparing to done/archived; comment rewritten (not terminal on its board, not blocked; deliberately not claim-aware because the drain's own claimed card must stay actionable). All five callers get snapshots from _task_states, so none needed changing. Regression test t/305-foundation-custom-terminal-status.t (shipped board: predicate, tick skip, drain + on_drained, Executor board_actionable) failed 4/5 subtests before the fix, passes after. t/31 _is_actionable/_stuck_tasks hand-built snapshots now carry terminal => 1. Observed actual cost before fix: not a drain to the iteration cap (the idle break ends it) but one agent run per tick on an unchanged board, a drain that shipped work reporting 'idle' instead of 'progress', on_drained never firing, and board_actionable=yes on a drained board. Drift for karr-pod-writer (not touched): Executor.pm POD fact table says board_actionable = 'any task an agent could still pick' (claims are not asked); Foundation.pm on_drained POD says 'everything done, archived or blocked' (should be the board's terminal status).
+
+Commit-ready: lib/App/karr/Foundation.pm (_task_states adds terminal via store->is_terminal_status; _is_actionable reads it; comment fixed), t/31-foundation-drain.t (hand-built snapshots carry terminal), new t/305-foundation-custom-terminal-status.t. Verified: prove -l t/305 t/31 t/165 t/193 t/106 t/202 t/209 t/150 t/185 all pass; t/305 failed 4/5 before the fix. Full suite not run (load discipline) -- orchestrator runs it.
+
+2026-09-26 13:55 Committed in 16aa132: k305: foundation takes terminal from the board's own statuses
