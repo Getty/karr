@@ -7,6 +7,13 @@
       `edit --release` no longer claims the card back. An explicit `--claim`
       still stamps on any status.
 
+    - `karr-foundation` treats a card as finished when it is in the board's
+      own final status (or archived), not only `done`/`archived`. A board
+      whose last column has another name (e.g. `shipped`) is now seen as
+      drained: an unchanged board is skipped instead of starting an agent
+      every tick, the drain reports its progress, `on_drained` runs, and
+      chain prechecks read `board_actionable=no`.
+
     - The bundled agent skill `kanban-issues-karr-cli` is split in two:
       `kanban-issues-karr-coordination` (reading a board, picking, creating and
       routing cards, config, sync) and `kanban-issues-karr-ticket` (working the

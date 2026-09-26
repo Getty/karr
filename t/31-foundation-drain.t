@@ -105,8 +105,12 @@ subtest '_is_actionable' => sub {
   ok   $f->_is_actionable({ status => 'todo' }),                 'todo actionable';
   ok   $f->_is_actionable({ status => 'in-progress' }),          'in-progress actionable';
   ok   $f->_is_actionable({ status => 'backlog' }),              'backlog actionable';
-  ok ! $f->_is_actionable({ status => 'done' }),                 'done not actionable';
-  ok ! $f->_is_actionable({ status => 'archived' }),             'archived not actionable';
+  # Terminal is the snapshot's verdict, made by _task_states against the
+  # board's own statuses (#305) -- a hand-built snapshot has to carry it.
+  ok ! $f->_is_actionable({ status => 'done', terminal => 1 }),     'done not actionable';
+  ok ! $f->_is_actionable({ status => 'archived', terminal => 1 }), 'archived not actionable';
+  ok   $f->_is_actionable({ status => 'in-progress', claimed_by => 'a' }),
+    'a claimed card is still actionable -- actionable is not pickable';
   ok ! $f->_is_actionable({ status => 'todo', blocked => 1 }),   'blocked not actionable';
   ok ! $f->_is_actionable(undef),                                'undef not actionable';
 };
@@ -151,7 +155,7 @@ subtest '_stuck_tasks' => sub {
   my $after = {
     1 => { status => 'in-progress', claimed_by => 'a', updated => 'T1' },  # unchanged -> stuck
     2 => { status => 'todo',        claimed_by => undef, updated => 'T1' }, # not claimed -> ignore
-    3 => { status => 'done',        claimed_by => 'a', updated => 'T2' },  # advanced -> not stuck
+    3 => { status => 'done',        claimed_by => 'a', updated => 'T2', terminal => 1 },  # advanced -> not stuck
   };
   is_deeply [ $f->_stuck_tasks( $before, $after, $eng ) ], [1],
     'only the unchanged claimed task is stuck';

@@ -904,12 +904,12 @@ C<on_drained_max_runtime>, because how long an agent may take says nothing
 about how long a release gate may.
 
 B<Drained> is a fact about the board, not a name for an outcome: no actionable
-task is left on it -- everything done, archived or blocked. That is deliberately
-the same question C<--force> and C<< on_idle: always-run >> are answers to, and
-it is the only one that stays meaningful across the run modes. A drain that
-ends in a C<common-error> does not count: a rate-limited agent leaves a board
-that looks exactly like one it worked through, and foundation does not believe
-that run itself.
+task is left on it -- everything is in the board's own final status (or
+archived), or blocked. That is deliberately the same question C<--force> and
+C<< on_idle: always-run >> are answers to, and it is the only one that stays
+meaningful across the run modes. A drain that ends in a C<common-error> does
+not count: a rate-limited agent leaves a board that looks exactly like one it
+worked through, and foundation does not believe that run itself.
 
 B<An empty board is not the same as finished work.> The hook may fail and file
 tickets, at which point the board is no longer drained; the next tick works
@@ -2234,18 +2234,24 @@ sub _skip_disabled {
 # Task state / actionability
 # ---------------------------------------------------------------------------
 
-# A task is actionable when an agent could still pick it: not terminal
-# (done/archived) and not blocked. Mirrors `karr pick` eligibility.
+# A task is actionable when there is still work in it: not terminal on its
+# board and not blocked. Terminal is the snapshot's own verdict, taken from the
+# board's configured statuses when _task_states read it (its final status plus
+# `archived`, #67) -- a board whose last column is `shipped` is drained when
+# everything on it is shipped, and has no `done` to wait for (#305).
+#
+# This is not `karr pick` eligibility, and deliberately does not ask the claim:
+# the drain's own agent claims the card it works on, and that card has to stay
+# actionable for the drain to keep going and for _stuck_tasks to see it stall.
 sub _is_actionable {
   my ( $self, $st ) = @_;
   return 0 unless $st;
   return 0 if $st->{blocked};
-  my $status = $st->{status} // '';
-  return 0 if $status eq 'done' || $status eq 'archived';
+  return 0 if $st->{terminal};
   return 1;
 }
 
-# Snapshot every task as id => { status, claimed_by, updated, blocked }.
+# Snapshot every task as id => { status, claimed_by, updated, blocked, terminal }.
 sub _task_states {
   my ( $self, $repo ) = @_;
   my $git = App::karr::Git->new( dir => "$repo" );
@@ -2259,6 +2265,7 @@ sub _task_states {
       claimed_by => ( $t->has_claimed_by ? $t->claimed_by : undef ),
       updated    => $t->updated,
       blocked    => ( $t->has_blocked ? 1 : 0 ),
+      terminal   => ( $store->is_terminal_status( $t->status ) ? 1 : 0 ),
     };
   }
   return %states;
