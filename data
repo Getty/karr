@@ -1,0 +1,25 @@
+---
+claimed_at: 2026-09-27T03:10:36Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-09-27T03:10:36Z
+created: 2026-09-27T00:58:57Z
+id: 316
+priority: low
+started: 2026-09-27T02:43:32Z
+status: done
+tags:
+- bug
+- skill
+- init
+title: init --claude-skill leaves an empty skill dir when the skill lookup fails
+updated: 2026-09-27T03:10:36Z
+---
+
+Found while fixing k308. karr init --claude-skill creates .claude/skills/NAME/ before it resolves the shipped SKILL.md; when the lookup fails (e.g. the pre-k308 binary) the user is left with an initialized board, an empty skill directory and exit 1. Resolve the source files first, create directories only once there is something to write.
+
+Repro: t/316 (new) fails 3/5 on HEAD - init writes board refs + .gitignore + empty skill dir, retry says 'Board already exists'. Fix in Cmd/Init.pm: resolve every shipped file of every skill before the first write. Cmd/Skill.pm already resolved first (guard subtests pass on HEAD). t/146 helper adapted to the private _install_claude_skill(root, shipped) signature.
+
+Fix: Cmd/Init.pm resolves every shipped file of every skill (same %shipped shape as Cmd::Skill) after the refusal checks and before the first ref write; _install_claude_skill(root, shipped) only writes. A failed lookup now leaves no board refs, no .gitignore, no .claude; same message + exit 1; retry works. Cmd/Skill.pm needed no change (already resolves first; pinned by guard subtests). Files: lib/App/karr/Cmd/Init.pm, t/316-init-skill-lookup-failure.t (new), t/146-init-skill-write-in-place.t (helper follows private signature). Tests: prove -l t/316-init-skill-lookup-failure.t -> FAIL 3/5 on HEAD, PASS after; plus t/26 t/146 t/285 t/302 t/120 t/25 t/182 t/268 t/144 t/226 t/136 t/121 t/62 t/65 t/80 t/211 t/84 t/49 t/124 t/215 all PASS. Full suite not run (per instructions).
+
+2026-09-27 03:10 Committed as 03c43ce (k316: init --claude-skill resolves the skills before its first write).
