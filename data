@@ -1,0 +1,27 @@
+---
+claimed_at: 2026-09-27T01:26:10Z
+claimed_by: karr
+class: standard
+completed: 2026-09-27T01:26:10Z
+created: 2026-09-27T00:25:02Z
+id: 310
+priority: medium
+started: 2026-09-27T01:26:10Z
+status: done
+tags:
+- bug
+- ids
+- log
+title: log --task rejects the kNNN id spelling
+updated: 2026-09-27T01:26:10Z
+---
+
+Unreleased Changes entry (kNNN ids) says a leading k/K "works anywhere a bare number does". karr log --task k5 is still refused: Log.pm:91-94 declares the option format => "i", so MooX::Options rejects it before karr sees it. Fix: accept k/K on --task (normalize via the existing BoardAccess normalize_task_id / parse_ids path, do not add a second parser), keep a non-id token failing as before.
+
+Same pass: Role/DependencyArgs.pm:68 user-facing error still says "(ids are comma-separated numbers)" -- mention the kNNN spelling. Check --remove-depends-on accepts k (audit says it does) so the Changes wording can name it.
+
+Drift (not fixed here, for the dispatcher to file if wanted): karr log --task 0 (and now --task k0 the same way) applies no filter at all and prints the whole log -- the filter is guarded by truthiness (Log.pm 'if ($task_id)'), same shape as the --last 0 bug fixed in #151. Kept as-is so k0 behaves exactly like 0; a fix would have to decide what an entry without task_id means under --task 0.
+
+log --task now takes kNNN: option format i -> s, value goes through BoardAccess normalize_task_id, then the same /\A[0-9]+\z/ check DependencyArgs uses; non-id -> usage error exit 2 'invalid --task id "abc" (ids are numbers or kNNN)', validated before require_local_board like --since/--action. Behaviour change: --task -1 / +5 (accepted by Getopt int before; -1 gave 'No log entries.' exit 0) are now usage errors. DependencyArgs message now '(ids are comma-separated numbers or kNNN)'; no test pinned the old text. --remove-depends-on already accepted k (goes through parse_dependency_ids) -- now covered by a test. Sweep: no other local-id option/positional rejects k (remaining format i options are counts: log/show --last, context --days/--activity-limit, list --limit, dashboard --depth). Test: t/301-k-prefix-task-id.t +4 subtests; before fix subtests 7 (log k5/K5) and 10 (message) failed, 8/9 passed. prove -l on t/301 + 17 Log/DependencyArgs tests: 18 files, 150 tests, PASS. Changes not edited; wording in report.
+
+2026-09-27 01:26 Committed 7076ef0: k310: log --task takes the kNNN id spelling
