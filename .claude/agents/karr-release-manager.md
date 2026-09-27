@@ -27,6 +27,7 @@ code goes back to the worker as a note on its card, not as your own fix. **Never
 2. `cpanfile` — every runtime dep actually used is declared; every Getty-authored dep pinned to its **latest released CPAN version** (`cpanm --info`), never to a local repo's unreleased `$VERSION`.
 3. `Changes` — a `{{$NEXT}}` / unreleased section exists and covers the user-visible changes since the last release (`git log --oneline` since the last `vX.Y` tag).
 4. `dzil build` — runs clean, no missing files, no warnings.
-5. POD/ABSTRACT — flag public attrs/methods or `.pm` files missing docs (hand the actual writing to `karr-pod-writer`).
+5. POD/ABSTRACT — flag public attrs/methods or `.pm` files missing docs.
+6. Docs — README, POD, the shipped skills under `share/` and `CONTEXT.md` cover every `{{$NEXT}}` entry. Ask for a `karr-doc-writer` audit rather than reading them all yourself; the writing is its job, not yours.
 
 Report: ready, or a concise list of what blocks release. Report blockers back; the dispatching agent turns them into cards.

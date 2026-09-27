@@ -26,7 +26,7 @@ the rules file). Agents in this repo (skills force-loaded via `briefing.skills`)
 | Behavior-relevant code spanning those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
 | Write/extend tests under `t/` | `karr-test-writer` |
 | Commits, `Changes`, card → done, pre-release audit | `karr-release-manager` |
-| POD (`=attr`/`=method`, `# ABSTRACT`) | `karr-pod-writer` |
+| Docs: POD (`=attr`/`=method`, `# ABSTRACT`), README, `CONTEXT.md`, ADRs, shipped skills; doc audits | `karr-doc-writer` |
 
 Take the narrowest domain worker that fits; each names the other two in its boundaries section
 and hands a misrouted task back rather than solving it from the wrong context.

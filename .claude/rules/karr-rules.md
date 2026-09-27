@@ -41,7 +41,7 @@ Depends on whether the Agent/Task tool is available to you.
   | Behavior-relevant code that spans those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
   | Write/extend tests under `t/` | `karr-test-writer` |
   | Commits, `Changes`, card → done, pre-release audit | `karr-release-manager` |
-  | POD (`=attr`/`=method`, ABSTRACT) | `karr-pod-writer` |
+  | Docs: POD, README, `CONTEXT.md`, ADRs, shipped skills; doc audits | `karr-doc-writer` |
 
   Pick the narrowest domain worker that covers the task — they brief on one domain instead of
   the whole distribution, and each one names the other two in its own boundaries section, so a
