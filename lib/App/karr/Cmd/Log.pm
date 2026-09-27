@@ -48,7 +48,10 @@ Only show entries recorded for a specific agent.
 
 =item * C<--task>
 
-Only show entries associated with a specific task id.
+Only show entries associated with a specific task id. The id takes the house
+C<kNNN> spelling as well (C<--task k12> is C<--task 12>), the same strip
+L<App::karr::Role::BoardAccess/normalize_task_id> makes for every local id;
+any other value is a usage error.
 
 =item * C<--last>
 
@@ -88,9 +91,12 @@ option agent => (
     doc => 'Filter by agent name',
 );
 
+# A string, not `format => 'i'`: Getopt::Long refuses `k5` before karr sees it,
+# and the house kNNN spelling has to work here as it does for every other local
+# id (ticket k310). Normalized and validated in execute.
 option task => (
     is => 'ro',
-    format => 'i',
+    format => 's',
     doc => 'Filter by task ID',
 );
 
@@ -154,6 +160,19 @@ sub execute {
         unless grep { $_ eq $self->action } @valid;
     }
 
+    # --task is a local task id, so it takes the house kNNN spelling through
+    # the same normalize_task_id every other id argument goes through (k5 ==
+    # 5). Anything that is still not a number afterwards -- abc, a lone k, k5x
+    # -- stays a usage error naming the value as typed, which is what the old
+    # `format => 'i'` answered it with (ticket k310).
+    my $task_id;
+    if ( defined $self->task ) {
+      $task_id = $self->normalize_task_id( $self->task );
+      $self->usage_error(
+        sprintf 'invalid --task id "%s" (ids are numbers or kNNN)', $self->task )
+        unless $task_id =~ /\A[0-9]+\z/;
+    }
+
     # This is where the empty answers are told apart, and all three are
     # settled before a single ref is read. "No log entries." is what a board
     # with no activity says; a repository with no board says something else
@@ -192,8 +211,8 @@ sub execute {
     if ($self->agent) {
         @entries = grep { ($_->{agent} // '') eq $self->agent } @entries;
     }
-    if ($self->task) {
-        @entries = grep { ($_->{task_id} // 0) == $self->task } @entries;
+    if ($task_id) {
+        @entries = grep { ($_->{task_id} // 0) == $task_id } @entries;
     }
     if ( defined $self->since && length $self->since ) {
         # String comparison against the RFC3339 timestamp: an entry from the

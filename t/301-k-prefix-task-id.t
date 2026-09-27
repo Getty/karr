@@ -9,6 +9,7 @@ use File::Temp qw( tempdir );
 
 use App::karr::Git;
 use App::karr::CrossBoard;
+use App::karr::Encoding qw( json_decode );
 
 # Board ticket 301: the house `kNNN` spelling is accepted as a local task id
 # wherever a bare number was expected -- `karr show k30` names the same card as
@@ -128,6 +129,81 @@ subtest 'CrossBoard: the id side of BOARD#ID accepts k-notation' => sub {
   like( $@, qr/invalid --needs reference/, 'other-repo#kk7 is still refused' );
   eval { App::karr::CrossBoard->parse_ref( '--needs', 'other-repo#k' ) };
   like( $@, qr/invalid --needs reference/, 'other-repo#k with no digits is refused' );
+};
+
+# Board ticket 310: `karr log --task` was left out of k301. Its option was
+# declared `format => 'i'`, so Getopt::Long refused `k5` before karr ever saw it
+# ("Value "k5" invalid for option task (number expected)", exit 2) -- while the
+# Changes entry promised the k spelling works anywhere a bare number does.
+# Reproduced against the pre-fix code: both k-form checks below failed there.
+subtest 'log --task: k5 and K5 filter exactly like 5' => sub {
+  my $repo = _init_board( 'Log Board', map {"Card $_"} 1 .. 5 );
+  # A second entry each for 5 and for 1, so the filter has something to drop
+  # and something to keep beyond the create entries.
+  is( _run_karr( $repo, 'move', '5', 'todo' )->{exit}, 0, 'card 5 moved' );
+  is( _run_karr( $repo, 'move', '1', 'todo' )->{exit}, 0, 'card 1 moved' );
+
+  my $bare = _run_karr( $repo, 'log', '--task', '5' );
+  is( $bare->{exit}, 0, 'log --task 5 succeeds' ) or diag( $bare->{stderr} );
+
+  my @lines = split /\n/, $bare->{stdout};
+  is( scalar @lines, 2, 'task 5 has its create and its move entry' );
+  is( scalar( grep { !/ task#5 / } @lines ), 0, 'and only task 5 entries are shown' );
+
+  for my $spelling (qw( k5 K5 )) {
+    my $rv = _run_karr( $repo, 'log', '--task', $spelling );
+    is( $rv->{exit}, 0, "log --task $spelling succeeds" ) or diag( $rv->{stderr} );
+    is( $rv->{stdout}, $bare->{stdout}, "log --task $spelling prints exactly what --task 5 does" );
+  }
+
+  my $json = _run_karr( $repo, 'log', '--json', '--task', 'k5' );
+  is( $json->{exit}, 0, 'log --json --task k5 succeeds' ) or diag( $json->{stderr} );
+  my $entries = eval { json_decode( $json->{stdout} ) } || [];
+  is_deeply( [ map { $_->{task_id} } @$entries ], [ 5, 5 ],
+    'the JSON payload holds the two task 5 entries' );
+};
+
+subtest 'log --task: a token that is not an id is still a usage error' => sub {
+  my $repo = _init_board( 'Log Reject Board', 'Only card' );
+
+  # What held before the fix and has to hold after it: exit 2, the value named
+  # as typed, and no log line printed in its place.
+  for my $token (qw( abc k kk5 k5x )) {
+    my $rv = _run_karr( $repo, 'log', '--task', $token );
+    is( $rv->{exit}, 2, "log --task $token exits 2" );
+    like( $rv->{stderr}, qr/"\Q$token\E"/, "the value $token is named verbatim" );
+    unlike( $rv->{stdout}, qr/task#/, 'no log entry is printed' );
+  }
+
+  # Validated before the board is looked up, like --since and --action: a
+  # repository with no board still answers a bad --task with exit 2.
+  my $bare_repo = _init_repo();
+  my $rv = _run_karr( $bare_repo, 'log', '--task', 'abc' );
+  is( $rv->{exit}, 2, 'log --task abc exits 2 on a repository with no board' );
+};
+
+subtest 'dependency ids: --remove-depends-on accepts k-notation' => sub {
+  my $repo = _init_board( 'Remove Dep Board', 'Dep one', 'Dep two', 'Needs them' );
+  is( _run_karr( $repo, 'edit', '3', '--add-depends-on', '1,2' )->{exit},
+    0, 'card 3 depends on 1 and 2' );
+
+  my $lower = _run_karr( $repo, 'edit', '3', '--remove-depends-on', 'k1' );
+  is( $lower->{exit}, 0, 'edit --remove-depends-on k1 succeeds' ) or diag( $lower->{stderr} );
+  is_deeply( _task( $repo, 3 )->depends_on, [2], 'k1 removed dependency 1' );
+
+  my $upper = _run_karr( $repo, 'edit', '3', '--remove-depends-on', 'K2' );
+  is( $upper->{exit}, 0, 'edit --remove-depends-on K2 succeeds' ) or diag( $upper->{stderr} );
+  is_deeply( _task( $repo, 3 )->depends_on, [], 'K2 removed dependency 2' );
+};
+
+subtest 'dependency ids: the usage error names the kNNN spelling' => sub {
+  my $repo = _init_board( 'Dep Message Board', 'Only card' );
+
+  my $rv = _run_karr( $repo, 'edit', '1', '--add-depends-on', 'abc' );
+  is( $rv->{exit}, 2, 'edit --add-depends-on abc is a usage error' );
+  like( $rv->{stderr},
+    qr/invalid --add-depends-on id "abc" \(ids are comma-separated numbers or kNNN\)/,
+    'the message says the k spelling is accepted too' );
 };
 
 done_testing;

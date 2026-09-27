@@ -65,7 +65,7 @@ sub parse_dependency_ids {
         # names the value as the caller typed it.
         my $id = $self->normalize_task_id($raw);
         $self->usage_error(
-            qq{invalid $flag id "$raw" (ids are comma-separated numbers)} )
+            qq{invalid $flag id "$raw" (ids are comma-separated numbers or kNNN)} )
             unless $id =~ /\A[0-9]+\z/;
         # Numified on purpose: YAML::XS and JSON::MaybeXS both encode by the
         # scalar's own type, so a string "2" would round-trip as '2' / "2" --
