@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-09-27T03:11:10Z
+claimed_by: karr-ref-worker
+class: standard
+completed: 2026-09-27T03:11:10Z
+created: 2026-09-27T00:58:51Z
+id: 315
+priority: medium
+started: 2026-09-27T02:43:25Z
+status: done
+tags:
+- binary
+- release
+- ci
+title: Binary runtime-lib check covers only libgit2 -- a trixie build image would
+  ship a libthai dependency
+updated: 2026-09-27T03:11:10Z
+---
+
+Found while fixing k308. Building on a trixie-based perl:5.40 image links the bundled Unicode::LineBreak against libthai.so.0 (trixie base has libthai-dev, bookworm does not). On a target without libthai0 every command dies at startup. The runtime-lib assert in .github/workflows/release-binaries.yml inspects only the libgit2 deps, and verify-binary.sh runs inside the build container, so a base-image bump would ship this silently. CI currently pins perl:5.40-bookworm. Fix: check every compiled .so packed into the binary (ldd over the PAR-extracted libs) against the documented runtime list, and/or document why the image is pinned to bookworm.
+
+scripts/check-binary-libs.sh (new): unzip PAR archive, ldd loader + every .so, fail on libs outside RUNTIME_LIBS. 0.601 x86_64 passes (38 objects). Real trixie-built LineBreak.so (NEEDED libthai.so.0) swapped into a copy of 0.601 -> FAIL naming libthai+libdatrie and the object; also verified inside buildpack-deps:bookworm (mawk/unzip/ldd).
+
+Fix: scripts/check-binary-libs.sh (new) unzips the PAR archive, ldd's the loader + every .so, fails on any lib outside RUNTIME_LIBS (the one list; --list prints it). Workflow: step calls it on the built binary (no tee: default shell has no pipefail), asserts README.md names every listed lib, tarball README line comes from --list, unzip added to apt, comment at the bookworm pin. README unchanged (already agrees). pp-recipe.md updated (base-image paragraph, verify step, failure mode 11). Evidence: 0.601 x86_64 -> exit 0 (38 objects); copy with a real trixie-built LineBreak.so (NEEDED libthai.so.0) -> exit 1 naming libthai+libdatrie and the object; old libgit2-only logic passes that same variant; same results inside buildpack-deps:bookworm. No full trixie binary built (only Unicode::LineBreak compiled in a throwaway perl:5.40 container, removed).
+
+2026-09-27 03:10 Committed as e836ffc (k315: check every packed .so against the documented runtime libs).
