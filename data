@@ -1,0 +1,28 @@
+---
+claimed_at: 2026-09-27T01:25:54Z
+claimed_by: karr
+class: standard
+completed: 2026-09-27T01:25:54Z
+created: 2026-09-27T00:45:44Z
+id: 313
+priority: high
+started: 2026-09-27T01:25:54Z
+status: done
+tags:
+- bug
+- ex
+- foundation
+- release
+title: ex sandbox seeds its cards in backlog -- nothing to pick since k306
+updated: 2026-09-27T01:25:54Z
+---
+
+Found by the k311 docs pass. ex/setup.sh creates its sample cards in the default status (backlog). Since k306 backlog is held back, so on a fresh sandbox karr-foundation finds nothing to pick in either demo repo and the walkthrough in ex/README.md (~64-75, "backlog -> review/done") no longer happens. t/216-ex-sandbox.t pins backlog as the seeded status. Fix: seed the cards in todo (the pool that is picked from), update t/216 to pin that, and re-capture the sample output for ex/README.md.
+
+Reproduced on a scratch sandbox (HEAD setup.sh): foundation --verbose logs 'TICKET none assignable -- no agent run' for webapp, docs-site drain agent prints 'drain-agent: nothing to pick'; karr pick --json returns {"picked":null} on both. Fix: ex/setup.sh creates every sample card with --status todo (none left in backlog -- no card in the demo story is a parked one; each card's hold is its own mechanism: claim, depends_on, block, needs). t/216 pins todo and adds a Picker + foundation --dry-run check (#5 on webapp, #1 on docs-site).
+
+Drift found (not in scope, for the dispatcher to file on the karr board): (1) ex/README.md 'A stalled agent and auto-block' points docs-site (mode: drain) at lazy-agent.sh -- verified on a fresh sandbox that this never auto-blocks: lazy-agent never calls karr, so there is no engagement evidence (#158) and the drain ends idle after one run. Pointing webapp (mode: ticket) at lazy-agent.sh does auto-block #5 after 2 runs. Doc fix for karr-doc-writer. (2) karr-foundation --dry-run --verbose in ticket mode logs 'STALL task#5 -- no report from the agent' for the run it skipped; nothing is written (no .karr.state, no .karr.log), so cosmetic, but misleading. Foundation-side.
+
+ex/setup.sh now creates every sample card with --status todo (none stays in backlog: no card in the demo story is a parked one, and each card's hold is its own mechanism -- claim, depends_on, block, needs). t/216 pins todo for webapp #2/#4/#5/#6 and docs-site #1, and adds a subtest: Picker (karr pick's rules, read-only) hands out #5 on webapp and #1 on docs-site, and karr-foundation --dry-run --verbose logs 'TICKET task#5' and never 'TICKET none assignable'. Against HEAD's setup.sh the new t/216 fails 16/62; with the fix, 62/62 pass. The fresh-sandbox run now prints 'Moved task 5: todo -> review' and 'Moved task 1: todo -> done'; the new capture for ex/README.md ~64-75 is in the worker report. Commit-ready, not committed; README left to karr-doc-writer.
+
+2026-09-27 01:25 Committed f2580aa: k313: ex sandbox seeds its sample cards in todo, not the held-back backlog
