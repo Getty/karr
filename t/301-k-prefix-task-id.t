@@ -182,6 +182,57 @@ subtest 'log --task: a token that is not an id is still a usage error' => sub {
   is( $rv->{exit}, 2, 'log --task abc exits 2 on a repository with no board' );
 };
 
+# Board ticket 312: after k310, --task filtered only when the id was truthy, so
+# `--task 0` and `--task k0` applied no filter and printed the whole log, while
+# `--task 00` (a true string) filtered for task 0 and printed none -- two
+# answers for one value, and neither says the value is wrong. Task ids start
+# at 1, so 0 in any spelling is a usage error like every other value that
+# names no task. Reproduced against the pre-fix code: 0 and k0 exited 0 with
+# both create entries on STDOUT, 00 and K00 exited 0 with "No log entries.".
+subtest 'log --task: 0 in any spelling is a usage error, not "no filter"' => sub {
+  my $repo = _init_board( 'Log Zero Board', 'Card one', 'Card two' );
+
+  for my $token (qw( 0 k0 K0 00 k00 )) {
+    my $rv = _run_karr( $repo, 'log', '--task', $token );
+    is( $rv->{exit}, 2, "log --task $token exits 2" );
+    like( $rv->{stderr}, qr/invalid --task id "\Q$token\E" \(ids start at 1\)/,
+      "the value $token is named verbatim, with the reason" );
+    is( $rv->{stdout}, '', 'nothing is printed on STDOUT' );
+  }
+
+  # Validated before the board is looked up, like the other --task checks.
+  my $bare_repo = _init_repo();
+  my $rv = _run_karr( $bare_repo, 'log', '--task', '0' );
+  is( $rv->{exit}, 2, 'log --task 0 exits 2 on a repository with no board' );
+
+  # A leading zero on a real id still names that id: 01 is card 1.
+  my $one  = _run_karr( $repo, 'log', '--task', '1' );
+  my $zero = _run_karr( $repo, 'log', '--task', '01' );
+  is( $zero->{exit}, 0, 'log --task 01 succeeds' ) or diag( $zero->{stderr} );
+  is( $zero->{stdout}, $one->{stdout}, 'log --task 01 prints exactly what --task 1 does' );
+};
+
+# The check k312 asked for: dependency ids do not share the log hole. 0 on the
+# adding side is already refused before anything is written, through
+# assert_dependencies_exist (no card 0 exists); on the removing side it is the
+# same no-op as any id the card does not carry -- deliberately legal, because
+# removing an absent id is how a stale dependency is cleaned up. Pinned so the
+# adding side cannot start storing a 0.
+subtest 'dependency ids: 0 is never added as a dependency' => sub {
+  my $repo = _init_board( 'Dep Zero Board', 'Only card' );
+
+  for my $token (qw( 0 k0 00 )) {
+    my $create = _run_karr( $repo, 'create', 'Needs zero', '--depends-on', $token );
+    is( $create->{exit}, 2, "create --depends-on $token is a usage error" );
+    like( $create->{stderr}, qr/dependency task 0 does not exist/, 'the reason is given' );
+
+    my $edit = _run_karr( $repo, 'edit', '1', '--add-depends-on', $token );
+    is( $edit->{exit}, 2, "edit --add-depends-on $token is a usage error" );
+  }
+  is_deeply( _task( $repo, 1 )->depends_on, [], 'card 1 carries no dependency' );
+  ok( !App::karr::Git->new( dir => $repo )->load_task_ref(2), 'and no card was created' );
+};
+
 subtest 'dependency ids: --remove-depends-on accepts k-notation' => sub {
   my $repo = _init_board( 'Remove Dep Board', 'Dep one', 'Dep two', 'Needs them' );
   is( _run_karr( $repo, 'edit', '3', '--add-depends-on', '1,2' )->{exit},

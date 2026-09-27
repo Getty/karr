@@ -48,7 +48,9 @@
       `--depends-on`/`--add-depends-on`/`--remove-depends-on` flags and the id
       side of a cross-board `BOARD#ID` reference. Any other token is left
       untouched and still fails as before; `log --task` answers a value that
-      is not an id (a negative number included) with a usage error.
+      is not an id -- a negative number, or `0` in any spelling (`0`, `k0`,
+      `00`), since task ids start at 1 -- with a usage error (exit 2) naming
+      the value.
 
     - Release-asset names are tidied. The arm64 binary and tarball are now named
       `...-linux-aarch64` (was `-linux-arm64`) to match the `x86_64` naming, and

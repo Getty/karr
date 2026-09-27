@@ -50,8 +50,9 @@ Only show entries recorded for a specific agent.
 
 Only show entries associated with a specific task id. The id takes the house
 C<kNNN> spelling as well (C<--task k12> is C<--task 12>), the same strip
-L<App::karr::Role::BoardAccess/normalize_task_id> makes for every local id;
-any other value is a usage error.
+L<App::karr::Role::BoardAccess/normalize_task_id> makes for every local id.
+Task ids start at 1, so C<0> in any spelling (C<0>, C<k0>, C<00>) is a usage
+error, as is any value that is not a number or C<kNNN>.
 
 =item * C<--last>
 
@@ -171,6 +172,13 @@ sub execute {
       $self->usage_error(
         sprintf 'invalid --task id "%s" (ids are numbers or kNNN)', $self->task )
         unless $task_id =~ /\A[0-9]+\z/;
+      # Task ids start at 1, so 0 in any spelling -- 0, k0, 00 -- names no
+      # task. The filter below used to test the id for truth, which read 0 as
+      # "no filter" and printed the whole log, while "00" (a true string)
+      # filtered for task 0 and printed none (ticket k312).
+      $self->usage_error(
+        sprintf 'invalid --task id "%s" (ids start at 1)', $self->task )
+        if $task_id == 0;
     }
 
     # This is where the empty answers are told apart, and all three are
@@ -211,7 +219,7 @@ sub execute {
     if ($self->agent) {
         @entries = grep { ($_->{agent} // '') eq $self->agent } @entries;
     }
-    if ($task_id) {
+    if (defined $task_id) {
         @entries = grep { ($_->{task_id} // 0) == $task_id } @entries;
     }
     if ( defined $self->since && length $self->since ) {
