@@ -1,0 +1,25 @@
+---
+claimed_at: 2026-09-27T03:10:06Z
+claimed_by: karr-foundation-worker
+class: standard
+completed: 2026-09-27T03:10:06Z
+created: 2026-09-27T00:57:41Z
+id: 314
+priority: low
+started: 2026-09-27T02:43:18Z
+status: done
+tags:
+- bug
+- foundation
+- cosmetic
+title: foundation --dry-run --verbose logs STALL for the run it skipped (ticket mode)
+updated: 2026-09-27T03:10:06Z
+---
+
+Found while fixing k313. In ticket mode, karr-foundation --dry-run --verbose logs "STALL task#5 -- no report from the agent" for the agent run it did not start. Nothing is written (no .karr.state, no block), so it is cosmetic, but a dry run should not report a stall for a run that never happened.
+
+Repro (ex/setup.sh copied into scratchpad, config.yml from setup): karr-foundation --dry-run --verbose printed 'STALL task#5 -- no report from the agent' right after 'DRY-RUN (skipped)' for webapp (mode: ticket). docs-site (mode: drain) printed no STALL: a drain judges engagement and a run that never started engages nothing, so drain mode was not affected. Cause: Runner returns (0, '') for a dry run and _drain_repo judged that like a real run; in ticket mode the unmoved card became outcome stall + STALL line. Fix: 'last if $self->dry_run;' in _drain_repo right after _run_command, before any judging -- outcome idle, TICKET/START/DRY-RUN lines stay. Regression in t/185 (ticket dry run: no STALL, outcome not stall, no .karr.log/.karr.state, card unblocked) failed 2 assertions before the fix; drain-mode companion subtest passes before and after (pins one would-be START, no loop). No POD states what a dry run logs, so no POD change.
+
+Fix in lib/App/karr/Foundation.pm (_drain_repo: dry run skips judging), tests in t/185-foundation-ticket-mode.t. Targeted: prove -l t/30 t/31 t/33 t/34 t/63 t/64 t/*-foundation-*.t t/216 -> 35 files, 330 tests, PASS. Full suite not run (orchestrator). Proposed subject: 'k314: foundation --dry-run no longer reports a STALL for the run it skipped'. Changes: 'karr-foundation --dry-run in ticket mode no longer logs a STALL for the agent run it did not start'.
+
+2026-09-27 03:09 Committed as 9daa624 (k314: foundation --dry-run no longer reports a STALL for the run it skipped).
