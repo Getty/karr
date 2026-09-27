@@ -1,0 +1,23 @@
+---
+claimed_at: 2026-09-27T03:08:46Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-09-27T03:08:46Z
+created: 2026-09-27T00:32:22Z
+id: 312
+priority: low
+started: 2026-09-27T02:43:12Z
+status: done
+tags:
+- bug
+- log
+- ids
+title: log --task 0 (and k0) applies no filter and prints the whole log
+updated: 2026-09-27T03:08:46Z
+---
+
+Found while fixing k310. Log.pm filters only when the task id is non-zero, so --task 0 / --task k0 silently show every entry instead of none or a usage error. Same shape as the --last 0 bug (#151). Decide: 0 is not a valid task id (ids start at 1) -> usage error, exit 2.
+
+Fixed: log --task 0/k0/K0/00/k00 is now a usage error, exit 2, "invalid --task id "0" (ids start at 1)", raised before require_local_board; the filter guard is now defined($task_id) instead of truthiness (pre-fix 0/k0 printed the whole log, 00/K00 printed "No log entries."). --task POD states ids start at 1. Files: lib/App/karr/Cmd/Log.pm, t/301-k-prefix-task-id.t (new subtests: log --task zero spellings, and dependency ids 0). Checked DependencyArgs: not the same hole. --depends-on/--add-depends-on 0|k0|00 already exit 2 via assert_dependencies_exist ("dependency task 0 does not exist on this board"), nothing written; --remove-depends-on 0 is the same deliberate no-op as any absent id (cleanup path for a stale id, e.g. an imported depends_on: [0]), so left unchanged and pinned by a test. Pre-fix: 16/21 assertions of the new log subtest failed. Post-fix: prove -l t/301-k-prefix-task-id.t t/17-log.t t/151-log-last-range.t t/253-log-json-empty-stream.t t/278-log-since-action.t t/130-read-commands-no-board.t t/254-compact-output-role.t t/127-depends-on-cli.t -> all pass. Not committed.
+
+Committed as cbe6000 (k312: log --task 0 is a usage error, not an unfiltered log).
