@@ -85,7 +85,13 @@ sub install_into {
         open my $fh, '>', \$out or die "open scalar: $!";
         local *STDOUT = $fh;
         local $@;
-        eval { App::karr::Cmd::Init->new->_install_claude_skill( path($root) ); 1 };
+        # Handed the files execute looks up before its first write (k316).
+        eval {
+            my $init    = App::karr::Cmd::Init->new;
+            my %shipped = map { ( $_ => { $init->_skill_files($_) } ) } $init->_skill_names;
+            $init->_install_claude_skill( path($root), \%shipped );
+            1;
+        };
         $@;
     };
     return { stdout => $out, error => $err, warnings => \@warnings };

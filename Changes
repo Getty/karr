@@ -69,6 +69,12 @@
     - `karr-foundation --dry-run` in ticket mode no longer logs a STALL for the
       agent run it did not start.
 
+    - `karr init --claude-skill` looks up the bundled skills before it writes
+      anything, so an installation that cannot find them fails without
+      leaving a board, `.gitignore` entries or an empty `.claude/skills/`
+      directory behind, and the same command works once the installation is
+      fixed.
+
 0.601     2026-09-19 23:43:42Z
 
     - A card left blocked in a terminal status (`done`/`archived`) no longer

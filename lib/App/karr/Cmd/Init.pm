@@ -79,6 +79,11 @@ C<karr skill install --force>. A F<.claude/skills/kanban-issues-karr-cli/>
 left by an earlier release -- the single skill the two replace -- is removed,
 as C<karr skill install> removes it, and the plain output says so.
 
+The bundled skills are looked up before C<init> writes anything, so an
+installation that cannot find them fails without leaving a board, a
+F<.gitignore> entry or a half-written F<.claude/skills/> behind, and the same
+command can simply be run again once the installation is fixed.
+
 =item * C<--json>
 
 Emit the initialized board as one JSON object -- C<board.name> and the
@@ -129,6 +134,21 @@ sub execute {
   # repository already has a board is a question the remote answers too, not
   # the local refs alone (#182).
   $self->_refuse_if_remote_has_board unless $self->new_board;
+
+  # Every file --claude-skill is going to install, looked up before anything
+  # is written, the way `karr skill install` looks up the whole set before its
+  # first write. The lookup can fail -- an install whose share dir is missing,
+  # as the single binary's was until k308 -- and init used to find that out
+  # only after writing the board refs and the .gitignore entries and creating
+  # the first skill's directory: exit 1, an initialized board, an empty
+  # .claude/skills/NAME (or one skill written and the next one empty), and a
+  # retry that only said "Board already exists" (k316). Asked here, a failed
+  # lookup leaves the repository exactly as it found it. Since #146 the lookup
+  # is App::karr::Role::SkillFile's and since #285 a skill is a directory,
+  # SKILL.md plus references/*.md, which _skill_files hands out whole.
+  my %shipped = $self->claude_skill
+    ? map { ( $_ => { $self->_skill_files($_) } ) } $self->_skill_names
+    : ();
 
   # Asked before the first ref write below, which would make any repository
   # look like it already held something. This is what tells a board born here
@@ -213,7 +233,7 @@ sub execute {
   }
 
   if ($self->claude_skill) {
-    $self->_install_claude_skill($root);
+    $self->_install_claude_skill( $root, \%shipped );
   }
 
   # --json reports the board name and the .gitignore entries this run added,
@@ -286,8 +306,10 @@ sub _refuse_if_remote_has_board {
   );
 }
 
+# $shipped is what execute looked up before its first write: skill name =>
+# { relative path => content }, the shape `karr skill install` builds too.
 sub _install_claude_skill {
-  my ($self, $root) = @_;
+  my ($self, $root, $shipped) = @_;
   my $base = $root->child('.claude/skills');
   my @installed;
 
@@ -306,12 +328,6 @@ sub _install_claude_skill {
     eval { $skill_dir->mkpath; 1 }
       or user_error( "Could not create $skill_dir: ", clean_error($@) );
 
-    # Also App::karr::Role::SkillFile's, since ticket #146: finding the bundled
-    # skill was a second copy of `karr skill`'s _skill_content, identical to it
-    # except for the one $INC key that told the development fallback which
-    # command's source tree to look next to. Since #285 a skill is a directory
-    # (SKILL.md plus references/*.md) and _skill_files is the whole of it.
-    my %skill_files = $self->_skill_files($name);
     # Through App::karr::Role::SkillFile, not spew_utf8: this is the same
     # directory `karr skill install --agent claude-code` writes, and in a
     # checkout wired up by manage-skills its SKILL.md is one link of a hardlink
@@ -321,7 +337,7 @@ sub _install_claude_skill {
     # left standing here until #145. The role is also where the read-only
     # fallback and its warning live, so there is one description of how a
     # skill gets written rather than two that drift.
-    $self->_write_skill_files( $skill_dir, \%skill_files );
+    $self->_write_skill_files( $skill_dir, $shipped->{$name} );
     push @installed, $skill_dir->child('SKILL.md');
   }
 
