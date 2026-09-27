@@ -66,6 +66,9 @@
       because the build never packed share/. The release build now fails a
       binary that cannot install every bundled skill.
 
+    - `karr-foundation --dry-run` in ticket mode no longer logs a STALL for the
+      agent run it did not start.
+
 0.601     2026-09-19 23:43:42Z
 
     - A card left blocked in a terminal status (`done`/`archived`) no longer

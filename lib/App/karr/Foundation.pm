@@ -2472,6 +2472,14 @@ sub _drain_repo {
     $first     = 0;
     $iter++;
 
+    # --dry-run started nothing: the runner logged the START it would have made
+    # and DRY-RUN (skipped), and came back without a run. There is no run to
+    # judge, so nothing below may judge one -- ticket mode called the unmoved
+    # card a STALL for an agent that never started (#314). Idle, like a run
+    # that did nothing, and no second would-be START: nothing a skipped run
+    # "did" can change what the next iteration would see.
+    last if $self->dry_run;
+
     my $hash_after = $self->_ref_hash( $repo ) // '';
     my $progressed = ( $hash_before ne $hash_after ) ? 1 : 0;
 
