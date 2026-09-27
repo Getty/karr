@@ -1,0 +1,21 @@
+---
+claimed_at: 2026-09-27T03:17:52Z
+claimed_by: karr-doc-writer
+class: standard
+completed: 2026-09-27T03:17:52Z
+created: 2026-09-27T03:14:19Z
+id: 317
+priority: low
+started: 2026-09-27T03:17:52Z
+status: done
+tags:
+- docs
+title: 'Docs: foundation skill notes the dry-run stall exception; ADR 0004 names k305'
+updated: 2026-09-27T03:17:52Z
+---
+
+From the pre-release docs audit (2026-09-27, HEAD e836ffc). (1) .claude/skills/karr-foundation-cli/SKILL.md explains STALL classification (ticket mode / drain-loop table) but not that since k314 a --dry-run is never scored progress/stall/idle -- one sentence near "### Ticket mode" or the STALL row. (2) docs/adr/0004-a-terminal-status-is-finished.md: add a "Later:" note that k305 made karr-foundation (drain, board_actionable) use the same board-derived terminal rule, the way ADR 0005 annotates k306.
+
+Added the --dry-run/STALL exception note to .claude/skills/karr-foundation-cli/SKILL.md (Drain loop semantics table, k314/#314) and a 'Later:' paragraph to docs/adr/0004-a-terminal-status-is-finished.md naming k305 (foundation's drain detection and board_actionable now use BoardStore->is_terminal_status). Verified against lib/App/karr/Foundation.pm _drain_repo and commits 9daa624/16aa132. podcheck OK. Both files link count 1, edited in place, no hardlink concerns.
+
+2026-09-27 03:17 Committed as 5e4e8ac
