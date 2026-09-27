@@ -119,6 +119,12 @@ and byte-compare what it wrote against the checkout's own `share/*/SKILL.md`
 every check so far, since nothing above it reads the skill files, only loads
 the class. `scripts/verify-binary.sh`'s trap 3 is exactly this install-and-diff.
 
+Finally `scripts/check-binary-libs.sh ./karr`: none of the runs above can see a
+lib the target lacks, because they run where it is installed. This one reads
+what every packed object needs and fails on anything outside the documented
+runtime set (failure mode 11). A dev-box build may fail it for a lib the box
+links and CI's bookworm image does not; that binary is not one to hand out.
+
 ## Building in a fresh container (CI), not the dev box
 
 On the dev box the build works because `~/perl5` already has karr and all its
@@ -156,13 +162,19 @@ warnings masked a *transient CPAN mirror outage* — 404s on the dep tarballs �
 that looked like a tar bug but was not; if unpack fails with `gzip: unexpected
 end of file`, suspect the mirror, not tar.)
 
-Also local-only, not CI: the bare `perl:5.40` tag has moved on to a trixie
-base here, which links `Unicode::LineBreak` against `libthai` — a dependency
-`perl:5.40-bookworm` doesn't need. CI is unaffected because
-`release-binaries.yml` pins the tag explicitly
-(`.github/workflows/release-binaries.yml:24`: `image: perl:5.40-bookworm`);
-a local repro against the bare tag is not. k315 tracks giving that pin its own
-check.
+The base image matters beyond glibc: the bare `perl:5.40` tag has moved on to
+a trixie base, whose buildpack layer carries `libthai-dev`, so
+`Unicode::LineBreak` links `libthai.so.0` there — and the binary dies at
+startup on any target without `libthai0`. `perl:5.40-bookworm` doesn't link
+it, which is why `release-binaries.yml` pins that tag (the comment at the
+`image:` line says so). The pin is backed by a check (k315):
+`scripts/check-binary-libs.sh <binary>` unzips the PAR archive, runs `ldd` on
+the loader and every `.so` in it, and fails on any lib outside the documented
+runtime set, naming the object that needs it. It compares names rather than
+relying on a lib being absent, so it catches this inside the very container
+that has `libthai` installed — which `verify-binary.sh` cannot. The documented
+set is `RUNTIME_LIBS` in that script (`--list` prints it); README.md names
+the same libs, and the workflow fails if it loses one.
 
 ## Two build-breakers the static scanner won't warn about
 Both produce a binary that packs clean, and `perl -c` on the sources passes, yet
@@ -228,6 +240,11 @@ first:
     about a missing `-a` path and still exits 0, so nothing short of actually
     running `karr skill` catches it (k308; see "Bundle karr's own `share/`
     too" above).
+11. **An XS module links an optional lib the build image happens to have** →
+    e.g. `Unicode::LineBreak` → `libthai.so.0` on a trixie base; every command
+    dies at startup on a target without it, while the build container passes
+    everything. `scripts/check-binary-libs.sh` catches it (k315; see the
+    base-image paragraph under "Building in a fresh container").
 
 ## Not a speed win — set expectations
 Built and measured on this box (23 MB binary, N=100): warm startup **~457 ms**
