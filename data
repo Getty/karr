@@ -1,0 +1,34 @@
+---
+claimed_at: 2026-09-27T01:26:30Z
+claimed_by: karr
+class: standard
+completed: 2026-09-27T01:26:30Z
+created: 2026-09-26T22:53:44Z
+id: 308
+priority: high
+started: 2026-09-27T00:24:56Z
+status: done
+tags:
+- bug
+- binary
+- skill
+- release
+title: 'Prebuilt binary likely lacks App-karr share/: karr skill install may fail'
+updated: 2026-09-27T01:26:30Z
+---
+
+Found in the pre-release docs audit (2026-09-27), NOT yet reproduced.
+
+scripts/build-binary.sh bundles only Alien-Libgit2 dist share (`-a "$DISTDIR;lib/auto/share/dist/Alien-Libgit2"`), not App-karr share/. App::karr::Role::SkillFile resolves the skill dir via File::ShareDir::dist_dir(App-karr), then falls back to share/ next to its own lib/ path -- neither exists inside a PAR binary. scripts/verify-binary.sh only runs `karr skill --help`, so nothing would notice.
+
+Expected consequence: `karr skill install|show|check|update` and `karr init --claude-skill` fail in the 0.601 prebuilt binaries (and would in the next release).
+
+To do: reproduce with a built binary; bundle share/kanban-issues-karr-{coordination,ticket} (-a ...;lib/auto/share/dist/App-karr) so File::ShareDir finds them; make verify-binary.sh run `karr skill show` (or install into a temp dir) so the gap cannot come back.
+
+Reproduced with the shipped 0.601 x86_64 release binary in a clean debian:bookworm-slim container: 'karr skill show', 'karr skill install --agent claude-code' and 'karr init --claude-skill' all exit 1 with 'Could not find kanban-issues-karr-cli/SKILL.md. Is App::karr properly installed?' (init leaves the board initialized plus an empty .claude/skills/kanban-issues-karr-cli/). Building current tree in a perl:5.40 container to confirm + test the fix (-a share;lib/auto/share/dist/App-karr) and a verify-binary.sh trap 3.
+
+Drift for the dispatcher to file on THIS board (not fixed here): (1) Building on the local perl:5.40 image (now trixie, not bookworm) links the bundled Unicode::LineBreak XS .so against libthai.so.0 (trixie buildpack-deps carries libthai-dev; bookworm does not). The binary then dies at startup on any target without libthai0, and release-binaries.yml's runtime-libs check only ldd's libgit2, not the other bundled XS .so's, so a base-image bump would ship that silently (verify-binary runs inside the build container, which has libthai). Suggest: ldd every auto/**/*.so in the packed binary against the documented set, or pin the build image to *-bookworm and say why. (2) karr init --claude-skill mkpaths .claude/skills/NAME/ before _skill_files, so a failed lookup leaves an initialized board plus an empty skill dir and exit 1 (seen with 0.601 and pre-fix binaries); board-worker lane, low priority.
+
+Reproduced with the shipped 0.601 x86_64 binary and a binary built from the current tree: karr skill show/install/check/update and karr init --claude-skill all exit 1 with 'Could not find kanban-issues-karr-coordination/SKILL.md. Is App::karr properly installed?'. Fix: scripts/build-binary.sh packs share/ with -a 'share;lib/auto/share/dist/App-karr' (File::ShareDir finds it in $PAR_TEMP/inc/lib; a pp binary's @INC is only the PAR inc dirs, so no host install can shadow it). Guard: scripts/verify-binary.sh trap 3 installs the skills with --agent claude-code into a temp project and cmp's every share/*/**.md, and cmp's skill show NAME against share/NAME/SKILL.md. Evidence (perl:5.40 build container, clean debian:trixie-slim target): the new verify fails the pre-fix binary at trap 3 (the old verify passed it) and passes the fixed one; negative checks (extra reference, SKILL.md drift) fail too. prove -l t/26-skill-share-dir.t t/285-skill-directory-install.t: PASS. Only scripts/build-binary.sh and scripts/verify-binary.sh changed; no Changes edit (wording is in the report). Containers removed, no artifacts in the tree.
+
+2026-09-27 01:26 Committed 09f2607: k308: pack share/ into the prebuilt binary; verify-binary checks the bundled skills
