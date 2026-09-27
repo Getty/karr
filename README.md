@@ -42,7 +42,7 @@ karr board
 Claim and progress work:
 
 ```bash
-export KARR_CLAIM=$(karr agent-name)     # name yourself once; commands default to it
+export KARR_CLAIM=$(karr agent-name)     # name yourself once; pick and handoff default to it
 karr move 1 todo                         # promote: a new card waits in backlog, held back
 karr pick --move in-progress
 karr handoff 1 --note "Ready for review" --timestamp
@@ -156,8 +156,9 @@ the card with `karr pick`'s own eligibility and ranking (not terminal, not in
 backlog, not blocked, not held by a live claim; class, then priority, then id) and tells the
 agent twice: as a closing sentence in `$PROMPT` naming the id, and as
 `$KARR_TASK` for a template that wants the bare number. It does **not** claim
-the card — the claim is the agent's work session (`karr agent-name`), and the
-board's `.karr.lock` already keeps everyone else out for the length of the run.
+the card — the claim is the agent's work session, under the `KARR_CLAIM`
+foundation exports for the run (`karr agent-name --unique`), and the board's
+`.karr.lock` already keeps everyone else out for the length of the run.
 
 See what the next tick would do without doing it:
 
@@ -281,8 +282,9 @@ back to it; executing the chain is a command of its own (case 5).
 
 ### Case 3: `on_drained` — the hook karr deliberately does not understand
 
-When a board has drained — no actionable task left, everything done, archived,
-blocked or held back in backlog — foundation can run one command in it:
+When a board has drained — no actionable task left, everything in the board's
+own final status (or archived), held back in backlog, or blocked — foundation
+can run one command in it:
 
 ```yaml
 # /srv/gate/.karr
@@ -981,8 +983,9 @@ Prebuilt Linux binaries are attached to each
 [GitHub release](https://github.com/Getty/karr/releases):
 `karr-<version>-linux-x86_64` and `karr-<version>-linux-aarch64`, each as a raw
 executable and a `.tar.gz`; a single `karr-<version>-checksums.txt` covers them
-all. Download, verify with `sha256sum -c`, `chmod +x`, and run — no Perl or CPAN
-needed. The target needs
+all. Download, verify with `sha256sum -c --ignore-missing
+karr-<version>-checksums.txt` (the flag skips the assets you did not
+download), `chmod +x`, and run — no Perl or CPAN needed. The target needs
 the usual system libraries `libssl`, `libcrypto`, `libssh2`, `libz`, and
 `libzstd` (present on any normal Linux). The binary is ~23 MB and bundles its
 own Perl, so it starts a little slower than the CPAN install (~450 ms vs
@@ -1141,6 +1144,13 @@ Important refs:
 | `karr archive` | soft-delete into `archived` |
 | `karr delete --yes` | permanently remove the task ref (prompts without `--yes`, and refuses with exit 1 when stdin is not a terminal) |
 
+A task id is a number, and the house `kNNN` spelling names the same card:
+`karr show k30` is `karr show 30`. It works in id arguments and batches
+(`k30,31,K32`), in `--depends-on` / `--add-depends-on` / `--remove-depends-on`,
+in `log --task`, and on the id side of a cross-board `BOARD#ID` reference. In
+prose, write `k30`, never `#30` — a forge resolves `#30` against its own issue
+tracker.
+
 ### Flow and coordination
 
 | Command | Use it for |
@@ -1161,7 +1171,7 @@ Important refs:
 | Command | Use it for |
 |---------|------------|
 | `karr skill install` | install bundled skills for Claude Code, Codex, or Cursor |
-| `karr skill check` | detect outdated installed skills |
+| `karr skill check` | detect outdated or stale installed skills |
 | `karr skill update` | refresh installed skills |
 | `karr skill show [NAME]` | print the bundled skills' `SKILL.md` (or one of them) to stdout |
 | `karr set-refs` | store shared non-task payloads in allowed refs |
@@ -1201,7 +1211,7 @@ command-by-command map.
 ## Multi-agent workflow
 
 ```bash
-export KARR_CLAIM=$(karr agent-name)     # name yourself once; every claiming call defaults to it
+export KARR_CLAIM=$(karr agent-name)     # name yourself once; --claim defaults to it (see below)
 
 # pick the best available task
 karr pick --status todo --move in-progress
@@ -1223,7 +1233,8 @@ karr show --me
 `KARR_CLAIM` is the claim name `pick`, `handoff` and `list --claimed-by` fall
 back to when `--claim` is omitted. `create`, `move` and `edit` fall back to it
 only when the card ends up in a `require_claim` column, so a card filed into the
-backlog, promoted to `todo` or given a note stays unclaimed. An explicit
+backlog, promoted to `todo` or given a note stays unclaimed. `archive` and
+`delete` do not read it: a card you hold takes `--claim NAME` there. An explicit
 `--claim` overrides it everywhere, except that a card in `backlog` holds no claim
 at all. It is carried per process, not stored, so
 concurrent agents never share one — run several on a board by giving each its own
@@ -1285,7 +1296,9 @@ at a step, a run log or a question.
 ## Skills
 
 The distribution ships two bundled agent skills that can be installed locally
-in a repo (under `.claude/skills/`) or globally in the current home directory:
+in a repo or globally in the current home directory — under `.claude/skills/`
+for Claude Code, `.agents/skills/` for Codex (`~/.codex/skills/` globally) and
+`.cursor/skills/` for Cursor:
 
 - `kanban-issues-karr-coordination` — reading a board, picking, claiming and
   creating cards, handing them to subagents, filing on another repository's
@@ -1302,11 +1315,11 @@ installed) as outdated and exits 1, and `update` writes what is missing or
 differs. `show` prints both `SKILL.md` files, or the one named.
 
 Earlier releases shipped the single skill `kanban-issues-karr-cli` these two
-replace. `install` and `update` remove a leftover `kanban-issues-karr-cli/`
-directory and say so, and `check` reports it as `stale` — so `karr skill
-update` alone migrates an old install. A project still holding the even older
-`.claude/skills/karr/` keeps it untouched — nothing removes that one for you,
-so delete it after updating.
+replace. `install`, `update` and `init --claude-skill` remove a leftover
+`kanban-issues-karr-cli/` directory and say so, and `check` reports it as
+`stale` and exits 1 — so `karr skill update` alone migrates an old install. A
+project still holding the even older `.claude/skills/karr/` keeps it untouched
+— nothing removes that one for you, so delete it after updating.
 
 ```bash
 karr skill install

@@ -11,7 +11,7 @@ on. The card outlives your session — anything you know that is not on the card
 is lost when you stop.
 
 In prose (notes, commit subjects) a card is `k12`, never `#12` — the forge
-resolves `#12` against its own issue 12.
+resolves `#12` against its own issue 12. Commands take `k12` as well as `12`.
 
 ## Your name
 

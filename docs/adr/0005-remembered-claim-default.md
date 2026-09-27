@@ -61,8 +61,8 @@ until `claim_timeout` ran out.
 
 `edit --release` never claims, and `--release` with an explicit `--claim` is
 a usage error (exit 2, ADR 0002). An explicit `--claim` still stamps on any
-status. That is how an expired claim is taken over in place:
-`move ID <same status> --claim NAME`.
+status (since k306 except `backlog`, which holds no claim). That is how an
+expired claim is taken over in place: `move ID <same status> --claim NAME`.
 
 The environment still identifies the caller, even where it is not written:
 `check_claim` compares it with the card, so a card the caller already holds
@@ -181,3 +181,8 @@ board, may write claims at once -- so the per-run suffix keeps them distinct
 where the bare checkout name would collide, and `claim_timeout`, not name reuse,
 recovers a crashed run's cards. Nothing is written to `refs/karr/*` or to the
 working tree (ticket #281).
+
+> Later: `share/claude-skill.md` became the skill directory
+> `share/kanban-issues-karr-cli/` (k285), and that was split into
+> `share/kanban-issues-karr-coordination/` and `share/kanban-issues-karr-ticket/`
+> (k302). Both carry the claim guidance this section describes.

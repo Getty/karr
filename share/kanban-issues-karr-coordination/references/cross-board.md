@@ -19,10 +19,11 @@ karr needs --resolve                              # drop settled links, unblock 
 karr needs --json
 ```
 
-A reference is `BOARD#ID`: the other board's **name** and a card id. Never a
-path — the card is shared state and two clones of one fleet have different
-directories. karr maps the name to a directory from `--board NAME=PATH` or
-from the fleet config, matching the repository's directory basename.
+A reference is `BOARD#ID`: the other board's **name** and a card id
+(`other-repo#k7` is `other-repo#7`). Never a path — the card is shared state
+and two clones of one fleet have different directories. karr maps the name to
+a directory from `--board NAME=PATH` or from the fleet config, matching the
+repository's directory basename.
 
 `--resolve` settles a link whose far card has reached one of the **far**
 board's own terminal statuses, and lifts `blocked` when a card's last link

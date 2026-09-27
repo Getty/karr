@@ -9,7 +9,8 @@ state lives in `refs/karr/*`; the `tasks/` directory is a materialized view.
 An active, expiring lease an agent holds on a **Task** while working it —
 recorded as `claimed_by` (+ `claimed_at`). It is *not* authorship: it expires
 (see Pick claim-timeout) and is released when the Task reaches a terminal
-status — on a `done`/`archived` Task the claim guards nothing, and `edit`,
+status — on a Task in the board's final status (`done` on a default board) or
+`archived` the claim guards nothing, and `edit`,
 `move`, `delete`, `archive` and `handoff` all go through whoever the field
 names. `karr board` shows no claimant on such a Task and leaves it out of its
 claimed count, because the board shows live work-in-progress, not history;
@@ -52,7 +53,9 @@ the foundation agent's per-run stdout capture).
 
 **Task lifecycle**:
 A **Task** carries timestamps for each milestone it passes: `claimed_at`,
-`started`, `completed`. `done` and `archived` are the terminal statuses.
+`started`, `completed`. The board's final status — its last configured status
+other than `archived`, `done` on a default board — and `archived` are the
+terminal statuses (ADR 0004).
 Terminal means *closed*, not *succeeded* — karr has a notion of progress and
 none of outcome. A card given up in the backlog and archived is
 frontmatter-identical to one archived after `done`: `update_timestamps` stamps
@@ -73,6 +76,14 @@ same reading deserves more caution across boards than within one. Giving a card
 up is therefore something to say on the far board yourself.
 _Avoid_: "settled"/"resolved" read as "succeeded" — both say only that the far
 card is closed.
+
+**Task id**:
+A **Task**'s number, allocated from the board's counter
+(`refs/karr/meta/next-id`). In prose — commit subjects, card bodies, notes — it
+is written `k12`, because a forge resolves `#12` against its own issue tracker.
+Commands accept `k12` (or `K12`) for `12`, the id side of a cross-board
+`BOARD#k12` included; the stored `id` and the ref name stay the bare number.
+_Avoid_: `#12` for a karr card.
 
 **Identity**:
 Who is acting, as `<role>/<git-email>`. The git email comes from git config;

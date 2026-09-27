@@ -9,7 +9,9 @@ karr init [--name NAME] [--statuses s1,s2,s3] [--claude-skill] [--new-board]
 Creates the board refs in the current Git repository (`--dir PATH` starts the
 repository search elsewhere). `--claude-skill` installs the karr skills as
 `.claude/skills/kanban-issues-karr-coordination/` and
-`.claude/skills/kanban-issues-karr-ticket/` in the repository root.
+`.claude/skills/kanban-issues-karr-ticket/` in the repository root, and
+removes a leftover `.claude/skills/kanban-issues-karr-cli/` as `skill install`
+does.
 
 Before writing, init asks the remote whether a board already exists there:
 `git clone` does not fetch `refs/karr/*`, so a fresh clone looks like a

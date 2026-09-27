@@ -50,7 +50,10 @@ so the recommended shape is to export it once per session:
     export KARR_CLAIM=$(karr agent-name)
 
 rather than passing C<--claim NAME> on every call. An explicit C<--claim> still
-wins over the environment for a one-off.
+wins over the environment for a one-off. C<create>, C<move> and C<edit> write
+the environment's name onto a card only when it ends up in a C<require_claim>
+column (L<App::karr::Role::ClaimDefault/resolved_claim_for>), so a card filed,
+promoted to C<todo> or annotated stays free for C<pick>.
 
 The name is now B<stable> per checkout, not the random word it used to be: it
 is meaningful in C<karr show>, and distinct per worktree without a generator.

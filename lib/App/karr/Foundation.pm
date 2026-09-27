@@ -849,21 +849,22 @@ to draining it.
 
 B<Ticket mode.> Before the agent starts, foundation picks the card the run is
 about -- L<App::karr::Foundation::Picker>, applying C<karr pick>'s eligibility
-and ranking (not terminal, not blocked, not held by a live claim; class, then
-priority, then id). It is told to the agent twice: spliced into C<$PROMPT> as a
-closing sentence naming the id, and exported as C<$KARR_TASK> for a command
-template that wants the bare number. Nothing is appended to the command itself
--- how arguments are appended belongs to the per-agent contract (C<kind:>),
-which is a separate piece of work, and an environment variable works with every
-template that exists today.
+and ranking (not terminal, not held back in C<backlog>, not blocked, not held
+by a live claim; class, then priority, then id). It is told to the agent twice:
+spliced into C<$PROMPT> as a closing sentence naming the id, and exported as
+C<$KARR_TASK> for a command template that wants the bare number. Nothing is
+appended to the command itself -- how arguments are appended belongs to the
+per-agent contract (C<kind:>), which is a separate piece of work, and an
+environment variable works with every template that exists today.
 
 Foundation names the card; it does B<not> claim it. The claim is the agent's
-work session, minted with C<karr agentname> and reused across its own C<move>
-and C<handoff> (#176), and the board's per-repo lock plus the one-agent-per-
-repository rule already keep anybody else off the card for the length of the
-run. So an agent that dies mid-work leaves at most its own claim -- released by
-C<claim_timeout>, or by C<karr unlock> for a pick lock -- and costs one attempt
-on foundation's counter.
+work session: the C<KARR_CLAIM> foundation exports for the run (the checkout's
+C<karr agent-name --unique>, minted once per run), which the agent's own
+C<move> and C<handoff> default to (#176, #281), and the board's per-repo lock
+plus the one-agent-per-repository rule already keep anybody else off the card
+for the length of the run. So an agent that dies mid-work leaves at most its
+own claim -- released by C<claim_timeout>, or by C<karr unlock> for a pick lock
+-- and costs one attempt on foundation's counter.
 
 The run is then judged by that card and not by the board hash: C<progress> when
 it moved (status, claim or C<updated> changed, or it left the actionable set),

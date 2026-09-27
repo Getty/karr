@@ -2,7 +2,8 @@
 
 Every command here takes `--json`. `ID,ID,...` is accepted wherever an `ID`
 is shown. A karr id is written `k12` in prose, never `#12` — the forge
-resolves `#12` against its own issue tracker.
+resolves `#12` against its own issue tracker. Commands take either spelling:
+`karr show k12` is `karr show 12`, and a batch may mix them (`k12,13`).
 
 ## create
 
@@ -71,10 +72,11 @@ karr edit 12 --add-needs other-repo#7         # cross-board dependency (cross-bo
 karr edit 12 --remove-needs other-repo#7      # absent references are a no-op
 ```
 
-Dependency rules: an unknown or non-numeric id in `--depends-on` /
-`--add-depends-on` rejects the whole invocation before anything is written
-(usage error, exit 2). A self-reference (`karr edit 5 --add-depends-on 5`)
-fails only that id, the rest of the batch proceeds, and the command exits 1.
+Dependency rules: an id in `--depends-on` / `--add-depends-on` that names no
+card here, or is neither a number nor `kNNN`, rejects the whole invocation
+before anything is written (usage error, exit 2). A self-reference
+(`karr edit 5 --add-depends-on 5`) fails only that id, the rest of the batch
+proceeds, and the command exits 1.
 
 ## delete
 

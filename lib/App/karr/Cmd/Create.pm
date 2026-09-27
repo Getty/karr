@@ -60,10 +60,11 @@ Populate optional frontmatter fields at creation time.
 =item * C<--depends-on>
 
 Comma-separated ids of tasks this one depends on, same shape as C<--tags>.
-Every id must name a task on this board; an unknown or non-numeric id rejects
-the create as a usage error before an id is allocated, so nothing is burned
-(ticket #54). Taking the new card up while a dependency is unfinished warns --
-see L<App::karr::Cmd::Move>.
+Every id must name a task on this board, as a number or in the house C<kNNN>
+spelling (C<k2> is C<2>); an id that names no task here, or is neither a
+number nor C<kNNN>, rejects the create as a usage error before an id is
+allocated, so nothing is burned (ticket #54). Taking the new card up while a
+dependency is unfinished warns -- see L<App::karr::Cmd::Move>.
 
 =item * C<--needs>, C<--escalated-from>
 

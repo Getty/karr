@@ -9,7 +9,7 @@ Git-native kanban board for multi-agent work. The board is the repository's
 `refs/karr/*`: commands read and write those refs directly and sync them with
 the remote; nothing lands in the work tree. In prose (commit subjects, card
 bodies) a card is `k12`, never `#12` — the forge resolves `#12` against its
-own issue 12.
+own issue 12. Commands take `k12` as well as `12`.
 
 ## Name yourself once
 
@@ -18,12 +18,14 @@ export KARR_CLAIM=$(karr agent-name)     # the checkout's directory name, e.g. "
 ```
 
 Claims are matched by name: `--claim` stamps it, `handoff` checks it,
-`list --claimed-by` selects on it. Every command that takes `--claim` defaults
-to `KARR_CLAIM`, so export it once per session and leave `--claim` off. `create`,
-`move` and `edit` use it only when the card ends up in a `require_claim` column:
-filing a card, promoting it to `todo` or adding a note leaves it free. An
-explicit `--claim NAME` still wins. Agents in separate worktrees already differ
-by name; several agents in the **same** directory take
+`list --claimed-by` selects on it. Export `KARR_CLAIM` once per session and
+leave `--claim` off: `pick`, `handoff` and `list --claimed-by` default to it,
+and `move` and `edit` know a card you hold by it. `create`, `move` and `edit`
+write it onto a card only when the card ends up in a `require_claim` column:
+filing a card, promoting it to `todo` or adding a note leaves it free.
+`archive` and `delete` ignore it — a card you hold needs `--claim NAME` there.
+An explicit `--claim NAME` still wins. Agents in separate worktrees already
+differ by name; several agents in the **same** directory take
 `karr agent-name --unique` (`karr-8fa`).
 
 ## Read the board

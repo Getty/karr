@@ -175,11 +175,12 @@ ticket while it claimed the board held the live status.
 Agent/skill/rule material lives under `.claude/`:
 - `rules/karr-rules.md` — house rules, auto-loaded (discipline, delegation, coordination, release)
 - `agents/karr-*.md` — the project agent fleet (briefing-aware; skills force-loaded at spawn)
-- `skills/` — eight skills. Six are shared across repositories via manage-skills
+- `skills/` — twelve skills. Nine are shared across repositories via manage-skills
   hardlinks (`kanban-issues-karr-coordination`, `kanban-issues-karr-ticket`,
-  `getty-perl-core`, `getty-perl-moo`,
-  `getty-perl-release-author-getty`, `perl-release-dist-ini`); two are local to
-  this repository (`karr-foundation-cli`, `perl-file-sharedir`). `ls -li
+  `getty-git-commit-style`, `getty-git-usage`, `getty-perl-core`,
+  `getty-perl-moo`, `getty-perl-pod`, `getty-perl-release-author-getty`,
+  `perl-release-dist-ini`); three are local to this repository
+  (`karr-foundation-cli`, `karr-single-binary`, `perl-file-sharedir`). `ls -li
   .claude/skills/*/SKILL.md` tells them apart by link count. Don't rename them,
   and edit a shared one via `cat > .claude/skills/<skill>/SKILL.md` (its
   `references/*.md` are linked the same way) — **not** the

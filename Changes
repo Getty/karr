@@ -53,7 +53,9 @@
     - Release-asset names are tidied. The arm64 binary and tarball are now named
       `...-linux-aarch64` (was `-linux-arm64`) to match the `x86_64` naming, and
       the per-file `.sha256` sidecars are replaced by a single
-      `karr-<version>-checksums.txt` (verify with `sha256sum -c`) covering every
+      `karr-<version>-checksums.txt` (verify with `sha256sum -c --ignore-missing
+      karr-<version>-checksums.txt`, which checks only the assets you
+      downloaded -- a plain `-c` fails on the ones you did not) covering every
       asset. The raw binary and the `.tar.gz` are both still shipped per arch.
 
     - The prebuilt Linux binaries now carry the bundled skills: `karr skill

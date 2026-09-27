@@ -113,11 +113,13 @@ C<--add-tag> and C<--remove-tag> accept comma-separated lists.
 C<--add-depends-on> and C<--remove-depends-on> accept comma-separated task
 ids and follow the tag rule: add appends without duplicating, remove is a
 no-op for ids the card does not carry. Ids being added must exist on this
-board and must not name the task itself; an unknown or non-numeric id rejects
-the whole invocation as a usage error before anything is written, while a
-self-reference fails only the id it is wrong for and lets the rest of the
-batch proceed. Removing an id the board no longer has stays legal -- it is
-how a dependency on a deleted task is cleaned up.
+board and must not name the task itself; each is a number or the house
+C<kNNN> spelling (C<k2> is C<2>). An id that names no task here, or is
+neither a number nor C<kNNN>, rejects the whole invocation as a usage error
+before anything is written, while a self-reference fails only the id it is
+wrong for and lets the rest of the batch proceed. Removing an id the board no
+longer has stays legal -- it is how a dependency on a deleted task is cleaned
+up.
 
 =item * Cross-board dependency management
 

@@ -20,7 +20,8 @@ conventions silently.
 - storage/transport commands: `init`, `sync`, `materialize`, `import`, `repair`, `backup`,
   `restore`, `destroy`, `get-refs`, `set-refs`, and `unlock`
 - skill installation plumbing in `Cmd/Skill.pm`, `Cmd/Init.pm` and `Role/SkillFile.pm`, and
-  the shipped skill directory `share/kanban-issues-karr-ticket/`
+  the shipped skill directories `share/kanban-issues-karr-coordination/` and
+  `share/kanban-issues-karr-ticket/`
 
 Preserve these invariants: canonical board state is refs-first; the file tree is only a
 materialized view; concurrent writes use the established CAS/lock path; native Git handles

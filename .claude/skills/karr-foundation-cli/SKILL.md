@@ -181,14 +181,15 @@ error that skips that repo, never a silent fall back to draining it.
 ### Ticket mode
 
 Before the agent starts, foundation picks the card the run is about — `karr
-pick`'s eligibility (not terminal, not blocked, not held by a live claim; an
-expired claim no longer holds one) and `karr pick`'s ranking (class, then
-priority, then id). The agent is told twice: the id is spliced into `$PROMPT` as
-a closing sentence, and exported as `$KARR_TASK` for a command template that
-wants the bare number. Nothing is appended to the command itself.
+pick`'s eligibility (not terminal, not in `backlog`, not blocked, not held by a
+live claim; an expired claim no longer holds one) and `karr pick`'s ranking
+(class, then priority, then id). The agent is told twice: the id is spliced
+into `$PROMPT` as a closing sentence, and exported as `$KARR_TASK` for a command
+template that wants the bare number. Nothing is appended to the command itself.
 
 Foundation names the card; it does **not** claim it. The claim is the agent's
-work session (`karr agentname`, then the same name for `move` and `handoff`),
+work session (the `KARR_CLAIM` foundation exports for the run, which the
+agent's `move` and `handoff` default to),
 and `.karr.lock` plus one-agent-per-repository already keep anybody else off the
 card for the length of the run. An agent that dies leaves at most its own claim
 — cleared by `claim_timeout`, or by `karr unlock` for a pick lock — and one
@@ -561,8 +562,9 @@ Level resets on next clean (non-error) run, which also drops `last_error` from
 
 ## The domain hook (`on_drained`)
 
-When a board has **drained** — no actionable task left on it, everything done,
-archived or blocked — `on_drained` runs a configured command in it. karr does
+When a board has **drained** — no actionable task left on it, everything in the
+board's own final status (or archived), held back in `backlog`, or blocked —
+`on_drained` runs a configured command in it. karr does
 not know what that command does and must not: the exit code goes to `.karr.log`
 and `.karr.state` and is interpreted by nobody. A hook that fails does not park
 the board, does not mark the board's agent failing and is never the run's
@@ -626,6 +628,8 @@ During agent execution foundation sets:
   rather than the board's
 - `KARR_TASK` — the id of the task a `mode: ticket` run was given, empty in
   every other mode
+- `KARR_CLAIM` — the claim name nested `karr` calls default to: the checkout's
+  `karr agent-name --unique` (checkout name plus a suffix), minted once per run
 
 ## Cron example
 
@@ -656,7 +660,7 @@ To initialize karr in a repo:
 ```bash
 cd /path/to/repo
 karr init --name my-project
-karr create "Example task" --priority high
+karr create "Example task" --priority high --status todo   # backlog is never picked
 ```
 
 Then add the `.karr` file and configure foundation to scan the parent dir.
