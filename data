@@ -1,0 +1,49 @@
+---
+claimed_at: 2026-09-27T01:26:46Z
+claimed_by: karr
+class: standard
+completed: 2026-09-27T01:26:46Z
+created: 2026-09-27T00:28:38Z
+id: 311
+priority: high
+started: 2026-09-27T01:26:46Z
+status: done
+tags:
+- docs
+- release
+title: Docs catch-up for the unreleased changes since 0.601
+updated: 2026-09-27T01:26:46Z
+---
+
+Pre-release docs audit (2026-09-27) found docs that the unreleased changes made wrong: kNNN ids (k301), skill split (k302), final-status drain (k305), release asset checksums, plus nice-to-mention gaps. Fix them in README.md, ex/README.md, bin/karr POD, lib POD, CONTEXT.md, CLAUDE.md, .claude/agents/karr-ref-worker.md, share/ skills and .claude/skills/karr-foundation-cli. Also re-check k306 (6721735) coverage. Changes is out of scope (release manager). Full audit list is in the dispatch prompt.
+
+2026-09-27 00:43 Also found (outside the listed items, not fixed): ex/setup.sh seeds its sample cards with plain `karr create` (backlog). Since k306 foundation never picks backlog, so on a fresh sandbox webapp's ticket mode finds nothing assignable and docs-site's drain-agent picks nothing. The sample output in ex/README.md (`Moved task 5: backlog -> review`, `Moved task 1: backlog -> done`, ~lines 64-75) is therefore wrong too. Fix is in setup.sh (create with --status todo, or move to todo) -- script, not docs; after that the two output lines read todo -> review / todo -> done.
+
+2026-09-27 00:44 Addendum to the sandbox note: t/216-ex-sandbox.t pins the seeded statuses as backlog (lines ~215-244), so a setup.sh fix needs that test updated alongside.
+
+2026-09-27 00:44 Done (docs only, not committed). kNNN: Create/Edit/Show POD, cards.md (id header + dependency rules), both share SKILL.md (commands take k12), cross-board.md (BOARD#k7), README command map paragraph, CONTEXT.md new Task id term. Skill split: bin/karr Init item + EXAMPLES, README skills section (agent dirs per target, init --claude-skill removes kanban-issues-karr-cli, stale exits 1, check row 'outdated or stale'), setup.md, ex/README (--claude-skill dirs, Skills section with show [NAME] + migration), karr-ref-worker.md both share dirs, CLAUDE.md 12 skills (9 hardlinked, 3 local, verified by ls -li). Final-status drain: README, foundation-cli skill, ex/README (+ board_actionable per Executor.pm, ticket_links row). k306: backlog added to ticket-mode eligibility in Foundation.pm POD, foundation-cli skill, ex/README (also pick 'Allowed statuses'); foundation-cli example creates --status todo. KARR_CLAIM: README 45/1212/1232 (archive/delete ignore it), coordination SKILL.md, AgentName.pm POD, foundation exports KARR_CLAIM (Foundation.pm POD, foundation-cli skill env list, README ticket mode, ex/README). Terminal: CONTEXT.md Claim + Task lifecycle. ADR 0005 annotated (backlog exception, later skill paths note). README sha256sum -c --ignore-missing. ex/README: agentname section rewritten for KARR_CLAIM/stable names, archive --claim, karr-foundation plan, section-6 'since this was written' note. Verified: podcheck OK (6 files), prove t/62 + t/215 PASS, hardlinked inodes/link counts unchanged. Left: ex/setup.sh backlog seeding (see note), German comment leftovers in ex/README code blocks, ex/README sections 5-7 prose (annotated not rewritten), Changes sha256sum wording (release manager).
+
+2026-09-27 01:07 Follow-ups done (docs only, not committed):
+1. kNNN: README.md kNNN paragraph (line ~1147) now lists log --task and --remove-depends-on alongside --depends-on/--add-depends-on. Checked share skills (cards.md/queries.md), CONTEXT.md's Task id entry and Show.pm POD for the same "left out log --task" gap -- none had it; they're already general enough or Log.pm's own POD (already updated by k310's landing) covers it, so no change needed there.
+2. ex sandbox seeding: ex/README.md's fresh-sandbox transcript (~line 66) now says todo -> review / todo -> done and adds the fake-agent/#1->done echo lines and the drain-agent's "Updated task 1" line, matching a verified run. No other place quoted backlog or claimed the sample cards start there.
+3. Auto-block scenario: verified in a scratch sandbox (copy of setup.sh/bin/scripts + symlinked lib/bin, never the real ex/ or board) that docs-site+lazy-agent.sh never auto-blocks (drain mode's _stuck_tasks needs activity-log evidence the agent touched the card; lazy-agent.sh never calls karr) while webapp (ticket mode) auto-blocks #5 after 2 runs (ticket mode needs no such evidence -- the assignment itself counts). Rewrote the scenario in ex/README.md to reset first, point webapp's .karr at lazy-agent.sh via a command: override, explain why docs-site doesn't work, and show the verified two-run transcript plus the resulting Blocked: line on show 5.
+Touched: README.md, ex/README.md. podcheck OK on the already-touched Log/Show/Create/Edit.pm + DependencyArgs.pm (no further edits needed there). No hardlinked files touched this round.
+
+2026-09-27 01:08 Follow-ups landed: (1) README.md's kNNN paragraph now includes log --task and --remove-depends-on; checked share skills/CONTEXT.md/Show.pm for the same gap, found none. (2) ex/README.md's fresh-sandbox transcript fixed to todo -> review / todo -> done with the real echo lines. (3) Auto-block scenario rewritten to target webapp+lazy-agent.sh (verified in a scratch sandbox: docs-site/drain mode never auto-blocks because lazy-agent.sh never calls karr, so there's no activity-log evidence; ticket mode needs none and auto-blocks #5 after 2 runs) with the real transcript and Blocked: line.
+
+2026-09-27 01:12 Also added (k308 follow-up, requested mid-task): the share/-bundling trap in the repo-local
+skill .claude/skills/karr-single-binary/ (not hardlinked, link count 1 on both, confirmed with
+ls -l before and after -- plain Edit used).
+- SKILL.md: new "### 3. karr's own share/ is a File::ShareDir tree too" trap (verified against
+  App::karr::Role::SkillFile's actual dist_dir/fallback/die-message code), "two traps"/"three
+  traps" and "six failure modes"/"ten failure modes" counts corrected to match.
+- references/pp-recipe.md: added the `-a "share;lib/auto/share/dist/App-karr"` line to the S2
+  build block (matches scripts/build-binary.sh verbatim) plus an explanatory bullet; S3
+  verification now also runs `karr skill install` in a temp project and diffs it (matches
+  scripts/verify-binary.sh's trap 3); failure mode #10 added; a note on the local perl:5.40 tag
+  being trixie-based (libthai via Unicode::LineBreak) vs CI's pinned perl:5.40-bookworm
+  (.github/workflows/release-binaries.yml:24, verified by reading the file) and k315 tracking
+  the missing check.
+Card stays in review; not resubmitting a handoff for this addendum alone.
+
+2026-09-27 01:26 Committed 9a4f9da: k311: docs catch up with the unreleased changes since 0.601
