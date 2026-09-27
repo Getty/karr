@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-09-27T05:13:27Z
+claimed_by: karr-doc-writer
+class: standard
+completed: 2026-09-27T05:13:27Z
+created: 2026-09-27T03:14:32Z
+id: 318
+priority: low
+started: 2026-09-27T05:00:52Z
+status: done
+tags:
+- skills
+- docs
+title: Split karr-foundation-cli skill (669 lines) into SKILL.md + references/
+updated: 2026-09-27T05:13:27Z
+---
+
+From the pre-release docs audit (2026-09-27). .claude/skills/karr-foundation-cli/SKILL.md is 669 lines with no references/, far past the skill-authoring body guidance. The kanban-issues-karr-coordination skill models the split. Candidate references from its own ## headers: named agents/availability, the hub (chain + questions), the coordination agent, drain/auto-block/cooldown internals. Repo-local skill (link count 1), not shipped, so not release-relevant. Keep the description triggering on the same tasks.
+
+2026-09-27 05:11 Split .claude/skills/karr-foundation-cli/SKILL.md (673 lines) into SKILL.md (96 lines) + references/{configuration,hub,coordination-agent,drain,operations}.md (178/89/78/124/150 lines). Lossless: verified by diffing sorted non-blank lines of git HEAD's original against the concatenation of the new files -- the only 12 lines that don't match verbatim are the deliberate 'see "X"' pointer-text fixes (now cross-file links/mentions) and 2 redundant H2 headers dropped where they duplicated a new file's H1 title. Checked code-fence balance in every new file. No other repo file pointed into this skill by section (grepped karr-foundation-cli repo-wide: only CLAUDE.md and .claude/agents/karr-foundation-worker.md name it, both by whole-skill name, unaffected by the split). description: frontmatter left unchanged, already covers all required triggers. No wrong-against-code facts found.
+
+2026-09-27 05:12 Split karr-foundation-cli's 673-line SKILL.md into a 96-line router + 5 references (configuration.md 178L, hub.md 89L, coordination-agent.md 78L, drain.md 124L, operations.md 150L), following the share/kanban-issues-karr-coordination model. Body keeps: quick start, run modes at a glance, a new 'Rules you must not get wrong' section (KARR_CLAIM export, disabled-absolute, dry-run-never-scored, backlog out of reach, one-agent-per-repo, agent/assignment local-only -- each a short pointer to its full reference), exit codes, and the reference table. Lossless move verified by line-set diff against git HEAD's original; only the 10 intra-file 'see "Section"' pointers (now cross-file mentions/links) and 2 duplicate H2 headers (subsumed by a new file's H1) differ -- noted on the card. No pointers elsewhere in the repo needed fixing (grepped for karr-foundation-cli; only CLAUDE.md and karr-foundation-worker.md name it, both whole-skill, unaffected). description: frontmatter unchanged -- already fires on running karr-foundation, drain loops, ticket mode, named agents, coordination agent, hub chain/question mailbox, auto-block. No plainly-wrong facts found against the code (spot-checked config keys against lib/App/karr/Foundation.pm POD).
+
+2026-09-27 05:13 Committed as 3f0a7a5: k318: split the karr-foundation-cli skill into SKILL.md + references/
