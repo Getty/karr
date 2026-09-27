@@ -8,7 +8,7 @@ description: Use when packaging the karr CLI into a single distributable binary,
 Goal: one file you ship that runs `karr` on a box with no CPAN install. The Perl
 side is easy. The hard part is that **libgit2 is opened by FFI at runtime**, not
 linked at build time — so a naive pack builds fine and then dies on first git
-access. Read the verdict, avoid the two traps, follow the runbook.
+access. Read the verdict, avoid the three traps, follow the runbook.
 
 ## Verdict: which packer
 
@@ -24,9 +24,9 @@ access. Read the verdict, avoid the two traps, follow the runbook.
 - **PAR::Packer (`pp`) — yes.** It bundles the interpreter + XS `.so`s + the
   Alien share dir into one executable that extracts to a runtime cache where FFI
   finds libgit2. Full worked recipe, runtime-path mechanics, cache tuning, and
-  the six failure modes: `references/pp-recipe.md`.
+  the ten failure modes: `references/pp-recipe.md`.
 
-## Two traps that decide the night
+## Three traps that decide the night
 
 ### 1. The command classes load dynamically
 `lib/App/karr.pm` `use`s only `App::karr::Cmd::Board`; `MooX::Cmd` resolves the
@@ -56,6 +56,25 @@ that subcommand is first called — hence the "exercise every subcommand" step.
   glibc, so do not count on `-l` for these. They are ordinary OS libraries
   present on any normal Linux target — require them there, and bundle only for a
   bare/musl container. The reliable options are in `references/pp-recipe.md`.
+
+### 3. karr's own share/ is a File::ShareDir tree too
+`App::karr::Role::SkillFile` finds the shipped skills with
+`File::ShareDir::dist_dir('App-karr')`, falling back to `share/` next to the
+`lib/` it was loaded from when the dist isn't installed — and inside a PAR
+binary there is no checkout for that fallback to find. `pp` bundles no share
+tree of its own, so pack karr's alongside Alien-Libgit2's:
+
+```
+-a "share;lib/auto/share/dist/App-karr"
+```
+
+Miss it and the binary builds clean and passes `--help`, including trap 1's
+per-command `--help` sweep (nothing there reads the files) — then every `karr
+skill` action and `karr init --claude-skill` die with `Could not find
+<skill>/SKILL.md. Is App::karr properly installed?` (k308, shipped in 0.601).
+`pp` only warns about a missing `-a` path and still exits 0, so it is
+`scripts/verify-binary.sh`'s trap 3 — install the skills into a throwaway
+project and byte-compare them against `share/` — that actually catches it.
 
 ## This machine — verified start state
 - `Alien::Libgit2 install_type=share` **already** → build against the existing

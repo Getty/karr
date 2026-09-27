@@ -69,6 +69,7 @@ pp -o karr \
    -M Alien::Libgit2 \
    -M FFI::Platypus -M 'FFI::Platypus::**' -M FFI::CheckLib \
    -a "$DISTDIR;lib/auto/share/dist/Alien-Libgit2" \
+   -a "share;lib/auto/share/dist/App-karr" \
    bin/karr
 ```
 - **`PAR_VERBATIM=1` [verified].** Without it, pp's default `PAR::Filter::PodStrip`
@@ -86,6 +87,16 @@ pp -o karr \
 - **libgit2 gets no `-l`** — it is found at runtime via the bundled share dir
   (`dist_dir` resolves against `@INC`, which under PAR points into
   `$PAR_TEMP/inc/lib/auto/share/dist/Alien-Libgit2`).
+- **Bundle karr's own `share/` too, same mechanism.** `App::karr::Role::SkillFile`
+  (behind `karr skill` and `karr init --claude-skill`) looks the shipped skills
+  up with `File::ShareDir::dist_dir('App-karr')`, falling back to `share/` next
+  to the `lib/` it loaded from when the dist isn't installed — a fallback with
+  no checkout to find inside a PAR binary. `pp` does not pack a second dist's
+  share tree for you any more than it did Alien-Libgit2's, so it needs its own
+  `-a` pair, at the same `auto/share/dist/<Dist-Name>` target layout. Skipped,
+  the binary still builds and passes `--help`; only the first `karr skill`
+  action or `karr init --claude-skill` dies, with `Could not find
+  <skill>/SKILL.md. Is App::karr properly installed?` (k308, shipped in 0.601).
 - To flush out any runtime dep the scanner missed: add `-c` (compile-check) or,
   only if safe, `-x karr <args>` (really runs karr — may touch/write git; never in
   the karr checkout, whose `refs/karr/*` is the live board).
@@ -101,6 +112,12 @@ verification `create`/`move`/`destroy` there mutates live state. `karr <cmd> --h
 for each of the 32 commands is the cheap trap-1 probe (forces the class to load,
 no side effects); pair it with one real init→create→list→move→handoff→backup→
 restore→destroy flow to prove libgit2/FFI end-to-end.
+
+Also run `karr skill install --agent claude-code` in a fresh `mktemp -d` project
+and byte-compare what it wrote against the checkout's own `share/*/SKILL.md`
+(and `references/*.md`) — the missing-`share/` `-a` trap above is invisible to
+every check so far, since nothing above it reads the skill files, only loads
+the class. `scripts/verify-binary.sh`'s trap 3 is exactly this install-and-diff.
 
 ## Building in a fresh container (CI), not the dev box
 
@@ -138,6 +155,14 @@ LIBARCHIVE pax header; GNU tar warns `Ignoring unknown extended header keyword`.
 warnings masked a *transient CPAN mirror outage* — 404s on the dep tarballs —
 that looked like a tar bug but was not; if unpack fails with `gzip: unexpected
 end of file`, suspect the mirror, not tar.)
+
+Also local-only, not CI: the bare `perl:5.40` tag has moved on to a trixie
+base here, which links `Unicode::LineBreak` against `libthai` — a dependency
+`perl:5.40-bookworm` doesn't need. CI is unaffected because
+`release-binaries.yml` pins the tag explicitly
+(`.github/workflows/release-binaries.yml:24`: `image: perl:5.40-bookworm`);
+a local repro against the bare tag is not. k315 tracks giving that pin its own
+check.
 
 ## Two build-breakers the static scanner won't warn about
 Both produce a binary that packs clean, and `perl -c` on the sources passes, yet
@@ -197,6 +222,12 @@ first:
    module X.pm`; the whole build stops. Only `-M` what `perl -M<mod> -e1` loads.
 9. **`libperl-dev` absent** → `pp`'s own install fails at Configure with
    `you need to install package "libperl-dev"` (see Preconditions).
+10. **karr's own `share/` not packed** → unlike #3, the binary builds and
+    passes `--help` clean; only the first `karr skill` action or `karr init
+    --claude-skill` dies, with `Could not find .../SKILL.md`. `pp` only warns
+    about a missing `-a` path and still exits 0, so nothing short of actually
+    running `karr skill` catches it (k308; see "Bundle karr's own `share/`
+    too" above).
 
 ## Not a speed win — set expectations
 Built and measured on this box (23 MB binary, N=100): warm startup **~457 ms**

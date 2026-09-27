@@ -56,6 +56,12 @@
       `karr-<version>-checksums.txt` (verify with `sha256sum -c`) covering every
       asset. The raw binary and the `.tar.gz` are both still shipped per arch.
 
+    - The prebuilt Linux binaries now carry the bundled skills: `karr skill
+      install|show|check|update` and `karr init --claude-skill` failed in them
+      with "Could not find .../SKILL.md. Is App::karr properly installed?",
+      because the build never packed share/. The release build now fails a
+      binary that cannot install every bundled skill.
+
 0.601     2026-09-19 23:43:42Z
 
     - A card left blocked in a terminal status (`done`/`archived`) no longer
