@@ -71,14 +71,19 @@ sub pickable {
     # (ticket #252). These were three lines spelled out here -- has_claimed_by,
     # length, and the expiry parse -- which was fine while `karr pick` was the
     # only caller and became the #59/#198 failure the moment `karr list
-    # --unclaimed` needed the same answer: two spellings of "free" drift, and
-    # then a list says a card is available that pick will not hand out.
+    # --unclaimed` needed the same answer: two spellings of the claim test
+    # drift, and then a list calls a card unclaimed that pick treats as held.
     #
     # It could not be borrowed by calling pickable itself, because the whole of
     # what used to stand here is the claim, and the next line is not: blocked is
     # pick's rule, not part of being claimed, and kanban-md's IsUnclaimed
     # (internal/board/filter.go) does not ask it either. That is why the claim
-    # test moved out and this line stayed behind it.
+    # test moved out and this line stayed behind it. The held-back test at the
+    # top is pick's rule on the same terms (k306): a backlog card holds no
+    # claim, so `list --unclaimed` lists it and pick still refuses it. The list
+    # and pick share the claim half of this method and nothing more -- the
+    # pickable set is `list --unclaimed --not-blocked` minus backlog, a parting
+    # decided in ticket k309 rather than left to drift.
     #
     # What moved is exactly what was here, `claimed_by: ""` included -- see
     # App::karr::Role::ClaimTimeout/claim_held for the reasoning that came with
@@ -122,10 +127,13 @@ not the same as an empty list: no C<statuses> means "anything but terminal"
 
 The claim half of the test is L<App::karr::Role::ClaimTimeout/claim_held>,
 called rather than restated: C<karr list --unclaimed> asks that same method
-about every card on the board, so what the list shows as free is what this
-method lets C<karr pick> take (ticket #252). The blocked test deliberately
-stayed here and is not part of it -- a blocked card is unpickable, not
-claimed.
+about every card on the board, so the list and C<karr pick> cannot disagree
+about who holds a card (ticket #252). They share that half of the rule and
+only that half. The blocked test and the held-back test deliberately stayed
+here and are not part of it: a blocked card and a card in C<backlog> are
+unpickable, not claimed, so C<list --unclaimed> still lists them. Without
+filters, what this method lets C<karr pick> take is C<list --unclaimed
+--not-blocked> minus the cards in C<backlog> (ticket k309).
 
 =cut
 

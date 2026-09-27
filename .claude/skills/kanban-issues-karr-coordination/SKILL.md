@@ -34,7 +34,7 @@ differ by name; several agents in the **same** directory take
 karr list --compact                      # open cards, one line each
 karr board                               # per-column summary; --done shows the final column too
 karr show 12                             # one card in full, body included
-karr list --unclaimed --status todo      # what is free to take
+karr list --unclaimed --status todo      # todo cards no live claim holds
 karr list --blocked                      # what is stuck, and why
 karr show --me                           # the card you last touched (re-orient)
 ```

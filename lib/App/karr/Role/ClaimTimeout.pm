@@ -254,12 +254,16 @@ command run, so one window covers the whole run. C<0> is not the shortest
 window but no window at all: on a board with C<claim_timeout: 0s> a claim
 never expires, so every claimed card stays held until the claim is released.
 
-This is the only definition of "free" in karr, and both callers of it are
-meant to stay callers: L<App::karr::Role::PickRules/pickable> asks it about
-the card C<karr pick> is about to hand out, and C<karr list --unclaimed> asks
-it about every card on the board. A second spelling of the test is how C<list>
-and C<pick> come to disagree about which work is available (tickets #59,
-#198).
+This is the only claim test in karr, and both callers of it are meant to stay
+callers: L<App::karr::Role::PickRules/pickable> asks it about the card
+C<karr pick> is about to hand out, and C<karr list --unclaimed> asks it about
+every card on the board. A second spelling of the test is how C<list> and
+C<pick> come to disagree about who holds a card (tickets #59, #198).
+
+It is the claim half of C<pickable> and not the whole of it, so "not held" is
+not "free to pick": C<pickable> also refuses a blocked card and a card held
+back in C<backlog>, neither of which holds a claim, and C<list --unclaimed>
+lists both (ticket k309).
 
 It is B<not> L</check_claim> with the dying left out. That method answers a
 different question -- may I<this caller> write this card -- and its extra

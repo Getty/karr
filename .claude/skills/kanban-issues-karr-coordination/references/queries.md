@@ -29,11 +29,13 @@ urgent first. `-n`/`--limit` cuts after filtering **and** sorting, so
 `--sort priority -n 5` is the five most urgent cards, not five arbitrary ones
 put in order — the "what next" call without pulling the whole board.
 
-`--unclaimed` is "free right now": no claim, or one older than
-`claim_timeout` — the same test `pick` uses, without taking the card. It is
-not the opposite of `--claimed-by NAME`, which matches an expired claim too;
-passing both is a usage error. A blocked card nobody holds is still listed, so
-`--blocked --unclaimed` is a real triage query.
+`--unclaimed` is "no live claim": no claim, or one older than
+`claim_timeout` — the same claim test `pick` uses, without taking the card.
+It is not "what `pick` would take": a blocked card and a card in `backlog`
+hold no claim, so both are listed, while `pick` refuses them. The pick set is
+`--unclaimed --not-blocked` outside `backlog`, and `--blocked --unclaimed` is
+a real triage query. Nor is `--unclaimed` the opposite of `--claimed-by NAME`,
+which matches an expired claim too; passing both is a usage error.
 
 ## board
 
