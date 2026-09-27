@@ -523,6 +523,10 @@ Each iteration runs `command` once, then classifies result:
 | **common-error** | bad exit, timeout, or an error pattern in a run that moved *nothing* | exponential backoff, no task penalty |
 | **idle** | agent did nothing, grabbed nothing | stop |
 
+`--dry-run` never reaches this table: the loop stops right after logging the
+would-be START, before progress, stall or idle is scored for that iteration
+(#314). So a dry run never logs STALL and never counts toward auto-block.
+
 **What a run did is asked before what it printed.** A run that exited 0 and
 moved the board is progress whatever scrolled past it, and is never
 reclassified by its own transcript; the output is scanned only for a run that
