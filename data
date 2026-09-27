@@ -1,0 +1,25 @@
+---
+claimed_at: 2026-09-27T03:09:38Z
+claimed_by: karr-board-worker
+class: standard
+completed: 2026-09-27T03:09:38Z
+created: 2026-09-26T23:27:45Z
+id: 309
+priority: low
+started: 2026-09-27T02:43:06Z
+status: done
+tags:
+- list
+- pick
+- claims
+title: list --unclaimed lists backlog cards pick will never hand out
+updated: 2026-09-27T03:09:38Z
+---
+
+Left open by k306 (commit 6721735). list --unclaimed asks only claim_held, so backlog cards (never claimed, never pickable since k306) show up as free. t/252 is named list-unclaimed-agrees-with-pick; k306 moved its fixtures to todo, so the test no longer covers the gap. Blocked cards already had the same asymmetry (--unclaimed --not-blocked was the pick set); now even that combination includes backlog. Decide: is --unclaimed "no live claim" (kanban-md IsUnclaimed, leave as is and document) or "free to pick" (exclude held-back status)? kanban-md parity argues for the former.
+
+Progress: docs corrected per decision (keep --unclaimed = no live claim). PickRules/ClaimTimeout/List POD+comments, coordination queries.md and SKILL.md (hardlinks kept, cat >). README has no --unclaimed claim, nothing to change. New t/252 subtest pinned; mutation (is_held_back_status -> 0) fails only that subtest. Waiting on loadguard to run t/306 and t/285.
+
+Doc-only, per the decision: --unclaimed stays "no live claim" (kanban-md IsUnclaimed). Corrected every place that said it shows what pick would take: PickRules pickable comment + POD, ClaimTimeout claim_held POD ("only claim test", not "only definition of free"), List.pm top comment, --unclaimed POD and _filter comment, coordination references/queries.md and SKILL.md line 37 (both hardlinked; written with cat >, inodes 10619790/94 links and 4215128/91 links unchanged, .claude/skills copies follow). README carries no --unclaimed claim, unchanged. Also dropped a wrong claim from the --unclaimed POD: it said cards with unmet dependencies are unpickable, but karr pick hands them over and warns (#123). Test: t/252 new subtest "a backlog card is unclaimed and still not pickable (k309)" plus header/drain comments; with is_held_back_status mutated to 0 only that subtest fails. prove -l t/252-list-unclaimed-agrees-with-pick.t t/198-pick-rules-shared.t t/72-claim-timeout.t t/147-claim-timeout-requires.t t/252-list-filter-limit-options.t t/275-list-claim-and-hidden-footer.t t/62-skill-doc-sync.t t/26-skill-share-dir.t t/215-pod-ascii-only.t t/306-backlog-held-back.t t/285-skill-directory-install.t -> all pass. Not committed.
+
+2026-09-27 03:09 Committed as 28fc08e (k309: document list --unclaimed as the claim test, not the pick set).
