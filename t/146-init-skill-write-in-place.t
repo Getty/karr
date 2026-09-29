@@ -58,12 +58,32 @@ sub chained_install {
     return ( $installed, $elsewhere );
 }
 
-# Run _install_claude_skill against a share dir we control -- holding the
-# ticket skill only; the coordination skill falls through to this checkout's
-# share/, which the per-skill lookup allows and which these subtests do not
-# look at -- with its
-# "Installed ..." line and any warnings captured rather than dumped into the
-# TAP stream.
+# Every *.md under $src, copied to the same relative path under $dst.
+sub copy_skill_dir {
+    my ( $src, $dst ) = @_;
+    $src->visit(
+        sub {
+            my ($p) = @_;
+            return unless $p->is_file;
+            my $target = $dst->child( $p->relative($src) );
+            $target->parent->mkpath;
+            $p->copy($target);
+        },
+        { recurse => 1 },
+    );
+}
+
+# Run _install_claude_skill against a share dir we control, holding both
+# skills App::karr::Role::SkillFile lists (_skill_names) -- the content these
+# subtests plant for kanban-issues-karr-ticket, plus this checkout's real
+# kanban-issues-karr-coordination copied in verbatim. The fake share has to be
+# self-contained: leaving the coordination skill out of it relies on
+# _skill_source_dir's fallback to the checkout share/ next to the loaded
+# module's own path (%INC), which only resolves under `prove -l`, where
+# share/ sits beside lib/ -- under `make test` the module loads from
+# blib/lib, nothing sits beside that, and the lookup for the skill these
+# subtests never look at died anyway (k319). With its "Installed ..." line and
+# any warnings captured rather than dumped into the TAP stream.
 sub install_into {
     my ( $root, $content ) = @_;
     # The #285 layout: a directory with SKILL.md and references/ under it.
@@ -72,6 +92,8 @@ sub install_into {
     $skill->child('references')->mkpath;
     $skill->child('SKILL.md')->spew_utf8($content);
     $skill->child('references/extra.md')->spew_utf8($REF);
+    copy_skill_dir( path($ROOT)->child('share/kanban-issues-karr-coordination'),
+                     $share->child('kanban-issues-karr-coordination') );
 
     require File::ShareDir;
     no warnings 'redefine';
