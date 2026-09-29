@@ -1,0 +1,22 @@
+---
+claimed_at: 2026-09-29T20:35:29Z
+claimed_by: karr
+class: standard
+completed: 2026-09-29T20:35:29Z
+created: 2026-09-27T05:39:08Z
+id: 319
+priority: high
+started: 2026-09-29T20:35:29Z
+status: done
+tags:
+- bug
+- ci
+- test
+- skill
+title: 'CI: t/146 fails under make test -- fake share holds only the ticket skill'
+updated: 2026-09-29T20:35:29Z
+---
+
+CI run 36293077721 (HEAD 5e4e8ac, all perls 5.36-5.42): t/146-init-skill-write-in-place.t subtest 3 fails: "Could not find kanban-issues-karr-coordination/SKILL.md". install_into() stubs File::ShareDir::dist_dir with a temp share holding only kanban-issues-karr-ticket and relies on SkillFile falling back to the checkout share/ next to lib/ for the coordination skill. CI runs make test from blib/lib, where no share/ sits next to lib/, so the lookup fails. Local prove -l passes. Probably broken since the k302 split; CI had not run on a push since k301. Fix: make the fake share self-contained (both skills), and sweep the other tests that stub dist_dir for the same reliance. Reproduce under blib (dzil build + make + prove -b) before and after.
+
+2026-09-29 20:28 Committed 3b60a2a
