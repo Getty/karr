@@ -1,0 +1,53 @@
+{"action":"move","agent":"Torsten Raudssus","detail":"todo","task_id":315,"ts":"2026-09-27T02:43:25Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"todo","task_id":316,"ts":"2026-09-27T02:43:32Z"}
+{"action":"move","agent":"karr-board-worker","detail":"in-progress","task_id":312,"ts":"2026-09-27T02:43:39Z"}
+{"action":"move","agent":"karr-board-worker","detail":"in-progress","task_id":309,"ts":"2026-09-27T02:43:45Z"}
+{"action":"move","agent":"karr-foundation-worker","detail":"in-progress","task_id":314,"ts":"2026-09-27T02:43:52Z"}
+{"action":"move","agent":"karr-ref-worker","detail":"in-progress","task_id":316,"ts":"2026-09-27T02:43:59Z"}
+{"action":"move","agent":"karr-ref-worker","detail":"in-progress","task_id":315,"ts":"2026-09-27T02:44:07Z"}
+{"action":"handoff","agent":"karr-board-worker","detail":"review","task_id":312,"ts":"2026-09-27T02:46:45Z"}
+{"action":"edit","agent":"karr-foundation-worker","detail":"in-progress","task_id":314,"ts":"2026-09-27T02:50:04Z"}
+{"action":"handoff","agent":"karr-foundation-worker","detail":"review","task_id":314,"ts":"2026-09-27T02:50:04Z"}
+{"action":"edit","agent":"karr-board-worker","detail":"in-progress","task_id":309,"ts":"2026-09-27T02:50:43Z"}
+{"action":"handoff","agent":"karr-board-worker","detail":"review","task_id":309,"ts":"2026-09-27T02:53:50Z"}
+{"action":"edit","agent":"karr-ref-worker","detail":"in-progress","task_id":316,"ts":"2026-09-27T02:55:42Z"}
+{"action":"edit","agent":"karr-ref-worker","detail":"in-progress","task_id":315,"ts":"2026-09-27T02:55:43Z"}
+{"action":"handoff","agent":"karr-ref-worker","detail":"review","task_id":316,"ts":"2026-09-27T02:57:04Z"}
+{"action":"handoff","agent":"karr-ref-worker","detail":"review","task_id":315,"ts":"2026-09-27T02:57:05Z"}
+{"action":"handoff","agent":"karr-board-worker","detail":"review","task_id":312,"ts":"2026-09-27T03:08:00Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"review","task_id":312,"ts":"2026-09-27T03:08:39Z"}
+{"action":"move","agent":"karr-board-worker","detail":"done","task_id":312,"ts":"2026-09-27T03:08:46Z"}
+{"action":"edit","agent":"karr-board-worker","detail":"review","task_id":309,"ts":"2026-09-27T03:09:19Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"review","task_id":309,"ts":"2026-09-27T03:09:26Z"}
+{"action":"move","agent":"karr-board-worker","detail":"done","task_id":309,"ts":"2026-09-27T03:09:38Z"}
+{"action":"edit","agent":"karr-foundation-worker","detail":"review","task_id":314,"ts":"2026-09-27T03:09:48Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"review","task_id":314,"ts":"2026-09-27T03:09:57Z"}
+{"action":"move","agent":"karr-foundation-worker","detail":"done","task_id":314,"ts":"2026-09-27T03:10:06Z"}
+{"action":"edit","agent":"karr-ref-worker","detail":"review","task_id":316,"ts":"2026-09-27T03:10:19Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"review","task_id":316,"ts":"2026-09-27T03:10:27Z"}
+{"action":"move","agent":"karr-ref-worker","detail":"done","task_id":316,"ts":"2026-09-27T03:10:36Z"}
+{"action":"edit","agent":"karr-ref-worker","detail":"review","task_id":315,"ts":"2026-09-27T03:10:47Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"review","task_id":315,"ts":"2026-09-27T03:11:01Z"}
+{"action":"move","agent":"karr-ref-worker","detail":"done","task_id":315,"ts":"2026-09-27T03:11:10Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"todo","task_id":317,"ts":"2026-09-27T03:14:19Z"}
+{"action":"move","agent":"karr-doc-writer","detail":"in-progress","task_id":317,"ts":"2026-09-27T03:14:26Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":318,"ts":"2026-09-27T03:14:32Z"}
+{"action":"handoff","agent":"karr-doc-writer","detail":"review","task_id":317,"ts":"2026-09-27T03:16:34Z"}
+{"action":"edit","agent":"karr-doc-writer","detail":"review","task_id":317,"ts":"2026-09-27T03:17:45Z"}
+{"action":"move","agent":"karr-doc-writer","detail":"done","task_id":317,"ts":"2026-09-27T03:17:52Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"todo","task_id":318,"ts":"2026-09-27T05:00:52Z"}
+{"action":"move","agent":"karr-doc-writer","detail":"in-progress","task_id":318,"ts":"2026-09-27T05:00:58Z"}
+{"action":"edit","agent":"karr-doc-writer","detail":"in-progress","task_id":318,"ts":"2026-09-27T05:11:58Z"}
+{"action":"handoff","agent":"karr-doc-writer","detail":"review","task_id":318,"ts":"2026-09-27T05:12:05Z"}
+{"action":"edit","agent":"karr-doc-writer","detail":"review","task_id":318,"ts":"2026-09-27T05:13:20Z"}
+{"action":"move","agent":"karr-doc-writer","detail":"done","task_id":318,"ts":"2026-09-27T05:13:27Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"todo","task_id":319,"ts":"2026-09-27T05:39:08Z"}
+{"action":"move","agent":"karr-test-writer","detail":"in-progress","task_id":319,"ts":"2026-09-27T05:39:14Z"}
+{"action":"create","agent":"Torsten Raudssus","detail":"backlog","task_id":320,"ts":"2026-09-27T06:26:59Z"}
+{"action":"edit","agent":"karr-test-writer","detail":"in-progress","task_id":319,"ts":"2026-09-29T20:28:16Z"}
+{"action":"move","agent":"karr","detail":"review","task_id":319,"ts":"2026-09-29T20:28:25Z"}
+{"action":"move","agent":"karr","detail":"done","task_id":319,"ts":"2026-09-29T20:35:29Z"}
+{"action":"move","agent":"karr","detail":"in-progress","task_id":320,"ts":"2026-09-30T03:18:14Z"}
+{"action":"handoff","agent":"karr","detail":"review","task_id":320,"ts":"2026-09-30T03:30:24Z"}
+{"action":"edit","agent":"karr","detail":"review","task_id":320,"ts":"2026-09-30T04:26:03Z"}
+{"action":"move","agent":"karr","detail":"done","task_id":320,"ts":"2026-09-30T04:26:11Z"}
