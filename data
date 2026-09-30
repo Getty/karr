@@ -1,0 +1,23 @@
+---
+claimed_at: 2026-09-30T04:26:11Z
+claimed_by: karr
+class: standard
+completed: 2026-09-30T04:26:11Z
+created: 2026-09-27T06:26:59Z
+id: 320
+priority: medium
+started: 2026-09-30T03:18:14Z
+status: done
+tags:
+- bug
+- claims
+- edit
+title: edit --release claimt die Karte sofort wieder, wenn KARR_CLAIM gesetzt ist
+updated: 2026-09-30T04:26:11Z
+---
+
+Gefunden 2026-09-27 im DBIO-Koordinatorlauf (dbio core k243/k244). Repro: export KARR_CLAIM=dbio; karr move N in-progress; karr edit N --release; karr show N -> Claimed: dbio (unveraendert, claimed_at neu). Ursache (lib/App/karr/Cmd/Edit.pm, installierte Version ~Z. 338 und ~Z. 412): my $claim = $self->resolved_claim faellt auf $ENV{KARR_CLAIM} zurueck; der Release-Zweig loescht den Claim, danach setzt "if (defined $claim && length $claim) { $task->claimed_by($claim) ... }" ihn in derselben Edit wieder. Der Kommentar dort sagt selbst, dass ein Env-Default-Claim ein plain --release nicht zum Usage-Error machen soll -- er darf es aber auch nicht aufheben. Erwartet: bei --release keinen Claim (weder --claim noch Env) anwenden. Workaround: KARR_CLAIM fuer den Aufruf unsetten. Test: Env gesetzt + --release -> claimed_by leer.
+
+Already fixed in the unreleased tree by a89a245 (k303/k304): Cmd/Edit.pm computes $claim = $self->release ? undef : $self->resolved_claim_for($ends_in), so --release never takes the KARR_CLAIM default; explicit --claim X --release stays a usage error (exit 2). Reproduced the bug in installed karr 0.601 (Claimed: dbio after edit --release); in the repo tree (0.602) the claim is gone. The regression test already exists: t/303-edit-move-env-claim-scope.t subtest 'edit --release releases, and the env does not claim it back' (env KARR_CLAIM, move in-progress, edit --release -> no claimed_by and no claimed_at). Mutation check: dropping the release guard makes t/303 fail (subtests 3 and 5); restored. The Changes {{$NEXT}} entry already exists ('edit --release no longer claims the card back'). No files changed. prove -l t/: Files=247 Tests=1900 PASS. Close once 0.602 ships; nothing to commit.
+
+2026-09-30 04:26 Duplicate of k303/k304, fixed in a89a245, ships in 0.602. Workaround until then: unset KARR_CLAIM for the --release call.
