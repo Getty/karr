@@ -1,4 +1,4 @@
-{{$NEXT}}
+0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take
       a card from it, whatever the filters, and a board with only backlog
