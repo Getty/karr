@@ -1,7 +1,7 @@
 # ABSTRACT: The one definition of which card karr pick may hand out, and in what order
 
 package App::karr::Role::PickRules;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use Moo::Role;
 use App::karr::Config;
 

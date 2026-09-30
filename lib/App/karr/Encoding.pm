@@ -1,7 +1,7 @@
 # ABSTRACT: The character/octet boundary for karr
 
 package App::karr::Encoding;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use strict;
 use warnings;
 use Exporter qw( import );

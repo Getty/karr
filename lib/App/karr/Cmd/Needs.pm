@@ -1,7 +1,7 @@
 # ABSTRACT: Report and resolve cross-board dependencies
 
 package App::karr::Cmd::Needs;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

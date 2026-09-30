@@ -1,7 +1,7 @@
 # ABSTRACT: Role providing the --compact output option
 
 package App::karr::Role::CompactOutput;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use Moo::Role;
 use MooX::Options;
 

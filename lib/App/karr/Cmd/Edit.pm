@@ -1,7 +1,7 @@
 # ABSTRACT: Modify an existing task
 
 package App::karr::Cmd::Edit;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use Moo;
 use MooX::Cmd;
 use MooX::Options (

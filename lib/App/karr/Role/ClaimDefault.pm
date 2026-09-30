@@ -1,7 +1,7 @@
 # ABSTRACT: Default a command's claim name from KARR_CLAIM when the flag is omitted
 
 package App::karr::Role::ClaimDefault;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use Moo::Role;
 # Loaded without importing, and every call below is qualified. A Moo::Role
 # composes every sub in its package into its consumers, imported ones included

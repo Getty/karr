@@ -1,7 +1,7 @@
 # ABSTRACT: Activity log writer for karr board operations
 
 package App::karr::ActivityLog;
-our $VERSION = '0.602';
+our $VERSION = '0.603';
 use Moo;
 use App::karr::Encoding qw( json_encode json_decode );
 use POSIX qw( strftime );
