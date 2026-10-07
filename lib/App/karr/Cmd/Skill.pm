@@ -11,6 +11,7 @@ use App::karr::Role::Output;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
 use App::karr::Role::SkillFile;
+use App::karr::Home qw( require_home_dir );
 use App::karr::Error qw( user_error clean_error );
 use Path::Tiny;
 
@@ -526,7 +527,7 @@ sub _skills_base {
   # caller would have typed rather than a realpath they may not recognize. The
   # global branch is absolute already: $HOME is.
   return $self->global
-    ? path($ENV{HOME})->child($spec->{global})
+    ? path( require_home_dir('--global') )->child($spec->{global})
     : path('.')->absolute->child($spec->{project});
 }
 

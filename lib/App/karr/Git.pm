@@ -20,6 +20,7 @@ use Git::Libgit2 qw(
 );
 use Git::Libgit2::FFI ();
 use App::karr::Error qw( clean_error );
+use App::karr::Home qw( home_dir );
 use App::karr::Encoding qw(
     BOARD_ENCODING_VERSION
     to_octets from_octets yaml_dump yaml_load repair_mojibake
@@ -1640,8 +1641,12 @@ sub _default_credentials_cb {
         if ( $types & 2 ) {
             return Git::Native::Credential->ssh_agent( username => $user )
                 unless $tried[0]++;
-            for my $k (qw( id_ed25519 id_rsa )) {
-                my $priv = "$ENV{HOME}/.ssh/$k";
+            # No home directory, no key files to offer: the chain goes on to
+            # the default credential below (k326; PowerShell and cmd set
+            # USERPROFILE and no HOME, which App::karr::Home knows about).
+            my $home = home_dir();
+            for my $k ( defined $home ? qw( id_ed25519 id_rsa ) : () ) {
+                my $priv = "$home/.ssh/$k";
                 next unless -r $priv;
                 next if $tried[1]{$k}++;
                 return Git::Native::Credential->ssh_key(

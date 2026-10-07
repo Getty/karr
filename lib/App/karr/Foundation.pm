@@ -12,6 +12,7 @@ use MooX::Options (
   protect_argv => 0,
 );
 use App::karr::Error qw( user_error clean_error );
+use App::karr::Home qw( require_home_dir );
 use App::karr::Encoding qw( from_octets yaml_load );
 use App::karr::Role::ExitCodes;
 use Path::Tiny;
@@ -187,7 +188,8 @@ sub _build_config_path {
   my ( $self ) = @_;
   return defined $self->config
     ? path( $self->config )
-    : path( $ENV{HOME} )->child( '.config', 'karr-foundation', 'config.yml' );
+    : path( require_home_dir('the default fleet config') )
+        ->child( '.config', 'karr-foundation', 'config.yml' );
 }
 
 has _config_data => (

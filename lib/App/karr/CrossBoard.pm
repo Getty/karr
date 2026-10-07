@@ -8,6 +8,7 @@ use Try::Tiny;
 # Imported, not called through the package: App::karr::Encoding owns every
 # character/octet crossing, and the fleet config file is one of them.
 use App::karr::Encoding qw( yaml_load );
+use App::karr::Home qw( home_dir );
 use App::karr::Git;
 use App::karr::BoardStore;
 
@@ -354,8 +355,13 @@ sub _config_data {
 
     my $file = $self->config_file;
     my $explicit = $self->has_config_file && defined $file && length $file;
-    $file = path( $ENV{HOME} // '' )->child(qw( .config karr-foundation config.yml ))
-      unless $explicit;
+    unless ($explicit) {
+        # No home directory is no default config file, which reads the same
+        # as one that is not there: an empty fleet config (k326).
+        my $home = home_dir();
+        return {} unless defined $home;
+        $file = path($home)->child(qw( .config karr-foundation config.yml ));
+    }
     $file = path($file);
 
     unless ( $file->is_file ) {

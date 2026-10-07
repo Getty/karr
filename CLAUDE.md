@@ -69,6 +69,7 @@ counterpart and no parity obligation.
 - `lib/App/karr/ActivityLog.pm` — Activity log writer; role-qualified identities under `refs/karr/log/*`
 - `lib/App/karr/CrossBoard.pm` — Cross-board dependencies: a link from a card here to a card on another board (`BOARD#ID`)
 - `lib/App/karr/Error.pm` — Turns internal errors into one clean user-facing line
+- `lib/App/karr/Home.pm` — The user's home directory (`HOME`, on Windows also `USERPROFILE`); nothing else reads `$ENV{HOME}`
 
 ### karr-foundation (the second entry point)
 

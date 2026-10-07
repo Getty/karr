@@ -19,6 +19,12 @@
       card, create writes its card only where none exists and takes another
       id otherwise, and a pull moves a counter that has fallen behind.
 
+    - Without `HOME` in the environment (PowerShell and cmd on Windows), karr
+      takes the home directory from `USERPROFILE`: the ssh keys under `.ssh`
+      are found, and `karr skill --global` and karr-foundation's default
+      config path no longer die inside Path::Tiny. With neither set, they say
+      so in one line.
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take

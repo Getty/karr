@@ -627,6 +627,9 @@ sub _term_width {
   if ( defined $ENV{COLUMNS} && $ENV{COLUMNS} =~ /\A[0-9]+\z/ && $ENV{COLUMNS} > 0 ) {
     return $ENV{COLUMNS};
   }
+  # No tput under cmd.exe, and no /dev/null for the redirect to name: the
+  # shell reports the missing path on a stderr nothing here captures.
+  return 80 if $^O eq 'MSWin32';
   my $cols = eval {
     local $SIG{__WARN__} = sub { };
     my $out = `tput cols 2>/dev/null`;
