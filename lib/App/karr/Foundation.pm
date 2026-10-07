@@ -1092,6 +1092,15 @@ sub run {
     user_error("Unknown command: '$command' (expected: answer, ask, chain, plan)");
   }
 
+  # Everything from here on starts and supervises agents with fork, process
+  # groups, alarm and /bin/sh (App::karr::Foundation::Runner). None of that
+  # exists on MSWin32, and a drain that gets halfway is worse than one that
+  # says no. The mailbox commands above are ref operations and stay available.
+  user_error('karr-foundation cannot run agents on Windows: it needs fork, '
+      . 'process groups and /bin/sh. The ask, answer, chain and plan commands '
+      . 'work there.')
+    if $^O eq 'MSWin32';
+
   my @repos = $self->_discover_repos;
   unless ( @repos ) {
     warn "karr-foundation: no repos found -- check config\n";

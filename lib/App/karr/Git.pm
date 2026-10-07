@@ -7,9 +7,6 @@ use warnings;
 use Path::Tiny qw( path );
 use Try::Tiny;
 use IPC::Open3 qw( open3 );
-use IO::Select;
-use Symbol qw( gensym );
-use Errno qw( EINTR );
 use POSIX qw( WNOHANG );
 use Scalar::Util qw( blessed );
 use Time::HiRes ();
@@ -3091,9 +3088,11 @@ sub _count_push_porcelain_accepted {
 # ceiling rather than a guess at how slow a legitimate transfer may be.
 use constant DEFAULT_TRANSPORT_TIMEOUT => 120;
 
-# Cap on how much of each stream is kept. Draining continues past it -- the
-# point is only to stop a runaway git from being buffered into memory whole.
-use constant CLI_OUTPUT_LIMIT => 65_536;
+# Cap on how much of each stream is read back from the file git wrote it to --
+# the point is only to stop a runaway git from being held in memory whole.
+# Twice the pipe-buffer size the select loop used to stop at, because that
+# loop kept the chunk that crossed its limit and so held up to this much.
+use constant CLI_OUTPUT_LIMIT => 131_072;
 
 sub _transport_timeout {
     my $raw = $ENV{KARR_TRANSPORT_TIMEOUT};
@@ -3136,15 +3135,25 @@ sub _probe_timeout {
 # libgit2 cannot open has no root to run from, and there ->dir is all that is
 # left -- the same degradation every other native operation makes.
 #
-# Both pipes are drained through one IO::Select loop. Reading stdout to EOF
-# first, as this used to, deadlocks the moment the child fills the 64 KiB
-# stderr pipe buffer: the child blocks on write and so never exits or closes
-# stdout, while the parent is still blocked reading stdout. A diverged board
-# reaches that at roughly 700 rejected refs, and it could strike inside
-# bin/karr's END flush, i.e. after the command had already printed its result
-# (#43). The loop is also bounded by a deadline, so a transport that stalls
-# (an ssh ProxyCommand hanging on a jump host, a grandchild holding the pipes
-# open past the child's exit) fails instead of hanging an unattended agent.
+# The child writes stdout and stderr into two temporary files and is waited
+# for; nothing is read while it runs. That is what this needs from a platform:
+# spawning with redirected handles and a non-blocking waitpid. The two earlier
+# shapes each needed more. Reading stdout to EOF first deadlocks the moment the
+# child fills the 64 KiB stderr pipe buffer -- the child blocks on write and so
+# never exits or closes stdout, while the parent is still blocked reading it;
+# a diverged board reaches that at roughly 700 rejected refs, and it could
+# strike inside bin/karr's END flush, after the command had already printed its
+# result (#43). Draining both pipes through one select loop fixed that and
+# broke Windows, where select is only implemented for sockets: it returns at
+# once for a pipe, so the loop never read a byte, span until the deadline and
+# reported a timeout for a git that had long finished -- or, with no deadline,
+# never returned (k325). A file cannot fill up and block the child, and needs
+# no readiness call at all.
+#
+# The wait is bounded by a deadline, so a transport that stalls (an ssh
+# ProxyCommand hanging on a jump host) fails instead of hanging an unattended
+# agent. It ends when git itself exits: a grandchild that outlives it and still
+# holds the files open keeps nobody waiting.
 #
 # `status` is the raw waitpid status, not `$? >> 8`, so callers can tell a
 # clean exit from a death by signal (#42).
@@ -3164,39 +3173,32 @@ sub _run_git {
         out => '', err => '', timeout => $timeout,
     );
 
-    my ( $pid, $timed_out );
+    my ( $pid, $timed_out, $status, %capture );
     my $started = try {
         local $ENV{GIT_TERMINAL_PROMPT} = 0;   # never hang on an interactive prompt
-        my $err_fh = gensym;
-        $pid = open3( my $in, my $out_fh, $err_fh, @cmd );
+        for my $stream (qw( out err )) {
+            my $file = Path::Tiny->tempfile('karr-git-XXXXXXXX');
+            $capture{$stream} = { file => $file, fh => $file->openw_raw };
+        }
+        # ">&N" hands the child descriptor N itself rather than a pipe to it.
+        $pid = open3( my $in,
+            '>&' . fileno( $capture{out}{fh} ),
+            '>&' . fileno( $capture{err}{fh} ), @cmd );
         close $in;
 
-        my %sink = (
-            fileno($out_fh) => \$result{out},
-            fileno($err_fh) => \$result{err},
-        );
-        my $select   = IO::Select->new( $out_fh, $err_fh );
         my $deadline = $timeout ? Time::HiRes::time() + $timeout : undef;
-
-        while ( $select->count ) {
-            my $left = defined $deadline
-                     ? $deadline - Time::HiRes::time() : undef;
-            if ( defined $left && $left <= 0 ) { $timed_out = 1; last }
-            # Poll in slices so the deadline is still honoured while git is
-            # quiet on both streams.
-            my $slice = !defined $left || $left > 1 ? 1 : $left;
-            for my $fh ( $select->can_read($slice) ) {
-                my $read = sysread $fh, my $chunk, 65_536;
-                if ( !defined $read ) {
-                    next if $! == EINTR;
-                    $select->remove($fh);
-                    next;
-                }
-                if ( !$read ) { $select->remove($fh); next }
-                my $buffer = $sink{ fileno($fh) };
-                $$buffer .= $chunk if length($$buffer) < CLI_OUTPUT_LIMIT;
+        # Short naps first, so a git that answers in milliseconds -- ls-files,
+        # a local fetch -- is not made to wait for a poll interval.
+        my $nap = 0.002;
+        while ( waitpid( $pid, WNOHANG ) == 0 ) {
+            if ( defined $deadline && Time::HiRes::time() >= $deadline ) {
+                $timed_out = 1;
+                last;
             }
+            Time::HiRes::sleep($nap);
+            $nap = $nap * 2 if $nap < 0.05;
         }
+        $status = $?;
         1;
     } catch {
         $result{err} = "$_";
@@ -3204,14 +3206,26 @@ sub _run_git {
     };
     return \%result unless $started;
 
+    $self->_reap_killed($pid) if $timed_out;
+
+    # What the child wrote, up to the limit -- on a timeout too, where the
+    # last thing git said is usually the reason it stalled.
+    for my $stream (qw( out err )) {
+        close $capture{$stream}{fh};
+        my $read = try {
+            my $fh = $capture{$stream}{file}->openr_raw;
+            read $fh, my $buffer, CLI_OUTPUT_LIMIT;
+            $buffer;
+        };
+        $result{$stream} = $read if defined $read;
+    }
+
     if ($timed_out) {
-        $self->_reap_killed($pid);
         $result{failure} = 'timeout';
         return \%result;
     }
 
-    waitpid $pid, 0;
-    @result{qw( ok failure status )} = ( 1, '', $? );
+    @result{qw( ok failure status )} = ( 1, '', $status );
     # The buffers hold raw bytes from the child git process, exactly like the
     # bytes config_string hands back: the :encoding(UTF-8) layer on the
     # binmode'd handle that reads them would encode them a second time on

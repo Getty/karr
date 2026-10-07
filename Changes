@@ -25,6 +25,13 @@
       config path no longer die inside Path::Tiny. With neither set, they say
       so in one line.
 
+    - The git CLI fallback (fetch, push, the board probe, `ls-files`) collects
+      git's output in temporary files and waits for the process, instead of
+      selecting on pipes. On Windows, where select only works on sockets,
+      every fallback ran into its timeout and `KARR_TRANSPORT_TIMEOUT=0` never
+      returned. `karr-foundation` refuses to start a drain on Windows; `ask`,
+      `answer`, `chain` and `plan` are unaffected.
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take
