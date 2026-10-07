@@ -90,12 +90,14 @@ L<App::karr::Role::TaskMutation/update_task_guarded>.
 # (ticket #78). Anything unparseable -- including "7d", which Go rejects as
 # well -- falls back. An explicit zero is not a failure and is honoured: `0s`
 # is how a board says "locks never expire" (see App::karr::Cmd::Unlock), and
-# swapping it for the default would silently turn that off. A bare `0` with no
-# unit is caught by the falsy guard above and keeps its historical fallback.
+# swapping it for the default would silently turn that off. That holds for
+# every spelling `karr config set` accepts -- `0s`, a bare `0`, and the YAML
+# integer 0 a hand-edited config carries -- so "absent" is asked as defined
+# and non-empty, never as truth: the string "0" is false in Perl.
 sub _parse_timeout {
     my ($self, $timeout_str, $fallback) = @_;
     $fallback //= 3600;
-    return $fallback unless $timeout_str;
+    return $fallback unless defined $timeout_str && length $timeout_str;
     my $secs = App::karr::Config->parse_duration($timeout_str);
     return $fallback unless defined $secs && $secs >= 0;
     return $secs;

@@ -9,6 +9,10 @@
       that state by 0.602 or earlier: delete `refs/karr-remote/` once, then
       `karr sync`.
 
+    - `claim_timeout 0` and `lock_timeout 0` mean what `0s` means: claims,
+      respectively pick locks, never expire. The bare zero, which `karr config
+      set` accepts, was read back as the default (1h, 5m).
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take

@@ -126,9 +126,21 @@ subtest 'the parse: which values ever reach that comparison' => sub {
     '...on the board level too, so it never lands on the zero guard' );
   is( $c->_parse_timeout('7d'),    3600, 'an unsupported unit falls back to 1h' );
   is( $c->_parse_timeout('later'), 3600, 'a non-duration falls back to 1h' );
-  is( $c->_parse_timeout('0'),     3600,
-    'a bare 0 with no unit keeps its historical fallback, unchanged by this fix' );
   is( $c->_parse_timeout(undef),   3600, 'an absent value falls back to 1h' );
+  is( $c->_parse_timeout(''),      3600, 'and so does an empty one' );
+
+  # k323: `karr config set claim_timeout 0` is accepted and stored as it was
+  # typed, and a hand-edited config carries the YAML integer. Both are the
+  # zero above, not an absent value -- "0" is merely false in Perl.
+  is( $c->_parse_timeout('0'),  0, 'a bare 0 with no unit is zero too' );
+  is( $c->_parse_timeout(0),    0, '...as is the integer a YAML config holds' );
+  is( $c->_parse_timeout('00'), 0, '...and 00' );
+  is( $c->_parse_timeout( '0', 300 ), 0,
+    'with a lock-side fallback as well: lock_timeout 0 disables expiry' );
+  is( _consumer_for('0')->claim_timeout_secs, 0,
+    'a board saying 0 reads back as 0, not as the fallback' );
+  is( _consumer_for(0)->claim_timeout_secs, 0,
+    '...and so does one holding the integer' );
 };
 
 # The consumers above neither --json nor --quiet, so expired_claim_report
