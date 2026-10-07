@@ -1,0 +1,42 @@
+---
+class: standard
+completed: 2026-10-07T16:07:52Z
+created: 2026-10-07T05:15:47Z
+id: 326
+priority: medium
+started: 2026-10-07T15:37:53Z
+status: done
+tags:
+- bug
+- windows
+title: '$ENV{HOME} is assumed in four places: unset under PowerShell/cmd, ssh key
+  lookup fails and skill --global dies'
+updated: 2026-10-07T16:07:52Z
+---
+
+PowerShell and cmd set `USERPROFILE`, not `HOME`. Four places build a path
+from `$ENV{HOME}` directly:
+
+- `Git.pm` `_default_credentials_cb`: `"$ENV{HOME}/.ssh/$k"` -- "Use of
+  uninitialized value", the key is looked for under `/.ssh/`, ssh auth fails
+  and the pull goes to the CLI fallback (measured on Windows, B4b in the
+  windows-developer hub's docs/karr-windows.md).
+- `Cmd/Skill.pm` `path($ENV{HOME})` for `--global`: dies with "Path::Tiny
+  paths require defined, positive-length parts at .../Cmd/Skill.pm line 530".
+  Reproduces on Linux: `env -u HOME karr skill check --global --agent claude-code`.
+- `Foundation.pm` `path( $ENV{HOME} )->child('.config', ...)`: same death.
+- `CrossBoard.pm` `path( $ENV{HOME} // '' )`: `path('')` dies the same way.
+
+Git::Native fixed its half on main (`Remote::_known_hosts_files`: HOME, then
+USERPROFILE on MSWin32).
+
+Also Unix-only in passing: `Cmd/Dashboard.pm` `_term_width` runs
+`tput cols 2>/dev/null` through the shell; under cmd.exe the redirect target
+does not exist.
+
+Done when: one helper answers "the user's home directory" (HOME, then
+USERPROFILE on MSWin32, a clear error when neither is set), all four call
+sites use it, `_term_width` does not shell out with a Unix redirect on
+MSWin32, and a test runs each site with HOME unset.
+
+Fixed in 07985b3 (local main, not pushed). New App::karr::Home (home_dir, require_home_dir): HOME first everywhere, USERPROFILE only on MSWin32. All four sites use it; Dashboard's _term_width returns 80 on MSWin32 unless COLUMNS is set, instead of shelling out to tput with a Unix redirect. t/326 runs every site with HOME unset and sets $^O locally for the Windows branch. prove -l t/: 250 files, 1911 tests, green. Not measured on Windows itself -- that runs through the windows-developer hub (its k19).
