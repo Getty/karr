@@ -1,0 +1,47 @@
+---
+class: standard
+completed: 2026-10-07T16:02:02Z
+created: 2026-10-06T19:38:26Z
+id: 321
+priority: critical
+started: 2026-10-07T15:37:20Z
+status: done
+tags:
+- bug
+- data-loss
+- refs
+- review-2026-10-06
+title: create overwrites an existing card when refs/karr/meta/next-id is behind the
+  highest task id
+updated: 2026-10-07T16:02:02Z
+---
+
+`karr create` still trusts the id counter blindly. `Cmd::Create` takes `id => $self->allocate_next_id` (`lib/App/karr/Cmd/Create.pm:303`) and writes with the unguarded `$self->save_task($task)` (`Create.pm:345`). `Git::allocate_next_id_ref` (`lib/App/karr/Git.pm:3643-3651`) only compare-and-swaps the *counter*; nothing checks that `refs/karr/tasks/<id>/data` is free. `BoardStore::save_task` (`lib/App/karr/BoardStore.pm:493-502`) even sees the ref exists -- and reacts by bumping `updated`, then overwrites.
+
+The counter is kept monotone against pulls (k172) and seeded by `init`/`import` (`ensure_next_id`, `serialize_from`), but none of that helps once the counter is behind the cards: a remote whose counter was force-pushed by an older push while a newer card stayed (the situation the comment at `Git.pm:2470-2478` describes), a clone that fetched task refs but an older counter, a hand-repaired ref. `_adopt_next_id_ref` (`Git.pm:2490`) compares only counter against counter, never against `list_task_refs`. It has happened on real boards.
+
+**Reproduce** (scratch repo, current checkout):
+
+```
+git init -q . && git commit -q --allow-empty -m init
+karr init; karr create first; karr create second
+old=$(git rev-parse refs/karr/meta/next-id)
+karr create 'third original' --body precious
+git update-ref refs/karr/meta/next-id $old     # counter says 3, card 3 exists
+karr create newcomer
+# -> "Created task 3: newcomer", exit 0
+karr show 3    # title 'newcomer', the original card is gone
+```
+
+The task ref commits are parentless (`git log refs/karr/tasks/3/data` shows one commit), so the old card survives only as an unreachable object. The activity log shows two `create task#3` lines and nothing else.
+
+**Done when**
+
+- an allocated id is never one whose task ref exists: either `allocate_next_id_ref` skips forward past `list_task_refs` (floor = highest task id + 1, the rule `ensure_next_id` already implements at `BoardStore.pm:352-362`), or `create` writes its ref create-only (CAS against "absent") and re-allocates on a hit -- ideally both;
+- a pull that leaves the counter at or below the highest task id repairs it (same floor);
+- a test beside `t/172-next-id-monotonic-sync.t` sets the counter back under an existing card and asserts `create` hands out a fresh id and the old card is intact.
+
+---
+Fleet review 2026-10-06 · kind: bug · confidence: verified
+
+Fixed in 6e91e79 (local main, not pushed). All three from 'Done when': the allocator takes max(counter, highest task id + 1); create writes create-only through a new create_task door and re-allocates on a hit (8 attempts, then dies without writing); pull raises a counter that ends up at or below the highest task id. The pull repair only touches a counter that exists -- a board without one is left without one (t/73, t/99 pin 'a pull changes nothing here'), the allocator floor covers it. Full suite: 3 files red on the first run (t/72 from k323, t/73 and t/99 from the counter being created), all three green after the adjustment.
