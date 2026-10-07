@@ -1,0 +1,53 @@
+---
+class: standard
+completed: 2026-10-07T16:16:51Z
+created: 2026-10-07T05:15:39Z
+id: 325
+priority: high
+started: 2026-10-07T15:37:45Z
+status: done
+tags:
+- bug
+- windows
+- transport
+title: '_run_git selects on pipes, which Win32 does not implement: every CLI fallback,
+  probe and ls-files runs into its timeout'
+updated: 2026-10-07T16:16:51Z
+---
+
+`App::karr::Git::_run_git` drains the child's stdout and stderr through
+`IO::Select->can_read` on the two open3 pipes. perlport: "select (Win32, VMS)
+Only implemented on sockets." On Win32 the call fails at once for a pipe
+handle and `can_read` returns the empty list without waiting, so the loop
+never reads a byte, spins until the deadline and reports a timeout -- for a
+git that finished long ago. With `KARR_TRANSPORT_TIMEOUT=0` ("no limit") there
+is no deadline and the loop never ends.
+
+Derived from the code, not yet measured on Windows; it matches what was
+measured there (windows-developer hub, docs/karr-windows.md, B5a): `git
+ls-remote` from the same shell returns in 1s, karr's fallback reports "git
+fetch (CLI fallback) timed out after 120s and was killed", three times per
+sync (363s for one failed `karr sync`).
+
+Affected: all three callers of `_run_git` -- `_cli_transport` (fetch and push
+fallback, 120s each), `remote_has_board` (10s probe in front of read
+commands), `is_tracked_under`'s `ls-files` fallback. So on Windows everything
+that needs the CLI route is dead: ssh `Host` aliases and `ProxyCommand`, and
+HTTPS remotes that authenticate through a credential helper (the usual
+Windows setup). Each failed fetch also leaves the mirror advanced (k324), which is how a first sync there ends in an empty board.
+
+Same pattern, POSIX-only by construction: `App::karr::Foundation::Runner`
+(fork, setsid, `/bin/sh -c`, alarm, process-group kill).
+
+Done when:
+- `_run_git` collects output without select on pipes on MSWin32 -- e.g.
+  stdout/stderr redirected to temp files and a `waitpid(WNOHANG)` loop against
+  the deadline, which also removes the pipe-buffer deadlock (k43) by
+  construction -- and `_reap_killed` is checked there (kill TERM/KILL
+  semantics differ);
+- measured on Windows: a fallback fetch and push against an ssh alias return
+  in the time git itself takes; a stalled one is killed at the deadline;
+- karr-foundation either works on Windows or refuses to start there with one
+  clear line.
+
+Fixed in 3fc42f2 (local main, not pushed). _run_git no longer reads pipes at all: open3 hands git two temp files as stdout/stderr ('>&N'), the parent polls waitpid(WNOHANG) against the deadline and reads the files back afterwards (cap 128 KiB per stream). One code path on every platform, so the Windows path is the tested path. t/325 replays Win32's select (can_read returns empty at once): red before -- timeout for a finished git, endless spin at timeout 0 -- green now. karr-foundation's drain refuses on MSWin32 with one line; ask/answer/chain/plan stay. prove -l t/: 252 files, 1922 tests, green. Open for the Windows measurement (windows-developer k19): open3 with '>&N' under Strawberry's spawn path, and whether _reap_killed's kill TERM takes git's child processes (ssh, git-remote-https) with it.
