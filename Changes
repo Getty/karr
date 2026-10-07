@@ -1,5 +1,14 @@
 {{$NEXT}}
 
+    - A pull that does not finish no longer costs cards. When the transport
+      failed after its refs had landed, or karr was killed during a pull, the
+      next `karr sync` kept the stale local cards as unpushed work and pushed
+      them over the remote's newer ones; in a fresh clone the board came out
+      empty. The fetch now lands under `refs/karr-local/fetched/` and the
+      tracking mirror only follows what the board has taken. A clone left in
+      that state by 0.602 or earlier: delete `refs/karr-remote/` once, then
+      `karr sync`.
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take

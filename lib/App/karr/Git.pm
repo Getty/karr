@@ -103,11 +103,15 @@ truth of the namespace, which is wrong the moment another clone holds a card
 this one has never seen -- that push took the card off the remote, and the
 mirror update behind it made the next pull delete it locally as well (#178).
 C<pull> is its inverse, but it never fetches straight into the board: the
-remote state lands in a per-remote tracking mirror under C<refs/karr-remote/>,
-and the local board is then reconciled against it. That mirror is what tells a
-ref the remote I<deleted> apart from one that only exists locally because it
-has not been pushed yet -- the first is deleted here as well, the second is
-kept. Where both sides changed the same ref the remote version takes the slot,
+remote state lands under C<refs/karr-local/fetched/>, and the local board is
+then reconciled against it, with the per-remote tracking mirror under
+C<refs/karr-remote/> -- the remote state this board was last brought in line
+with -- as the third point. That mirror is what tells a ref the remote
+I<deleted> apart from one that only exists locally because it has not been
+pushed yet -- the first is deleted here as well, the second is kept. It moves
+one ref at a time, and only once the board holds what it says, so a pull that
+stops anywhere -- a transport failure, a killed process -- leaves a mirror the
+next pull can still decide from. Where both sides changed the same ref the remote version takes the slot,
 the local one is parked under C<refs/karr-conflict/>, and a warning names
 both. Neither extra namespace is ever pushed.
 
@@ -116,7 +120,7 @@ last-writer-wins: it is merged forward rather than adopted, because a counter
 that moves backwards hands out an id a card already holds (#172).
 
 A reconciliation that would delete I<every> remaining board ref is refused
-with an exception instead of being applied, and the mirror is left as it was:
+with an exception instead of being applied, and the mirror stays as it was:
 that outcome is what a C<karr destroy> on another clone looks like, and
 equally what a re-created origin or a mis-edited remote URL looks like.
 C<< pull( $remote, accept_wipe => 1 ) >> -- reached from C<karr sync --prune>
@@ -127,8 +131,7 @@ a re-initialised origin or a mis-edited remote URL can present a whole
 I<different>, non-empty board, which reconciliation would happily converge
 onto (#95). Boards therefore carry an identity in C<refs/karr/meta/board-id>,
 stamped at init and compared on every pull before any reconciliation. A
-mismatch is refused the same way as a wholesale wipe, mirror rolled back and
-all, and C<< pull( $remote, accept_foreign => 1 ) >> -- C<karr sync
+mismatch is refused the same way as a wholesale wipe, and C<< pull( $remote, accept_foreign => 1 ) >> -- C<karr sync
 --accept-foreign-board> -- is the deliberate way through.
 
 C<push> fails when the far side rejects refs, even though libgit2 returns
@@ -777,8 +780,8 @@ Normalizes C<$ref> (L</normalize_ref_name>) and dies unless it is both a
 syntactically valid git ref name and outside every namespace karr itself owns
 or protects: C<refs/heads/>, C<refs/tags/>, C<refs/remotes/>, C<refs/bisect/>,
 C<refs/replace/>, C<refs/stash>, C<refs/karr/> (the board),
-C<refs/karr-local/> (pick locks and deletion tombstones, deliberately kept
-out of reach of any refspec -- #93, #178), C<refs/karr-remote/> (the
+C<refs/karr-local/> (pick locks, deletion tombstones and the fetched copy of
+the remote, deliberately kept out of reach of any refspec -- #93, #178), C<refs/karr-remote/> (the
 remote-tracking mirror every pull reconciles against) and
 C<refs/karr-conflict/> (where a displaced local version is parked). Returns
 the normalized ref on success. This is the gate
@@ -1333,6 +1336,24 @@ use constant NEXT_ID_REF => 'refs/karr/meta/next-id';
 # The mirror makes the four cases decidable. See _reconcile_with_mirror.
 use constant MIRROR_ROOT => 'refs/karr-remote';
 
+# Where a fetch lands: refs/karr-local/fetched/<remote>/<X> is the remote's
+# refs/karr/<X> as the last fetch found it, and nothing more than that.
+#
+# The mirror above is a statement about this clone -- "the remote state this
+# board has been reconciled against" -- and a fetch cannot make it: between the
+# fetch and the end of the reconciliation the process can die, and a transport
+# can report a failure for a fetch whose refs have already landed (a CLI
+# fallback killed at the timeout). While the fetch wrote the mirror itself,
+# either one left a mirror claiming a remote state the board had never been
+# brought in line with, and the next pull read every stale local ref as
+# "unpushed local work" and pushed it over the remote's newer card (k324). So
+# the fetch gets a namespace of its own, and the mirror moves one ref at a
+# time, each only once the board holds what it says. Whatever a pull that
+# stopped leaves here is overwritten by the next fetch and trusted by nobody
+# in between. Under refs/karr-local/ because it is local bookkeeping: never
+# pushed, and out of reach of `karr set-refs`.
+use constant FETCH_ROOT => 'refs/karr-local/fetched';
+
 # Where the local side of a genuine conflict is parked before the remote
 # version replaces it. Outside refs/karr/, so it never reaches the remote and
 # never shows up on the board.
@@ -1399,6 +1420,9 @@ use constant FOUNDATION_REFSPEC =>
 # construction.
 use constant FOUNDATION_MIRROR_ROOT => 'refs/karr-local/foundation-remote';
 
+# The fleet namespace's FETCH_ROOT, for the same reason.
+use constant FOUNDATION_FETCH_ROOT => 'refs/karr-local/foundation-fetched';
+
 use constant FOUNDATION_TOMBSTONE_ROOT => 'refs/karr-local/foundation-deleted';
 
 # Ref root => tombstone root, for every namespace whose deletions are published
@@ -1420,13 +1444,18 @@ sub _mirror_prefix {
     return ( $root // MIRROR_ROOT ) . "/$remote/";
 }
 
-# Fetch never writes into the live board any more: the remote state lands in
-# the mirror, and karr decides per ref what that means. Forced and pruning is
-# safe here for the same reason -- the mirror is supposed to be an exact copy
-# of the remote, nothing of ours lives in it.
+sub _fetch_prefix {
+    my ( $self, $remote, $root ) = @_;
+    return ( $root // FETCH_ROOT ) . "/$remote/";
+}
+
+# Fetch never writes into the live board, and not into the mirror either: the
+# remote state lands under FETCH_ROOT, and karr decides per ref what that
+# means. Forced and pruning is safe here for the same reason -- that namespace
+# is supposed to be an exact copy of the remote, nothing of ours lives in it.
 sub _fetch_refspec {
     my ( $self, $remote ) = @_;
-    return '+refs/karr/*:' . $self->_mirror_prefix($remote) . '*';
+    return '+refs/karr/*:' . $self->_fetch_prefix($remote) . '*';
 }
 
 sub has_remote {
@@ -2073,15 +2102,13 @@ sub pull {
 
     my $refspec = $self->_fetch_refspec($remote);
 
-    # The mirror as it stands now is the remote state at the last sync; the
-    # fetch is about to overwrite it with the current one. Both are needed to
-    # tell the four cases apart, so snapshot it first.
-    my $tracked = $self->ref_oids( $self->_mirror_prefix($remote) ) || {};
-
+    # A fetch that fails is simply over: it wrote, at most, into FETCH_ROOT,
+    # which nothing reads until a fetch has succeeded. The mirror -- the remote
+    # state at the last sync -- has not moved, so there is nothing to put back.
     return 0 unless $self->_fetch_refspecs( $remote, [$refspec], prune => 1 );
 
-    $self->_check_board_identity( $remote, $tracked, $opt{accept_foreign} );
-    $self->_reconcile_with_mirror( $remote, $tracked, $opt{accept_wipe} );
+    $self->_check_board_identity( $remote, $opt{accept_foreign} );
+    $self->_reconcile_with_mirror( $remote, $opt{accept_wipe} );
     return 1;
 }
 
@@ -2089,9 +2116,10 @@ sub pull {
 
     my $ok = $git->pull( $remote, accept_wipe => 0, accept_foreign => 0 );
 
-Fetches the remote's board state into the C<refs/karr-remote/E<lt>remoteE<gt>/>
-mirror and reconciles the local board against it (see L</DESCRIPTION> for the
-full algorithm and the four cases it resolves). One ref is not reconciled
+Fetches the remote's board state into C<refs/karr-local/fetched/E<lt>remoteE<gt>/>
+and reconciles the local board against it, using the
+C<refs/karr-remote/E<lt>remoteE<gt>/> mirror as the last reconciled state (see
+L</DESCRIPTION> for the full algorithm and the four cases it resolves). One ref is not reconciled
 last-writer-wins: the id counter C<refs/karr/meta/next-id> only ever moves
 forward, so a remote value behind the local one is left where it is and
 published by the next push instead (#172). Returns C<1> when C<$remote>
@@ -2102,11 +2130,11 @@ C<karr sync --prune> -- to allow it), a remote presenting a board with a
 different C<refs/karr/meta/board-id> (pass C<accept_foreign =E<gt> 1> --
 C<karr sync --accept-foreign-board> -- to allow it), and a ref the
 reconciliation decided on but could not write locally, because another process
-holds its lock file or left a stale one behind. Either refusal leaves the
-mirror exactly as it was before the fetch; the unapplied-ref failure rolls the
-mirror back for the refs it could not apply, so the next pull decides them
-again instead of mistaking the stale local version for unpushed work and
-force-pushing it over the remote (#154). The exception is what stops the
+holds its lock file or left a stale one behind. None of
+them moves the mirror for a ref the board did not take, and neither does a
+pull that fails in transport or is killed partway, so the next pull decides
+those refs again instead of mistaking the stale local version for unpushed
+work and force-pushing it over the remote (#154, k324). The exception is what stops the
 caller's push: this method never reports an unapplied ref as success.
 
 =cut
@@ -2133,17 +2161,16 @@ caller's push: this method never reports an unapplied ref as success.
 # An absent id is never a refusal by itself: an empty remote remains the wipe
 # guard's case, and a non-empty one a board from before identities existed.
 sub _check_board_identity {
-    my ( $self, $remote, $tracked, $accept_foreign ) = @_;
-    my $prefix    = $self->_mirror_prefix($remote);
+    my ( $self, $remote, $accept_foreign ) = @_;
+    my $prefix    = $self->_fetch_prefix($remote);
     my $remote_id = $self->_read_id_ref( $prefix . 'meta/board-id' );
     my $local_id  = $self->read_board_id_ref;
 
     if ( defined $remote_id && defined $local_id && $remote_id ne $local_id ) {
         return if $accept_foreign;
-        # Same rule as the wipe guard: put the mirror back first, or the
-        # refusal is a one-shot -- the next pull would read the foreign board
-        # as already-reconciled state and walk straight through.
-        my @stale = $self->_restore_mirror( $remote, $tracked );
+        # The foreign board sits under FETCH_ROOT and the mirror has not seen
+        # it, so the refusal repeats on the next pull without anything having
+        # to be put back first.
         die "karr: refusing to sync: the remote '$remote' is a different board.\n"
           . "This clone has been syncing with board $local_id, but the remote "
           . "now presents board $remote_id.\n"
@@ -2152,16 +2179,15 @@ sub _check_board_identity {
           . "Check the remote first (git remote -v). Then either republish this "
           . "board over it with 'karr sync --push', or -- if the remote's board "
           . "really is the one you want now -- adopt it with 'karr sync "
-          . "--accept-foreign-board'.\n"
-          . $self->_mirror_rollback_note( $remote, \@stale );
+          . "--accept-foreign-board'.\n";
     }
 
     if ( defined $local_id && !defined $remote_id ) {
         # A pre-change karr's forced, pruning push drops the stamp off the
         # remote while the rest of the board stays. That remote is still this
-        # board, so keep the identity continuous: point the mirror's stamp
-        # slot back at the local stamp, or reconciliation would read the
-        # missing ref as "the remote deleted the id" and strip it here too.
+        # board, so keep the identity continuous: point the fetched stamp
+        # slot at the local stamp, or reconciliation would read the missing
+        # ref as "the remote deleted the id" and strip it here too.
         # Only while the remote still IS a board -- an empty one is the wipe
         # guard's case, and the stamp must not count as a survivor there.
         my $remote_now = $self->ref_oids($prefix) || {};
@@ -2169,14 +2195,14 @@ sub _check_board_identity {
             my ( $oid ) = $self->read_ref_with_oid(BOARD_ID_REF);
             my $slot = $prefix . 'meta/board-id';
             # Unchecked, this was the same defect as #154 one ref over: the
-            # mirror would keep saying the remote has no stamp, reconciliation
-            # would read that as "the remote deleted the id" and strip it here
-            # too, and the next clone to pull would meet a board that had lost
+            # fetched copy would keep saying the remote has no stamp,
+            # reconciliation would read that as "the remote deleted the id"
+            # and strip it here too, and the next clone to pull would meet a board that had lost
             # its identity. Stopping leaves the local stamp untouched and the
             # next push re-arms the remote, which is the outcome this branch is
             # for anyway.
             if ( defined $oid && !$self->_write_ref_untracked( $slot, $oid ) ) {
-                die "karr: could not update the tracking mirror for '$remote' "
+                die "karr: could not update the fetched copy of '$remote' "
                   . "($slot).\n"
                   . "Another karr process is writing it, or a .lock file under "
                   . ".git/refs/ was left behind by one that was killed.\n"
@@ -2199,8 +2225,8 @@ sub _check_board_identity {
 }
 
 # Bring the local board in line with the remote, one ref at a time, using
-# L = local, T = the mirror before this fetch (the remote at the last sync)
-# and R = the mirror after it (the remote now).
+# L = local, T = the mirror (the remote state this board was last reconciled
+# against) and R = what the fetch just brought in (the remote now).
 #
 #   L == T, R exists       the local ref carries nothing the remote has not
 #                          seen -> take R. This is the #40 fix: without it the
@@ -2228,18 +2254,22 @@ sub _check_board_identity {
 # guard against a wholesale wipe (#82) is a property of the plan as a whole,
 # not of a single ref, and it has to fire before the first deletion lands.
 sub _reconcile_with_mirror {
-    my ( $self, $remote, $tracked, $accept_wipe ) = @_;
+    my ( $self, $remote, $accept_wipe ) = @_;
     return unless $self->_repo;
 
     my $prefix = $self->_mirror_prefix($remote);
-    my ( $plan, $survivors, $deletes ) =
-        $self->_mirror_plan( BOARD_ROOT, $prefix, $tracked );
+    my ( $plan, $survivors, $deletes, $settled ) =
+        $self->_mirror_plan( BOARD_ROOT, $prefix, $self->_fetch_prefix($remote) );
     my @plan = @$plan;
 
-    $self->_refuse_wholesale_wipe( $remote, $tracked, $deletes )
+    $self->_refuse_wholesale_wipe( $remote, $deletes )
         if $deletes && !$survivors && !$accept_wipe;
 
-    my ( @conflicts, @unapplied, @stale );
+    # Refs the board already agrees with the remote on, where only the mirror
+    # is behind -- the other half of a pull that stopped partway (k324).
+    $self->_advance_mirror_ref( $prefix, BOARD_ROOT, @$_ ) for @$settled;
+
+    my ( @conflicts, @unapplied );
     for my $step (@plan) {
         my ( $ref, $oid, $displaced, $conflict ) = @$step;
         # Nothing to park when the local side of a conflict is a deletion:
@@ -2253,6 +2283,11 @@ sub _reconcile_with_mirror {
 
         my $applied = $parked && $self->_adopt_remote_ref( $ref, $oid );
         if ($applied) {
+            # Only now, with the remote's answer in place here, does the
+            # mirror say so. KEPT_LOCAL counts: the remote's value was seen
+            # and decided on, and the further local counter is unpushed work
+            # measured against it.
+            $self->_advance_mirror_ref( $prefix, BOARD_ROOT, $ref, $oid );
             # KEPT_LOCAL is the counter declining the remote's older value
             # (see _adopt_next_id_ref). It is not a conflict to report: the
             # warning says the remote version is now in place and the local
@@ -2262,54 +2297,58 @@ sub _reconcile_with_mirror {
             next;
         }
 
-        # The plan was right and the apply failed. Both halves matter: the
-        # mirror goes back to the value this ref had before the fetch, and the
-        # pull stops. See _rollback_mirror_ref for what the first one prevents.
+        # The plan was right and the apply failed. The mirror stays where it
+        # was for this ref, which is what makes the next pull decide it again
+        # (see _advance_mirror_ref), and the pull stops.
         CORE::push @unapplied, $ref;
-        CORE::push @stale, $self->_rollback_mirror_ref( $prefix, $tracked, $ref );
     }
 
     # The conflicts that did land are real and still worth reporting, even on
     # the way to the failure below.
     $self->_warn_conflicts( $remote, \@conflicts ) if @conflicts;
-    die $self->_unapplied_refs_error( $remote, \@unapplied, \@stale )
-        if @unapplied;
+    die $self->_unapplied_refs_error( $remote, \@unapplied ) if @unapplied;
     return;
 }
 
 # The four cases above, decided for every ref of one namespace and for none of
 # them applied. $root is the live namespace (refs/karr/ or refs/karr-foundation/),
-# $prefix its mirror for this remote, %$tracked the mirror as it stood before
-# the fetch.
+# $prefix its mirror for this remote, $fetched where the fetch put the remote's
+# current state.
 #
-# Returns ( \@plan, $survivors, $deletes ), where a plan entry is
+# Returns ( \@plan, $survivors, $deletes, \@settled ), where a plan entry is
 # [ ref, remote oid (undef = delete), local oid displaced (undef = none),
 # is a conflict ]. The two counts are the wipe guard's evidence (#82); a caller
 # with no wipe guard -- the fleet namespace, see FOUNDATION_ROOT -- ignores them.
+# @settled lists [ ref, remote oid ] for the refs that need no step because the
+# board already holds the remote's version, but whose mirror entry does not say
+# so yet.
 #
 # Shared rather than written once per namespace: the four cases are the whole
 # reasoning of this file, and two copies of them would diverge on the first
 # ticket that touches one.
 sub _mirror_plan {
-    my ( $self, $root, $prefix, $tracked ) = @_;
+    my ( $self, $root, $prefix, $fetched ) = @_;
 
-    my $remote_now = $self->ref_oids($prefix) || {};
-    my $local      = $self->ref_oids($root)   || {};
+    my $remote_now = $self->ref_oids($fetched) || {};
+    my $tracked    = $self->ref_oids($prefix)  || {};
+    my $local      = $self->ref_oids($root)    || {};
 
     my %names = map { $_ => 1 } keys %$local;
-    for my $mirror ( keys %$remote_now, keys %$tracked ) {
-        $names{ $root . substr( $mirror, length $prefix ) } = 1;
-    }
+    $names{ $root . substr( $_, length $fetched ) } = 1 for keys %$remote_now;
+    $names{ $root . substr( $_, length $prefix ) }  = 1 for keys %$tracked;
 
-    my @plan;
+    my ( @plan, @settled );
     my ( $survivors, $deletes ) = ( 0, 0 );
     for my $ref ( sort keys %names ) {
-        my $mirror = $prefix . substr( $ref, length $root );
-        my ( $l, $r, $t ) =
-            ( $local->{$ref}, $remote_now->{$mirror}, $tracked->{$mirror} );
+        my $name = substr( $ref, length $root );
+        my ( $l, $r, $t ) = (
+            $local->{$ref}, $remote_now->{ $fetched . $name },
+            $tracked->{ $prefix . $name },
+        );
 
         if ( _same_oid( $l, $r ) ) {        # already converged
             $survivors++ if defined $l;
+            CORE::push @settled, [ $ref, $r ] unless _same_oid( $r, $t );
             next;
         }
 
@@ -2334,26 +2373,30 @@ sub _mirror_plan {
             $survivors++ if defined $r;
         }
     }
-    return ( \@plan, $survivors, $deletes );
+    return ( \@plan, $survivors, $deletes, \@settled );
 }
 
 # The invariant the whole reconciliation rests on: the mirror may only claim
 # what is actually in place here.
 #
-# A ref that could not be applied has to leave the mirror at the value it had
-# before this fetch. Left advanced, the next pull reads the remote's version as
-# state this clone has already reconciled against, so the stale local ref comes
-# out as L != T, R == T -- "unpushed local work: keep it" -- and the forced,
-# pruning push writes it over the remote's newer card, in every clone, at exit
-# 0 (#154). Rolled back, the same pull sees the case it saw this time and
-# applies it. Returns the mirror ref name when even the rollback did not land.
-sub _rollback_mirror_ref {
-    my ( $self, $prefix, $tracked, $ref, $root ) = @_;
-    my $name = $prefix . substr( $ref, length( $root // BOARD_ROOT ) );
-    my $ok   = exists $tracked->{$name}
-        ? $self->_write_ref_untracked( $name, $tracked->{$name} )
+# So the mirror entry for a ref moves in exactly one place, here, and only
+# after the board holds what the entry is about to say -- the remote's version
+# adopted, or the two sides found to agree. An entry that ran ahead of the
+# board is how a stopped pull turned into a lost card: the next pull read the
+# remote's version as state this clone had already reconciled against, the
+# stale local ref came out as L != T, R == T -- "unpushed local work: keep it"
+# -- and the push wrote it over the remote's newer card, in every clone, at
+# exit 0 (#154, k324).
+#
+# A write that does not land is not reported. It leaves the entry behind the
+# board, which is the direction that converges: the next pull finds L == R for
+# that ref and comes back here.
+sub _advance_mirror_ref {
+    my ( $self, $prefix, $root, $ref, $oid ) = @_;
+    my $name = $prefix . substr( $ref, length $root );
+    return defined $oid
+        ? $self->_write_ref_untracked( $name, $oid )
         : $self->_delete_ref_untracked($name);
-    return $ok ? () : $name;
 }
 
 # A pull that decided what the remote says and could not put some of it in
@@ -2362,7 +2405,7 @@ sub _rollback_mirror_ref {
 # destructive step: this clone would force-write the older version it still
 # holds over the newer one it just failed to take (#154).
 sub _unapplied_refs_error {
-    my ( $self, $remote, $refs, $stale ) = @_;
+    my ( $self, $remote, $refs ) = @_;
     my $names = join ', ', @$refs;
     my $those = @$refs == 1 ? 'that ref' : 'those refs';
     return "karr: could not apply the remote's version of $names.\n"
@@ -2372,23 +2415,7 @@ sub _unapplied_refs_error {
       . "holds the older version of $those, and pushing it would overwrite "
       . "the remote's.\n"
       . "Clear the lock (or wait for the other process) and run 'karr sync' "
-      . "again.\n"
-      . $self->_mirror_rollback_note( $remote, $stale );
-}
-
-# Said out loud because nothing here can fix it: a mirror that could not be put
-# back leaves the refs it names claiming a remote state this clone never
-# reconciled against, which is exactly the shape that turns a stopped pull into
-# a lost card on the next one. The refusals below share it for the same reason
-# -- their rollback is what keeps them from being one-shots.
-sub _mirror_rollback_note {
-    my ( $self, $remote, $stale ) = @_;
-    return '' unless $stale && @$stale;
-    return "\nkarr: the tracking mirror for '$remote' could not be put back: "
-      . join( ', ', sort @$stale ) . ".\n"
-      . "Until it is, this clone believes it has already seen the remote's "
-      . "current state for those refs. Do not run a writing command against "
-      . "it before a 'karr sync' completes.\n";
+      . "again.\n";
 }
 
 # Refuse to reconcile a board out of existence.
@@ -2406,14 +2433,14 @@ sub _mirror_rollback_note {
 # that one, asks a human. A pull that would leave at least one board ref
 # standing is ordinary reconciliation and still runs unattended.
 #
-# The mirror is rolled back to what it was before the fetch first. Leaving it
-# emptied would make the very next pull read every local ref as unpushed work
-# (L != T, R == T), keep the board, and then push it back at whatever the
-# remote has become -- turning one refusal into a silent resurrection, and
-# making the refusal a one-shot that never fires again.
+# The mirror is not involved: it still describes the board this clone last
+# reconciled against, so the next pull meets the same emptied remote, counts
+# the same deletions and refuses again. While the fetch wrote the mirror
+# itself, it had to be put back first, or the very next pull would have read
+# every local ref as unpushed work (L != T, R == T), kept the board, and then
+# pushed it back at whatever the remote had become.
 sub _refuse_wholesale_wipe {
-    my ( $self, $remote, $tracked, $deletes ) = @_;
-    my @stale = $self->_restore_mirror( $remote, $tracked );
+    my ( $self, $remote, $deletes ) = @_;
     die "karr: refusing to sync: this would delete the whole board.\n"
       . "The remote '$remote' no longer has any of the $deletes board ref"
       . ( $deletes == 1 ? '' : 's' ) . " it had at the last sync.\n"
@@ -2422,33 +2449,7 @@ sub _refuse_wholesale_wipe {
       . "hosting-side restore look like.\n"
       . "Check the remote first (git remote -v). Then either republish this "
       . "board with 'karr sync --push', or accept the deletion with "
-      . "'karr sync --prune'.\n"
-      . $self->_mirror_rollback_note( $remote, \@stale );
-}
-
-# Put the mirror back the way the caller found it. Safe to do with bare OIDs:
-# the refs/karr/* refs still point at those commits (that is what makes this a
-# wholesale wipe), so nothing has become unreachable in between.
-#
-# Returns the mirror refs it could not put back, which both callers report:
-# this rollback is the only thing keeping their refusal from being a one-shot,
-# so a half-done one is not something to discover on the next pull (#154).
-sub _restore_mirror {
-    my ( $self, $remote, $tracked ) = @_;
-    my $prefix = $self->_mirror_prefix($remote);
-    my $now    = $self->ref_oids($prefix) || {};
-
-    my @stale;
-    for my $name ( keys %$tracked ) {
-        next if _same_oid( $now->{$name}, $tracked->{$name} );
-        CORE::push @stale, $name
-            unless $self->_write_ref_untracked( $name, $tracked->{$name} );
-    }
-    for my $name ( keys %$now ) {
-        next if exists $tracked->{$name};
-        CORE::push @stale, $name unless $self->_delete_ref_untracked($name);
-    }
-    return @stale;
+      . "'karr sync --prune'.\n";
 }
 
 # Put the remote's answer for one ref in place. An undefined OID is the
@@ -2825,18 +2826,15 @@ sub pull_foundation {
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
 
-    my $prefix = $self->_mirror_prefix( $remote, FOUNDATION_MIRROR_ROOT );
+    my $prefix  = $self->_mirror_prefix( $remote, FOUNDATION_MIRROR_ROOT );
+    my $fetched = $self->_fetch_prefix( $remote, FOUNDATION_FETCH_ROOT );
 
-    # The mirror as it stands now is the remote state at the last sync; the
-    # fetch is about to overwrite it with the current one. Both are needed to
-    # tell the four cases apart, so snapshot it first -- exactly as L</pull>
-    # does, and for exactly the same reason.
-    my $tracked = $self->ref_oids($prefix) || {};
-
-    my $refspec = '+' . FOUNDATION_ROOT . '*:' . $prefix . '*';
+    # Into its own namespace, not into the mirror -- exactly as L</pull> does,
+    # and for exactly the same reason (FETCH_ROOT).
+    my $refspec = '+' . FOUNDATION_ROOT . '*:' . $fetched . '*';
     return 0 unless $self->_fetch_refspecs( $remote, [$refspec], prune => 1 );
 
-    $self->_reconcile_foundation( $remote, $prefix, $tracked );
+    $self->_reconcile_foundation( $remote, $prefix, $fetched );
     return 1;
 }
 
@@ -2931,31 +2929,32 @@ at L</push>: they are what this clone owes a remote, and there is none (#197).
 =cut
 
 sub _reconcile_foundation {
-    my ( $self, $remote, $prefix, $tracked ) = @_;
+    my ( $self, $remote, $prefix, $fetched ) = @_;
     return unless $self->_repo;
 
-    my ($plan) = $self->_mirror_plan( FOUNDATION_ROOT, $prefix, $tracked );
+    my ( $plan, undef, undef, $settled ) =
+        $self->_mirror_plan( FOUNDATION_ROOT, $prefix, $fetched );
 
-    my ( @conflicts, @unapplied, @stale );
+    $self->_advance_mirror_ref( $prefix, FOUNDATION_ROOT, @$_ ) for @$settled;
+
+    my ( @conflicts, @unapplied );
     for my $step (@$plan) {
         my ( $ref, $oid, undef, $conflict ) = @$step;
         my $applied = defined $oid
             ? $self->_write_ref_untracked( $ref, $oid )
             : $self->_delete_ref_untracked($ref);
         if ($applied) {
+            $self->_advance_mirror_ref( $prefix, FOUNDATION_ROOT, $ref, $oid );
             CORE::push @conflicts, $ref if $conflict;
             next;
         }
-        # Same rule as the board's: the mirror goes back to what this ref had
-        # before the fetch, and the pull stops (#154).
+        # Same rule as the board's: the mirror stays where it was for this
+        # ref, and the pull stops (#154).
         CORE::push @unapplied, $ref;
-        CORE::push @stale, $self->_rollback_mirror_ref(
-            $prefix, $tracked, $ref, FOUNDATION_ROOT );
     }
 
     $self->_warn_foundation_conflicts( $remote, \@conflicts ) if @conflicts;
-    die $self->_unapplied_refs_error( $remote, \@unapplied, \@stale )
-        if @unapplied;
+    die $self->_unapplied_refs_error( $remote, \@unapplied ) if @unapplied;
     return;
 }
 

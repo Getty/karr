@@ -225,7 +225,7 @@ subtest 'a conflict whose local side cannot be parked keeps the local ref' => su
 # pointed back at the local one, so reconciliation does not read the missing
 # ref as "the remote deleted the id". Unchecked, that write failing stripped
 # the stamp from this clone too.
-subtest 'a mirror stamp that cannot be written stops the pull' => sub {
+subtest 'a fetched stamp slot that cannot be written stops the pull' => sub {
     my ( $work, $a, $b ) = two_clones();
 
     # A board from before identities existed: no meta/board-id anywhere.
@@ -239,12 +239,14 @@ subtest 'a mirror stamp that cannot be written stops the pull' => sub {
     ok $stamp, 'B stamped the board on the way in';
 
     # The remote still has no stamp, so B's next pull takes the migration
-    # branch -- with the mirror slot for it locked.
-    my $lock = stale_lock( "$work/b", 'refs/karr-remote/origin/meta/board-id' );
+    # branch -- with the slot it writes locked. Since k324 that slot is the
+    # fetched copy of the remote, not the mirror.
+    my $lock = stale_lock( "$work/b",
+        'refs/karr-local/fetched/origin/meta/board-id' );
     my $rv  = eval { $b->pull };
     my $err = $@;
     ok !$rv, 'the pull does not report success';
-    like $err, qr/could not update the tracking mirror/, 'and says what failed';
+    like $err, qr/could not update the fetched copy/, 'and says what failed';
     is $b->read_board_id_ref, $stamp,
         "the board's identity stamp is still here";
 
