@@ -2109,6 +2109,7 @@ sub pull {
 
     $self->_check_board_identity( $remote, $opt{accept_foreign} );
     $self->_reconcile_with_mirror( $remote, $opt{accept_wipe} );
+    $self->_raise_next_id_to_floor;
     return 1;
 }
 
@@ -2122,7 +2123,8 @@ C<refs/karr-remote/E<lt>remoteE<gt>/> mirror as the last reconciled state (see
 L</DESCRIPTION> for the full algorithm and the four cases it resolves). One ref is not reconciled
 last-writer-wins: the id counter C<refs/karr/meta/next-id> only ever moves
 forward, so a remote value behind the local one is left where it is and
-published by the next push instead (#172). Returns C<1> when C<$remote>
+published by the next push instead (#172), and a counter that ends up at or
+below the highest task id is moved past it (k321). Returns C<1> when C<$remote>
 isn't configured (a no-op) or reconciliation completes, C<0> on a transport
 failure. Three situations C<die> rather than returning C<0>: a reconciliation
 that would delete every remaining board ref (pass C<accept_wipe =E<gt> 1> --
@@ -3639,13 +3641,53 @@ counter outright, not for handing out an id.
 # parallel creates produced 32 tasks (#44). The counter has to be re-read
 # inside the loop, not once outside it: retrying with the value that already
 # lost would just lose again.
+#
+# The counter alone is not believed either. It can sit at or below a card that
+# exists -- a remote whose counter an older push wrote back while a newer card
+# stayed, a ref repaired by hand -- and handing that id out again wrote the new
+# card over the old one, at exit 0 (k321). So the id is the counter or the
+# first id past the highest task ref, whichever is further.
 sub allocate_next_id_ref {
     my ($self) = @_;
     return $self->retry_contended( 'the next-id counter', sub {
         my ( $oid, $raw ) = $self->read_ref_with_oid(NEXT_ID_REF);
-        my $id = _parse_next_id($raw);
+        my $id    = _parse_next_id($raw);
+        my $floor = $self->_next_id_floor;
+        $id = $floor if $floor > $id;
         return () unless $self->write_ref_cas( NEXT_ID_REF, ($id + 1) . "\n", $oid );
         return $id;
+    } );
+}
+
+# The first id no task ref holds from here up: one past the highest, 1 on a
+# board without cards. The rule App::karr::BoardStore/ensure_next_id seeds the
+# counter with.
+sub _next_id_floor {
+    my ($self) = @_;
+    my ($max) = reverse $self->list_task_refs;
+    return defined $max ? $max + 1 : 1;
+}
+
+# The pull half of the same rule: a reconciliation that leaves the counter at
+# or below the highest task id moves it past it. _adopt_next_id_ref only ever
+# compares counter against counter, so a remote that publishes such a pair
+# hands it to every clone that pulls. An ordinary tracked write: the repaired
+# counter is unpushed local work, and the next push publishes it.
+#
+# Only a counter that exists is repaired. A board without one is not made to
+# carry one by a pull -- a pull that meets nothing to reconcile leaves the
+# namespace exactly as it found it -- and needs none to be safe: the allocator
+# applies the same floor when it is asked.
+sub _raise_next_id_to_floor {
+    my ($self) = @_;
+    my $floor = $self->_next_id_floor;
+    return 1 if $floor <= 1;
+    return $self->retry_contended( 'the next-id counter', sub {
+        my ( $oid, $raw ) = $self->read_ref_with_oid(NEXT_ID_REF);
+        return 1 unless defined $oid;
+        return 1 if _parse_next_id($raw) >= $floor;
+        return () unless $self->write_ref_cas( NEXT_ID_REF, "$floor\n", $oid );
+        return 1;
     } );
 }
 
@@ -3658,11 +3700,15 @@ and the compare-and-swapped write happen inside one L</retry_contended> loop,
 so two callers racing for the same id can never both receive it and silently
 overwrite each other's task (#44). Returns the allocated id.
 
+The id is the counter's value, or the first id past the highest existing task
+ref when the counter is behind it -- so a counter that has fallen behind the
+cards never hands out an id one of them holds (k321).
+
 That makes this the sole authority for handing out an id, but only for as long
 as nothing else moves the counter: it was still possible for two creates to
 receive the same id when a pull walked the counter backwards between them
 (#172), which is why L</pull> merges that ref forward instead of adopting the
-remote's value.
+remote's value, and moves it past the highest task id it ends up with.
 
 =cut
 

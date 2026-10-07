@@ -13,6 +13,12 @@
       respectively pick locks, never expire. The bare zero, which `karr config
       set` accepts, was read back as the default (1h, 5m).
 
+    - `karr create` never reuses the id of an existing card. With the id
+      counter behind the highest card id, the next create took that card's id
+      and replaced it. The allocator now starts past the highest existing
+      card, create writes its card only where none exists and takes another
+      id otherwise, and a pull moves a counter that has fallen behind.
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take

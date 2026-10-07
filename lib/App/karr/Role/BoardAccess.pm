@@ -116,6 +116,26 @@ is exactly one write path to keep the log in step with.
 
 =cut
 
+sub create_task {
+    my ( $self, $task ) = @_;
+    my $wrote = $self->store->create_task($task);
+    return $wrote unless $wrote;
+    $self->log_task_write( $task->id, $task->status, $task );
+    return $wrote;
+}
+
+=method create_task
+
+    my $ok = $self->create_task($task);
+
+The create-only door: writes a new card through
+L<App::karr::BoardStore/create_task> and logs it, exactly as L</save_task>
+does for a write. Returns false, without writing or logging, when the card's
+id already holds a card -- the caller takes another id from
+L</allocate_next_id> and tries again (k321).
+
+=cut
+
 sub delete_task {
     my ($self, $id) = @_;
     # The same guard save_task has, for the same reason. The log answers what

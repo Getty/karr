@@ -516,6 +516,23 @@ see L</serialize_from>.
 
 =cut
 
+sub create_task {
+    my ( $self, $task ) = @_;
+    return $self->git->save_task_ref_cas( $task, undef );
+}
+
+=method create_task
+
+    my $ok = $store->create_task($task);
+
+Writes a brand-new card create-only: the write lands only if no ref exists
+for the card's id. Returns true when it did, and false when the id is taken --
+the caller allocates another id and tries again, never the same one. This is
+what keeps C<karr create> from writing over a card when the id it was handed
+turns out to be in use (k321). C<updated> is left as the card carries it.
+
+=cut
+
 sub save_task_cas {
     my ( $self, $task, $expected_oid ) = @_;
     # The card came from find_task_with_oid, so the ref exists by construction

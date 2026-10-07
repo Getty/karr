@@ -17,6 +17,9 @@ use App::karr::CrossBoard;
 use App::karr::Error qw( user_error require_claim_message held_back_claim_message );
 use Time::Piece;
 
+# How many ids `create` asks for before it gives up on finding a free one.
+use constant CREATE_ATTEMPTS => 8;
+
 # The set-time half only (ticket #137). A card that does not exist yet cannot be
 # taken up, so create never has a dependency warning to emit and must not
 # inherit the emitting half -- the half that would also require --quiet, which
@@ -300,7 +303,6 @@ sub execute {
     if defined $self->escalated_from && length $self->escalated_from;
 
   my %task_args = (
-    id       => $self->allocate_next_id,
     title    => $title,
     status   => $status,
     priority => $self->priority // $defaults->{priority}  // 'medium',
@@ -341,8 +343,22 @@ sub execute {
     $task_args{claimed_at} = gmtime->datetime . 'Z';
   }
 
-  my $task = App::karr::Task->new(%task_args);
-  $self->save_task($task);
+  # The id is allocated last and the ref written create-only (k321). The
+  # allocator already steps past every existing card, so a taken id here means
+  # something outside it put a card there in between -- and the answer to that
+  # is another id, never a write over the card. Bounded, because an id space
+  # that stays taken this many times in a row is not a race.
+  my $task;
+  for ( 1 .. CREATE_ATTEMPTS ) {
+    my $candidate =
+      App::karr::Task->new( %task_args, id => $self->allocate_next_id );
+    next unless $self->create_task($candidate);
+    $task = $candidate;
+    last;
+  }
+  die "karr: could not find a free task id after " . CREATE_ATTEMPTS
+    . " attempts; nothing was created\n"
+    unless $task;
 
   $self->sync_after;
 
