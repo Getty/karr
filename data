@@ -1,0 +1,41 @@
+---
+class: standard
+completed: 2026-10-07T15:53:33Z
+created: 2026-10-06T19:38:43Z
+id: 323
+priority: medium
+started: 2026-10-07T15:37:37Z
+status: done
+tags:
+- bug
+- claims
+- config
+- review-2026-10-06
+title: claim_timeout 0 (and lock_timeout 0) is accepted as 'never' by config set but
+  read back as the 1h default
+updated: 2026-10-07T15:53:33Z
+---
+
+`karr config set claim_timeout 0` is accepted: `Config->parse_duration` returns 0 for a bare zero (`lib/App/karr/Config.pm:310`, `return 0 if $str =~ /\A0+\z/`), the same value `0s` gives, which k232 defined as 'a claim never expires'. The reader disagrees. `Role::ClaimTimeout::_parse_timeout` (`lib/App/karr/Role/ClaimTimeout.pm:95-102`) starts with
+
+```perl
+return $fallback unless $timeout_str;
+```
+
+and the string `"0"` is false in Perl, so the fallback (3600 s) is used. `0s` and even `00` are true strings and give 0. A board whose owner switched expiry off with `0` therefore still lets `pick` and `check_claim` take over a claim after one hour -- two agents on one card, with only the 'overriding the expired claim' warning as a trace. A hand-written `claim_timeout: 0` in the config (a YAML integer) behaves the same. `lock_timeout` goes through the same sub (`Cmd/Pick.pm:265`, `Cmd/Unlock.pm:106`): `0` gives the default lock TTL instead of the documented 'disable'.
+
+**Reproduce**
+
+```
+karr config set claim_timeout 0      # 'Set claim_timeout = 0'
+perl -Ilib -e 'package T; use Moo; sub store{} sub json{} sub quiet{} with "App::karr::Role::ClaimTimeout";
+  package main; my $t = T->new; print join(" ", map { $t->_parse_timeout($_) } "0", "0s", "00"), "\n"'
+# 3600 0 0
+```
+
+**Done when** `_parse_timeout` tests `defined && length` instead of truth, so `0`, `0s` and `00` all mean 0 for both timeouts, and a test beside the k232 one pins `claim_timeout: 0` (string and YAML integer) as 'never expires'.
+
+---
+Fleet review 2026-10-06 · kind: bug · confidence: verified
+
+Fixed in e4249b7 (local main, not pushed). _parse_timeout asks defined-and-length; '0', integer 0 and '00' are zero for claim_timeout and lock_timeout. t/232 pinned the old fallback for a bare 0 explicitly; that assertion is reversed there, per this card.
