@@ -1,0 +1,70 @@
+---
+class: standard
+completed: 2026-10-07T15:51:56Z
+created: 2026-10-07T05:15:29Z
+id: 324
+priority: critical
+started: 2026-10-07T15:37:10Z
+status: done
+tags:
+- bug
+- sync
+- data-loss
+title: 'A failed or interrupted pull leaves the tracking mirror advanced: the next
+  sync overwrites the remote''s newer cards with stale local ones'
+updated: 2026-10-07T15:51:56Z
+---
+
+A pull whose fetch fails after the refs have landed -- or a process that dies
+between the fetch and the reconciliation -- leaves `refs/karr-remote/<remote>/*`
+at the remote's new state while `refs/karr/*` still holds the old one. The next
+pull reads T == R for every ref and classifies the stale local refs as
+"L != T, R == T: unpushed local work, keep it"; the push that follows writes
+them over the remote. A card another clone edited goes back to its old
+version on the remote, in every clone, at exit 0. This is the k154 defect
+through a different door: k154 put the mirror back for a ref that could not be
+applied, but `pull` (Git.pm, `return 0 unless $self->_fetch_refspecs(...)`)
+and `pull_foundation` return on a failed fetch without restoring it.
+
+The failing sync also prints "Pull failed after 3 attempts. Nothing was
+changed." -- the mirror was changed.
+
+Reproduction (Linux, checkout at 319aef8), a CLI fallback that fetches and
+then outlives the transport timeout:
+
+    git init -q --bare remote.git; git clone -q remote.git A; git clone -q remote.git B
+    (cd A && git commit -q --allow-empty -m init && git push -q origin HEAD \
+        && karr init --name Repro && karr create "Card one" && karr sync)
+    (cd B && karr sync)
+    (cd A && karr edit 1 --title "Card one EDITED by A" && karr sync)
+    # fakebin/git: runs the real git with
+    #   -c url.$PWD/remote.git.insteadOf=ssh://git@nohost.invalid/remote.git
+    # and sleeps 6s after a fetch
+    cd B && git remote set-url origin ssh://git@nohost.invalid/remote.git
+    PATH=../fakebin:$PATH KARR_TRANSPORT_TIMEOUT=2 karr sync
+    #   -> "git fetch (CLI fallback) timed out after 2s and was killed", exit 1
+    #   B local bc0455e, B mirror b03e7b1 (= remote)
+    git remote set-url origin ../remote.git && karr sync      # exit 0, "Done."
+    #   remote refs/karr/tasks/1/data: b03e7b1 -> bc0455e
+    (cd ../A && karr sync && karr list --compact)             # "Card one" -- A's edit is gone
+
+Same state without a wrapper: `git fetch origin '+refs/karr/*:refs/karr-remote/origin/*'`
+in B, then `karr sync`. In a fresh clone the same state makes the board come
+out empty ("No karr board in this repository") after a sync that says "Done.":
+every card reads as a local deletion to keep.
+
+Seen in the wild on Windows, where every CLI fallback times out (k325): the first `karr sync` in a fresh clone left 21 mirror refs
+and an empty board.
+
+Done when:
+- a failed `_fetch_refspecs` in `pull` and `pull_foundation` leaves the mirror
+  as it was before the call (`_restore_mirror` exists for the refusals), and
+  the message no longer claims nothing changed when the restore failed;
+- a process killed between fetch and reconciliation cannot produce the state
+  either -- e.g. fetch into a staging namespace and move each mirror ref only
+  as its reconciliation lands, or an "unreconciled fetch" marker that makes the
+  next pull distrust the mirror;
+- a test drives both doors (fetch reported failed after writing; mirror ahead
+  of an untouched local board) and asserts the remote keeps the newer card.
+
+Fixed in df3a939 (local main, not pushed). The fetch now lands under refs/karr-local/fetched/<remote>/ and a mirror entry moves only after the board holds what it says (ADR 0007), which closes the failed-fetch door and the killed-process door alike. prove -l t/: green apart from t/149, adjusted in the same commit to lock the fetched stamp slot. CLI reproduction from this card re-run against the fix: remote keeps A's edit. Not covered: a clone an older karr already left with its mirror ahead -- delete refs/karr-remote/ once, then sync (Changes says so).
