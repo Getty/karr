@@ -47,7 +47,7 @@ subtest '_parse_timeout' => sub {
   # would make every claim instantly stealable.
   is( $c->_parse_timeout(undef), 3600, 'undef falls back to 1h' );
   is( $c->_parse_timeout(''),    3600, 'empty string falls back to 1h' );
-  is( $c->_parse_timeout('0'),   3600, 'a bare 0 falls back to 1h' );
+  is( $c->_parse_timeout('0'),   0,    'a bare 0 is zero, the same as 0s' );
   is( $c->_parse_timeout('7d'),  3600, 'an unsupported unit falls back to 1h' );
   is( $c->_parse_timeout('1 h'), 3600, 'a malformed value falls back to 1h' );
   is( $c->_parse_timeout('h'),   3600, 'a unit with no number falls back to 1h' );
