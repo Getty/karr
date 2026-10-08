@@ -93,7 +93,9 @@ subtest '_discover_repos: symlinked dirs: path is the same board (#166)' => sub 
   $real->mkpath;
   system( 'git', '-C', "$real", 'init', '-q' );
   write_karr_file( $real );
-  symlink "$real", "$symlink" or die "symlink: $!";
+  # No symlinks without the privilege for them on MSWin32 (k328).
+  eval { symlink "$real", "$symlink" }
+    or plan skip_all => "no symlink here: " . ( $@ || $! );
 
   my ( $cfg_dir, $cfg ) = write_config( ["$symlink"], ["$parent"] );
   my $f = new_foundation( config => "$cfg" );

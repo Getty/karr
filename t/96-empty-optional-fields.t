@@ -268,6 +268,7 @@ subtest 'karr import then karr pick, through the CLI' => sub {
 
   mkdir "$repo/tasks" or die "mkdir $repo/tasks: $!";
   open my $fh, '>', "$repo/tasks/001-kanban-written.md" or die $!;
+  binmode $fh;    # a task file is LF everywhere; text mode writes CRLF on MSWin32 (k328)
   print {$fh} $KANBAN_CARD;
   close $fh;
 

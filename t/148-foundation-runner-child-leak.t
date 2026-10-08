@@ -30,6 +30,8 @@ BEGIN {
 }
 
 use Test::More;
+# k328: karr-foundation refuses a drain on MSWin32 -- no fork, process groups or /bin/sh there.
+BEGIN { plan skip_all => 'karr-foundation cannot run agents on MSWin32' if $^O eq 'MSWin32' }
 use POSIX qw( WNOHANG );
 use Path::Tiny qw( tempdir );
 

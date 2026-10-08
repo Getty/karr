@@ -107,6 +107,8 @@ subtest 'success and help exit 0' => sub {
 # ------------------------------------------------------------------ exit 1
 
 subtest 'a broken config is a runtime failure (1)' => sub {
+    plan skip_all => 'needs a drain, which karr-foundation refuses on MSWin32 (k325)'
+        if $^O eq 'MSWin32';
     my $repo = init_repo();
 
     # Not a mapping: the config is syntactically fine YAML, karr-foundation
@@ -123,6 +125,8 @@ subtest 'a broken config is a runtime failure (1)' => sub {
 };
 
 subtest 'other runtime failures exit 1' => sub {
+    plan skip_all => 'needs a drain, which karr-foundation refuses on MSWin32 (k325)'
+        if $^O eq 'MSWin32';
     my $repo = init_repo();
 
     # Nothing to work on: run() returns 1 by value rather than dying, and the

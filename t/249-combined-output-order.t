@@ -74,6 +74,20 @@ sub _board {
 sub _combined {
     my ( $repo, @args ) = @_;
 
+    # No fork to dup the handles in on MSWin32: open3 with no handle for stderr
+    # puts both streams on the one pipe just the same (k328).
+    if ( $^O eq 'MSWin32' ) {
+        require IPC::Open3;
+        my $old = getcwd();
+        chdir $repo or die "chdir $repo: $!";
+        my $pid = IPC::Open3::open3( my $in, my $both, undef,
+            $^X, "-I$ROOT/lib", $BIN, @args );
+        chdir $old or die "chdir $old: $!";
+        my $out = do { local $/; <$both> };
+        waitpid( $pid, 0 );
+        return defined $out ? $out : '';
+    }
+
     pipe( my $reader, my $writer ) or die "pipe: $!";
 
     my $pid = fork;

@@ -202,7 +202,13 @@ sub start_daemon {
     my ($work) = @_;
     for ( 1 .. 5 ) {
         my $port = 20000 + int rand 20000;
-        my $pid  = fork();
+        # No fork on MSWin32, and a signal sent to the pseudo-process perl
+        # gives instead takes the test down with it: start git there as a
+        # process of its own (k328).
+        my $pid = $^O eq 'MSWin32'
+            ? system( 1, 'git', 'daemon', '--export-all', '--enable=receive-pack',
+                "--base-path=$work", "--port=$port", $work )
+            : fork();
         return () unless defined $pid;
         if ( !$pid ) {
             open STDOUT, '>',  "$work/daemon.log";

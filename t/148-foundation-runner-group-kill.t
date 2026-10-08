@@ -28,6 +28,8 @@ use warnings;
 # up in the same group. That is the exact invariant the runner relies on.
 
 use Test::More;
+# k328: karr-foundation refuses a drain on MSWin32 -- no fork, process groups or /bin/sh there.
+BEGIN { plan skip_all => 'karr-foundation cannot run agents on MSWin32' if $^O eq 'MSWin32' }
 use POSIX qw( WNOHANG SIGTERM SIGKILL );
 use File::Temp qw( tempdir );
 use Path::Tiny qw( path );

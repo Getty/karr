@@ -111,7 +111,8 @@ subtest 'the fleet config lookups' => sub {
     like $@, qr/HOME/, 'Foundation: the default config path names what is missing';
     unlike $@, qr/Path::Tiny/, 'rather than dying inside Path::Tiny';
 
-    my $given = tempdir( CLEANUP => 1 ) . '/config.yml';
+    # Forward slashes throughout: that is how the path comes back on MSWin32.
+    my $given = ( tempdir( CLEANUP => 1 ) =~ tr{\\}{/}r ) . '/config.yml';
     is eval { App::karr::Foundation->new( config => $given )->_config_path },
         $given, 'an explicit --config needs no home at all';
 };

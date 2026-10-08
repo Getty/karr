@@ -1,6 +1,8 @@
 use strict;
 use warnings;
 use Test::More;
+# k328: the runaway is caught with `ulimit -v` in a POSIX shell.
+BEGIN { plan skip_all => 'needs ulimit -v in a POSIX shell' if $^O eq 'MSWin32' }
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();

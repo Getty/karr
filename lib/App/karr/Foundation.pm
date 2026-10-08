@@ -1095,11 +1095,12 @@ sub run {
   # Everything from here on starts and supervises agents with fork, process
   # groups, alarm and /bin/sh (App::karr::Foundation::Runner). None of that
   # exists on MSWin32, and a drain that gets halfway is worse than one that
-  # says no. The mailbox commands above are ref operations and stay available.
+  # says no. The mailbox commands above are ref operations and stay available,
+  # and so does --status: the overview only reads (k328).
   user_error('karr-foundation cannot run agents on Windows: it needs fork, '
       . 'process groups and /bin/sh. The ask, answer, chain and plan commands '
-      . 'work there.')
-    if $^O eq 'MSWin32';
+      . 'and --status work there.')
+    if $^O eq 'MSWin32' && !$self->status;
 
   my @repos = $self->_discover_repos;
   unless ( @repos ) {

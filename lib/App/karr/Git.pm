@@ -1888,6 +1888,9 @@ sub _is_local_url {
     my ($url) = @_;
     return 1 if $url =~ m{\Afile://}i;
     return 0 if $url =~ m{\A[A-Za-z][A-Za-z0-9+.\-]*://};
+    # C:\repo and C:/repo: a drive letter, not the host of an scp-style remote.
+    # git reads it that way on Windows too (k328).
+    return 1 if $^O eq 'MSWin32' && $url =~ m{\A[A-Za-z]:[\\/]};
     return 0 if $url =~ m{\A[^/]*:};
     return 1;
 }

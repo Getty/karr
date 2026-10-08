@@ -78,6 +78,7 @@ subtest 'import, the other board-birth path, stamps too' => sub {
     my $tasks = "$repo/tasks";
     mkdir $tasks or die "mkdir $tasks: $!";
     open my $fh, '>', "$tasks/1-imported.md" or die $!;
+    binmode $fh;    # a task file is LF everywhere; text mode writes CRLF on MSWin32 (k328)
     print {$fh} <<'MD';
 ---
 id: 1

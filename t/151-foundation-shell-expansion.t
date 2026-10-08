@@ -24,6 +24,8 @@ use warnings;
 # _run_command rather than a unit test of a substitution that should not exist.
 
 use Test::More;
+# k328: karr-foundation refuses a drain on MSWin32 -- no fork, process groups or /bin/sh there.
+BEGIN { plan skip_all => 'karr-foundation cannot run agents on MSWin32' if $^O eq 'MSWin32' }
 use Path::Tiny qw( tempdir );
 
 use App::karr::Foundation;

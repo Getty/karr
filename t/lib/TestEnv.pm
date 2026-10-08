@@ -12,4 +12,8 @@ use warnings;
 # (typically `local $ENV{KARR_CLAIM} = '...'` inside one subtest).
 delete $ENV{KARR_CLAIM};
 
+# k328: on MSWin32 the sh-style setup commands of the test files go to Git's
+# sh instead of cmd.exe. A no-op everywhere else.
+use TestShell;
+
 1;

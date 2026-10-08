@@ -4,10 +4,11 @@ package App::karr::BoardStore;
 our $VERSION = '0.603';
 use Moo;
 use Path::Tiny qw( path );
-use YAML::XS qw( DumpFile LoadFile );
+use YAML::XS qw( LoadFile );
 use Time::Piece;
 use App::karr::Config;
 use App::karr::Task;
+use App::karr::Encoding qw( yaml_dump );
 
 has git => (
     is       => 'ro',
@@ -639,13 +640,15 @@ sub materialize_to {
         # the integers Perl uses for them; JSON::PP is YAML::XS's mode name for
         # "dump JSON::PP::Boolean as a real YAML boolean" (ticket #60).
         local $YAML::XS::Boolean = 'JSON::PP';
-        DumpFile(
-            $config_file->stringify,
+        # Not DumpFile: it opens the file in text mode, which on MSWin32 writes
+        # CRLF -- into a view whose task files are LF and that kanban-md reads
+        # too (k328).
+        $config_file->spew_utf8( yaml_dump(
             App::karr::Config->file_view_config(
                 $self->load_config,
                 next_id => $self->peek_next_id,
             ),
-        );
+        ) );
     }
 
     $_->remove for @stale;

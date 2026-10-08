@@ -198,6 +198,8 @@ subtest 'karr init --claude-skill reports an unwritable .claude' => sub {
 };
 
 subtest 'karr-foundation reports a broken config without leaking its own source' => sub {
+  plan skip_all => 'needs a drain, which karr-foundation refuses on MSWin32 (k325)'
+    if $^O eq 'MSWin32';
     my $tmp = tempdir( CLEANUP => 1 );
 
     my $broken = path($tmp)->child('broken.yml');

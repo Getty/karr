@@ -56,6 +56,19 @@ sub _init_repo {
     system( 'git', 'init', '-q', $repo ) == 0 or BAIL_OUT('git init failed');
     # `git config` itself takes the value as bytes, so the libgit2 read above
     # gets exactly the UTF-8 octets we want to spot on the way back.
+    if ( $^O eq 'MSWin32' ) {
+        # There the octets would reach git through the ANSI code page and be
+        # stored as something else; write them into the config file as they
+        # are (k328).
+        open my $fh, '>>', "$repo/.git/config" or BAIL_OUT("git config: $!");
+        binmode $fh;
+        print {$fh} "[user]
+	email = $RAW_EMAIL_OCTETS
+	name = $RAW_NAME_OCTETS
+";
+        close $fh or BAIL_OUT("git config: $!");
+        return $repo;
+    }
     system( 'git', '-C', $repo, 'config', 'user.email', $RAW_EMAIL_OCTETS ) == 0 or BAIL_OUT('git config failed');
     system( 'git', '-C', $repo, 'config', 'user.name',  $RAW_NAME_OCTETS )  == 0 or BAIL_OUT('git config failed');
     return $repo;

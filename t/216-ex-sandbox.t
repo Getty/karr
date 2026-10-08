@@ -1,6 +1,8 @@
 use strict;
 use warnings;
 use Test::More;
+# k328: ex/ is a sandbox of bash scripts around a karr-foundation drain, which MSWin32 refuses.
+BEGIN { plan skip_all => 'the ex/ sandbox needs bash and a karr-foundation drain' if $^O eq 'MSWin32' }
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();

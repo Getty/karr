@@ -32,6 +32,25 @@
       returned. `karr-foundation` refuses to start a drain on Windows; `ask`,
       `answer`, `chain` and `plan` are unaffected.
 
+    - On Windows a push to a remote whose push URL is a local path
+      (`remote.<name>.pushurl`, `url.<base>.pushInsteadOf`) wrote the board
+      into the fetch URL's repository instead: `C:\repo` was read as an
+      scp-style ssh address, so the guard for that case never applied.
+
+    - On Windows karr's output no longer carries CRLF. `karr skill show`,
+      `karr get-refs` and `karr backup` redirected into a file are the bytes
+      karr holds, and `karr materialize` writes `config.yml` with LF like the
+      task files beside it.
+
+    - `karr-foundation --status` works on Windows: the overview only reads,
+      and was refused along with the drain.
+
+    - The test suite runs on Windows (Strawberry Perl, Git for Windows):
+      `.gitattributes` pins LF, `t/lib/TestShell.pm` sends the sh-style setup
+      commands of the tests to Git's sh and works around three limits of
+      perl's process handling there, and the tests that need a drain, a POSIX
+      shell or a symlink skip.
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take

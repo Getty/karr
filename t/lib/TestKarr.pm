@@ -65,6 +65,7 @@ use App::karr::Error qw( is_usage_error );
 
 # For the subprocess fallback only.
 use IPC::Open3 qw( open3 );
+use File::Temp ();
 use Symbol qw( gensym );
 
 my $ROOT = abs_path('.');
@@ -105,12 +106,21 @@ sub _run_inprocess {
     } @argv;
 
     my ( $out, $err ) = ( '', '' );
+    my @files;
     my $exit;
     {
         local *STDOUT;
         local *STDERR;
-        open( STDOUT, '>', \$out ) or die "capture STDOUT: $!";
-        open( STDERR, '>', \$err ) or die "capture STDERR: $!";
+        # Files rather than in-memory handles on MSWin32 (k328): karr runs git
+        # through IPC::Open3, which there saves and restores the standard
+        # handles by descriptor. An in-memory STDERR has none, and whatever
+        # karr printed after its first git run went to the real stderr.
+        @files = map { File::Temp->new } 1, 2 if $^O eq 'MSWin32';
+        open( STDOUT, '>', @files ? $files[0]->filename : \$out )
+            or die "capture STDOUT: $!";
+        open( STDERR, '>', @files ? $files[1]->filename : \$err )
+            or die "capture STDERR: $!";
+        if (@files) { binmode STDOUT; binmode STDERR }
 
         # Opened even when nothing was asked to be fed in: open3's parent
         # closes an unused stdin pipe without writing to it, so the child sees
@@ -151,6 +161,17 @@ sub _run_inprocess {
         # STDOUT/STDERR are still captured, so any insurance-push output lands
         # in the capture exactly as it does in a subprocess run.
         eval { App::karr::SyncGuard->flush_armed };
+
+        if (@files) {
+            close STDOUT;
+            close STDERR;
+            ( $out, $err ) = map {
+                open my $fh, '<:raw', $_->filename or die "read capture: $!";
+                local $/;
+                my $text = <$fh>;
+                defined $text ? $text : '';
+            } @files;
+        }
     }
 
     chdir $old or die "chdir $old: $!";

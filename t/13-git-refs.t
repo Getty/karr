@@ -60,12 +60,10 @@ subtest 'ref points to commit object' => sub {
     $git->write_ref('refs/karr/test/obj', 'hello');
 
     # Verify the ref points to a commit, not a blob
-    my $pid = open(my $fh, '-|');
-    if (!$pid) {
-        open(STDERR, '>', '/dev/null');
-        chdir $tmpdir->stringify;
-        exec('git', 'cat-file', '-t', 'refs/karr/test/obj');
-    }
+    # List-form pipe open, not a forking open($fh, '-|'): MSWin32 has no such
+    # thing (k328).
+    open( my $fh, '-|', 'git', '-C', $tmpdir->stringify,
+        'cat-file', '-t', 'refs/karr/test/obj' ) or die "git cat-file: $!";
     my $type = do { local $/; <$fh> };
     close $fh;
     chomp $type;

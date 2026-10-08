@@ -117,10 +117,16 @@ subtest 'the question arrives before karr waits for the answer' => sub {
     while ( time < $deadline ) {
         my $rin = '';
         vec( $rin, fileno($err), 1 ) = 1;
-        my $ready = select( my $rout = $rin, undef, undef, 1 );
+        # select() answers for sockets only on MSWin32, and t/lib/TestShell.pm
+        # puts a file behind $err there: poll it, and read "nothing yet" as
+        # just that rather than as the end (k328).
+        my $win   = $^O eq 'MSWin32';
+        my $ready = $win ? select( undef, undef, undef, 0.2 ) + 1
+                          : select( my $rout = $rin, undef, undef, 1 );
         next unless defined $ready && $ready > 0;
         my $chunk = '';
         my $read  = sysread( $err, $chunk, 4096 );
+        next if $win && !$read;
         last unless $read;    # child died or closed stderr
         $prompt .= $chunk;
         last if $prompt =~ /\[y\/N\]/;

@@ -27,6 +27,8 @@ my $config = tempdir( CLEANUP => 1 ) . '/no-such-config.yml';
 }
 
 {
+    # Pinned, so that "elsewhere" is elsewhere when the suite runs on MSWin32.
+    local $^O = 'linux';
     my $foundation = App::karr::Foundation->new( config => $config );
     eval { $foundation->run };
     unlike $@, qr/Windows/, 'and nothing is refused elsewhere';

@@ -1,0 +1,4 @@
+# Line endings stay LF in every checkout, whatever core.autocrlf says: the
+# shipped skills and the test fixtures are compared byte for byte.
+* text=auto eol=lf
+*.png binary

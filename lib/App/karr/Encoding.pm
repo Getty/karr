@@ -244,6 +244,14 @@ expect a layer here.
 =cut
 
 sub enable_std_utf8 {
+  # MSWin32 opens the standard handles in text mode, where every "\n" leaves
+  # as CRLF: `karr skill show > SKILL.md`, `karr get-refs ... > file` and
+  # `karr backup > file` would then not be the bytes karr holds. Drop that
+  # layer first, as git does for its own output (k328).
+  if ( $^O eq 'MSWin32' ) {
+    binmode STDOUT, ':raw';
+    binmode STDERR, ':raw';
+  }
   binmode STDOUT, ':encoding(UTF-8)';
   binmode STDERR, ':encoding(UTF-8)';
   # After the binmode, and on both handles: see above (#249). The layer takes

@@ -40,6 +40,16 @@ my $ROOT = abs_path('.');
 my $BIN  = "$ROOT/bin/karr";
 my $PERL = ( $^X =~ m{/} && -x $^X ) ? $^X : $Config{perlpath};
 
+# A PATH with no git on it. Empty everywhere else; on MSWin32 an empty PATH
+# also takes away the directories perl loads its DLLs from (libffi and libgit2
+# and what they depend on), so karr could not start at all -- there only the
+# entries that hold a git are dropped (k328).
+sub path_without_git {
+  return '' unless $^O eq 'MSWin32';
+  return join ';', grep { my $dir = $_; !grep { -e "$dir/git$_" } qw( .exe .cmd .bat ) }
+    split /;/, $ENV{PATH} // '';
+}
+
 # A repository tracking @files, each committed with a line of project content.
 sub repo_with {
   my (@files) = @_;
@@ -162,7 +172,7 @@ subtest 'no git binary on PATH: the index answers anyway' => sub {
   my $repo = repo_with( 'tasks/notes/backlog.md', 'config.yml' );
   my $git  = App::karr::Git->new( dir => $repo );
 
-  local $ENV{PATH} = '';
+  local $ENV{PATH} = path_without_git();
   is( $git->is_tracked_under("$repo/tasks"), 1, 'tasks/ is still the project\'s' );
   is( $git->is_tracked_under("$repo/config.yml"), 1, 'and so is config.yml' );
   is( $git->is_tracked_under("$repo/elsewhere"), 0, 'an untracked path still answers false' );
@@ -182,7 +192,7 @@ subtest 'no git binary on PATH: init still leaves the project\'s .gitignore alon
 
   my ( $stdout, $exit );
   {
-    local $ENV{PATH} = '';
+    local $ENV{PATH} = path_without_git();
     my $stderr = gensym;
     my $pid = open3( undef, my $out, $stderr, $PERL, "-I$ROOT/lib", $BIN,
       'init', '--name', 'NoPath' );
@@ -229,7 +239,7 @@ subtest 'neither route available answers false rather than dying' => sub {
 
   no warnings 'redefine';
   local *Git::Native::Repository::index = sub { die "index unreadable\n" };
-  local $ENV{PATH} = '';
+  local $ENV{PATH} = path_without_git();
 
   is( $git->is_tracked_under("$repo/tasks"), 0,
     'not-tracked-as-far-as-we-can-tell, the same answer an unopenable repo gets' );

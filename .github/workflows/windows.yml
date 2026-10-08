@@ -1,0 +1,34 @@
+name: windows
+# The suite on Windows (k328): Strawberry Perl and Git for Windows, both on the
+# runner image. Started by hand until it has been seen green there -- it was
+# written from a local run (Windows 11, Strawberry Perl 5.42) and has not run
+# on a runner yet. Add `push:` once it has.
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CMAKE_GENERATOR: MinGW Makefiles   # the libgit2 build in Alien::Libgit2
+    steps:
+      - uses: actions/checkout@v6
+      - name: Toolchain
+        run: |
+          perl -e "print qq{perl $^V on $^O\n}"
+          git --version
+      - name: Dependencies
+        run: |
+          cpanm --quiet Alien::Libgit2
+          # Their own suites still assume POSIX paths on this platform.
+          cpanm --quiet --notest Git::Libgit2 Git::Native
+          cpanm --quiet --notest --installdeps .
+      - name: Test
+        # An absolute -I: with a relative one a test that changes directory
+        # before a command class is first loaded would not find lib/ again.
+        run: prove "-I$PWD/lib" t

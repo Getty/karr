@@ -1,6 +1,8 @@
 use strict;
 use warnings;
 use Test::More;
+# k328: the stand-in git is a script found through a POSIX PATH and killed by a signal.
+BEGIN { plan skip_all => 'needs a POSIX shell for the stand-in git' if $^O eq 'MSWin32' }
 use lib 't/lib';
 use TestGit qw( require_git_c );
 require_git_c();
