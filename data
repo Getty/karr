@@ -1,0 +1,116 @@
+---
+claimed_at: 2026-10-08T02:52:27Z
+claimed_by: karr
+class: standard
+completed: 2026-10-08T05:13:37Z
+created: 2026-10-07T05:16:04Z
+id: 328
+priority: medium
+started: 2026-10-08T01:08:23Z
+status: done
+tags:
+- windows
+- tests
+- ci
+title: Test suite hangs on Windows at t/113 (karr init with PATH emptied); no Windows
+  CI
+updated: 2026-10-08T05:13:37Z
+---
+
+`cpanm App::karr` on Windows (Strawberry Perl 5.42, App::karr 0.602) never
+finishes: the suite is green through t/112 and then stands still.
+
+    t/112-handoff-derived-target.t .............. ok
+    (hangs)
+    perl.exe t/113-native-index-tracked-under.t
+    perl.exe -I.../lib .../bin/karr init --name NoPath
+
+That is the subtest "no git binary on PATH: init still leaves the project's
+.gitignore alone": `karr init` started through open3 with `PATH` emptied.
+After the child was killed the test itself stayed blocked. Tests after t/113
+have never run on Windows. (windows-developer hub, docs/karr-windows.md, B6.)
+
+Not diagnosed. Candidates: an emptied PATH on Windows also removes the
+directory the libgit2 DLL's dependencies load from (libssl, libssh2 in
+`C:\Strawberry\c\bin`); the test reads the child's pipes to EOF before
+`waitpid`; `_run_git`'s select loop (k325).
+
+There is no Windows CI: ci.yml and release-binaries.yml are Linux only, and
+neither are Git::Native's or Git::Libgit2's.
+
+Done when:
+- the suite runs to the end on Windows with a per-test time limit and every
+  failure or hang is named (fixed, or skipped on MSWin32 with the reason);
+- a `windows-latest` job in ci.yml keeps it that way -- or the decision not
+  to support Windows from source is written down and the install path there
+  is the binary.
+
+2026-10-07: braucht eine Windows-Maschine; Messung läuft über windows-developer k19. Nicht Teil des Linux-Durchgangs.
+
+2026-10-07 17:12 t/113 diagnosed on Windows 11, Strawberry Perl 5.42.0, tree 319aef8 (windows-developer k19). Two things stack up; neither is `_run_git`.
+
+1. With PATH emptied karr cannot start on Strawberry at all. The DLLs that FFI::Platypus and libgit2 depend on live in `C:\Strawberry\c\bin` and are found through PATH:
+
+    PATH=''                      perl -MFFI::Platypus -e1  -> exit 2, "Can't load '.../auto/FFI/Platypus/Platypus.xs.dll' ... load_file: module not found"
+    PATH='C:\Strawberry\c\bin'   perl -MFFI::Platypus -e1  -> exit 0
+    PATH='C:\Strawberry\c\bin'   perl -Ilib bin/karr --version -> karr 0.603, 0.5s
+
+   `bin/karr init` under the empty PATH exits 2 at once with that message plus the "Compilation failed in require" chain, about 1.1 KB on stderr. The in-process subtest before it ("the index answers anyway") passes only because the DLLs are already loaded.
+
+2. The test then deadlocks on its own read order: it reads the child's stdout to EOF before touching stderr. A pipe made by perl on Win32 holds 512 bytes. Same open3 pattern, child = `perl -e "print STDERR 'x' x N; exit 2"`:
+
+    N=400  exit=2, read 400      N=512  exit=2, read 512
+    N=513  hangs                 N=1100, 4096, 4097  hang
+
+   So the child blocks writing byte 513 of the error, the parent blocks waiting for stdout EOF. Killing the child does not free the parent in the cpanm run because the test never reaches waitpid.
+
+Fix candidates for the test: on MSWin32 build the "no git" PATH from the directories perl's DLLs need (`C:\Strawberry\c\bin`, i.e. $Config{bin}-relative) rather than '', and send the child's stderr to a file or merge it into stdout (`2>&1` handle) instead of a second pipe read after EOF. The same read-stdout-then-stderr pattern is worth a grep across t/ -- any child that says more than 512 bytes on stderr hangs its test on Windows.
+
+2026-10-07 17:51 Whole suite run on Windows with a time limit (windows-developer k19): tree 319aef8, Strawberry Perl 5.42.0, PowerShell with HOME unset, core.autocrlf=true (Git for Windows default), each t/*.t on its own with 120s, process tree killed on expiry. 247 files: 161 ok, 72 fail, 14 timeout. Per-file list: windows-developer docs/karr-testlauf-2026-10-07.tsv. Grouped by the first error each file prints -- the groups are measured, the assignment of a single file to a group is by that first line, not by a diagnosis of each file.
+
+1. Shell strings written for sh, run by cmd.exe (about 30 files). `system("git clone -q '$a' '$b' 2>/dev/null")`, backticks with single-quoted arguments, `printf`, `perl -e '...'`. cmd passes the single quotes through and has no /dev/null: "fatal: cannot change to ''C:\...\x'': Invalid argument", "Der Befehl "printf" ist entweder falsch geschrieben", "syntax error at -e line 1", and every later step fails with "cannot change to '...\a': No such file or directory" because the clone never happened. t/13 16 17 19 20 21 73 76 78 85 91 99 130 149 151-log 173 181 182 183 189 191 203 278, probably also 93 172 178 190. 36 test files contain `>/dev/null`. Fix is list-form system/open3 everywhere.
+
+2. karr-foundation is Unix-only as written (about 25 files). "POSIX::setpgid not implemented on this architecture at lib/App/karr/Foundation/Runner.pm line 263", "Your vendor has not defined POSIX macro SIGKILL", symlink in t/166, and seven files end with a native crash under perl's fork emulation with libgit2 loaded: exit 0xC0000005 (access violation: t/152 193 200 202 209 305 306) and 0xC0000374 (heap corruption: t/168 210). t/30 31 33 34 148 148 150 151-foundation 161 162 163 164 165 185 187 188 as well. That is a product decision, not a test fix: either foundation gets a Win32 runner (Win32::Job / process groups) or it is declared unsupported there and its tests skip on MSWin32.
+
+3. Line endings (about 10 files). (a) No .gitattributes: with core.autocrlf=true the checkout has CRLF in share/*/SKILL.md and the fixtures, so "byte for byte" comparisons fail (t/26 65 80, probably 302). (b) Tests write fixtures through a text-mode handle (`open '>'`) or patch config.yml with `$`-anchored regexes: t/102 227 255. (c) t/87 96 104 fail at "import succeeds" -- see the product finding below. `* text=auto eol=lf` in .gitattributes (as on Git::Native's windows branch) removes (a).
+
+4. Timeouts (14): t/35 57 60 61 68 74 113 114 157 201 213 249 263 291. t/57 60 291 sit on a deliberately bogus remote and wait in the CLI fallback (k325, fixed on Linux, not in this tree); t/113 is the 512-byte pipe from the previous note; the rest not looked at one by one -- rerun after k325 lands before diagnosing them.
+
+5. Not grouped, one line each: t/167 "to_octets_for_env is in @EXPORT_OK", t/192 "a board this machine cannot place is not a failure", t/216 "ex/setup.sh is executable" (no exec bit on NTFS), t/241 prompt flush, t/279 group-by, t/66, t/94, t/171, t/208.
+
+Also found, product not test: `karr import --yes` refuses a task file with CRLF line endings. Same file, LF: "Imported 1 task(s)"; after unix2dos: "Refusing to import ... 1 of 1 task file(s) could not be parsed: Invalid task format". Measured with the installed 0.602. Every Windows editor produces such files, and `karr materialize` + edit + `import` is the documented bridge. Getty decides whether that becomes its own card.
+
+Suggested order: .gitattributes, then group 1 (mechanical), rerun on a tree with k325/k326, then decide group 2. A windows-latest job only makes sense after that; today it would be red in 86 files.
+
+Correction to the note above, group 2: nine files end in a native crash, not seven (seven with 0xC0000005, two with 0xC0000374).
+
+2026-10-07 23:35 Second run, tree 3fc42f2 (k324/k325/k326 in), same setup, this time with an absolute -I: 252 files, 163 ok, 84 fail, 5 timeout. Per-file list: windows-developer docs/karr-testlauf-2026-10-08.tsv.
+
+Caveat on the first run: it used `-Ilib`. A test that chdirs before a command class is first required then loads that class from the installed App::karr (here 0.602 in site/lib) -- t/326 "karr skill --global" died at "C:/Strawberry/perl/site/lib/App/karr/Cmd/Skill.pm line 378" under `-Ilib` and passes under `-IC:/.../karr/lib`. `prove -l` has the same relative entry, on any machine with karr installed. Worth making t/lib absolutise @INC.
+
+What k325 changed, measured: timeouts 14 -> 5. t/35 57 114 now pass; t/60 61 68 74 157 291 no longer hang and fail on their own assertions instead. Outside the suite: `_run_git('--version')` 0.05s, `log -p -300` 131064 bytes in 0.5s, a git hung on a child (`-c alias.hang='!sleep 61' hang`, timeout 3) comes back after 3.1s with failure=timeout and no sleep.exe left behind. `karr sync --pull` from PowerShell without HOME: exit 0 in 6s with the installed Git::Native 0.006 (native transport still fails on its own HOME lookup, the CLI fallback now answers), 1s and silent with Git::Native main.
+
+Still hanging: t/113 (512-byte pipe, above), t/201 213 249 263 -- not diagnosed; 213 stops at "a YAML document on stdin", 249 right after init.
+
+The new tests on Windows: t/325-run-git-without-select.t skips ("needs a POSIX shell for the stand-in git"), so nothing in the suite exercises the k325 fix there. t/325-foundation-refuses-windows.t fails its last test -- "nothing is refused elsewhere" runs with the real $^O, which is MSWin32 here. t/326 fails one comparison of 'C:/...' against 'C:\...'. t/321 and t/324 are in group 1 (single-quoted shell strings).
+
+Group 2 shifted rather than shrank: the foundation tests now fail on the refusal message instead of on setpgid (t/120 186 214 newly red for that reason). They want a skip on MSWin32.
+
+Also found, product: the refusal in Foundation.pm sits in front of the read-only paths too. `karr-foundation --config c.yml --status` on Windows prints "cannot run agents on Windows ..." and exits 1 (t/201 'the read-only overview exits 0'), and the no-agent default overview is behind it as well. Neither forks. Moving the check below the overview branches would keep the dashboard usable there.
+
+2026-10-08 02:52 Done on main, pushed: e164a34 (k328). Third run after the fixes, Windows 11, Strawberry Perl 5.42.0, PowerShell without HOME, absolute -I, 150s per file: 252 files, 252 ok, 0 timeout; 33 of them skip as a whole (27 karr-foundation drain tests, t/66 ulimit, t/74 and t/325-run-git POSIX stand-in git, t/216 ex sandbox, two that already skipped without fork). Per-file list: windows-developer docs/karr-testlauf-2026-10-08-nach-fix.tsv.
+
+Product changes, each small: (1) Git.pm _is_local_url -- on MSWin32 `C:\repo` was read as an scp-style ssh address, so the k208 guard never applied and a push with a local pushurl wrote into the fetch URL's repository (t/208 showed it). (2) Encoding.pm -- STDOUT/STDERR lose the CRLF layer on MSWin32; `karr skill show > file` was not byte-identical. (3) BoardStore.pm -- config.yml of the file view through spew_utf8 instead of DumpFile, which wrote CRLF there. (4) Foundation.pm -- --status no longer refused on MSWin32.
+
+Tests: .gitattributes pins LF. t/lib/TestShell.pm (new, loaded via TestEnv, inert outside MSWin32) sends sh-style one-string system()/backticks from files under t/ to Git's sh and works around three Win32 perl limits: quotes inside list-form arguments, a child's stderr beyond a 512-byte pipe (file-backed), a child's stdin that never sees EOF under open3 (non-inherited pipe). TestKarr captures in-process output in files on MSWin32 -- IPC::Open3 there restores the std handles by descriptor and an in-memory STDERR lost everything after karr's first git run. Twelve test files got small portable edits (t/13 78 87 93 96 104 113 157 241 249 325 326).
+
+Retracted from my earlier note: `karr import` refusing CRLF is deliberate (kanban-md parity, Task.pm says so), and the materialize -> import round trip works on Windows. No change there.
+
+Not done / to check:
+- Linux and macOS have not run this tree. The edits outside `if MSWin32` that Linux executes: t/13 (list-form pipe open instead of fork-open), binmode on three fixture writes, path_without_git() in t/113 (returns '' there), tr on the path in t/326, local $^O in t/325-foundation, BoardStore's spew_utf8(yaml_dump(...)), the BEGIN block in bin/*.
+- .github/workflows/windows.yml is workflow_dispatch only and has never run on a runner.
+- t/325-run-git-without-select.t still skips on MSWin32, so the k325 fix has no test there (measured by hand, see above).
+- The first run's "prove -l loads the installed karr after a chdir" stands: t/lib does not absolutise @INC.
+- karr-foundation on Windows remains refused for drains; whether it gets a Win32 runner is Getty's call.
+
+2026-10-08 04:14 Linux cross-check (reuben, Debian 13, perl 5.40, tree 23dc561): `prove -l -j6 t/` 252 files, 1922 tests, PASS -- the same count as before the two commits, so nothing skips here. `DZIL_DOCKER_API_SKIP=1 dzil test --jobs 6` 254 files, 1997 tests, PASS. `materialize` writes config.yml byte for byte as DumpFile did (compared on a structure with non-ASCII strings, booleans and an undef). `.gitattributes` changes nothing in this checkout (no file with CRLF in the index, tree clean). Still open, not checked from here: .github/workflows/windows.yml has never run on a runner.
