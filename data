@@ -1,0 +1,68 @@
+---
+claimed_at: 2026-10-08T02:52:34Z
+claimed_by: karr
+class: standard
+completed: 2026-10-08T05:13:29Z
+created: 2026-10-07T05:15:56Z
+id: 327
+priority: high
+started: 2026-10-08T01:08:16Z
+status: done
+tags:
+- windows
+- packaging
+title: karr from Git Bash on Windows runs under the MSYS perl and dies with Can't
+  locate App/karr/SyncGuard.pm
+updated: 2026-10-08T05:13:29Z
+---
+
+`bin/karr` starts with `#!/usr/bin/env perl`, and ExtUtils::MakeMaker installs
+that line unchanged (it only rewrites a shebang that names perl directly). On
+Windows with Strawberry Perl the script lands in `C:\Strawberry\perl\site\bin`;
+from Git Bash `env perl` is `/usr/bin/perl`, the stripped MSYS perl that ships
+with Git for Windows and has no App::karr:
+
+    $ karr list --compact
+    Can't locate App/karr/SyncGuard.pm in @INC (... /usr/lib/perl5/site_perl ...)
+      at /c/Strawberry/perl/site/bin/karr line 8.
+    $ /c/Strawberry/perl/bin/perl /c/Strawberry/perl/site/bin/karr board     -> works
+
+`karr.bat` (pl2bat, `perl -x -S`) picks the same wrong perl there. The Bash
+tool of Claude Code on Windows is Git Bash, so every agent that follows the
+karr skills and types `karr ...` fails on its first command; the message
+names a missing module of karr's own, which reads like a broken install.
+(windows-developer hub, docs/karr-windows.md, B7; hit again 2026-10-07 by an
+agent in another repository.)
+
+Options, to be measured on Windows:
+1. `#!perl` in the source, so MakeMaker writes the installing perl's absolute
+   path -- check that MSYS bash executes a shebang with a Windows path, and
+   what that means for the house default of `#!/usr/bin/env perl`.
+2. A `karr.exe` (PAR::Packer or portable Strawberry plus launcher) as a
+   release asset; `scripts/build-binary.sh` and release-binaries.yml build
+   linux-x86_64 and linux-aarch64 only.
+3. Documentation plus a shim (`exec /c/Strawberry/perl/bin/perl .../karr "$@"`)
+   as the stopgap -- the windows-developer hub carries one as `tools/karr`.
+
+Done when `karr --version` answers from PowerShell, cmd and Git Bash after
+the documented Windows install, and README says how.
+
+2026-10-07: wartet auf die Messungen aus windows-developer k19 und auf Gettys Entscheidung (Shebang, karr.exe oder nur Starter). Nicht Teil des Linux-Durchgangs.
+
+2026-10-07 17:10 Measured on Windows 11, Strawberry Perl 5.42.0, ExtUtils::MakeMaker 7.76, Git for Windows bash (windows-developer k19):
+
+Option 1 (`#!perl`) does not work. On Win32 `$Config{startperl}` is `#!perl`, so MakeMaker's fixin has no absolute path to write: a throwaway dist with three EXE_FILES came out of `perl Makefile.PL && gmake` with the first lines unchanged -- `#!perl`, `#!/usr/bin/env perl`, `#!/usr/bin/perl` -- and all three, started from Git Bash, ran under `/usr/bin/perl` (MSYS, v5.42.2). The generated .bat is `perl -x -S %0 %*`, PATH-dependent as before.
+
+What Git Bash does execute is an absolute path to Strawberry in the shebang, in every spelling: `#!/c/Strawberry/perl/bin/perl`, `#!C:/Strawberry/perl/bin/perl.exe` and `#!C:\Strawberry\perl\bin\perl.exe` each gave `$^X = C:\Strawberry\perl\bin\perl.exe`. So a shebang fix would have to be written by karr's own install step (or by hand after each `cpanm App::karr`), not by MakeMaker.
+
+Option 3 as measured: a starter `~/bin/karr` (`exec /c/Strawberry/perl/bin/perl /c/Strawberry/perl/site/bin/karr "$@"`) wins, because `~/bin` is the first PATH entry of the Claude Code Bash tool, ahead of the Strawberry directories. `karr --version` and `karr list --compact` now answer from Git Bash in a foreign repo on this machine. PowerShell and cmd never had the problem (karr.bat finds Strawberry's perl there).
+
+Still open: Getty's choice between an install-time shebang rewrite, a karr.exe, or documenting the starter.
+
+2026-10-08 02:52 Done on main, pushed: 23dc561. bin/karr and bin/karr-foundation carry a BEGIN block: under $^O msys/cygwin, when App::karr::SyncGuard cannot be required, exec the perl beside the script (../../bin/perl.exe from site/bin), else the first native perl.exe on PATH. Chosen over the three options on the card because it needs neither a starter nor a binary and is inert everywhere else; Getty had left the choice open and then asked for the tickets to be done here.
+
+Measured from Git Bash on Windows 11: the patched script copied into C:\Strawberry\perl\site\bin answers `list --compact`, passes arguments with spaces and returns the exit code (1 for a missing card); `bin/karr --version` and `bin/karr-foundation --help` straight from the checkout answer too; PowerShell unaffected. README has a Windows section with the install recipe.
+
+Not measured: a real `cpanm App::karr` of a release carrying this (there is none yet) and cmd.exe by hand. The `karr.exe` release asset (option 2) is not done.
+
+2026-10-08 04:14 Linux cross-check (reuben, tree 23dc561): bin/karr and bin/karr-foundation compile and the BEGIN block is inert ($^O is neither msys nor cygwin); `prove -l t/` and `dzil test` pass, numbers on k328. The handover itself can only be measured on Windows; a real `cpanm App::karr` of a release carrying it is still missing, as the note above says.
