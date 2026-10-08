@@ -977,6 +977,35 @@ setup.
 cpanm App::karr
 ```
 
+### Windows
+
+karr runs on Windows under [Strawberry Perl](https://strawberryperl.com/) with
+[Git for Windows](https://gitforwindows.org/) installed. There is no Windows
+binary yet, and the Perl that ships inside Git for Windows is not an install
+target (it has no compiler and no CPAN toolchain). From PowerShell:
+
+```powershell
+$env:CMAKE_GENERATOR = 'MinGW Makefiles'   # for the libgit2 build in Alien::Libgit2
+cpanm Alien::Libgit2
+cpanm --notest Git::Libgit2 Git::Native    # their suites still assume POSIX paths
+cpanm App::karr
+```
+
+`karr` then answers from PowerShell, cmd and Git Bash alike. In Git Bash
+`env perl` is the Perl of Git for Windows; the `karr` script notices that it
+cannot load its modules there and hands the run over to the Perl it was
+installed for.
+
+What differs on Windows:
+
+- `karr-foundation` does not run agents: a drain needs `fork`, process groups
+  and `/bin/sh`. `ask`, `answer`, `chain`, `plan` and `--status` work.
+- Over HTTPS, libgit2 as built by Alien::Libgit2 finds no CA store; set
+  `SSL_CERT_FILE` to a CA bundle (for example
+  `C:\Strawberry\perl\vendor\lib\Mozilla\CA\cacert.pem`) in the environment
+  before starting karr. ssh remotes are not affected.
+- karr writes LF line endings, to its file view and to stdout, like git does.
+
 ### Binary (no Perl needed)
 
 Prebuilt Linux binaries are attached to each

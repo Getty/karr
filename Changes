@@ -32,6 +32,12 @@
       returned. `karr-foundation` refuses to start a drain on Windows; `ask`,
       `answer`, `chain` and `plan` are unaffected.
 
+    - `karr` and `karr-foundation` start from Git Bash on Windows. There
+      `env perl` is the MSYS Perl of Git for Windows, which has none of karr's
+      modules, and the run died with "Can't locate App/karr/SyncGuard.pm". The
+      scripts now hand over to the Perl they were installed for. README has a
+      Windows section.
+
     - On Windows a push to a remote whose push URL is a local path
       (`remote.<name>.pushurl`, `url.<base>.pushInsteadOf`) wrote the board
       into the fetch URL's repository instead: `C:\repo` was read as an

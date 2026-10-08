@@ -5,6 +5,24 @@
 use strict;
 use warnings;
 our $VERSION = '0.603';
+
+# Git Bash on Windows resolves `env perl` to the MSYS perl that ships with Git
+# for Windows, which has none of karr's modules (k327). Hand the run over to
+# the perl this script was installed for: the one beside it, else the first
+# native perl.exe on PATH. Plain perl only -- that MSYS perl is a stripped one.
+BEGIN {
+    if ( ( $^O eq 'msys' || $^O eq 'cygwin' )
+        && !eval { require App::karr::SyncGuard; 1 } )
+    {
+        ( my $here = $0 ) =~ s{/[^/]*\z}{};
+        my ($perl) = grep { -x }
+            ( map { "$here/$_/perl.exe" } '../../bin', '../bin', '.' ),
+            ( map { "$_/perl.exe" } grep { !m{\A/usr/|\A/bin\z} }
+                split /:/, $ENV{PATH} // '' );
+        exec {$perl} $perl, $0, @ARGV if $perl;
+    }
+}
+
 use App::karr::SyncGuard;
 use App::karr::Dispatch qw( dispatch );
 
