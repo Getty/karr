@@ -1,0 +1,15 @@
+{"action":"move","agent":"Torsten Raudssus","detail":"done","task_id":321,"ts":"2026-10-07T16:02:02Z"}
+{"action":"move","agent":"hub-claude","detail":"in-progress","task_id":326,"ts":"2026-10-07T16:02:10Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"in-progress","task_id":326,"ts":"2026-10-07T16:07:44Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"done","task_id":326,"ts":"2026-10-07T16:07:52Z"}
+{"action":"move","agent":"hub-claude","detail":"in-progress","task_id":325,"ts":"2026-10-07T16:08:00Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"in-progress","task_id":325,"ts":"2026-10-07T16:16:43Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"done","task_id":325,"ts":"2026-10-07T16:16:51Z"}
+{"action":"move","agent":"hub-claude","detail":"in-progress","task_id":322,"ts":"2026-10-07T16:16:59Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"in-progress","task_id":322,"ts":"2026-10-07T16:19:19Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"todo","task_id":322,"ts":"2026-10-07T16:19:27Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"todo","task_id":322,"ts":"2026-10-07T16:19:41Z"}
+{"action":"edit","agent":"karr","detail":"review","task_id":328,"ts":"2026-10-08T04:14:33Z"}
+{"action":"edit","agent":"karr","detail":"review","task_id":327,"ts":"2026-10-08T04:14:41Z"}
+{"action":"move","agent":"karr","detail":"done","task_id":327,"ts":"2026-10-08T05:13:29Z"}
+{"action":"move","agent":"karr","detail":"done","task_id":328,"ts":"2026-10-08T05:13:37Z"}
