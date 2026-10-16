@@ -3,6 +3,21 @@
     "superpowers@claude-plugins-official": true,
     "caveman@caveman": true,
     "briefing@getty": true,
-    "ruler@getty": true
+    "ruler@getty": true,
+    "skilletor@getty": true
+  },
+  "extraKnownMarketplaces": {
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      }
+    },
+    "getty": {
+      "source": {
+        "source": "github",
+        "repo": "Getty/marketplace"
+      }
+    }
   }
 }
