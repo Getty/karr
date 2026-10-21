@@ -4,6 +4,7 @@ description: "Write and extend tests for App::karr under t/. Use for new coverag
 model: sonnet
 briefing:
   skills:
+    - karr-core
     - getty-perl-core
     - getty-perl-moo
     - kanban-issues-karr-ticket

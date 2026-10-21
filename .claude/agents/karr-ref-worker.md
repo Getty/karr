@@ -5,6 +5,7 @@ model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
 briefing:
   skills:
+    - karr-core
     - getty-perl-core
     - getty-perl-moo
 ---

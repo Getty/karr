@@ -4,6 +4,7 @@ description: "Default App::karr worker — implement, refactor, debug, and test 
 model: inherit
 briefing:
   skills:
+    - karr-core
     - getty-perl-core
     - getty-perl-moo
     - kanban-issues-karr-ticket
