@@ -10,7 +10,7 @@ A Perl reimplementation of [kanban-md](https://github.com/antopolskiy/kanban-md)
 
 This is a Dist::Zilla distribution using `[@Author::GETTY]`.
 
-## House rules, agents & coordination
+## Delegation
 
 Engineering discipline, the delegation lane, board coordination, and the release policy live in
 `.claude/rules/karr-rules.md` — auto-loaded by Claude Code at launch. Don't restate them here.
