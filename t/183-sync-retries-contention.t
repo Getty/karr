@@ -299,7 +299,9 @@ subtest 'a real contended push lands on the retry and reaches the remote' => sub
     $git->save_task_ref( task( 1, 'One' ) );
 
     # First push loses the race the way libgit2's local transport reports it;
-    # the second is the genuine article.
+    # the second is the genuine article. The board push goes out through the
+    # git CLI first since k322, so pin the native route the mock belongs to.
+    local $ENV{KARR_NO_CLI_FALLBACK} = 1;
     my $pushes = 0;
     my $orig   = \&Git::Native::Remote::push;
     no warnings 'redefine';

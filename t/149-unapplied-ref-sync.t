@@ -225,7 +225,7 @@ subtest 'a conflict whose local side cannot be parked keeps the local ref' => su
 # pointed back at the local one, so reconciliation does not read the missing
 # ref as "the remote deleted the id". Unchecked, that write failing stripped
 # the stamp from this clone too.
-subtest 'a fetched stamp slot that cannot be written stops the pull' => sub {
+subtest 'a mirror stamp slot that cannot be cleared stops the pull' => sub {
     my ( $work, $a, $b ) = two_clones();
 
     # A board from before identities existed: no meta/board-id anywhere.
@@ -237,22 +237,35 @@ subtest 'a fetched stamp slot that cannot be written stops the pull' => sub {
 
     my $stamp = $b->read_board_id_ref;
     ok $stamp, 'B stamped the board on the way in';
+    ok $b->push, 'and publishes the stamp';
+    ok mirror_oid( $b, 'meta/board-id' ), "so B's mirror says the remote has it";
 
-    # The remote still has no stamp, so B's next pull takes the migration
-    # branch -- with the slot it writes locked. Since k324 that slot is the
-    # fetched copy of the remote, not the mirror.
+    # What a pre-change karr's forced, pruning push does: the stamp goes off
+    # the remote, the rest of the board stays.
+    system( 'git', '-C', "$work/origin.git", 'update-ref', '-d',
+        'refs/karr/meta/board-id' ) == 0 or die 'cannot drop the stamp';
+
+    # B's next pull takes the migration branch, which clears the mirror slot
+    # so the stamp reads as unpublished work -- with that slot locked. Since
+    # k322 it is the mirror slot; before, the fetched copy was written.
     my $lock = stale_lock( "$work/b",
-        'refs/karr-local/fetched/origin/meta/board-id' );
+        'refs/karr-remote/origin/meta/board-id' );
     my $rv  = eval { $b->pull };
     my $err = $@;
     ok !$rv, 'the pull does not report success';
-    like $err, qr/could not update the fetched copy/, 'and says what failed';
+    like $err, qr/could not update the mirror/, 'and says what failed';
     is $b->read_board_id_ref, $stamp,
         "the board's identity stamp is still here";
 
     unlink $lock;
     ok $b->pull, 'the next pull goes through';
     is $b->read_board_id_ref, $stamp, 'and the stamp is still the same one';
+
+    # And the point of clearing the mirror slot: a guarded push only sends
+    # what differs from the mirror, so the stamp goes out again.
+    ok $b->push, 'B pushes';
+    is( App::karr::Git->new( dir => "$work/origin.git" )->read_board_id_ref,
+        $stamp, 'which re-arms the remote with the same stamp' );
 };
 
 # ---------------------------------------------------------------------

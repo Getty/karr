@@ -267,6 +267,12 @@ sub _insurance_push {
           && @{ $git->push_rejections }
           && !( $git->can('push_contention') && $git->push_contention );
 
+        # Stale is the third answer (k322): another clone published refs this
+        # push carried, and the same push can never land them. What they need
+        # is a pull, which a command that has already died is not the place
+        # to run -- 'karr sync' is, and it says so below.
+        last if $git->can('push_stale') && @{ $git->push_stale };
+
         sleep 1 if $attempt < 3;
     }
 
@@ -284,6 +290,11 @@ sub _insurance_push {
       ? "Push rejected by the remote. Local refs are intact.\n"
         . "The refs above were refused, not lost in transit, so pushing again "
         . "would only be refused again.\n"
+      : ( $git->can('push_stale') && @{ $git->push_stale } )
+      ? "Push not sent: the remote changed refs this clone had changed too. "
+        . "Local refs are intact.\n"
+        . "Run 'karr sync' to pull the other clone's version in and push "
+        . "again.\n"
       : "Push failed after 3 attempts. Local refs are intact.\n"
         . "Run 'karr sync' to retry.\n"
         . "Errors: " . join( ', ', $self->errs ) . "\n";

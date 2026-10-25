@@ -72,9 +72,15 @@ sub origin_refs {
 # ---------------------------------------------------------------------
 # The native contract, taken straight off the Result: libgit2 said "fine"
 # (no exception, rc 0) and the Result says two refs were refused.
+#
+# The native route: since k322 the board push goes out through the git CLI
+# first (only the CLI makes the remote check what this clone expects it to
+# hold) and through libgit2 when no git binary can be started.
+# KARR_NO_CLI_FALLBACK pins the libgit2 route these Results belong to.
 # ---------------------------------------------------------------------
 subtest 'native: a Result with rejections fails the push and names every ref' => sub {
     my ( $work, $git ) = protected_remote();
+    local $ENV{KARR_NO_CLI_FALLBACK} = 1;   # see the native route note above
 
     my $rv = do {
         no warnings 'redefine';
@@ -111,6 +117,7 @@ subtest 'native: a Result with rejections fails the push and names every ref' =>
 
 subtest 'native: a partial rejection is still a failed push' => sub {
     my ( $work, $git ) = protected_remote();
+    local $ENV{KARR_NO_CLI_FALLBACK} = 1;   # see the native route note above
 
     my $rv = do {
         no warnings 'redefine';
@@ -130,6 +137,7 @@ subtest 'native: a partial rejection is still a failed push' => sub {
 
 subtest 'native: a clean Result still succeeds, and clears earlier rejections' => sub {
     my ( $work, $git ) = protected_remote();
+    local $ENV{KARR_NO_CLI_FALLBACK} = 1;   # see the native route note above
 
     my $rejected = do {
         no warnings 'redefine';
@@ -152,6 +160,7 @@ subtest 'native: a clean Result still succeeds, and clears earlier rejections' =
 
 subtest 'native: a rejected push does not update the tracking mirror' => sub {
     my ( $work, $git ) = protected_remote();
+    local $ENV{KARR_NO_CLI_FALLBACK} = 1;   # see the native route note above
 
     do {
         no warnings 'redefine';
@@ -207,7 +216,9 @@ subtest 'CLI fallback: a transport failure is still reported as one' => sub {
     };
 
     ok !$rv, 'a broken remote fails';
-    like $git->last_error, qr/CLI fallback\) failed/,
+    # The board push runs the CLI first since k322, so its failure is
+    # reported in the CLI's own words rather than as a fallback's.
+    like $git->last_error, qr/git push failed/,
         'and is not dressed up as a per-ref rejection';
     is_deeply $git->push_rejections, [],
         'push_rejections stays empty when no ref was individually refused';

@@ -204,8 +204,16 @@ subtest 'a repository with no remote settles its tombstones instead of hoarding 
 
     system( 'git', '-C', $solo, 'remote', 'add', 'origin', $origin ) == 0
         or die "cannot add remote";
-    _karr_ok( $solo, 'the solo repository gets a remote and pushes',
-        'sync', '--push', '--quiet' );
+    # Since k322 the push carries what it expects the remote to hold, so it
+    # does not get as far as sending the backlog: the remote already holds a
+    # board where this clone expected none, the push pulls first, and the
+    # board identity check (#95) refuses the foreign board out loud.
+    my $pushed = _run( $solo, 'sync', '--push', '--quiet' );
+    is( $pushed->{exit}, 1,
+        'the solo repository gets a remote and its push is refused' )
+        or diag "stdout: $pushed->{stdout}\nstderr: $pushed->{stderr}";
+    like( $pushed->{stderr}, qr/different board/,
+        'because the remote holds a different board' );
     is_deeply( _task_ids($origin), [1],
         "the other board's card is still there" );
 };

@@ -1,5 +1,17 @@
 {{$NEXT}}
 
+    - Two clones writing the board at the same moment no longer overwrite
+      each other. A push only replaces a ref the remote still holds as this
+      clone last saw it; when another clone got there first, `karr create`
+      takes the next free id and `karr pick` the next card, and every other
+      command fails with exit 1, names the card that changed and publishes
+      nothing. Previously one create was lost and one card picked twice.
+
+    - `karr sync --push` no longer overwrites what other clones published:
+      it pulls their changes in, parks a conflicting card as a pull does, and
+      pushes again. Republishing a board over an empty or foreign remote is
+      now `karr sync --push --force`.
+
     - A pull that does not finish no longer costs cards. When the transport
       failed after its refs had landed, or karr was killed during a pull, the
       next `karr sync` kept the stale local cards as unpushed work and pushed

@@ -252,7 +252,7 @@ subtest 'end to end: karr destroy on one clone still propagates to another' => s
 };
 
 # The other way out: the remote was wrong, so republish this board over it.
-subtest 'end to end: karr sync --push republishes instead of accepting the loss' => sub {
+subtest 'end to end: karr sync --push --force republishes instead of accepting the loss' => sub {
     my $root = abs_path('.');
     my $bin  = "$root/bin/karr";
 
@@ -285,8 +285,14 @@ subtest 'end to end: karr sync --push republishes instead of accepting the loss'
 
     my $blocked = $karr->( 'create', 'Second task' );
     isnt $blocked->{exit}, 0, 'the accident stops the next writing command';
+    # Since k322 a plain push only sends what changed against what this clone
+    # last saw on the remote -- here, nothing. Overwriting the remote with the
+    # local board is the explicit --force, and the guard says so.
+    like $blocked->{stderr}, qr/karr sync --push --force/,
+        'and names the command that republishes';
 
-    is $karr->( 'sync', '--push' )->{exit}, 0, 'sync --push republishes the board';
+    is $karr->( 'sync', '--push', '--force' )->{exit}, 0,
+        'sync --push --force republishes the board';
     my @remote =
       `git -C '$work/origin.git' for-each-ref --format='%(refname)' 'refs/karr/'`;
     chomp @remote;

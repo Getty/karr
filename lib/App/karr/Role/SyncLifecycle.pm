@@ -150,8 +150,8 @@ sub _sync_git {
 #
 # $label is 'Pull' or 'Push' and appears in both the banner and the git error
 # line, so the wording every existing test pins is produced here and nowhere
-# else. Returns ( $ok, $rejected ); $rejected is only ever true when
-# check_rejection was asked for.
+# else. Returns ( $ok, $rejected, $stale ); the last two are only ever true
+# when check_rejection was asked for.
 sub _sync_attempts {
     my ( $self, $label, $git, $attempt, %opt ) = @_;
 
@@ -159,6 +159,7 @@ sub _sync_attempts {
     my $err      = '';
     my $shown    = '';
     my $rejected = 0;
+    my $stale    = 0;
     for my $try ( 1 .. 3 ) {
         # Retry-only: attempt 1 is silent; only announce the actual retries.
         print STDERR "$label retry $try of 3...\n"
@@ -166,6 +167,16 @@ sub _sync_attempts {
         $ok = $attempt->();
         if ($ok) {
             print STDERR "$label succeeded.\n" if $try > 1 && !$self->quiet;
+            last;
+        }
+
+        # A stale push (k322) is not an error to show and not a failure to
+        # try again: the remote moved underneath refs this push carried, the
+        # same push can never land, and what it needs is a pull first. The
+        # caller decides what follows (sync_after); nothing is printed here.
+        if ( $opt{check_rejection} && $git->can('push_stale')
+             && @{ $git->push_stale } ) {
+            $stale = 1;
             last;
         }
         # Errors always reach STDERR, even under --quiet (#27). But the same
@@ -202,7 +213,7 @@ sub _sync_attempts {
 
         sleep 1 if $try < 3;
     }
-    return ( $ok, $rejected );
+    return ( $ok, $rejected, $stale );
 }
 
 =method sync_before
@@ -239,12 +250,18 @@ sub sync_before {
     my $guard = App::karr::SyncGuard->new( git => $git, quiet => $self->quiet );
     $guard->done if $self->local_only;
     $self->_sync_guard($guard);
+
+    # From here on the command writes against the board this pull produced,
+    # and a stale push has to be able to take exactly those writes back
+    # (k322, sync_after). The `can` is for the duck-typed doubles.
+    $git->start_journal if $git->can('start_journal');
     return $guard;
 }
 
 =method sync_after
 
-    $self->sync_after;  # push with up to 3 attempts
+    $self->sync_after;                 # push with up to 3 attempts
+    $self->sync_after( force => 1 );   # karr sync --push --force
 
 Pushes refs to remote with up to 3 attempts, using the same retry-only output
 convention as L</sync_before> (silent first attempt, retries announced from
@@ -256,10 +273,32 @@ from L<App::karr::SyncGuard/flush_armed> would only repeat the failure.
 
 A push the remote I<rejected> per ref (a pre-receive hook, a protected ref)
 is not retried at all: the connection worked and the far side gave its answer,
-which the error message carries ref by ref. A rejection that is only
-contention -- two pushes racing for the same ref, see
-L<App::karr::Git/push_contention> -- is retried like any other transient
-failure, because the same refspec lands on the next attempt.
+which the error message carries ref by ref.
+
+The board push is guarded (L<App::karr::Git/push>, k322): each ref goes out
+only while the remote still holds what this clone last saw there. When
+another clone published one of them since this command's pull, the push is
+I<stale> (L<App::karr::Git/push_stale>) and sending it again cannot help.
+What happens instead depends on whose refs went stale:
+
+=over 4
+
+=item * Only refs this command did not write -- older local work, the id
+counter: the other clone's versions are pulled in (a genuine conflict parked
+and reported, as on every pull) and the push goes again, up to three rounds.
+
+=item * Refs this command wrote: they were decided against a board that no
+longer exists. They are taken back (L<App::karr::Git/take_back_journal> --
+the card and the activity log entry alike, so neither goes out later), the
+other clone's version is pulled in, and then a command composing
+L<App::karr::Role::ReapplyOnStale> (C<create>, C<pick>) runs again from the
+top; every other command stops with exit 1, naming the card that changed and
+saying that nothing of it was published.
+
+=back
+
+C<< force => 1 >> is handed to L<App::karr::Git/push>: the unguarded push of
+every local board ref, for C<karr sync --push --force> alone.
 
 Under C<--local-only> (see L</Local-only mode>) this returns immediately without
 pushing: the fetch was skipped and the guard already spent in L</sync_before>,
@@ -267,8 +306,14 @@ so the local refs stay put until C<karr sync>.
 
 =cut
 
+# How many times one command pulls in what another clone published and pushes
+# again before it gives up. Every round is a clone pushing inside this
+# command's window, so the third one in a row is a board too busy to go on
+# guessing at, not a race.
+use constant STALE_ROUNDS => 3;
+
 sub sync_after {
-    my ($self) = @_;
+    my ( $self, %opt ) = @_;
 
     # --local-only skipped the fetch and spent the guard in sync_before; skip
     # the push to match, so nothing here reaches the remote. The refs are on the
@@ -278,8 +323,13 @@ sub sync_after {
 
     my $git = $self->_sync_git;
 
-    my ( $ok, $rejected ) = $self->_sync_attempts( 'Push', $git,
-        sub { $git->push }, check_rejection => 1 );
+    my ( $ok, $rejected, $stale );
+    for my $round ( 1 .. STALE_ROUNDS ) {
+        ( $ok, $rejected, $stale ) = $self->_sync_attempts( 'Push', $git,
+            sub { $git->push( undef, undef, %opt ) }, check_rejection => 1 );
+        last unless $stale;
+        $self->_pull_after_stale_push($git) if $round < STALE_ROUNDS;
+    }
 
     # Neutralise the insurance guard on both outcomes.
     #
@@ -302,8 +352,73 @@ sub sync_after {
       . "would only be refused again." ) if $rejected;
 
     App::karr::Error::user_error(
+        "The remote kept changing underneath this push: "
+      . $self->_name_board_refs( @{ $git->push_stale } ) . ".\n"
+      . "Local refs are intact. Run 'karr sync' to retry." ) if $stale;
+
+    App::karr::Error::user_error(
         "Push failed after 3 attempts. Local refs are intact.\n"
       . "Run 'karr sync' to retry." );
+}
+
+# A guarded push came back stale (k322): another clone published refs this
+# push carried, in the window since this command's pull. Nothing went out.
+#
+# When the stale refs are only refs this command did not write -- older local
+# work, the id counter -- the other clone's versions are pulled in (a genuine
+# conflict parked and reported, as every pull does) and the push goes again.
+#
+# When the command's own writes are among them, they were decided against a
+# board that no longer exists. They are taken back first (App::karr::Git/
+# take_back_journal), so that neither the card nor the activity log entry
+# about it goes out with a later push, and then the pull brings the other
+# clone's version in. A command that can decide again on the new board --
+# App::karr::Role::ReapplyOnStale: create takes the next free id, pick the next
+# candidate -- runs once more from the top. Every other command stops with
+# exit 1 and says which card changed: re-applying a move or an edit on top of a
+# card somebody else just changed, without the caller ever seeing that change,
+# would be the silent merge this whole path exists to prevent.
+sub _pull_after_stale_push {
+    my ( $self, $git ) = @_;
+    my @own = $git->can('stale_own_writes') ? $git->stale_own_writes : ();
+
+    unless (@own) {
+        print STDERR "The remote changed "
+          . $self->_name_board_refs( @{ $git->push_stale } )
+          . " since this clone last synced; pulling that in first.\n"
+          unless $self->quiet;
+        $self->sync_pull;
+        return;
+    }
+
+    $git->take_back_journal;
+    # What the guard would insure has just been withdrawn.
+    $self->_release_guard;
+    $self->sync_pull;
+
+    my $what = $self->_name_board_refs(@own);
+    if ( $self->can('reapplies_after_stale_push') ) {
+        print STDERR "$what changed on the remote while this command ran; "
+          . "running it again on top of that.\n" unless $self->quiet;
+        $self->_stale_reapply(1);
+        die "karr: $what changed on the remote while this command ran\n";
+    }
+
+    App::karr::Error::user_error(
+        "$what changed on the remote while this command ran.\n"
+      . "Nothing this command wrote was published, and it was taken back here: "
+      . "this clone now holds the remote's version.\n"
+      . "Run the command again if it still applies." );
+}
+
+# "task 12", or the ref's path below refs/karr/ for anything that is not a card.
+sub _name_board_refs {
+    my ( $self, @refs ) = @_;
+    return join ', ', map {
+        m{\Arefs/karr/tasks/(\d+)/data\z} ? "task $1"
+          : m{\Arefs/karr/(.+)\z}         ? $1
+          : $_
+    } @refs;
 }
 
 =method sync_pull_foundation

@@ -11,6 +11,7 @@ use App::karr::Role::BoardAccess;
 use App::karr::Role::DependencyArgs;
 use App::karr::Role::Output;
 use App::karr::Role::ClaimDefault;
+use App::karr::Role::ReapplyOnStale;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::CrossBoard;
@@ -26,6 +27,11 @@ use constant CREATE_ATTEMPTS => 8;
 # create does not take (ticket #137).
 with 'App::karr::Role::BoardAccess', 'App::karr::Role::DependencyArgs',
      'App::karr::Role::Output', 'App::karr::Role::ClaimDefault';
+
+# A create whose push finds that another clone published in the meantime runs
+# again on the board as it is now -- most often because that clone took the
+# same id, and the card here simply gets the next one (k322).
+with 'App::karr::Role::ReapplyOnStale';
 
 =head1 SYNOPSIS
 

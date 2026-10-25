@@ -168,7 +168,7 @@ subtest 'end to end: a swapped remote is refused, and the ways through work' => 
         'and writing commands work again' );
 };
 
-subtest 'end to end: sync --push republishes this board over the wrong remote' => sub {
+subtest 'end to end: sync --push --force republishes this board over the wrong remote' => sub {
     my $work = _clone_pair();
 
     is( _run_karr( "$work/a", 'init', '--name', 'Mine' )->{exit}, 0, 'board created' );
@@ -179,9 +179,14 @@ subtest 'end to end: sync --push republishes this board over the wrong remote' =
     my $blocked = _run_karr( "$work/a", 'create', 'Second task' );
     isnt( $blocked->{exit}, 0, 'the swap stops the next writing command' );
     like( $blocked->{stderr}, qr/refusing to sync/, 'with the refusal' );
+    # Since k322 a plain push only sends what changed against what this clone
+    # last saw on the remote, and never overwrites another board's refs.
+    # Republishing is the explicit --force, and the refusal names it.
+    like( $blocked->{stderr}, qr/karr sync --push --force/,
+        'naming the command that republishes' );
 
-    is( _run_karr( "$work/a", 'sync', '--push' )->{exit}, 0,
-        'sync --push republishes this board over the foreign one' );
+    is( _run_karr( "$work/a", 'sync', '--push', '--force' )->{exit}, 0,
+        'sync --push --force republishes this board over the foreign one' );
     is( _run_karr( "$work/a", 'create', 'Third task' )->{exit}, 0,
         'and ordinary commands resume once the remote agrees again' );
     like( _run_karr( "$work/a", 'list', '--compact' )->{stdout},

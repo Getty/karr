@@ -6,7 +6,7 @@ use Moo;
 use MooX::Cmd;
 use feature 'say';
 use MooX::Options (
-    usage_string => 'USAGE: karr sync [--push] [--pull] [--prune] [--accept-foreign-board]',
+    usage_string => 'USAGE: karr sync [--push [--force]] [--pull] [--prune] [--accept-foreign-board]',
 );
 use App::karr::Role::BoardAccess;
 
@@ -62,7 +62,20 @@ Only fetches remote C<refs/karr/*>.
 
 =item * C<--push>
 
-Only pushes local C<refs/karr/*> state to the configured remote.
+Only pushes local C<refs/karr/*> state to the configured remote. Like every
+board push it sends only what this clone changed since it last synced, and
+each ref only while the remote still holds what this clone last saw there
+(L<App::karr::Git/push>). A ref another clone published in the meantime is
+pulled in first -- a conflict parked under C<refs/karr-conflict/> and reported,
+as on any pull -- and the push goes again; it is never written over.
+
+=item * C<--force>
+
+With C<--push> only: pushes every local board ref under the forced refspec,
+whatever the remote holds, and so overwrites what other clones published. It
+is the way to republish this board over a remote that is empty or presents a
+different board -- the two situations a pull refuses -- and nothing else
+should need it. Check C<git remote -v> first.
 
 =item * C<--prune>
 
@@ -99,6 +112,11 @@ option prune => (
     default => 0,
     doc     => 'Accept a pull that deletes every remaining board ref',
 );
+option force => (
+    is      => 'ro',
+    default => 0,
+    doc     => 'With --push: overwrite the remote board, whatever it holds',
+);
 option accept_foreign_board => (
     is      => 'ro',
     default => 0,
@@ -126,6 +144,12 @@ sub execute {
 
     my $push_only = $self->push && !$self->pull;
     my $pull_only = $self->pull && !$self->push;
+
+    # A forced push after a pull would overwrite whatever another clone
+    # published between the two, which is all --force can add there; the
+    # situations it exists for are the ones where the pull refuses anyway.
+    $self->usage_error('--force only applies together with --push (and without --pull)')
+        if $self->force && !$push_only;
 
     # Both halves go through App::karr::Role::SyncLifecycle, which this command
     # has composed all along (via App::karr::Role::BoardAccess) without using.
@@ -157,7 +181,7 @@ sub execute {
 
     unless ($pull_only) {
         print STDERR "Pushing refs/karr/ to remote...\n" unless $self->quiet;
-        $self->sync_after;
+        $self->sync_after( $self->force ? ( force => 1 ) : () );
     }
 
     # The fleet namespace, second and in the same command (#190).

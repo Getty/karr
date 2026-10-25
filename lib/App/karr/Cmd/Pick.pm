@@ -13,6 +13,7 @@ use App::karr::Role::CompactOutput;
 use App::karr::Role::DependencyCheck;
 use App::karr::Role::PickRules;
 use App::karr::Role::ClaimDefault;
+use App::karr::Role::ReapplyOnStale;
 use App::karr::Task;
 use App::karr::Config;
 use App::karr::Lock;
@@ -23,6 +24,11 @@ with 'App::karr::Role::BoardAccess', 'App::karr::Role::Output',
      'App::karr::Role::CompactOutput', 'App::karr::Role::ClaimTimeout',
      'App::karr::Role::DependencyCheck', 'App::karr::Role::PickRules',
      'App::karr::Role::ClaimDefault';
+
+# A pick whose push finds that another clone published in the meantime runs
+# again on the board as it is now: when that clone claimed the same card, this
+# one moves on to the next candidate instead of taking it over (k322).
+with 'App::karr::Role::ReapplyOnStale';
 
 =head1 SYNOPSIS
 

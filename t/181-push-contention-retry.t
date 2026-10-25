@@ -68,6 +68,9 @@ sub board_with_remote {
 # Runs one push whose Result carries @$rejected, the way libgit2 hands it back.
 sub push_rejecting {
     my ( $git, $rejected ) = @_;
+    # The board push goes out through the git CLI first since k322; the
+    # Result mocked here is libgit2's, so pin the native route.
+    local $ENV{KARR_NO_CLI_FALLBACK} = 1;
     no warnings 'redefine';
     local *Git::Native::Remote::push = sub {
         return Git::Native::Remote::Result->new(

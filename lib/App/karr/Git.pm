@@ -94,8 +94,11 @@ can fail under the native one. L</remote_has_board> narrows both: it runs
 unasked in front of a read command (#173), so its budget is capped at 10
 seconds and split between its two attempts.
 
-C<push> sends C<refs/karr/*> under a forced refspec, plus one delete refspec
-for every board ref this clone deleted and has not published yet. It
+C<push> sends the board refs this clone changed since it last saw the remote,
+plus one delete for every board ref it deleted and has not published yet --
+each one guarded by what the remote held when this clone last synced, so a
+ref another clone published in between is never overwritten: the push comes
+back stale (L</push_stale>) and the caller pulls first (k322). It
 deliberately does not prune: a prune makes the pusher's local refs the whole
 truth of the namespace, which is wrong the moment another clone holds a card
 this one has never seen -- that push took the card off the remote, and the
@@ -975,6 +978,7 @@ sub _write_ref_oid {
     my $repo = $self->_repo or return;
 
     return $self->retry_contended( "ref $ref", sub {
+        my $before = $self->_journal_wants($ref) ? $self->_ref_oid($ref) : undef;
         my $wrote = try {
             $repo->reference_create( $ref, $commit_oid, force => 1 );
             1;
@@ -985,6 +989,7 @@ sub _write_ref_oid {
         };
         return () unless $wrote;
         $WRITES++;
+        $self->_journal( $ref, $before, _oid_hex($commit_oid) );
         return 1;
     } );
 }
@@ -1031,6 +1036,7 @@ sub _cas_ref_oid {
     };
     return 0 unless $wrote;
     $WRITES++;
+    $self->_journal( $ref, $expected_old, _oid_hex($commit_oid) );
     return 1;
 }
 
@@ -1105,6 +1111,7 @@ sub delete_ref_cas {
     };
     return 0 unless $deleted;
     $WRITES++;
+    $self->_journal( $ref, $expected_old, undef );
     return 1;
 }
 
@@ -1248,6 +1255,7 @@ sub delete_ref {
         # Asking first keeps "nothing to delete" -- a no-op, not a write --
         # apart from the failure below, which libgit2 reports the same way.
         return 0 unless $repo->reference_exists($ref);
+        my $before = $self->_journal_wants($ref) ? $self->_ref_oid($ref) : undef;
 
         # Before the ref goes, not after: a crash in between leaves a
         # tombstone for a ref that is still there, which the push skips,
@@ -1264,6 +1272,7 @@ sub delete_ref {
         };
         return () unless $deleted;
         $WRITES++;
+        $self->_journal( $ref, $before, undef );
         return 1;
     } );
 }
@@ -1436,6 +1445,174 @@ my @TOMBSTONED = (
 # but not by taking the remote's version -- which is the difference the
 # conflict report has to know about.
 use constant KEPT_LOCAL => 'kept-local';
+
+# ----- What this process wrote (k322) -----
+#
+# A board push is guarded: every ref it sends carries what the remote has to
+# hold for the update to land (see push). When that expectation fails, another
+# clone published in the window between this command's pull and its push, and
+# the command's own writes were made against a board that is no longer the
+# board. They must not be published, and they must not linger here either: a
+# card written under an id another clone has since taken, or an activity log
+# entry for a move that never reached the board, would go out with the next
+# push of anything else.
+#
+# So App::karr::Role::SyncLifecycle opens a journal once its pull is through,
+# every board ref write and delete below records what the ref held before this
+# process first touched it and what it holds now, and on a stale push the
+# journal is taken back -- each ref returned to what it held before, but only
+# where it still holds this process's last write. Another process of the same
+# clone that wrote the ref since owns it now, and its write stands.
+#
+# Only refs/karr/*: the pick lock, the tombstones and the mirrors are this
+# clone's bookkeeping, never pushed. And never the id counter, which only moves
+# forward -- an id this command allocated is burnt rather than handed out
+# twice (#172).
+
+sub _oid_hex {
+    my ($oid) = @_;
+    return undef unless defined $oid;
+    return blessed($oid) ? $oid->hex : $oid;
+}
+
+# The OID $ref points at, or undef when it is absent.
+sub _ref_oid {
+    my ( $self, $ref ) = @_;
+    my $repo = $self->_repo or return undef;
+    return undef unless $repo->reference_exists($ref);
+    return try {
+        my $t = $repo->reference($ref)->target;
+        $t ? $t->hex : undef;
+    } catch { undef };
+}
+
+sub _journal_wants {
+    my ( $self, $ref ) = @_;
+    my $journal = $self->{_journal} or return 0;
+    return 0 unless index( $ref, BOARD_ROOT ) == 0;
+    return exists $journal->{$ref} ? 0 : 1;
+}
+
+sub _journal {
+    my ( $self, $ref, $before, $after ) = @_;
+    my $journal = $self->{_journal} or return;
+    return unless index( $ref, BOARD_ROOT ) == 0;
+    if ( exists $journal->{$ref} ) {
+        $journal->{$ref}[1] = $after;
+    }
+    else {
+        $journal->{$ref} = [ $before, $after ];
+    }
+    return;
+}
+
+sub start_journal {
+    my ($self) = @_;
+    $self->{_journal} = {};
+    return;
+}
+
+=method start_journal
+
+    $git->start_journal;
+
+Starts recording the board refs (C<refs/karr/*>) this object writes or
+deletes: for each one, what it held before the first write and what it holds
+now. Starting again forgets what was recorded so far.
+L<App::karr::Role::SyncLifecycle/sync_before> calls it once its pull is
+through, so the journal holds exactly the command's own writes -- the ones
+L</take_back_journal> undoes when the push finds that the remote moved
+underneath them.
+
+=cut
+
+sub journal_refs {
+    my ($self) = @_;
+    my $journal = $self->{_journal} || {};
+    return grep { !_same_oid( @{ $journal->{$_} } ) } sort keys %$journal;
+}
+
+=method journal_refs
+
+    my @refs = $git->journal_refs;
+
+The board refs the journal (L</start_journal>) has seen this object change,
+sorted. A ref written and then put back to what it held is not among them.
+
+=cut
+
+sub stale_own_writes {
+    my ($self) = @_;
+    my %stale = map { $_ => 1 } @{ $self->push_stale };
+    return grep { $stale{$_} && $_ ne NEXT_ID_REF } $self->journal_refs;
+}
+
+=method stale_own_writes
+
+    my @refs = $git->stale_own_writes;
+
+The refs that are both stale after the last L</push> (L</push_stale>) and
+written by this object since L</start_journal> -- the id counter excepted,
+which converges on its own (L</pull> keeps the further one). Non-empty means
+the command's own writes were made against a board the remote has moved past.
+
+=cut
+
+sub take_back_journal {
+    my ($self) = @_;
+    my $journal = delete $self->{_journal} or return ();
+    my $repo = $self->_repo or return ();
+
+    my @back;
+    for my $ref ( sort keys %$journal ) {
+        next if $ref eq NEXT_ID_REF;
+        my ( $before, $ours ) = @{ $journal->{$ref} };
+        next if _same_oid( $before, $ours );
+        next unless _same_oid( $self->_ref_oid($ref), $ours );
+
+        my $done = try {
+            if ( defined $before ) {
+                $repo->reference_create( $ref, $before, expected_old => $ours );
+            }
+            else {
+                # Created by this process: gone again, but only while it still
+                # holds what this process put there (libgit2 refuses the delete
+                # with GIT_EMODIFIED otherwise).
+                $repo->reference($ref)->delete;
+            }
+            1;
+        } catch { 0 };
+        next unless $done;
+
+        # A deletion taken back is no deletion to publish.
+        if ( !defined $ours and my $tomb = $self->_tombstone_name($ref) ) {
+            $self->_delete_ref_untracked($tomb);
+        }
+        CORE::push @back, $ref;
+    }
+    return @back;
+}
+
+=method take_back_journal
+
+    my @refs = $git->take_back_journal;
+
+Undoes what the journal (L</start_journal>) recorded and closes it: every
+board ref this object changed is put back to what it held before, and a
+deletion's tombstone is dropped with it, so nothing of it is published. A ref
+that no longer holds this object's last write is left alone -- another process
+has written it since, and that write stands -- and so is the id counter
+C<refs/karr/meta/next-id>, which only ever moves forward. Returns the refs that
+were put back, sorted.
+
+This is the other half of a guarded push (L</push>): when the remote moved
+underneath a ref the command wrote, the command's writes were decided against
+a board that no longer exists, and L<App::karr::Role::SyncLifecycle/sync_after>
+takes them back before it pulls in what the other clone published. The ref
+writes are bookkeeping, not board edits: they do not count towards
+L</pending_writes> and they record no tombstone.
+
+=cut
 
 sub _mirror_prefix {
     my ( $self, $remote, $root ) = @_;
@@ -1737,8 +1914,8 @@ got here first", which is not an answer worth keeping.
 #       libgit2's local transport -- a bare repo reached by a path or by
 #       file://, which is what the tests and the reproducers use. It looks the
 #       destination ref up, finds nothing, and creates it *without* force, so
-#       a ref another push created in between fails the create. karr never
-#       asks for a forceless create: the board refspec is +refs/karr/*.
+#       a ref another push created in between fails the create, whatever
+#       the refspec asks for.
 #
 #   failed to update ref
 #       git-receive-pack, which is what every real ssh/https/git:// remote
@@ -1810,6 +1987,11 @@ retries on them instead of reporting a create that wrote its card as a failure
 (#181). It is not a local-transport quirk: against a real C<git daemon> it is
 the more common outcome of the two, because receive-pack updates all refs in
 one transaction and one contended ref fails the lot.
+
+Pushing again is safe on the board push because it is guarded (L</push>):
+the next attempt still expects what this clone last saw on the remote, so if
+the other push did land, that attempt comes back stale (L</push_stale>)
+instead of overwriting it.
 
 =cut
 
@@ -1941,17 +2123,26 @@ sub _misdirected_local_push {
 # The three public pushes -- the board's, a single helper ref's and the fleet
 # namespace's -- differ in what they send and in what they do afterwards, never
 # in this, so it is written once.
+#
+# %opt: native_only => bool, for the guarded board push's native route
+# (_push_guarded_native), which only runs because the CLI cannot or may not:
+# no CLI fallback, and a misdirected push URL (#208) is the named refusal it is
+# under KARR_NO_CLI_FALLBACK.
 sub _push_refspecs {
-    my ( $self, $remote, $refspecs ) = @_;
+    my ( $self, $remote, $refspecs, %opt ) = @_;
     my $repo = $self->_repo or return 0;
     $self->{_push_rejections} = [];
+    my $fallback = sub {
+        return 0 if $opt{native_only};
+        return $self->_cli_transport( 'push', $remote, $refspecs );
+    };
 
     my $result;
     my $ok = try {
         my $r = $repo->remote($remote);
         if ( my $why = _misdirected_local_push($r) ) {
             $self->{_last_error} = $why;
-            return $self->_cli_transport( 'push', $remote, $refspecs );
+            return $fallback->();
         }
         $result = $r->push(
             refspecs    => $refspecs,
@@ -1960,7 +2151,7 @@ sub _push_refspecs {
         1;
     } catch {
         $self->{_last_error} = "$_";
-        $self->_cli_transport( 'push', $remote, $refspecs );
+        $fallback->();
     };
     return 0 unless $ok;
     return $self->_accept_push_result( $remote, $result ) ? 1 : 0;
@@ -1968,9 +2159,13 @@ sub _push_refspecs {
 
 # The fetch half of the same: native first, CLI fallback, no reconciliation.
 # An empty @$refspecs means the remote's configured ones.
+#
+# %opt: prune => bool; native_only => bool, no CLI fallback (see
+# _push_refspecs).
 sub _fetch_refspecs {
     my ( $self, $remote, $refspecs, %opt ) = @_;
     my $repo = $self->_repo or return 0;
+    my $native_only = delete $opt{native_only};
     return try {
         my $r = $repo->remote($remote);
         $r->fetch(
@@ -1981,16 +2176,18 @@ sub _fetch_refspecs {
         1;
     } catch {
         $self->{_last_error} = "$_";
-        $self->_cli_transport( 'fetch', $remote, $refspecs, %opt );
+        $native_only ? 0 : $self->_cli_transport( 'fetch', $remote, $refspecs, %opt );
     };
 }
 
 sub push {
-    my ( $self, $remote, $refspec ) = @_;
+    my ( $self, $remote, $refspec, %opt ) = @_;
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
     $refspec //= BOARD_REFSPEC;
     my $board = $refspec eq BOARD_REFSPEC;
+    $self->{_push_stale}      = [];
+    $self->{_push_rejections} = [];
 
     # No remote is no debt. A tombstone is the record of a deletion this clone
     # owes the remote (TOMBSTONE_ROOT), and _clear_pending_deletes only ever
@@ -2016,6 +2213,19 @@ sub push {
         return 1;
     }
 
+    return $self->_push_refspecs( $remote, [$refspec] ) unless $board;
+    return $self->_push_board_forced($remote) if $opt{force};
+    return $self->_push_board_guarded($remote);
+}
+
+# The board push as it was before k322, for `karr sync --push --force` alone:
+# every local board ref under the forced refspec, whatever the remote holds.
+# It is the one way to put this board back over a remote that is empty or
+# carries a different board -- the two refusals a pull makes (#82, #95) -- where
+# a guarded push can only find every expectation broken.
+sub _push_board_forced {
+    my ( $self, $remote ) = @_;
+
     # A board push publishes exactly two things: the local refs as they stand
     # here, and the deletions this clone recorded. It used to publish a third
     # -- "and nothing else exists", via prune -- which is a claim no clone is
@@ -2033,17 +2243,14 @@ sub push {
     # remote, the direction that converges harmlessly (see
     # _mirror_local_state). Reading it afterwards is the direction that
     # loses cards: the mirror would claim refs the push never carried.
-    my ( $local, $tombstones, @deletes );
-    if ($board) {
-        $local      = $self->ref_oids(BOARD_ROOT) || {};
-        $tombstones = $self->_pending_deletes;
-        # A tombstone whose ref is back on the board is stale, not a
-        # deletion: `karr restore` deletes refs/karr/meta/board-id on its way
-        # through and writes it straight back (#95), and publishing that
-        # tombstone would take the board's identity off the remote.
-        @deletes = grep { !exists $local->{$_} } sort keys %$tombstones;
-    }
-    my @refspecs = ( $refspec, map { ":$_" } @deletes );
+    my $local      = $self->ref_oids(BOARD_ROOT) || {};
+    my $tombstones = $self->_pending_deletes;
+    # A tombstone whose ref is back on the board is stale, not a deletion:
+    # `karr restore` deletes refs/karr/meta/board-id on its way through and
+    # writes it straight back (#95), and publishing that tombstone would take
+    # the board's identity off the remote.
+    my @deletes = grep { !exists $local->{$_} } sort keys %$tombstones;
+    my @refspecs = ( BOARD_REFSPEC, map { ":$_" } @deletes );
 
     return 0 unless $self->_push_refspecs( $remote, \@refspecs );
 
@@ -2052,33 +2259,297 @@ sub push {
     # every ref this clone ever pushed would still look "changed locally" on
     # the next pull, and the other agent's perfectly ordinary update would be
     # reported as a conflict.
-    if ($board) {
-        $self->_mirror_local_state( $remote, $local, \@deletes );
-        $self->_clear_pending_deletes( $tombstones, \@deletes );
-    }
+    $self->_mirror_local_state( $remote, $local, \@deletes );
+    $self->_clear_pending_deletes( $tombstones, \@deletes );
     return 1;
 }
+
+# The board push (k322). It sends exactly the refs this clone changed since it
+# last synced, and each one only on the condition that the remote still holds
+# what this clone last saw there -- the mirror's value, or nothing at all for a
+# ref the mirror does not have, which makes a new card create-only.
+#
+# The forced push before it carried no such condition, and the window between
+# a command's pull and its push was enough to lose work: a second clone that
+# pushed in it had its ref replaced, and because the loser had already pushed,
+# its next pull adopted the winner's version as an ordinary remote update --
+# no conflict parked on either side. `create` lost a card that way (both clones
+# allocated the same id from the same counter), and `pick` handed one card to
+# two agents.
+#
+# A ref whose expectation fails is not sent again as it is: it is stale, and
+# the caller has to pull in what the other clone published before anything of
+# its own goes out (push_stale, and App::karr::Role::SyncLifecycle/sync_after).
+#
+# Refs where the board and the mirror agree are not sent at all. They carry
+# nothing the remote has not seen, and sending them anyway is exactly the write
+# over a version this clone has never seen. Since k324 the mirror only claims
+# what the board has taken, so "agrees with the mirror" means "nothing to say".
+sub _push_board_guarded {
+    my ( $self, $remote ) = @_;
+
+    my $local      = $self->ref_oids(BOARD_ROOT) || {};
+    my $prefix     = $self->_mirror_prefix($remote);
+    my $tracked    = $self->ref_oids($prefix) || {};
+    my $tombstones = $self->_pending_deletes;
+    my $seen = sub { $tracked->{ $prefix . substr( $_[0], length BOARD_ROOT ) } };
+
+    my ( %send, %expect, @unseen );
+    for my $ref ( keys %$local ) {
+        my $was = $seen->($ref);
+        next if _same_oid( $local->{$ref}, $was );
+        $send{$ref}   = $local->{$ref};
+        $expect{$ref} = $was;
+    }
+    for my $ref ( keys %$tombstones ) {
+        # Back on the board: a stale tombstone, not a deletion (see
+        # _push_board_forced).
+        next if exists $local->{$ref};
+        my $was = $seen->($ref);
+        # A ref the remote never had, as far as this clone knows, is no
+        # deletion to publish: whatever sits at that name over there is
+        # somebody else's, and deleting it is the loss #178 was.
+        if ( !defined $was ) { CORE::push @unseen, $ref; next }
+        $send{$ref}   = undef;
+        $expect{$ref} = $was;
+    }
+
+    unless (%send) {
+        $self->_clear_pending_deletes( $tombstones, \@unseen );
+        return 1;
+    }
+
+    return 0 unless $self->_push_guarded( $remote, \%send, \%expect );
+
+    my @deletes = grep { !defined $send{$_} } sort keys %send;
+    $self->_mirror_local_state( $remote,
+        { map { $_ => $send{$_} } grep { defined $send{$_} } keys %send },
+        \@deletes );
+    $self->_clear_pending_deletes( $tombstones, [ @deletes, @unseen ] );
+    return 1;
+}
+
+# Send %$send (ref => oid, undef = delete), each only while the remote holds
+# $expect->{ref} (undef = nothing). Returns 1 when everything landed, 0
+# otherwise with last_error set, and push_stale or push_rejections saying
+# which refs and why.
+#
+# The git CLI is the route: --force-with-lease is git's name for this exact
+# condition, checked against the remote's own advertisement and then held by
+# receive-pack's compare-and-swap on the update, so nothing can slip in
+# between. libgit2 has no such option, and the one place it could be built --
+# git_remote_callbacks.push_negotiation -- is not bound by Git::Native yet
+# (p5-git-native k34). So the native transport is the fallback here, the
+# reverse of every other transport call in this class, and only where the CLI
+# cannot run at all or KARR_NO_CLI_FALLBACK forbids it.
+sub _push_guarded {
+    my ( $self, $remote, $send, $expect ) = @_;
+    unless ( $ENV{KARR_NO_CLI_FALLBACK} ) {
+        my $done = $self->_push_guarded_cli( $remote, $send, $expect );
+        return $done unless $done eq 'unavailable';
+    }
+    return $self->_push_guarded_native( $remote, $send, $expect );
+}
+
+# --atomic as well: either every ref lands or none does. A push that landed the
+# activity log entry and lost the card it talks about would publish exactly
+# the half that take_back_journal is there to withdraw.
+sub _push_guarded_cli {
+    my ( $self, $remote, $send, $expect, $no_atomic ) = @_;
+    my @refs = sort keys %$send;
+    my @args = (
+        'push', '--porcelain', ( $no_atomic ? () : '--atomic' ),
+        map( { "--force-with-lease=$_:" . ( $expect->{$_} // '' ) } @refs ),
+        $remote,
+        # The OID, not the local ref name: what goes out is exactly the
+        # snapshot the expectations and the mirror update are made from, even
+        # if another process of this clone writes the ref in between.
+        map( { defined $send->{$_} ? "$send->{$_}:$_" : ":$_" } @refs ),
+    );
+
+    my $native = $self->{_last_error};
+    my $run    = $self->_run_git(@args);
+
+    if ( $run->{failure} eq 'start' ) {
+        $self->{_last_error} = "git CLI unavailable: $run->{err}"
+          . ( defined $native ? " (native: $native)" : '' );
+        return 'unavailable';
+    }
+    my $detail = $run->{err};
+    $detail =~ s/\s+\z//;
+    my $suffix = length $detail ? ": $detail" : '';
+    if ( $run->{failure} eq 'timeout' ) {
+        $self->{_last_error} = "git push timed out after $run->{timeout}s and "
+          . "was killed$suffix";
+        return 0;
+    }
+    if ( my $sig = $run->{status} & 127 ) {
+        $self->{_last_error} = "git push was killed by signal $sig$suffix";
+        return 0;
+    }
+    return 1 unless $run->{status} >> 8;
+
+    my $rejected = _parse_push_porcelain( $run->{out} );
+    unless (@$rejected) {
+        # A server too old for atomic pushes says so before a single ref is
+        # considered. The expectations still hold ref by ref without it.
+        return $self->_push_guarded_cli( $remote, $send, $expect, 1 )
+            if !$no_atomic && $detail =~ /does not support --atomic/i;
+        $self->{_last_error} = "git push failed: $detail";
+        return 0;
+    }
+    return $self->_settle_guarded_rejections( $remote, $rejected,
+        _count_push_porcelain_accepted( $run->{out} ) );
+}
+
+# Without the CLI there is no way to make the remote check the expectation
+# itself, so it is checked here, against a fetch taken immediately before the
+# push. That leaves the round trip between the two open -- far narrower than
+# the whole command it used to be, and closed once Git::Native binds
+# push_negotiation (p5-git-native k34). A new ref is still created
+# create-only: libgit2 refuses to create one that appeared in between.
+sub _push_guarded_native {
+    my ( $self, $remote, $send, $expect ) = @_;
+
+    return 0 unless $self->_fetch_refspecs( $remote,
+        [ $self->_fetch_refspec($remote) ], prune => 1, native_only => 1 );
+    my $fetched = $self->_fetch_prefix($remote);
+    my $remote_now = $self->ref_oids($fetched) || {};
+
+    my @stale = grep {
+        !_same_oid( $remote_now->{ $fetched . substr( $_, length BOARD_ROOT ) },
+            $expect->{$_} )
+    } sort keys %$send;
+    return $self->_report_stale( $remote, \@stale ) if @stale;
+
+    my @refspecs = map { defined $send->{$_} ? "+$_:$_" : ":$_" } sort keys %$send;
+    return 1 if $self->_push_refspecs( $remote, \@refspecs, native_only => 1 );
+
+    my $rejected = $self->push_rejections;
+    return 0 unless @$rejected;
+    # libgit2 pushes ref by ref: whatever it did not reject landed.
+    return $self->_settle_guarded_rejections( $remote, $rejected,
+        scalar( keys %$send ) - @$rejected );
+}
+
+# Sort the refused refs of a guarded push into the answers it can get:
+#
+#   stale        "stale info": the remote no longer holds what this clone
+#                expected, so another clone published that ref (k322).
+#   contended    a concurrent push held the ref, in the words
+#                _is_contended_push_reason knows. Whether that push landed is
+#                not known yet; the caller pushes again under the same
+#                expectations, and that attempt comes back stale if it did.
+#   collateral   "atomic push failed" / "atomic transaction failed": nothing
+#                wrong with this ref, it went down with the others.
+#   refused      everything else, the server's final answer (#84).
+#
+# One refusal makes the push final, whatever else came back. A push that only
+# reports collateral had its transaction fail as a whole, which is the
+# compare-and-swap losing too.
+sub _settle_guarded_rejections {
+    my ( $self, $remote, $rejected, $accepted ) = @_;
+    my ( @stale, @contended, @collateral, @refused );
+    for my $entry (@$rejected) {
+        my $reason = $entry->{reason} // '';
+        if ( $reason =~ /stale info/i ) {
+            CORE::push @stale, $entry->{ref};
+        }
+        elsif ( _is_contended_push_reason($reason) ) {
+            CORE::push @contended, $entry;
+        }
+        elsif ( $reason =~ /atomic/i ) {
+            CORE::push @collateral, $entry->{ref};
+        }
+        else {
+            CORE::push @refused, $entry;
+        }
+    }
+
+    # A refusal is final, whatever else came back with it. Contention -- a
+    # concurrent push held the ref -- is not yet known to be stale: the caller
+    # pushes again under the same expectations (push_contention), and that
+    # attempt comes back stale if the other push did land.
+    if ( @refused || ( @contended && !@stale ) ) {
+        my $rejections = @refused ? \@refused : \@contended;
+        $self->{_push_rejections} = $rejections;
+        $self->{_last_error} =
+            _push_rejection_error( $remote, $rejections, $accepted );
+        return 0;
+    }
+    $self->{_push_rejections} = [];
+    return $self->_report_stale( $remote, @stale ? \@stale : \@collateral );
+}
+
+sub _report_stale {
+    my ( $self, $remote, $stale ) = @_;
+    $self->{_push_stale} = [ sort @$stale ];
+    my $names = join ', ', map { substr $_, length BOARD_ROOT } @{ $self->{_push_stale} };
+    $self->{_last_error} = "the remote '$remote' changed $names since this "
+      . "clone last synced";
+    return 0;
+}
+
+sub push_stale {
+    my ($self) = @_;
+    return $self->{_push_stale} || [];
+}
+
+=method push_stale
+
+    my $stale = $git->push_stale;   # [ 'refs/karr/tasks/12/data', ... ]
+
+The board refs the most recent L</push> did not send because the remote no
+longer holds what this clone last saw there: another clone published them in
+the meantime. Empty after a push that landed, after one that failed for any
+other reason, and after any push that is not the board's. Reset at the start
+of every push.
+
+A stale ref is neither a transport failure nor a rejection, and the same push
+again cannot land it. What it needs is a pull, which brings the other clone's
+version in, and then the command decides what its own write still means --
+L<App::karr::Role::SyncLifecycle/sync_after> does exactly that. The refs are
+not listed in L</push_rejections>.
+
+=cut
 
 =method push
 
     my $ok = $git->push( $remote, $refspec );
+    my $ok = $git->push( $remote, undef, force => 1 );   # karr sync --push --force
 
-Pushes C<$refspec> (default: the forced board refspec covering all of
-C<refs/karr/*>) to C<$remote> (default C<origin>). Returns C<1> when
-C<$remote> isn't configured or the push lands, C<0> otherwise --
-including when the transport itself succeeded but the far side rejected some
-or all of the refs (see L</push_rejections>, and L</last_error> for the
-combined message). Tries the native transport first, falls back to the CLI on
-transport failure (L</DESCRIPTION>).
+Pushes the board to C<$remote> (default C<origin>), or C<$refspec> instead of
+the board when one is given. Returns C<1> when C<$remote> isn't configured or
+the push lands, C<0> otherwise, with L</last_error> saying why.
 
-A push of the default board refspec is the only one that carries board
-semantics: it adds a delete refspec for every ref this clone deleted and has
-not published yet (recorded under C<refs/karr-local/deleted/>, so the record
-outlives the process that made the deletion), and it updates the
-C<refs/karr-remote/> mirror afterwards. It does I<not> prune -- a ref on the
-remote that this clone has never seen is another agent's card, not a
-leftover, and pruning it is how a card was lost outright (#178). A custom
-C<$refspec> (as L</push_ref> uses) does neither.
+The board push is guarded (k322). It sends only the board refs this clone
+changed since it last synced -- those that differ from the
+C<refs/karr-remote/> mirror -- plus a deletion for every ref this clone
+deleted and has not published yet (recorded under C<refs/karr-local/deleted/>,
+so the record outlives the process that made the deletion). Each of them goes
+out on a condition: the remote must still hold what the mirror says it held,
+and a ref the mirror does not have must not exist there at all, so a new card
+is created and never written over somebody else's. When a condition fails
+nothing is sent and L</push_stale> names the refs; when the far side refuses a
+ref outright, L</push_rejections> does. The mirror follows what the push
+published. It does I<not> prune -- a ref on the remote that this clone has
+never seen is another agent's card, not a leftover, and pruning it is how a
+card was lost outright (#178) -- and a deletion of a ref the mirror never had
+is not sent either, for the same reason.
+
+The guarded push goes through the git CLI (C<--force-with-lease>,
+C<--atomic>), the reverse of every other transport call here: libgit2 has no
+way to make the remote check the condition. Where the CLI cannot run, or
+C<KARR_NO_CLI_FALLBACK> is set, the native transport checks it against a fetch
+taken right before the push, which leaves that one round trip open.
+
+C<< force => 1 >> is the board push as it was before: every local board ref
+under the forced refspec C<+refs/karr/*:refs/karr/*>, whatever the remote
+holds. C<karr sync --push --force> is the only caller; it republishes a board
+over a remote that is empty or presents a different board, where the guarded
+push would send nothing (the mirror still says the remote has it all) or come
+back stale. A custom C<$refspec> (as L</push_ref> uses) is sent
+forced as given, with no deletions and no mirror update.
 
 Without a configured remote it is nearly a no-op: it still clears those
 deletion records, because they are what this clone owes a remote and there is
@@ -2184,7 +2655,7 @@ sub _check_board_identity {
           . "That is what a re-initialised origin, an edited remote URL, or a "
           . "stale clone pointed at the wrong repository looks like.\n"
           . "Check the remote first (git remote -v). Then either republish this "
-          . "board over it with 'karr sync --push', or -- if the remote's board "
+          . "board over it with 'karr sync --push --force', or -- if the remote's board "
           . "really is the one you want now -- adopt it with 'karr sync "
           . "--accept-foreign-board'.\n";
     }
@@ -2192,24 +2663,29 @@ sub _check_board_identity {
     if ( defined $local_id && !defined $remote_id ) {
         # A pre-change karr's forced, pruning push drops the stamp off the
         # remote while the rest of the board stays. That remote is still this
-        # board, so keep the identity continuous: point the fetched stamp
-        # slot at the local stamp, or reconciliation would read the missing
-        # ref as "the remote deleted the id" and strip it here too.
+        # board, so keep the identity continuous, or reconciliation would read
+        # the missing ref as "the remote deleted the id" and strip it here too.
         # Only while the remote still IS a board -- an empty one is the wipe
         # guard's case, and the stamp must not count as a survivor there.
+        #
+        # The mirror slot is what goes, so that the local stamp reads as work
+        # this clone has not published yet -- which is what it now is: the
+        # remote has none, and the mirror said it had. Reconciliation keeps it
+        # (L != T, R == T) and the next push re-arms the remote with it,
+        # create-only. Pointing the fetched slot at the local stamp instead, as
+        # this used to, kept the stamp too, but made board and mirror agree on
+        # it, and a guarded push sends nothing the mirror already has (k322).
         my $remote_now = $self->ref_oids($prefix) || {};
         if ( %$remote_now ) {
-            my ( $oid ) = $self->read_ref_with_oid(BOARD_ID_REF);
-            my $slot = $prefix . 'meta/board-id';
+            my $slot = $self->_mirror_prefix($remote) . 'meta/board-id';
             # Unchecked, this was the same defect as #154 one ref over: the
-            # fetched copy would keep saying the remote has no stamp,
-            # reconciliation would read that as "the remote deleted the id"
-            # and strip it here too, and the next clone to pull would meet a board that had lost
-            # its identity. Stopping leaves the local stamp untouched and the
-            # next push re-arms the remote, which is the outcome this branch is
-            # for anyway.
-            if ( defined $oid && !$self->_write_ref_untracked( $slot, $oid ) ) {
-                die "karr: could not update the fetched copy of '$remote' "
+            # mirror would keep saying the remote has the stamp,
+            # reconciliation would read its absence as "the remote deleted the
+            # id" and strip it here too, and the next clone to pull would meet
+            # a board that had lost its identity. Stopping leaves the local
+            # stamp untouched, and the next pull tries again.
+            unless ( $self->_delete_ref_untracked($slot) ) {
+                die "karr: could not update the mirror of '$remote' "
                   . "($slot).\n"
                   . "Another karr process is writing it, or a .lock file under "
                   . ".git/refs/ was left behind by one that was killed.\n"
@@ -2455,7 +2931,7 @@ sub _refuse_wholesale_wipe {
       . "what a re-created origin, an edited remote URL, or a rolled-back "
       . "hosting-side restore look like.\n"
       . "Check the remote first (git remote -v). Then either republish this "
-      . "board with 'karr sync --push', or accept the deletion with "
+      . "board with 'karr sync --push --force', or accept the deletion with "
       . "'karr sync --prune'.\n";
 }
 
