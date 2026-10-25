@@ -12,11 +12,13 @@ This is a Dist::Zilla distribution using `[@Author::GETTY]`.
 
 ## Delegation
 
-Engineering discipline, the delegation lane, board coordination, and the release policy live in
-`.claude/rules/karr-rules.md` — auto-loaded by Claude Code at launch. Don't restate them here.
+Engineering discipline, the delegation lock, board coordination and the publish gate are shared
+house rules (skilletor bundle `getty-cpan-dist@getty`); the lanes, the dogfood board and the
+release specifics live in `.claude/rules/karr-rules.md` — all auto-loaded by Claude Code at
+launch. Don't restate them here.
 
 **Delegate behavior-relevant code instead of editing it yourself** (the rule and rationale are in
-the rules file). Agents in this repo (skills force-loaded via `briefing.skills`):
+the shared rule `getty-agent-delegation`). Agents in this repo (skills force-loaded via `briefing.skills`):
 
 | Task | Agent |
 |---|---|
@@ -169,12 +171,13 @@ ticket while it claimed the board held the live status.
 - For user-visible changes, add an unreleased entry under `{{$NEXT}}` in `Changes`
 - POD follows `[@Author::GETTY]` conventions (inline `=attr`, `=method`, no manual NAME/VERSION/AUTHOR sections)
 - `# ABSTRACT:` comment required on every .pm file
-- Release policy (`dzil release` only with explicit go-ahead) is in `.claude/rules/karr-rules.md`
+- Release policy (`dzil release` only with explicit go-ahead) is in the shared rule `getty-publish-gate`
 
 ## Repository metadata
 
 Agent/skill/rule material lives under `.claude/`:
-- `rules/karr-rules.md` — house rules, auto-loaded (discipline, delegation, coordination, release)
+- `rules/karr-rules.md` — project house rules, auto-loaded (lanes, dogfood board, release); the
+  shared ones arrive as `rules/.local.*.md` from skilletor
 - `agents/karr-*.md` — the project agent fleet (briefing-aware; skills force-loaded at spawn)
 - `skills/` — twelve skills. Nine are shared across repositories via manage-skills
   hardlinks (`kanban-issues-karr-coordination`, `kanban-issues-karr-ticket`,

@@ -1,89 +1,55 @@
 # App::karr House Rules
 
-Apply to every task in this repository unless explicitly overridden. Bias: caution over speed
-on non-trivial work; use judgment on trivial tasks. Loaded automatically by Claude Code at
-launch (same priority as `.claude/CLAUDE.md`). Subagents get their discipline from the skills
-force-loaded via `briefing.skills` — this file is for the orchestrating agent.
+The shared house rules come from skilletor — bundle `getty-cpan-dist@getty`: engineering
+discipline, the delegation lock, the publish gate, karr coordination, CPAN release. They load
+as `.claude/rules/.local.*.md`; if they are missing, run `skilletor sync` and publish nothing
+until they load. This file adds what is true only here, and wins where it differs.
 
-## Engineering discipline
+## What this repo is
 
-1. **Think before coding** — State assumptions. When uncertain, ask rather than guess. Present
-   alternatives when ambiguous. Push back when a simpler approach exists. Stop when confused;
-   name what's unclear.
-2. **Simplicity first** — Minimum code that solves the problem. Nothing speculative. No
-   abstractions for single-use code.
-3. **Surgical changes** — Touch only what you must. Don't "improve" adjacent code, comments, or
-   formatting. Match existing style.
-4. **Read before you write** — Before new code, read exports, immediate callers, shared
-   utilities (`Role/*`, `BoardStore`, `Git`, `Task`, `Config`). "Looks orthogonal" is dangerous.
-5. **Tests verify intent, not just behavior** — A test that can't fail when the logic changes is
-   wrong. Reproduce a bug before fixing it; leave a regression test behind.
-6. **Match the codebase's conventions, even if you disagree** — Conformance > taste. Surface a
-   harmful convention; don't fork silently.
-7. **Fail loud** — "Done" is wrong if anything was skipped silently. "Tests pass" is wrong if any
-   were skipped. Surface uncertainty, don't hide it.
+App::karr — Kanban Assignment & Responsibility Registry, the tool behind the board itself.
+Read first: exports, immediate callers and the shared utilities (`Role/*`, `BoardStore`,
+`Git`, `Task`, `Config`).
 
-## Delegation
+## Agent team
 
-Depends on whether the Agent/Task tool is available to you.
+| Task | Agent |
+|---|---|
+| Task/config semantics, lifecycle, claims, dependencies, activity log, ordinary board commands, filtering, rendering, `context`, `metrics` | `karr-board-worker` |
+| Git transport, refs-backed persistence, CAS, locks, sync, encoding, `init`/`sync`/`materialize`/`import`/`repair`/`backup`/`restore`/`destroy`/`unlock`, share-file plumbing | `karr-ref-worker` |
+| karr-foundation: multi-board discovery, overview, agent command resolution, drain loops, `.karr.lock`/`.karr.state`, cooldown, stall detection, auto-blocking, `disable`/`enable` | `karr-foundation-worker` |
+| Behavior-relevant code that spans those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
+| Write/extend tests under `t/` | `karr-test-writer` |
+| Commits, `Changes`, card → done, pre-release audit | `karr-release-manager` |
+| Docs: POD, README, `CONTEXT.md`, ADRs, shipped skills; doc audits | `karr-doc-writer` |
+| Read-only research, audit, gap analysis | the narrowest domain worker ("read-only, change nothing") |
 
-- **You can spawn subagents** (orchestrating main agent): Do NOT touch behavior-relevant karr
-  code yourself — delegate to the domain worker below. Your lane: coordinate, inspect, plan, review diffs,
-  run tests, edit non-behavioral docs. Why: only the `karr-*` agents get their skills
-  force-loaded via `briefing.skills`; you get no briefing and would touch internals with too
-  little context. Specialist lanes:
-
-  | Task | Agent |
-  |---|---|
-  | Task/config semantics, lifecycle, claims, dependencies, activity log, ordinary board commands, filtering, rendering, `context`, `metrics` | `karr-board-worker` |
-  | Git transport, refs-backed persistence, CAS, locks, sync, encoding, `init`/`sync`/`materialize`/`import`/`repair`/`backup`/`restore`/`destroy`/`unlock`, share-file plumbing | `karr-ref-worker` |
-  | karr-foundation: multi-board discovery, overview, agent command resolution, drain loops, `.karr.lock`/`.karr.state`, cooldown, stall detection, auto-blocking, `disable`/`enable` | `karr-foundation-worker` |
-  | Behavior-relevant code that spans those domains, or none of them cleanly | `karr-worker` (generalist fallback) |
-  | Write/extend tests under `t/` | `karr-test-writer` |
-  | Commits, `Changes`, card → done, pre-release audit | `karr-release-manager` |
-  | Docs: POD, README, `CONTEXT.md`, ADRs, shipped skills; doc audits | `karr-doc-writer` |
-
-  Pick the narrowest domain worker that covers the task — they brief on one domain instead of
-  the whole distribution, and each one names the other two in its own boundaries section, so a
-  task that turns out to belong elsewhere gets handed back rather than solved from the wrong
-  context. `karr-worker` stays for work that genuinely crosses the seams.
-
-- **You cannot spawn subagents** (you ARE a `karr-*` agent): The delegation lock does not apply —
-  implement, refactor, debug, and test per these rules.
+Pick the narrowest domain worker that covers the task — they brief on one domain instead of the
+whole distribution, and each one names the other two in its own boundaries section, so a task
+that turns out to belong elsewhere gets handed back rather than solved from the wrong context.
+`karr-worker` stays for work that genuinely crosses the seams.
 
 Behavior-relevant = CLI command logic (`Cmd/*`), refs-backed storage (`BoardStore`, `Git`,
 `Lock`, `SyncGuard`), `Task`/`Config` parsing and writing, sync lifecycle, tests.
 
-**Only `karr-release-manager` commits.** A worker leaves a commit-ready tree and hands its card
-to `review`; you then dispatch `karr-release-manager` to cut the commit and close the card.
+## Coordination — dogfood
 
-## Coordination — karr board (dogfood, always in scope)
+This repo manages its own work on its own board — `refs/karr/*` already exists here; karr is
+the tool *and* the workflow. Bugs found while dogfooding become tickets on this board.
 
-This repo manages its own work on its own board — `refs/karr/*` already exists here. karr is the
-tool *and* the workflow, so use it; don't invoke a skill first, just run it:
+`export KARR_CLAIM=$(karr agent-name)` — name yourself **once** per session; `pick`, `handoff`
+and `list --claimed-by` then default to it, so the handoff matches the claim. `create`, `move`
+and `edit` take it only when the card ends up in a `require_claim` column (`in-progress`,
+`review`): a card you file, promote to `todo` or annotate stays unclaimed, so others can pick
+it. Full command surface (pick / context / set-refs / multi-agent): skill
+`kanban-issues-karr-coordination`.
 
-- `karr list --compact` / `karr board` — open work · `karr show ID` — detail
-- `karr create "Title" --priority high --tags a,b --body '…'` — new ticket
-- `karr edit ID -a "note"` · `--claim NAME` · `--block "why"` — update
-- `karr move ID in-progress --claim NAME` — start · `karr handoff ID --claim NAME --note "…"` — to review
-- `export KARR_CLAIM=$(karr agent-name)` — name yourself **once** per session; `pick`, `handoff`
-  and `list --claimed-by` then default to it, so the handoff matches the claim. `create`, `move`
-  and `edit` take it only when the card ends up in a `require_claim` column (`in-progress`,
-  `review`): a card you file, promote to `todo` or annotate stays unclaimed, so others can pick it
+## Release
 
-Bugs found while dogfooding become tickets on this board. Full command surface (pick / context /
-set-refs / multi-agent): skill `kanban-issues-karr-coordination`.
-
-## Release — never without permission
-
-`dzil build` / `dzil test` / `prove -l t/` are fine anytime. `dzil release` and any CPAN upload
-are STRICTLY forbidden without the maintainer's explicit go-ahead — even if a plan or roadmap
-lists "release" as the next step. For anything heading toward release: stop and ask. After a
-release the `$VERSION` bump is a separate, deliberate commit, and it touches every file
-under `lib/` and `bin/` — each one carries its own `our $VERSION`, not just
-`lib/App/karr.pm`.
+After a release the `$VERSION` bump is a separate, deliberate commit, and it touches every file
+under `lib/` and `bin/` — each one carries its own `our $VERSION`, not just `lib/App/karr.pm`.
 
 ## Perl specifics — reference, don't restate
 
 Module loading, Moo/Moose patterns, cpanfile pinning for Getty-authored deps, and house style
-live in skill `getty-perl-core` (force-loaded for `karr-*` agents). Do not duplicate that content here.
+live in skill `getty-perl-core` (force-loaded for `karr-*` agents).

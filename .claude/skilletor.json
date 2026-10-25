@@ -12,6 +12,9 @@
       "getty-perl-core@getty",
       "getty-perl-moo@getty",
       "perl-release-dist-ini@getty"
+    ],
+    "bundles": [
+      "getty-cpan-dist@getty"
     ]
   },
   "targets": [
