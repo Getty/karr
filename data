@@ -1,0 +1,88 @@
+---
+claimed_at: 2026-10-25T02:28:06Z
+claimed_by: k322
+class: standard
+completed: 2026-10-25T02:28:06Z
+created: 2026-10-06T19:38:35Z
+id: 322
+priority: critical
+started: 2026-10-07T15:37:29Z
+status: done
+tags:
+- bug
+- data-loss
+- sync
+- refs
+- review-2026-10-06
+- needs:p5-git-native#34
+title: 'Two clones writing in the pull->write->push window overwrite each other silently:
+  create loses a card, pick hands one card to two agents'
+updated: 2026-10-25T02:28:06Z
+---
+
+Every writing command runs `sync_before` (pull), writes its ref, then `sync_after` (push) (`lib/App/karr/Role/SyncLifecycle.pm:225-307`). The push uses the forced board refspec `+refs/karr/*:refs/karr/*` (`lib/App/karr/Git.pm:1306`, `push` at `:1954-2028`) and carries no expectation about what the remote holds. If another clone pushed between this command's pull and its push, the forced push replaces that clone's ref. The conflict parking under `refs/karr-conflict/` only fires on a *pull* that finds both sides changed; here the loser already pushed, so on its next pull its local ref equals its mirror and the foreign version is adopted as an ordinary remote update -- no warning on either side.
+
+The id counter makes this worst for `create`: both clones pulled the same `next-id`, both allocate the same id, and `allocate_next_id_ref`'s compare-and-swap is local to one repository. The retry added for push contention (k181, `_is_contended_push_reason`, `Git.pm:1737-1746`) treats 'reference already exists' as 'try again' -- for a *new* task ref that is exactly the signal that someone else created that id, and the retry then overwrites it.
+
+**Reproduced** (bare remote R, clones A and B, current checkout). `create --local-only` + `sync --push` in B stands in for a plain `karr create` whose pull ran before A's push landed -- the same sequence, made deterministic:
+
+```
+A: karr init; karr create seed            # id 1, pushed
+B: karr sync                              # B has the board, counter 2
+A: karr create 'card from A'              # id 2, pushed
+B: karr create 'card from B' --local-only # id 2 as well
+B: karr sync --push                       # remote tasks/2 is now B's
+A: karr sync && karr list --compact
+#1 backlog seed
+#2 backlog card from B                    # 'card from A' is gone on A too; refs/karr-conflict is empty
+```
+
+Same mechanism with claims: A `pick --claim agentA` (pushed), B `pick --claim agentB --local-only` + `sync --push` from its earlier view. Both were told `Picked task 3`; after A's next sync `karr show 3` says `Claimed: agentB`, no conflict, no log entry about the takeover.
+
+A single clone shared by several agents is safe (local CAS); the exposure is every board with more than one clone -- the remote-agent and fresh-clone workflows.
+
+**Done when**
+
+- a push never replaces a remote ref this clone has not seen: the remote's value must equal the clone's mirror for that ref (a lease), and a new task ref is pushed create-only;
+- on a lost lease the command pulls and reconciles instead of retrying the same push: a colliding `create` re-allocates its id and keeps both cards, a colliding `pick`/`move`/`edit` reports that the card changed underneath it (and `pick` moves on to the next candidate);
+- 'reference already exists' on a task ref stops counting as retriable contention;
+- a two-clone test beside `t/181-push-contention-retry.t` runs the sequence above for `create` and for `pick` and asserts both cards exist, respectively that exactly one agent holds the claim.
+
+Related: the stale-counter card (create overwrites an existing id inside one clone) -- different trigger, same missing guarantee that an id is never written twice.
+
+---
+Fleet review 2026-10-06 · kind: bug · confidence: verified
+
+2026-10-07, hub pass over the open cards. Not implemented: the fix is a different push model with public consequences, and the exact form needs the maintainer. What was established, and the design this card now waits on.
+
+Why nothing smaller helps. The exposure of an ordinary command is the stretch between its pull and its push. A second fetch-and-compare right before the push only moves that stretch, it does not close it; and stopping to retry 'reference already exists' alone breaks the single-clone case k181 fixed, because without knowing the remote's value 'someone created this ref' and 'my sibling process pushed the same ref' look the same. The guarantee has to come from the push itself.
+
+Proposed model.
+1. A push carries only the refs that differ from the mirror (L != T) plus the tombstoned deletions, each with the mirror value as its lease: update only if the remote still holds T, create only if the remote has nothing. Refs with L == T are not sent at all, so a clone can no longer write over something it has not seen. (Since k324 the mirror is trustworthy for this: it only says what the board has taken.)
+2. CLI transport: one --force-with-lease=<ref>:<T> per ref sent. Native transport: libgit2 has no lease; the exact place is git_remote_callbacks.push_negotiation, which Git::Native does not bind -- filed as p5-git-native k34. Without it the native route can only pre-check with ls-remote, which leaves a window of one round trip.
+3. A lost lease is its own push outcome (neither transport failure nor rejection). sync_after then pulls -- the reconciliation parks the local version as it does today -- and the command decides.
+
+Decisions needed from the maintainer.
+a. `karr sync --push` becomes leased too (the reproduction on this card uses it). The wipe-guard and foreign-board refusals tell the user to 'republish this board with karr sync --push', which then needs an explicit force. Proposal: `karr sync --push --force`, named in both messages. New public flag.
+b. What a command does after a lost lease. Proposal: `create` takes a new id for its card and pushes again, both cards exist (the card id printed is the final one; create prints after sync_after already). `pick` releases and picks the next candidate. `move`, `edit`, `handoff`, `archive`, `delete`: re-apply the same change on top of the remote's version once, and if the card no longer qualifies (claim taken by someone else, status changed away) fail with exit 1 and say what changed. Alternative: never re-apply, always fail and let the caller re-run.
+c. Whether the native transport may ship with the ls-remote pre-check until Git::Native has the callback, or whether leased pushes go through the CLI until then.
+
+Order once decided: p5-git-native k34, then Git.pm (push set, lease, outcome), SyncLifecycle (lost-lease path), the per-command handling, an ADR, the two-clone test from this card.
+
+2026-10-25 01:33 Decisions (taken on the coordinator's delegation, measured against git 2.47.3 before deciding):
+
+a) Push model. The board push is guarded: only refs whose local value differs from the refs/karr-remote mirror go out, each with the mirror's value as expectation; a ref the mirror lacks is create-only; deletions only for refs the mirror has. Transport: `git push --porcelain --atomic --force-with-lease=<ref>:<oid> <oid>:<ref> ...` -- the remote checks under its own ref lock, and --atomic keeps a card and its log entry together. Native route (no git binary, KARR_NO_CLI_FALLBACK) checks against a fetch taken right before the push: one round trip stays open until p5-git-native k34 binds push negotiation. That is why the card no longer waits for k34. Measured: `--force-with-lease=ref:` means must-not-exist, a failed lease reports `[rejected] (stale info)`, the others `(atomic push failed)`, and the lease holds for deletes too.
+
+b) `karr sync --push` is guarded as well (pulls the other clone's change in, parks a conflict as any pull does, pushes again; max 3 rounds). The old forced push survives only as `karr sync --push --force`, for republishing over an empty or foreign remote; the wipe-guard and foreign-board messages name it.
+
+c) After a stale push: each process journals the board refs it wrote since its pull. Stale refs it did not write -> pull and push again. Its own writes stale -> CAS them back to their pre-command value (id counter excepted, it only moves forward), pull; then `create` and `pick` run again from the top (next free id / next candidate, Role::ReapplyOnStale); move/edit/handoff/archive/delete and the rest exit 1, name the card and say nothing was published. Why not re-apply those: they print per card before their push, may have asked for confirmation, and act on a card the caller named -- re-applying on top of an unseen change is the silent merge.
+
+Deviation from "Done when": 'reference already exists' still counts as contention and is retried, but the retry carries the same expectation, so if the other push landed it comes back stale instead of overwriting. Treating contention as stale outright would fail an `edit` with exit 1 when the other push did not land.
+
+ADR: docs/adr/0008-the-board-push-is-guarded.md. Test: t/322-two-clone-guarded-push.t (two real clones; red against the old lib: card from A lost, both agents pick card 1, edit overwritten silently).
+
+2026-10-25 01:34 Also found: when both clones moved the id counter, the pull parks the local refs/karr/meta/next-id under refs/karr-conflict/ even though it keeps the local value (KEPT_LOCAL); the park ref is an orphan. Not fixed here.
+
+2026-10-25 01:59 Committed on branch k322: 5684989e2369c127373d587c2a682a59adc4f98a (Guard the board push against refs another clone published). Tests, offline, prove -lr t/: 253 files / 1927 tests; t/104 and t/149 failed on that run and were adjusted (republish now needs --force; identity re-arm moved to the mirror slot) and re-run green alone, lib/ unchanged since the full run. t/216 fails, also on a clean main checkout. t/322 was red against the old lib and is green now.
+
+2026-10-25 01:59 Also found: t/216-ex-sandbox.t subtest 3 fails on a fresh checkout, main included: 'git check-ignore ex/webapp' only matches the rule /webapp/ once the directory exists, and the subtest runs before setup.sh creates it. Not fixed here.
