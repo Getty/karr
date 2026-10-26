@@ -77,11 +77,10 @@ the line does nothing — do not scatter it into files Dist::Zilla never sees.
 ## What the tarball ships
 
 `Git::GatherDir` gathers every tracked file, dotfiles included
-(`gather_include_dotfiles` defaults to 1): `.claude/`, `CLAUDE.md`, `.github/` and
-the like ship on purpose, and `[GatherAgentContext]` adds a snapshot of the agent
-context under `misc/agent-context/` (build provenance, not installed). That is the
-house default, not a release finding: never `gather_exclude_*` or `[PruneFiles]`
-them away. Out by default: `README.md` (see `include_readme`) and `.karr`.
+(`gather_include_dotfiles` defaults to 1), so `.claude/`, `CLAUDE.md` and `.github/`
+ship with the dist; `[GatherAgentContext]` adds a snapshot of the agent context under
+`misc/agent-context/` (build provenance, not installed). We keep them in. Out by
+default: `README.md` (see `include_readme`) and `.karr`.
 
 ## @Author::GETTY Options
 
