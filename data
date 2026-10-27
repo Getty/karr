@@ -1,0 +1,20 @@
+---
+class: standard
+completed: 2026-10-27T03:14:19Z
+created: 2026-10-27T02:40:35Z
+id: 329
+priority: high
+started: 2026-10-27T03:14:19Z
+status: done
+tags:
+- bug
+- github
+title: t/216-ex-sandbox.t runs ex/setup.sh under the system perl (GitHub issue 7)
+updated: 2026-10-27T03:14:19Z
+---
+
+Reported by andk: https://github.com/Getty/karr/issues/7 — t/216-ex-sandbox.t 'a fresh ./setup.sh run exits 0' fails because ex/setup.sh calls perl from PATH (system perl 5.34 without Moo) instead of the perl running the tests. Report: https://www.cpantesters.org/cpan/report/b3ed3a10-b589-11f1-8d5c-8ffd0fb9ba79. Done: the test runs setup.sh with the testing perl; setup.sh itself still works unmodified for a user.
+
+Commit 5ce30e7 on branch gh-issue-7: PERL var in ex/setup.sh + ex/bin/*, t/216 sets PERL=$^X. Also found: t/216 subtest 'ex/.gitignore matches...' fails in a fresh git checkout/worktree (ex/webapp etc. do not exist, so check-ignore does not match the dir-only patterns /webapp/).
+
+2026-10-27 03:14 Merged on main and pushed: 7000df3 (Changes entry reworded). Red/green checked again with a PATH-first perl wrapper without Moo: old t/216 26 failures, new 62 tests PASS; t/216 PASS in the main checkout.
