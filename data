@@ -1,0 +1,15 @@
+---
+class: standard
+created: 2026-10-27T03:14:36Z
+id: 330
+priority: low
+status: backlog
+tags:
+- test
+- bug
+title: t/216 .gitignore subtest fails in a fresh checkout without ex/webapp, ex/docs-site,
+  ex/fleet-hub
+updated: 2026-10-27T03:14:36Z
+---
+
+Found while working k329 (GitHub issue 7). The subtest "ex/.gitignore matches exactly what is tracked vs. generated" in t/216-ex-sandbox.t fails in a fresh git clone or worktree: ex/webapp, ex/docs-site and ex/fleet-hub do not exist there yet, and git check-ignore matches the directory-only patterns (/webapp/ …) only for existing directories. Passes in a checkout where setup.sh already ran; a smoker running from the tarball is likely unaffected. Done: the subtest passes in a fresh clone and in a fresh worktree.
