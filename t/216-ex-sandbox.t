@@ -370,6 +370,12 @@ subtest 'ex/.gitignore matches exactly what is tracked vs. generated' => sub {
 
 my $sandbox = _build_sandbox();
 
+# setup.sh and the demo agents run the checkout with the perl named by PERL
+# (default: the first perl on PATH). Name the one running this test, so a
+# smoker whose PATH starts with a different perl builds the sandbox with the
+# perl that has the dependencies installed.
+$ENV{PERL} = $^X;
+
 my $fresh = _run( $sandbox, 'bash', "$sandbox/ex/setup.sh" );
 is( $fresh->{exit}, 0, 'a fresh ./setup.sh run exits 0' ) or diag $fresh->{stderr};
 

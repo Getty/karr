@@ -10,9 +10,11 @@ set -euo pipefail
 EX="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$EX/.." && pwd)"
 
+PERL="${PERL:-perl}"
+
 karr() {
   if [ -n "${KARR_BIN:-}" ]; then "$KARR_BIN" "$@"
-  else perl -I"$REPO_ROOT/lib" "$REPO_ROOT/bin/karr" "$@"; fi
+  else "$PERL" -I"$REPO_ROOT/lib" "$REPO_ROOT/bin/karr" "$@"; fi
 }
 
 cd "$KARR_REPO"

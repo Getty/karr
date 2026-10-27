@@ -23,15 +23,18 @@ if [ "${1:-}" = "--reset" ]; then
 fi
 
 # --- how we call karr --------------------------------------------------------
+# PERL names the interpreter for the checkout (default: the first perl on PATH).
+# Set it to run against another one, e.g.  PERL=/opt/perl-5.40/bin/perl.
+PERL="${PERL:-perl}"
 # Default: the repo checkout (perl -Ilib bin/karr). Set KARR_BIN to point at an
 # installed binary instead, e.g.  KARR_BIN="$(command -v karr)".
 karr() {
   if [ -n "${KARR_BIN:-}" ]; then "$KARR_BIN" "$@"
-  else perl -I"$REPO_ROOT/lib" "$REPO_ROOT/bin/karr" "$@"; fi
+  else "$PERL" -I"$REPO_ROOT/lib" "$REPO_ROOT/bin/karr" "$@"; fi
 }
 foundation() {
   if [ -n "${KARR_BIN:-}" ]; then "${KARR_BIN%karr}karr-foundation" "$@"
-  else perl -I"$REPO_ROOT/lib" "$REPO_ROOT/bin/karr-foundation" "$@"; fi
+  else "$PERL" -I"$REPO_ROOT/lib" "$REPO_ROOT/bin/karr-foundation" "$@"; fi
 }
 
 make_repo() {  # make_repo NAME
@@ -129,7 +132,7 @@ EOF
 echo "ex/config.yml: written"
 
 # --- the chain ---------------------------------------------------------------
-perl -I"$REPO_ROOT/lib" "$EX/scripts/write-chain.pl" "$EX/fleet-hub"
+"$PERL" -I"$REPO_ROOT/lib" "$EX/scripts/write-chain.pl" "$EX/fleet-hub"
 echo
 echo "Sandbox ready. The walkthrough is $EX/README.md. Try:"
 echo "  perl -I$REPO_ROOT/lib $REPO_ROOT/bin/karr --dir $EX/webapp board"

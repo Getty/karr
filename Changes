@@ -1,5 +1,11 @@
 {{$NEXT}}
 
+    - `ex/setup.sh` and the demo agents under `ex/bin/` run the checkout with
+      the perl named by the `PERL` environment variable (default: the first
+      `perl` on `PATH`), and the sandbox test passes the perl that runs it,
+      so the suite builds its sandbox with the perl under test (GitHub
+      issue 7).
+
     - Two clones writing the board at the same moment no longer overwrite
       each other. A push only replaces a ref the remote still holds as this
       clone last saw it; when another clone got there first, `karr create`
