@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/107-completed-stamp-terminal-status.t
 #
 # Ticket #98, second half: App::karr::Task::update_timestamps asked

@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/232-claim-timeout-zero-never-expires.t
 #
 # Ticket #232. `claim_timeout: 0s` is documented as "claims never expire" --

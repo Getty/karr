@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/139-repair-started-clamp.t - ticket #138: `karr repair` raises a `started`
 # stamp that precedes its own card's `created` up to that `created`.
 #

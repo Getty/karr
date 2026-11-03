@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/114-tracked-under-path-origin.t
 #
 # Tickets #113 and #114: one boundary, one contract. App::karr::Git resolves

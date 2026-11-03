@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/13-git-refs.t - Test Git.pm ref operations (commit-wrapped refs)
 use strict;
 use warnings;

@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/15-sync.t - Test sync lifecycle in Role::SyncLifecycle
 use strict;
 use warnings;

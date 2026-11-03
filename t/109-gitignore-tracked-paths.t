@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/109-gitignore-tracked-paths.t
 #
 # Ticket #89: `karr init` appended `tasks/` and `config.yml` to .gitignore

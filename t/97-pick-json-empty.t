@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/97-pick-json-empty.t
 #
 # Ticket #65: both of `karr pick`'s empty paths printed an English sentence and

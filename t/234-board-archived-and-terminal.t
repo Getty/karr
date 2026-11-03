@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/234-board-archived-and-terminal.t
 #
 # Ticket #234, two findings in App::karr::Cmd::Board that shared one root.

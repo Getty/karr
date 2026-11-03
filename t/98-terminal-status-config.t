@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/98-terminal-status-config.t
 #
 # Ticket #67: "which status means finished" was hardcoded to done + archived.

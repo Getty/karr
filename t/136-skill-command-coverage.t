@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/136-skill-command-coverage.t - every command implemented under
 # lib/App/karr/Cmd/*.pm must be mentioned by name in the skill docs that ship
 # to users, share/kanban-issues-karr-coordination/ and

@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/251-pick-compact.t
 #
 # Ticket #251: App::karr::Cmd::Pick composes App::karr::Role::Output, which

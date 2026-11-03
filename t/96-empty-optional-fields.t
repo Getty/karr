@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/96-empty-optional-fields.t
 #
 # Ticket #59: an optional frontmatter field set to the empty string counted as

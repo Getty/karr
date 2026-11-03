@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 use strict;
 use warnings;
 use utf8;        # source has UTF-8 string literals, see ticket #157

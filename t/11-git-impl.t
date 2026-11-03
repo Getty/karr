@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/11-git-impl.t - Test Git CLI implementation for karr sync
 use strict;
 use warnings;

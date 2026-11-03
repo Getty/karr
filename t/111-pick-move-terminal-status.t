@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/111-pick-move-terminal-status.t
 #
 # Ticket #101: the last leftover of the #67 terminal-status sweep. Every other

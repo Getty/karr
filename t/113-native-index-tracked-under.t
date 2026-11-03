@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/113-native-index-tracked-under.t
 #
 # Ticket #107: App::karr::Git::is_tracked_under answers "does the project

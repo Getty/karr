@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/62-skill-doc-sync.t - every bundled skill lives in two places: under
 # share/<skill>/ (shipped to users) and under the repo's own
 # .claude/skills/<skill>/ (what this repo's agents are briefed with). Two

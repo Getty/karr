@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/229-context-only-archived-excluded.t
 #
 # Ticket #229: `karr context` dropped every terminal card from the list it

@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/150-foundation-autoblock-ownership.t
 #
 # Ticket #158: karr-foundation auto-blocked cards its agent never touched.

@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # ABSTRACT: karr must work inside git worktrees, not only in the main work-tree
 #
 # A git worktree shares the object database and refs with the main repo but

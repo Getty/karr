@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/108-context-recently-completed.t
 #
 # Ticket #99: `karr context` built its recently-completed section by grepping

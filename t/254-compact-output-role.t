@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/254-compact-output-role.t
 #
 # Ticket #254: App::karr::Role::Output declared --compact beside --json, and

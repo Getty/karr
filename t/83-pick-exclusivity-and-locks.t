@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/82-pick-exclusivity-and-locks.t
 #
 # Two tickets, one code path.

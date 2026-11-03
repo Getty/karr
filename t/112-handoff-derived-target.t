@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/112-handoff-derived-target.t
 #
 # Ticket #102: karr handoff moved the task to the literal status `review`,

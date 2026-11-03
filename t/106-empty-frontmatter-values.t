@@ -1,3 +1,4 @@
+#!/usr/bin/env perl
 # t/106-empty-frontmatter-values.t
 #
 # Ticket #98: an optional frontmatter key that is present but empty must load
