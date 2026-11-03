@@ -1,0 +1,15 @@
+---
+class: standard
+created: 2026-11-03T20:34:07Z
+id: 331
+priority: low
+status: backlog
+tags:
+- skills
+- docs
+title: 'getty-perl-release-author-getty: document the binary* keys next to the Docker
+  keys'
+updated: 2026-11-03T20:34:07Z
+---
+
+From p5-mcp-wiki (binary release form, 2026-11-03). After the bundle ships the keys (p5-dist-zilla-pluginbundle-author-getty k20, plan Task 8): add a "### Binary" block after "### Docker" in .claude/skills/getty-perl-release-author-getty/SKILL.md — one line per key (binary, binary_modules, binary_pp_args, binary_require, binary_verify, binary_smoke, binary_platforms, binary_prepare, binary_default, [@Author::GETTY::Binary / name]), one line each for the caller workflow and DZIL_BINARY_SKIP=1, copied from the bundle POD; point to skill perl-par-binary-release for packing. Plan: ~/dev/p5-mcp-wiki/docs/superpowers/plans/2026-11-03-binary-skills.md Task 2. Lane: karr-doc-writer. Not before the bundle POD exists.
