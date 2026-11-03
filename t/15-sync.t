@@ -43,7 +43,6 @@ sub _init_remote_pair {
     return ($local, $remote);
 }
 
-plan tests => 4;
 
 subtest 'sync_before returns SyncGuard' => sub {
     my $repo = _init_repo();
