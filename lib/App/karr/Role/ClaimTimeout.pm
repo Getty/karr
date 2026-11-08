@@ -265,7 +265,7 @@ C<pick> come to disagree about who holds a card (tickets #59, #198).
 It is the claim half of C<pickable> and not the whole of it, so "not held" is
 not "free to pick": C<pickable> also refuses a blocked card and a card held
 back in C<backlog>, neither of which holds a claim, and C<list --unclaimed>
-lists both (ticket k309).
+lists both.
 
 It is B<not> L</check_claim> with the dying left out. That method answers a
 different question -- may I<this caller> write this card -- and its extra
@@ -445,7 +445,7 @@ message naming the holder and both ways out: C<< karr edit ID --release >>,
 and -- where the caller's own argv was recorded
 (L<App::karr::Error/original_argv>) -- the caller's own command line with
 C<--claim HOLDER> added, so the last line is the invocation that would have
-worked (the shape ticket k263 settled on). Five cases, checked in order:
+worked (the shape the other claim refusals share). Five cases, checked in order:
 
 =over 4
 

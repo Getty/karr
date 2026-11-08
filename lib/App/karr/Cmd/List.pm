@@ -84,7 +84,7 @@ status". C<--status> additionally accepts C<archived>, which is a real status
 karr hardcodes even on a board that does not configure a column for it. When the
 rejected value is C<blocked> or C<not-blocked> -- filter flags, not statuses --
 the message also names C<karr list --blocked>/C<--not-blocked>, the trap an
-agent reaching for C<--status> falls into (ticket k290).
+agent reaching for C<--status> falls into.
 
 =item * C<--archived>
 
@@ -133,7 +133,7 @@ and nothing else, matching kanban-md's C<IsUnclaimed>, so it is not "what pick
 would take": blocked cards and cards held back in C<backlog> are unpickable
 but not claimed, and they are still listed. C<--blocked --unclaimed> is
 therefore a real query rather than an empty one, and what C<karr pick> would
-take is C<--unclaimed --not-blocked> minus the C<backlog> column (ticket k309).
+take is C<--unclaimed --not-blocked> minus the C<backlog> column.
 On a board with C<claim_timeout: 0s> no claim ever expires, so there
 C<--unclaimed> means C<claimed_by> empty and nothing more.
 

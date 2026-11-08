@@ -67,7 +67,7 @@ banner and C<--quiet> rule is decided in it.
 
 =head2 Local-only mode
 
-The C<--local-only> option (k291) makes a writing command write to the board's
+The C<--local-only> option makes a writing command write to the board's
 local C<refs/karr/*> and touch the remote in neither direction: L</sync_before>
 skips the fetch and L</sync_after> skips the push. It exists for the
 multi-board case where a mutating command (C<move>, C<edit>, C<handoff>,
@@ -275,7 +275,7 @@ A push the remote I<rejected> per ref (a pre-receive hook, a protected ref)
 is not retried at all: the connection worked and the far side gave its answer,
 which the error message carries ref by ref.
 
-The board push is guarded (L<App::karr::Git/push>, k322): each ref goes out
+The board push is guarded (L<App::karr::Git/push>): each ref goes out
 only while the remote still holds what this clone last saw there. When
 another clone published one of them since this command's pull, the push is
 I<stale> (L<App::karr::Git/push_stale>) and sending it again cannot help.

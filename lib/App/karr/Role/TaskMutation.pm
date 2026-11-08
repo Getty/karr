@@ -240,7 +240,7 @@ line as the way to see the ids that do exist. Shared so that C<move>, C<edit>,
 C<delete>, C<archive> and C<handoff> -- which reach it through
 L</update_task_guarded>, L</delete_task_guarded> and the unguarded pre-reads in
 L<App::karr::Cmd::Archive> and L<App::karr::Cmd::Delete> -- spell it one way
-(ticket k264, the shape L<App::karr::Cmd::Needs> got in k263).
+(the same shape L<App::karr::Cmd::Needs> uses).
 
 =cut
 
@@ -550,7 +550,7 @@ needs an owner asks for C<--claim> rather than handing that column to whoever
 had finished the work (the shape of ticket #150).
 
 Moving a card into C<backlog> releases its claim the same way, whatever column
-it comes from (ticket k306): backlog is held back
+it comes from: backlog is held back
 (L<App::karr::Config/is_held_back_status>) and holds no claim. A C<$claimant>
 passed for such a move is refused by L</check_held_back_claim>, before the
 same-status shortcut, so C<move ID backlog --claim NAME> is refused on a card
@@ -582,7 +582,7 @@ step. L</apply_status_change> asks it for the destination; C<karr edit> asks it
 for the status the card is left in when there is no C<--status>.
 
 Only a claim being written is refused. A card that already carries one in
-backlog -- written before ticket k306 -- is not touched, so a note, a tag or a
+backlog (written by an earlier version) is not touched, so a note, a tag or a
 C<show> on it works as before.
 
 =cut

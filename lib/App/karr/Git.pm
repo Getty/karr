@@ -98,7 +98,7 @@ C<push> sends the board refs this clone changed since it last saw the remote,
 plus one delete for every board ref it deleted and has not published yet --
 each one guarded by what the remote held when this clone last synced, so a
 ref another clone published in between is never overwritten: the push comes
-back stale (L</push_stale>) and the caller pulls first (k322). It
+back stale (L</push_stale>) and the caller pulls first. It
 deliberately does not prune: a prune makes the pusher's local refs the whole
 truth of the namespace, which is wrong the moment another clone holds a card
 this one has never seen -- that push took the card off the remote, and the
@@ -2522,7 +2522,7 @@ Pushes the board to C<$remote> (default C<origin>), or C<$refspec> instead of
 the board when one is given. Returns C<1> when C<$remote> isn't configured or
 the push lands, C<0> otherwise, with L</last_error> saying why.
 
-The board push is guarded (k322). It sends only the board refs this clone
+The board push is guarded. It sends only the board refs this clone
 changed since it last synced -- those that differ from the
 C<refs/karr-remote/> mirror -- plus a deletion for every ref this clone
 deleted and has not published yet (recorded under C<refs/karr-local/deleted/>,
@@ -2600,7 +2600,7 @@ L</DESCRIPTION> for the full algorithm and the four cases it resolves). One ref 
 last-writer-wins: the id counter C<refs/karr/meta/next-id> only ever moves
 forward, so a remote value behind the local one is left where it is and
 published by the next push instead (#172), and a counter that ends up at or
-below the highest task id is moved past it (k321). Returns C<1> when C<$remote>
+below the highest task id is moved past it. Returns C<1> when C<$remote>
 isn't configured (a no-op) or reconciliation completes, C<0> on a transport
 failure. Three situations C<die> rather than returning C<0>: a reconciliation
 that would delete every remaining board ref (pass C<accept_wipe =E<gt> 1> --
@@ -2612,7 +2612,7 @@ holds its lock file or left a stale one behind. None of
 them moves the mirror for a ref the board did not take, and neither does a
 pull that fails in transport or is killed partway, so the next pull decides
 those refs again instead of mistaking the stale local version for unpushed
-work and force-pushing it over the remote (#154, k324). The exception is what stops the
+work and force-pushing it over the remote (#154). The exception is what stops the
 caller's push: this method never reports an unapplied ref as success.
 
 =cut
@@ -4200,7 +4200,7 @@ overwrite each other's task (#44). Returns the allocated id.
 
 The id is the counter's value, or the first id past the highest existing task
 ref when the counter is behind it -- so a counter that has fallen behind the
-cards never hands out an id one of them holds (k321).
+cards never hands out an id one of them holds.
 
 That makes this the sole authority for handing out an id, but only for as long
 as nothing else moves the counter: it was still possible for two creates to

@@ -132,7 +132,7 @@ The create-only door: writes a new card through
 L<App::karr::BoardStore/create_task> and logs it, exactly as L</save_task>
 does for a write. Returns false, without writing or logging, when the card's
 id already holds a card -- the caller takes another id from
-L</allocate_next_id> and tries again (k321).
+L</allocate_next_id> and tries again.
 
 =cut
 

@@ -133,7 +133,7 @@ only that half. The blocked test and the held-back test deliberately stayed
 here and are not part of it: a blocked card and a card in C<backlog> are
 unpickable, not claimed, so C<list --unclaimed> still lists them. Without
 filters, what this method lets C<karr pick> take is C<list --unclaimed
---not-blocked> minus the cards in C<backlog> (ticket k309).
+--not-blocked> minus the cards in C<backlog>.
 
 =cut
 

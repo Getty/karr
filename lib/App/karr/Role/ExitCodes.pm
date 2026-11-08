@@ -49,7 +49,7 @@ An option-parse error used to read like this, and the first line was the answer:
 
 karr's primary callers are agents, which read it through C<tail -n> because the
 output is long -- so the line that says what went wrong is exactly the line that
-gets cut, and the four-call reproduction in ticket k263 is what that costs. The
+gets cut, and several calls spent re-running it is what that costs. The
 same error now ends where it is read:
 
     USAGE: karr move ID[,ID,...] STATUS [--claim NAME] [--next|--prev]

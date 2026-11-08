@@ -530,7 +530,7 @@ Writes a brand-new card create-only: the write lands only if no ref exists
 for the card's id. Returns true when it did, and false when the id is taken --
 the caller allocates another id and tries again, never the same one. This is
 what keeps C<karr create> from writing over a card when the id it was handed
-turns out to be in use (k321). C<updated> is left as the card carries it.
+turns out to be in use. C<updated> is left as the card carries it.
 
 =cut
 

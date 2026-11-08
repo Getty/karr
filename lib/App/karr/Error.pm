@@ -84,7 +84,7 @@ copied as it stands.
 
 The suggestion is always the B<last> thing a message prints. Agents pipe karr
 through C<tail -n>, so anything printed in front of a usage block is what gets
-cut (ticket k263).
+cut.
 
 =cut
 
@@ -277,7 +277,7 @@ sub require_claim_message {
         'move', $id, 'in-progress', '--claim', 'NAME' ) );
 
 The refusal a C<require_claim> column raises when no claim is on the card and
-none was supplied (ADR 0002 / ticket k263, extended by ADR 0005). Names both
+none was supplied (ADR 0002, extended by ADR 0005). Names both
 ways to claim -- the invocation with C<--claim>, and C<export KARR_CLAIM=$(karr
 agent-name)> -- and adds "and KARR_CLAIM is unset" to the first line only when
 that variable really is empty. The first line stays a self-contained sentence

@@ -20,7 +20,7 @@ has _stale_reapply => (
 =head1 DESCRIPTION
 
 Composed by the commands that can decide again when their push finds that
-another clone published in the window since their pull (k322): C<create>, whose
+another clone published in the window since their pull: C<create>, whose
 card simply takes the next free id, and C<pick>, which moves on to the next
 candidate when the card it claimed was claimed elsewhere first.
 
