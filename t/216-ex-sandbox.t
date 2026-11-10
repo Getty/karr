@@ -351,7 +351,10 @@ subtest 'ex/.gitignore matches exactly what is tracked vs. generated' => sub {
     'git tracks exactly setup.sh + bin/ + scripts/ + README.md + .gitignore -- nothing generated',
   );
 
-  for my $generated (qw( ex/webapp ex/docs-site ex/fleet-hub ex/config.yml )) {
+  # The three sandbox dirs are ignored by directory-only patterns (/webapp/);
+  # git only applies those to a path it knows is a directory, which a fresh
+  # clone (no setup.sh run yet) does not have -- so ask with a trailing slash.
+  for my $generated (qw( ex/webapp/ ex/docs-site/ ex/fleet-hub/ ex/config.yml )) {
     my @lines = _git_lines( 'git', '-C', $ROOT, 'check-ignore', '-v', $generated );
     ok( scalar(@lines), "$generated is ignored" );
     like( $lines[0], qr{ex/\.gitignore}, "...via a rule in ex/.gitignore, not some other file" ) if @lines;
