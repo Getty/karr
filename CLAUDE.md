@@ -179,12 +179,13 @@ Agent/skill/rule material lives under `.claude/`:
 - `rules/karr-rules.md` — project house rules, auto-loaded (lanes, dogfood board, release); the
   shared ones arrive as `rules/.local.*.md` from skilletor
 - `agents/karr-*.md` — the project agent fleet (briefing-aware; skills force-loaded at spawn)
-- `skills/` — thirteen skills. Eight are owned here: `kanban-issues-karr-coordination`,
-  `kanban-issues-karr-ticket`, `getty-perl-pod` and `getty-perl-release-author-getty`
-  (other repos install these from skilletor source `karr`), plus `karr-core`,
-  `karr-foundation-cli`, `karr-single-binary` and `perl-file-sharedir`. Five are
-  installed by skilletor from `.claude/skilletor.json` and not tracked (`getty-git-commit-style`,
-  `getty-git-usage`, `getty-perl-core`, `getty-perl-moo`, `perl-release-dist-ini`);
+- `skills/` — thirteen skills. Six are owned here: `kanban-issues-karr-coordination`
+  and `kanban-issues-karr-ticket` (other repos install these from skilletor source
+  `karr`), plus `karr-core`, `karr-foundation-cli`, `karr-single-binary` and
+  `perl-file-sharedir`. Seven are installed by skilletor from `.claude/skilletor.json`
+  and not tracked: five listed there (`getty-git-commit-style`, `getty-git-usage`,
+  `getty-perl-core`, `getty-perl-moo`, `perl-release-dist-ini`) and two that come with
+  the `getty-cpan-dist` bundle (`getty-perl-pod`, `getty-perl-release-author-getty`);
   they change in their source. Keep the skill names stable.
   `kanban-issues-karr-coordination` and `kanban-issues-karr-ticket` are each
   hardlinked file-for-file to their directory under `share/`
