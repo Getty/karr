@@ -18,7 +18,7 @@ release specifics live in `.claude/rules/karr-rules.md` — all auto-loaded by C
 launch. Don't restate them here.
 
 **Delegate behavior-relevant code instead of editing it yourself** (the rule and rationale are in
-the shared rule `getty-agent-delegation`). Agents in this repo (skills force-loaded via `briefing.skills`):
+the shared rule `agent-delegation`). Agents in this repo (skills force-loaded via `briefing.skills`):
 
 | Task | Agent |
 |---|---|
@@ -171,7 +171,7 @@ ticket while it claimed the board held the live status.
 - For user-visible changes, add an unreleased entry under `{{$NEXT}}` in `Changes`
 - POD follows `[@Author::GETTY]` conventions (inline `=attr`, `=method`, no manual NAME/VERSION/AUTHOR sections)
 - `# ABSTRACT:` comment required on every .pm file
-- Release policy (`dzil release` only with explicit go-ahead) is in the shared rule `getty-publish-gate`
+- Release policy (`dzil release` only with explicit go-ahead) is in the shared rule `publish-gate`
 
 ## Repository metadata
 
