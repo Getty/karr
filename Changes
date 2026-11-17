@@ -74,6 +74,7 @@
       commands of the tests to Git's sh and works around three limits of
       perl's process handling there, and the tests that need a drain, a POSIX
       shell or a symlink skip.
+    - Requires Git::Native 0.007, Git::Libgit2 0.008 and Alien::Libgit2 0.003.
 
 0.602     2026-09-30 05:24:57Z
 

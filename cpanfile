@@ -3,9 +3,9 @@
 # forever against a peer that accepts the connection and then stays silent:
 # libssh2 does its own reads and no libgit2 timeout option reaches that loop,
 # so KARR_TRANSPORT_TIMEOUT cannot bound it either (#174, fixed upstream by
-# libgit2 PR #7165). 0.002 raises the pkg-config floor to 1.9.3, so a
+# libgit2 PR #7165). Since 0.002 the pkg-config floor is 1.9.3, so a
 # distribution lib below the fix falls through to the bundled source build.
-requires 'Alien::Libgit2', '0.002';
+requires 'Alien::Libgit2', '0.003';
 requires 'Carp';
 requires 'Digest::MD5';
 requires 'Encode';
@@ -13,8 +13,8 @@ requires 'Errno';
 requires 'Exporter';
 requires 'Fcntl';
 requires 'File::ShareDir';
-requires 'Git::Libgit2', '0.007';
-requires 'Git::Native', '0.006';
+requires 'Git::Libgit2', '0.008';
+requires 'Git::Native', '0.007';
 requires 'IO::Handle';
 requires 'IO::Select';
 requires 'IPC::Open3';
