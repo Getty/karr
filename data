@@ -1,0 +1,28 @@
+---
+class: standard
+completed: 2026-11-17T15:24:01Z
+created: 2026-11-17T15:20:50Z
+id: 332
+priority: high
+started: 2026-11-17T15:24:01Z
+status: done
+tags:
+- docs
+- skills
+title: 'Skills: say that the board is the exchange and is always pushed'
+updated: 2026-11-17T15:24:11Z
+---
+
+Agents in consuming repos hold board writes back: they ask before a karr write, pass --local-only to avoid the push, read a "do not push" from their brief as covering the board, or stay local for the rest of a session after one failed push. The shared rules publish-gate and board-karr (skills library) now say the board is outside the gate; the two shipped skills have to say the same.
+
+kanban-issues-karr-coordination: a short section that the board is how agents, sessions and machines exchange work, that a card not pushed does not exist for anyone else, that the push is wanted and never asked for; what --local-only is for (a configured remote that cannot be reached) and that karr sync catches up afterwards; what to do when a push fails; card text is as public as the repository.
+
+kanban-issues-karr-ticket: the notes and the handoff push the board and that is intended even when the brief says not to push (that means commits and tags); the "sync" under "What you do not do" means the command, not the automatic sync of edit/handoff.
+
+Done: both skills say it, share/ copies identical (hardlinks intact, t/62 green), no behavior code touched.
+
+2026-11-17 15:21 Verified: --local-only is a role option of SyncLifecycle (skips fetch and push); a create --local-only in a scratch repo with a bare origin stayed off the remote and a later karr sync pushed refs/karr/tasks/2. Both skills + storage.md written via in-place rewrite, link counts 2/2, t/62 green.
+
+2026-11-17 15:22 Done: coordination SKILL.md gets a section 'The board is the exchange', storage.md sync gets the --local-only detail, ticket SKILL.md gets the push bullet and an unambiguous 'karr sync command' in 'What you do not do'. t/62 passes.
+
+Committed as a2bbdb0
