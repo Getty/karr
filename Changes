@@ -1,5 +1,15 @@
 {{$NEXT}}
 
+    - The shipped karr skills (`karr skill install`) now say that the board
+      is the exchange between agents: a card that is not on the remote does
+      not exist for other agents, so board writes and their push are wanted
+      and need no go-ahead, a "don't push" in a brief means commits and
+      tags, and `--local-only` is only for an unreachable configured remote
+      (`karr sync` catches up). A failed push goes at the top of the
+      report. `references/storage.md` documents `--local-only` under `sync`.
+      The ticket skill says the worker's notes and handoff push the board
+      on purpose.
+
     - `ex/setup.sh` and the demo agents under `ex/bin/` run the checkout with
       the perl named by the `PERL` environment variable (default: the first
       `perl` on `PATH`), and the sandbox test passes the perl that runs it,
