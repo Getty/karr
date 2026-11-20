@@ -48,7 +48,9 @@ STDERR, and C<--quiet> silencing the progress lines and the retry
 announcements but never an error. A push the remote refused ref by ref is
 I<not> retried -- the far side gave its answer -- unless the refusal was only
 contention, two pushes racing for the same ref, which the next attempt wins
-(L<App::karr::Git/push_contention>). This is the command karr points every
+(L<App::karr::Git/push_contention>). Nor is a push denied write access
+(L<App::karr::Git/push_failure>): no credentials or no accepted key are still
+missing a second later. This is the command karr points every
 failed sync at, and until #183 it was the only one that pushed once and gave
 up.
 

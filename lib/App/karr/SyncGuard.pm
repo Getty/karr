@@ -149,7 +149,9 @@ advise one: the far side already gave its answer, so it names what was refused
 instead of pointing at a C<karr sync> that would be refused identically. A
 rejection that is only contention (L<App::karr::Git/push_contention>) is
 retried and, if it still stands after three attempts, reported as the ordinary
-failure it is.
+failure it is. A push denied write access (L<App::karr::Git/push_failure>) is
+not retried either, and the warning says it was denied and tried once:
+pushing again only helps once this clone can write.
 
 =cut
 
@@ -243,10 +245,17 @@ sub _insurance_push {
             return 1;
         }
         # Native Git::Native/libgit2 ops set no shell exit code; the failure
-        # detail lives in $git->last_error (see App::karr::Git).
-        $err = "git push failed: " . ( $git->last_error // 'unknown error' );
+        # detail lives in $git->last_error (see App::karr::Git). The guarded
+        # board push already says "git push failed: ..." there, and saying
+        # it twice was k333.
+        my $why = $git->last_error // 'unknown error';
+        $err = $why =~ /\Agit push\b/ ? $why : "git push failed: $why";
         push @{$self->{_errors}}, $err;
         print STDERR "  $err\n";
+
+        # Denied write access is as final as a rejection, and asked first: a
+        # denied CLI push can list its refs as refused too (k333).
+        last if $self->_denied;
 
         # A push the far side refused ref by ref is not a lost connection: the
         # remote was reached and gave its answer, so the other two attempts
@@ -286,7 +295,17 @@ sub _insurance_push {
     # command that will be refused identically, and says nothing about the one
     # thing they need to know -- that the remote, not the network, said no. The
     # per-ref reasons are in the error printed just above.
-    warn $self->_rejected
+    #
+    # The denied verdict is provisional (k333): what the push left behind and
+    # how to give this clone write access are still to be said here.
+    my $failure = $self->_denied && $git->push_failure;
+    warn $failure
+      ? "Push denied: the remote '" . ( $failure->{remote} // 'origin' )
+        . "' refused this clone write access ("
+        . ( $failure->{reason} // 'write access denied' ) . ").\n"
+        . "It was tried once and not repeated: pushing again only helps once "
+        . "this clone can write.\n"
+      : $self->_rejected
       ? "Push rejected by the remote. Local refs are intact.\n"
         . "The refs above were refused, not lost in transit, so pushing again "
         . "would only be refused again.\n"
@@ -313,6 +332,16 @@ sub _rejected {
     return 0 unless $rejected && @$rejected;
     return 0 if $git->can('push_contention') && $git->push_contention;
     return 1;
+}
+
+# Whether the last push was denied write access (App::karr::Git/push_failure).
+# The `can` is for the same duck-typed doubles _rejected allows for.
+sub _denied {
+    my ($self) = @_;
+    my $git = $self->git;
+    return 0 unless $git && $git->can('push_failure');
+    my $failure = $git->push_failure or return 0;
+    return ( $failure->{class} // '' ) eq 'denied' ? 1 : 0;
 }
 
 1;

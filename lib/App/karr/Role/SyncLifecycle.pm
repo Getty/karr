@@ -150,8 +150,8 @@ sub _sync_git {
 #
 # $label is 'Pull' or 'Push' and appears in both the banner and the git error
 # line, so the wording every existing test pins is produced here and nowhere
-# else. Returns ( $ok, $rejected, $stale ); the last two are only ever true
-# when check_rejection was asked for.
+# else. Returns ( $ok, $rejected, $stale, $denied ); the last three are only
+# ever true when check_rejection was asked for.
 sub _sync_attempts {
     my ( $self, $label, $git, $attempt, %opt ) = @_;
 
@@ -160,6 +160,7 @@ sub _sync_attempts {
     my $shown    = '';
     my $rejected = 0;
     my $stale    = 0;
+    my $denied   = 0;
     for my $try ( 1 .. 3 ) {
         # Retry-only: attempt 1 is silent; only announce the actual retries.
         print STDERR "$label retry $try of 3...\n"
@@ -185,12 +186,19 @@ sub _sync_attempts {
         # (#84) -- three copies of that buries the one thing worth reading. A
         # repeat of what was just printed is dropped; a *different* error still
         # gets its own line.
-        $err = 'git ' . lc($label) . ' failed: '
-             . ( $git->last_error // 'unknown error' );
+        $err = $self->_sync_error_line( $label, $git->last_error );
         print STDERR "  $err\n" if $err ne $shown;
         $shown = $err;
 
         if ( $opt{check_rejection} ) {
+            # Write access denied is as final as a rejection (k333): no
+            # credentials, a key the remote does not accept, a read-only key
+            # are all still true a second later, so the other two attempts
+            # would only collect the same denial. Asked first, because a
+            # denied CLI push can list its refs as refused too.
+            $denied = $self->_push_denied($git);
+            last if $denied;
+
             # A per-ref rejection is final (#84): the remote was reached and
             # said no, so two more attempts would only collect the same
             # refusal twice more, at a second each, on every writing command.
@@ -213,7 +221,42 @@ sub _sync_attempts {
 
         sleep 1 if $try < 3;
     }
-    return ( $ok, $rejected, $stale );
+    return ( $ok, $rejected, $stale, $denied );
+}
+
+# "git push failed: <why>" -- unless <why> already says that much. The guarded
+# board push reports its CLI failure as "git push failed: ...", a timed-out
+# run as "git push timed out ...", and prefixing those again printed
+# "git push failed: git push failed: fatal: ..." (k333).
+sub _sync_error_line {
+    my ( $self, $label, $why ) = @_;
+    my $verb = lc $label;
+    $why //= 'unknown error';
+    return $why if $why =~ /\Agit \Q$verb\E\b/;
+    return "git $verb failed: $why";
+}
+
+# The push just made was denied write access (App::karr::Git/push_failure).
+# The `can` is for the duck-typed git objects the sync tests drive this role
+# with, the same way push_rejections and push_stale are asked.
+sub _push_denied {
+    my ( $self, $git ) = @_;
+    return 0 unless $git->can('push_failure');
+    my $failure = $git->push_failure or return 0;
+    return ( $failure->{class} // '' ) eq 'denied' ? 1 : 0;
+}
+
+# The verdict for a denied push. Provisional (k333): what the push left
+# behind and how to give this clone write access are still to be said here.
+sub _push_denied_message {
+    my ( $self, $git, $what ) = @_;
+    my $failure = $git->push_failure;
+    my $remote  = $failure->{remote} // 'origin';
+    my $reason  = $failure->{reason} // 'write access denied';
+    return "$what denied: the remote '$remote' refused this clone write "
+      . "access ($reason).\n"
+      . "It was tried once and not repeated: pushing again only helps once "
+      . "this clone can write.";
 }
 
 =method sync_before
@@ -275,6 +318,16 @@ A push the remote I<rejected> per ref (a pre-receive hook, a protected ref)
 is not retried at all: the connection worked and the far side gave its answer,
 which the error message carries ref by ref.
 
+A push that was I<denied> write access (L<App::karr::Git/push_failure>: no
+credentials for HTTPS, no SSH key the remote accepts, a read-only key, a
+local repository this user cannot write) is not retried either. The git error
+is shown once and the command ends with exit 1 on
+C<Push denied: the remote 'origin' refused this clone write access (REASON).>,
+followed by the note that it was tried once and that pushing again only helps
+once this clone can write. Only a remote that could not be I<reached> -- the
+name did not resolve, the connection was refused or timed out -- and a failure
+of no recognised kind get all three attempts.
+
 The board push is guarded (L<App::karr::Git/push>): each ref goes out
 only while the remote still holds what this clone last saw there. When
 another clone published one of them since this command's pull, the push is
@@ -323,9 +376,9 @@ sub sync_after {
 
     my $git = $self->_sync_git;
 
-    my ( $ok, $rejected, $stale );
+    my ( $ok, $rejected, $stale, $denied );
     for my $round ( 1 .. STALE_ROUNDS ) {
-        ( $ok, $rejected, $stale ) = $self->_sync_attempts( 'Push', $git,
+        ( $ok, $rejected, $stale, $denied ) = $self->_sync_attempts( 'Push', $git,
             sub { $git->push( undef, undef, %opt ) }, check_rejection => 1 );
         last unless $stale;
         $self->_pull_after_stale_push($git) if $round < STALE_ROUNDS;
@@ -341,10 +394,14 @@ sub sync_after {
     # leaving the guard armed would only make the END flush in bin/karr (#37)
     # repeat the identical failing push, doubling both the delay and the noise
     # on an already-failing command. On a per-ref rejection the attempts were
-    # not spent, but the answer was given (#84), so it holds there too.
+    # not spent, but the answer was given (#84), so it holds there too, and on
+    # a denial (k333) for the same reason.
     $self->_release_guard;
 
     return if $ok;
+
+    App::karr::Error::user_error( $self->_push_denied_message( $git, 'Push' ) )
+      if $denied;
 
     App::karr::Error::user_error(
         "Push rejected by the remote. Local refs are intact.\n"
@@ -465,8 +522,9 @@ sub sync_pull_foundation {
 L</sync_after> for C<refs/karr-foundation/*>, minus the
 L<App::karr::SyncGuard>: the guard insures a command body that wrote board refs
 and died, and nothing in a command body writes this namespace. The rejection
-verdict is the same one L</sync_after> uses, contention included, since it is
-the same remote answering.
+and denial verdicts are the same ones L</sync_after> uses, contention
+included, since it is the same remote answering; a denial ends on
+C<Push of refs/karr-foundation/ denied: ...>.
 
 =cut
 
@@ -474,9 +532,13 @@ sub sync_push_foundation {
     my ($self) = @_;
     my $git = $self->_sync_git;
 
-    my ( $ok, $rejected ) = $self->_sync_attempts( 'Push', $git,
+    my ( $ok, $rejected, undef, $denied ) = $self->_sync_attempts( 'Push', $git,
         sub { $git->push_foundation }, check_rejection => 1 );
     return if $ok;
+
+    App::karr::Error::user_error(
+        $self->_push_denied_message( $git, 'Push of refs/karr-foundation/' ) )
+      if $denied;
 
     App::karr::Error::user_error(
         "Push of refs/karr-foundation/ was rejected by the remote. Local refs "

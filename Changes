@@ -1,5 +1,15 @@
 {{$NEXT}}
 
+    - A push the remote refuses for lack of write access (no credentials
+      for an HTTPS remote, no SSH key the remote accepts, a read-only key
+      or token, a local remote this user cannot write) is now tried once
+      and reported as "Push denied", with the remote and the reason,
+      instead of being retried like a flaky network. This holds for the
+      board push, `karr set-refs`, the karr-foundation refs and the
+      insurance push on a dying command. An unreachable remote keeps its
+      retries, and the doubled "git push failed: git push failed:" prefix
+      is gone.
+
     - The shipped karr skills (`karr skill install`) now say that the board
       is the exchange between agents: a card that is not on the remote does
       not exist for other agents, so board writes and their push are wanted

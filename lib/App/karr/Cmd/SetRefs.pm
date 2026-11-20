@@ -108,7 +108,16 @@ sub execute {
     : $self->_payload_from_stdin;
 
   $git->write_ref($ref, $content) or die "Failed to write $ref\n";
-  $git->push_ref($ref) or die "Failed to push $ref\n";
+  unless ( $git->push_ref($ref) ) {
+    # A denial says so (k333): "failed" alone reads like something a second
+    # run could fix. Provisional wording, like the board push's.
+    my $failure = $git->push_failure;
+    die "Failed to push $ref: the remote '$failure->{remote}' refused this "
+      . "clone write access ($failure->{reason}).\n"
+      . "Pushing again only helps once this clone can write.\n"
+      if $failure && $failure->{class} eq 'denied';
+    die "Failed to push $ref\n";
+  }
 
   print STDERR "Stored $ref\n";
 }
