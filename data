@@ -1,0 +1,165 @@
+---
+claimed_at: 2026-11-20T21:51:09Z
+claimed_by: k333-push-denied
+class: standard
+completed: 2026-11-20T21:51:14Z
+created: 2026-11-20T15:34:47Z
+id: 333
+priority: high
+started: 2026-11-20T20:43:48Z
+status: done
+tags:
+- sync
+- cli
+- ux
+- bug
+title: Name the cause of a failed board push, make a clone that cannot write read-only,
+  keep reporting changes not on the remote
+updated: 2026-11-20T21:51:14Z
+---
+
+Seen on an agent machine: a clone whose origin is `https://github.com/...` with no credentials (public repo, so the pull works). `karr create` pulled, wrote the card, and the push failed. What the agent saw (reproduced with a scratch clone, karr 0.603):
+
+```
+  git push failed: git push failed: fatal: could not read Username for 'https://github.com': terminal prompts disabled
+Push retry 2 of 3...
+Push retry 3 of 3...
+Push failed after 3 attempts. Local refs are intact.
+Run 'karr sync' to retry.
+```
+
+Exit 1. The agent moved on, the card stayed in that one clone for hours, and every later `karr list` / `karr show` there was silent (exit 0, no hint). Problems:
+
+1. It says "failed", not that the remote denied write access, and it recommends a retry that cannot work. Three identical attempts a second apart add nothing.
+2. "Local refs are intact" reads as "all fine". It does not say what is missing on the remote or what that risks: another clone does not see the card and can give out the same card number.
+3. It is said once, by the command that failed. Nothing reminds the next command or the next agent.
+4. The number of the card just created is not in the output, and the `git push failed:` prefix is doubled.
+
+## Done looks like
+
+### A. Classify every failed push (done: 04c9bc6)
+
+Applies to the board push, the helper-ref push and the `refs/karr-foundation/*` push. It covers the native libgit2 route and the CLI fallback, and the normal path (`SyncLifecycle`), the insurance push (`SyncGuard`) and `karr sync`. Every failed push falls into one of five classes:
+
+- **Write access denied.** The remote was reached, or the transport asked for credentials, and writing is not allowed or no credentials are available. Recognise at least:
+  - libgit2: `GIT_EAUTH`, "authentication required", "too many redirects or authentication replays", "failed to authenticate SSH session"
+  - git CLI: "could not read Username", "terminal prompts disabled", "Authentication failed", "Permission denied (publickey)", "The requested URL returned error: 403", "Permission to ... denied", "key you are authenticating with has been marked as read only", "Write access to repository not granted"
+  - a local remote: "insufficient permission"
+
+  Prefer the error class or code Git::Native exposes over string matching where it exists.
+- **Unreachable:** DNS, connection refused, timeout. This is the only class where retrying is the advice.
+- **Rejected:** as today.
+- **Stale:** as today.
+- **Anything else:** as today, raw error shown once.
+
+Write access denied ends the attempts at the first denial, the way a per-ref rejection does (k96). The message names the attempts truthfully.
+
+### B. A clone that cannot write the board is read-only (replaces the earlier B)
+
+Decided 2026-11-20. A board change that cannot reach the remote because the remote denies writing must not stay in the clone. The clone becomes read-only instead, and every later write is refused before anything is written. Guessing from the URL is out: clones that fetch over `https://` and push over a `pushurl` with an SSH key write fine.
+
+**The state lives in the clone, never on the board.** Store it in git config (`.git/config`). The board config is not the place: every clone shares it. Key names are the worker's choice. The state holds:
+
+- the mode: `denied` (learned from a push) or `on` (set or confirmed by hand)
+- the push URL it applies to: the remote's effective push URL (`pushurl`, else `url`), stored without userinfo
+- for `denied`: the reason (from A) and the time (UTC)
+
+**It applies only to that push URL.** If the remote's effective push URL changes (`git remote set-url --push origin git@...`, a new `pushurl`, a new `url`), the state no longer applies. karr writes and pushes normally again, and drops the stale keys after the next push that lands.
+
+**Learning.** The first push that fails with class `denied` (A) does three things:
+
+1. It takes back this command's own writes, the card, next-id and log entries included, so nothing of the command is left in the clone. The stale path already has the mechanism for taking writes back (k322).
+2. It puts the clone into `denied`, with reason, time and push URL.
+3. It exits 1 with the denial message (C1).
+
+**Refusing before writing.** In `denied` or `on`, every command that writes board refs refuses after its pull and before its first ref write, with exit 1 and the refusal message (C2). That is `create`, `move`, `edit`, `delete`, `archive`, `handoff`, `pick`, `unlock`, `config set`, and `import`, `materialize`, `repair`, `restore`, `set-refs` where they write board refs. No push is attempted, and there is no network cost beyond the pull that already happens. `--local-only` is refused too: in a read-only clone a local-only change could never be published.
+
+**Reading keeps working in every state:** `list`, `show`, `board`, `context` and the rest, plus the pull.
+
+**`karr sync`** is the explicit retry:
+
+- In `denied` it pulls and tries the push. A push that lands clears the state, for example after a credential was added without the URL changing. A denied push leaves the state as it is.
+- In `on` it pulls only, and says in one line that the push was skipped.
+
+**`karr readonly`**, a new command:
+
+- `karr readonly` shows the state: off, `denied` (since when, why, for which push URL) or `on`. `--json` as usual.
+- `karr readonly on` confirms the state, or sets it right after cloning a clone that is only for reading.
+- `karr readonly off` clears it. The next write tries to push again, and learns `denied` again if writing is still not allowed.
+
+**karr-foundation** writes nothing to a read-only board and marks it in its overview (`read-only: denied` / `read-only: on`).
+
+### C. Messages (replaces the earlier B and C)
+
+All messages go to STDERR. Exit 1 for refusals and failures (ADR 0002). URLs are always printed without userinfo. "Local refs are intact" goes away everywhere. Every message says what is and what is not on the remote.
+
+**C1. At the denial,** in this order:
+
+1. `karr: write access to the remote 'origin' (<push url>) was denied: <short reason from A>.`
+2. `Nothing was changed: this command's change was taken back, and this clone is now read-only for the board. Run the command again once this clone can write.`
+3. The fix:
+   - For `https://`: a push URL over SSH, which keeps fetching as it is: `git remote set-url --push origin git@<host>:<owner>/<repo>.git`. Or a credential for HTTPS.
+   - For SSH: the key is missing or read-only.
+   - Then the command again. The state lifts itself when the push URL changes, otherwise `karr readonly off`.
+4. `If this clone is only for reading: karr readonly on.`
+
+**C2. Refusal before writing:**
+
+- In `denied`: `karr: this clone is read-only for the board: write access to 'origin' (<push url>) was denied on <time> (<reason>). Nothing was changed.` The fix lines follow as in C1.
+- In `on`: one line, `karr: this clone is read-only for the board (karr readonly on). Nothing was changed.`
+
+**C3. Lasting warnings,** on every karr command including read commands. `--quiet` does not hide them, and stdout stays untouched, so `--json` stays parseable.
+
+- In `denied`, one line: `karr: this clone cannot write the board: write access to 'origin' was denied on <time>. Fix the access, or 'karr readonly on' if this clone is only for reading.` In `on`, read commands print no warning.
+- Board changes that are not on the remote. These come from an unreachable remote, from `--local-only`, or from clones made before this change: local `refs/karr/*` and `refs/karr-foundation/*` that differ from the remote's last known state, tombstones included. Every command warns: `karr: changes still not on the remote 'origin': #452, next-id. Last push: remote unreachable (<time>). Run 'karr sync' once the remote can be reached.` A read command pays no extra network round trip for this: it uses what the pull fetched, or the last known remote state. No warning when no remote is configured.
+- Unreachable keeps its three attempts, and the change stays in the clone. `create` prints the new card's number with `saved in this clone, not on the remote`. In C1 there is no number, because the card was taken back.
+
+### D. Docs
+
+- New ADR beside 0008: a clone that cannot write the board is read-only. Cover the state, where it is stored, how it lifts, and why not from the URL.
+- POD for the new command and for `SyncLifecycle`, `SyncGuard` and `Git` where they describe push failures.
+- Shipped skills:
+  - `kanban-issues-karr-coordination`, section "keep it pushed": a refusal means nothing was changed. The agent fixes the access if it may, otherwise puts the denial at the top of its report. An agent never runs `karr readonly on` on its own initiative; that is the call of whoever owns the clone.
+  - `kanban-issues-karr-ticket`: the same, briefly.
+- `Changes` entry under `{{$NEXT}}`.
+
+### E. Tests
+
+- **Denied.** `create` in a clone whose remote denies writing:
+  - exit 1 with C1;
+  - the board refs are byte-identical to before, next-id included;
+  - the state is set in git config.
+- **Refused before writing.** A second `create` is refused with C2, and zero pushes are attempted.
+- **Warning on reads.** `list` warns on STDERR, and its `--json` stdout is unchanged.
+- **`karr readonly on`.** Reads are silent, writes are refused with the one line. `karr readonly off`: the next write pushes.
+- **Push URL change.** `set-url --push` to a writable remote: the next write goes through, and the state is cleared.
+- **`karr sync` in `denied`.** It tries the push, and a push that lands clears the state.
+- **`--local-only` in a read-only clone** is refused.
+- **Unreachable.** Three attempts, the change kept, the card number printed, and the warning on later commands until `karr sync` lands.
+- **karr-foundation** marks a read-only board.
+- **By hand** as before: a scratch clone with `https://github.com/Getty/karr.git` and `GIT_TERMINAL_PROMPT=0`:
+  - `karr create` shows C1 and leaves no card;
+  - a second `create` shows C2 without a push;
+  - `karr list` shows the `denied` warning.
+
+## Notes
+
+Started on branch worktree-k333-push-denied. Phase 1 (karr-ref-worker): push classification, denied/unreachable messages, unpushed-state API. Then board-worker (create output, per-command warning) + foundation-worker (overview mark), test-writer, doc-writer, release-manager.
+
+Scope on hold: only part A (push classification, denied stops after first attempt) is being built now. B and C are deferred because a per-clone read-only state (refuse before writing) is under consideration and may change them. Nothing committed until A is reviewed.
+
+Part A built on worktree-k333-push-denied (uncommitted): App::karr::Git::push_failure classifies every failed push (denied/unreachable/rejected/stale/other) on native and CLI routes; denied stops after the first attempt in sync_after, sync_push_foundation, the SyncGuard insurance push and set-refs; unreachable keeps three attempts; doubled 'git push failed:' prefix gone. Denied wording is provisional pending B. Tests t/327-t/329. Drift filed: k334 (native stack trace), k335 (in-process runner stderr), k336 (relative lib after chdir), k337 (push_stale reset). B and C still on hold.
+
+Part A committed as 04c9bc6 on worktree-k333-push-denied (not pushed). B and C on hold.
+
+New version (B read-only clone, C1-C3 messages) started on worktree-k333-push-denied on top of 04c9bc6. Phase B1: karr-ref-worker builds git-config state, take-back on first denial, refusal before writing, karr sync behaviour, C1/C2 texts and the C3 API. Then board-worker (karr readonly, C3 hook, create number) and foundation-worker in parallel, then test-writer, doc-writer (new ADR), release-manager.
+
+B/C implemented in the working tree (uncommitted): CloneState (git-config read-only state, C1/C2/C3 texts), read-only door in sync_before, take-back on first denial, karr sync lift/probe, karr readonly command, lasting warnings via Dispatch/bin/karr END, success lines after the push (BoardAccess sync_after_and_report), foundation skips and marks read-only boards. Now: test-writer (E, updating 8 deliberately broken pins + t/182) and doc-writer (ADR, skills, README, POD) in parallel. Drift filed: k338, k339, k340, k341; p5-git-native k36 (public config delete).
+
+Committed as ed56794 (parts B-E) on top of 04c9bc6 (part A), branch worktree-k333-push-denied; not pushed.
+
+Review round (R1-R5) before merge: R1 take_back_journal must return refs it could not put back and C1 must say what stays in the clone; R2 narrow the denied classification (per-ref hook refusals are rejected, rate limits never make a clone read-only, filesystem texts only for a local remote's own write access); R3 strip userinfo up to the last @ and run every stored/printed push reason through the cleanup; R4/R5 three lines in ADR 0009. Third commit on worktree-k333-push-denied, no push of commits.
+
+Review fixes R1-R3 in the working tree on worktree-k333-push-denied (karr-ref-worker, uncommitted): take_back_journal returns {back, left} and the denial message names what it could not take back instead of 'Nothing was changed'; the stale path names a ref that still holds this clone's version. Classification: a rate limit is 'other' and never makes a clone read-only; a per-ref refusal (hook declined) is 'rejected'; file-permission texts count as denied only when they name the remote's files. App::karr::Error::strip_userinfo strips URL userinfo up to the last @ from push reasons, last_error and the karr.* git config values (written and read). t/327 got remote context for one case. Full suite: Files=261, Tests=2021, PASS. Next: test-writer pins, then review.
+
+Committed as c873c66 (review round: partial take-back wording, narrowed denied classification, URL userinfo stripped)
