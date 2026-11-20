@@ -28,8 +28,10 @@ remote configured it changes nothing. Never use it to dodge the push. Run
 ## A clone that cannot write
 
 A push the remote denies write access (no credentials over HTTPS, a read-only
-SSH key) is not retried. The command's change is taken back and the clone
-becomes read-only for the board; the state lives in this clone's git config,
+SSH key) is not retried. The command's change is taken back (what cannot be
+is named in the message and stays here until `karr sync` publishes it) and the
+clone becomes read-only for the board; a rate limit or a ref the remote refuses
+for its own reason (a hook) does not do that; the state lives in this clone's git config,
 not on the board.
 
 ```bash

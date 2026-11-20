@@ -45,9 +45,13 @@ the repository: no secrets, no home-directory paths.
 What a failed push says, and what to do:
 
 - **`karr: write access to the remote … was denied`** — the remote will not
-  take writes from this clone (no credentials, a read-only key). Nothing was
-  changed: the command's change was taken back, and the clone is now read-only
-  for the board. Fix the access if you may (the message names how: usually a
+  take writes from this clone (no credentials, a read-only key). Usually
+  nothing was changed: the command's change was taken back, and the clone is now
+  read-only for the board. If the message instead says part of the change
+  "could not be taken back and is still in this clone", those cards exist here
+  only: `karr sync` publishes them once the access works. A rate limit or a
+  ref the remote refuses itself (a hook) is a different failure and does not
+  make the clone read-only. Fix the access if you may (the message names how: usually a
   push URL over SSH, `git remote set-url --push origin git@…`), then run the
   command again. If you may not, the denial goes at the top of your report.
 - **`karr: this clone is read-only for the board … Nothing was changed.`** —

@@ -23,9 +23,12 @@ use Git::Libgit2 qw( GIT_EAUTH );
 # bare repository this user cannot write and checks the verdict
 # App::karr::Git::push_failure hands back, on both routes.
 
-sub classify { return App::karr::Git::_classify_push_error( $_[0] ) }
+sub classify { return App::karr::Git::_classify_push_error( $_[0], $_[1] ) }
 
-# [ text, class, reason-regex, label ]
+# [ text, class, reason-regex, label, context ] -- the context is what
+# App::karr::Git::_push_context hands the classifier for a real push: a bare
+# "Permission denied" counts as the remote's files only on a line naming the
+# remote's path, which the classifier cannot know without it.
 my @cases = (
     # --- denied, CLI ---------------------------------------------------
     [ "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
@@ -64,7 +67,8 @@ my @cases = (
     [ "remote: error: insufficient permission for adding an object to repository database ./objects",
       denied => qr/cannot write the remote repository/, 'local remote, older "insufficient permission"' ],
     [ "failed to create temporary file '/srv/o.git/objects/pack/pack_git2_1': Permission denied",
-      denied => qr/cannot write the remote repository/, 'local remote over libgit2' ],
+      denied => qr/cannot write the remote repository/, 'local remote over libgit2',
+      { remote_paths => ['/srv/o.git'] } ],
 
     # --- unreachable -----------------------------------------------------
     [ "fatal: unable to access 'https://nohost.invalid/o/r.git/': Could not resolve host: nohost.invalid",
@@ -92,8 +96,8 @@ my @cases = (
 );
 
 for my $case (@cases) {
-    my ( $text, $class, $reason, $label ) = @$case;
-    my ( $got, $why ) = classify($text);
+    my ( $text, $class, $reason, $label, $ctx ) = @$case;
+    my ( $got, $why ) = classify( $text, $ctx );
     is $got, $class, "$label: class";
     like $why, $reason, "$label: reason";
 }

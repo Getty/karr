@@ -87,14 +87,17 @@ bin/karr  →  App::karr (MooX::Cmd-Wurzel)  →  Cmd/*.pm  →  Role/BoardAcces
   zurückwies, wird **nicht** wiederholt — die Gegenseite hat geantwortet; nur eine Kontention
   (zwei Pushes auf dieselbe Ref) gewinnt der nächste Versuch. Ebenso wenig wird ein Push
   wiederholt, dem die Gegenseite das Schreiben verweigert (`denied`: keine Zugangsdaten, ein
-  Read-only-Key — `Git->push_failure` sortiert jeden Fehlschlag in `denied` / `unreachable` /
+  Read-only-Key; nicht `denied` sind Rate-Limit (`other`), eine pro Ref verweigerte Aktualisierung
+  wie Hook/geschützte Ref (`rejected`) und Rechtefehler im eigenen Clone-Repository (`other`);
+  Userinfo fliegt über `Error::strip_userinfo` aus jedem Grund — `Git->push_failure` sortiert jeden Fehlschlag in `denied` / `unreachable` /
   `rejected` / `stale` / `other`); nur `unreachable` behält die drei Versuche, und seine
   Änderung bleibt im Clone („Saved in this clone, not on the remote“).
 - **`CloneState` und die Read-only-Tür** — was dieser Clone über sein eigenes Schreibrecht
   weiß, in `.git/config` (`karr.readonly` = `denied`|`on`, `karr.readonlyPushUrl`, …), nie auf
   dem Board: die Board-Config gehört allen Clones zugleich. Der erste `denied`-Push nimmt die
-  Schreibvorgänge des Kommandos zurück (`take_back_journal`, `next-id` eingeschlossen) und setzt
-  den Zustand; danach lehnt `sync_before` jedes schreibende Kommando **nach dem Pull und vor dem
+  Schreibvorgänge des Kommandos zurück (`take_back_journal`, `next-id` eingeschlossen; es liefert
+  `{back, left}` — was nicht zurückging, nennt die Meldung statt „Nothing was changed“ und bleibt
+  im Clone, bis `karr sync` es publiziert) und setzt den Zustand; danach lehnt `sync_before` jedes schreibende Kommando **nach dem Pull und vor dem
   ersten Ref-Write** ab, `--local-only` eingeschlossen — Lesen und Pull gehen weiter. Der Zustand
   gilt nur für die Push-URL, für die er notiert wurde; er endet bei neuer Push-URL, mit einem
   `karr sync`, dessen Push landet (oder dessen Dry-Run-Probe durchgeht), oder mit `karr readonly
@@ -146,8 +149,8 @@ abgeschnitten, und karrs Hauptleser sind Agenten.
   `Host`-Alias oder `ProxyCommand` erreicht libgit2 nicht, dafür gibt es den CLI-Fallback.
   `BatchMode=yes` heißt: keine interaktive Passphrase — ein Agent ohne Key bekommt einen Fehler,
   keine Nachfrage.
-- **Ein verweigerter Push hinterlässt keine Karte.** Er nimmt die Änderung zurück und macht den
-  Clone read-only; wer danach „Local refs are intact“ sucht, findet es nicht mehr. `karr
+- **Ein verweigerter Push hinterlässt keine Karte.** Er nimmt die Änderung zurück (was sich nicht zurücknehmen lässt, nennt die Meldung und bleibt
+  nur im Clone) und macht den Clone read-only; wer danach „Local refs are intact“ sucht, findet es nicht mehr. `karr
   readonly` zeigt den Zustand; ihn ohne Auftrag des Clone-Maintainers auf `on` zu setzen, ist ein
   Fehler.
 - **Der Push prunt nicht.** Eine Remote-Ref, die der Clone nie gesehen hat, ist die Karte eines

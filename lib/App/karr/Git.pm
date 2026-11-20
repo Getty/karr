@@ -17,7 +17,7 @@ use Git::Libgit2 qw(
     GIT_OPT_SET_SERVER_TIMEOUT
 );
 use Git::Libgit2::FFI ();
-use App::karr::Error qw( clean_error );
+use App::karr::Error qw( clean_error strip_userinfo );
 use App::karr::Home qw( home_dir );
 use App::karr::Encoding qw(
     BOARD_ENCODING_VERSION
@@ -1678,18 +1678,28 @@ the command's own writes were made against a board the remote has moved past.
 
 sub take_back_journal {
     my ( $self, %opt ) = @_;
-    my $journal = delete $self->{_journal} or return ();
+    my $journal = delete $self->{_journal} or return { back => [], left => [] };
     delete $self->{_journal_root};
-    my $repo = $self->_repo or return ();
 
-    my @back;
-    for my $ref ( sort keys %$journal ) {
-        next if $ref eq NEXT_ID_REF && !$opt{next_id};
+    # What there is to take back: every ref this object changed, the id
+    # counter only when asked to. A counter that is not asked for is kept on
+    # purpose, not left behind, and is in neither list.
+    my @mine = grep {
+        !( $_ eq NEXT_ID_REF && !$opt{next_id} ) && !_same_oid( @{ $journal->{$_} } )
+    } sort keys %$journal;
+
+    # A repository that cannot be opened takes nothing back, and says so: all
+    # of it is still there.
+    my $repo = $self->_repo or return { back => [], left => \@mine };
+
+    my ( @back, @left );
+    for my $ref (@mine) {
         my ( $before, $ours ) = @{ $journal->{$ref} };
-        next if _same_oid( $before, $ours );
-        next unless _same_oid( $self->_ref_oid($ref), $ours );
 
-        my $done = try {
+        # Another process has written the ref since, and its write stands --
+        # but this object's write is not taken back, and the caller has to
+        # know: in a clone that cannot publish, it is still here.
+        my $done = _same_oid( $self->_ref_oid($ref), $ours ) && try {
             if ( defined $before ) {
                 $repo->reference_create( $ref, $before, expected_old => $ours );
             }
@@ -1701,7 +1711,10 @@ sub take_back_journal {
             }
             1;
         } catch { 0 };
-        next unless $done;
+        unless ($done) {
+            CORE::push @left, $ref;
+            next;
+        }
 
         # A deletion taken back is no deletion to publish.
         if ( !defined $ours and my $tomb = $self->_tombstone_name($ref) ) {
@@ -1709,21 +1722,32 @@ sub take_back_journal {
         }
         CORE::push @back, $ref;
     }
-    return @back;
+    return { back => \@back, left => \@left };
 }
 
 =method take_back_journal
 
-    my @refs = $git->take_back_journal;
-    my @refs = $git->take_back_journal( next_id => 1 );   # a denied push
+    my $took = $git->take_back_journal;
+    my $took = $git->take_back_journal( next_id => 1 );   # a denied push
+    # { back => [ 'refs/karr/tasks/12/data', ... ],   # put back
+    #   left => [ 'refs/karr/log/developer/a@b' ] }   # could not be
 
 Undoes what the journal (L</start_journal>) recorded and closes it: every
 board ref this object changed is put back to what it held before, and a
 deletion's tombstone is dropped with it, so nothing of it is published. A ref
-that no longer holds this object's last write is left alone -- another process
-has written it since, and that write stands -- and so is the id counter
-C<refs/karr/meta/next-id>, which only ever moves forward. Returns the refs that
-were put back, sorted.
+that no longer holds this object's last write is not touched -- another
+process has written it since, and that write stands -- and neither is one
+whose reset fails; the id counter C<refs/karr/meta/next-id>, which only ever
+moves forward, is kept unless C<next_id> is given.
+
+Returns a hash reference with two sorted lists of ref names. C<back>: the refs
+that were put back. C<left>: the refs this object changed that were I<not> put
+back -- another process wrote them since, the reset or the delete failed, or
+the repository could not be opened at all (then every changed ref is in
+C<left>). Whatever is in C<left> still carries this object's change, or
+another process's on top of it, and is not on the remote. The id counter kept
+because C<next_id> was not given is in neither list: keeping it is the
+intent, not a failure. Both lists are empty when no journal was open.
 
 This is the other half of a guarded push (L</push>): when the remote moved
 underneath a ref the command wrote, the command's writes were decided against
@@ -2150,6 +2174,51 @@ instead of overwriting it.
 # the ones they print; a read-only local remote says "unable to create
 # temporary object directory" on git 2.47 and "insufficient permission" on the
 # gits before the quarantine directory.
+#
+# Three things are kept out of "denied", because each would make a clone
+# read-only that can write (k333 review):
+#
+# A rate limit. A 403 or a 429 the remote sends because this clone asked too
+# often says nothing about its write access, so it is 'other' -- and is asked
+# before every denial rule, the 403 one included. Measured against a local
+# HTTP stand-in: git 2.47 prints "remote: Too Many Requests" and "The
+# requested URL returned error: 429", or for a 403 the body ("remote: You have
+# exceeded a secondary rate limit.") above "returned error: 403"; libgit2 says
+# "unexpected http status code: 429" -- and for the 403 only "unexpected http
+# status code: 403", the body dropped, so on the native route alone a
+# rate-limit 403 cannot be told from any other. The CLI, which every https push
+# reaches first or falls back to, can.
+#
+# A per-ref refusal. When the remote lists refs as refused for a reason of
+# their own -- "pre-receive hook declined", a protected ref -- the push reached
+# the remote and its answer is per ref: rejected, whatever the hook printed
+# around it. Measured: a hook printing "remote: error: Permission denied: hook
+# refuses refs/karr/x" comes with "[remote rejected] (pre-receive hook
+# declined)", and so does a hook script the remote cannot read ("remote:
+# /bin/sh: 0: cannot open .../pre-receive: Permission denied") and one whose
+# interpreter is missing ("fatal: cannot exec 'hooks/pre-receive': No such
+# file or directory"). The read-only local remote lists every ref as refused
+# too, but for no reason of its own -- "unpacker error" when objects/ is
+# unwritable, "atomic transaction failed" (with --atomic) or "failed to update
+# ref" (without) when refs/ is -- which is what _push_reason_is_collateral
+# recognises; those leave the verdict to the text. (A hook the remote ignores
+# because it is not executable fails nothing: git 2.47 prints a hint and the
+# push lands.)
+#
+# A file permission error about something else. "Permission denied",
+# "Read-only file system", "insufficient permission", "unable to create
+# temporary object directory" are the remote's files only when the line says
+# so (_names_remote_files): the remote's own words ("remote: ..." and "remote
+# unpack failed: ..."), or a line naming the remote's repository path when the
+# remote is a local one, and never a line about a hook -- libgit2's "failed
+# to create temporary file '/srv/o.git/objects/pack/pack_git2_...': Permission
+# denied", git's "remote: error: cannot lock ref 'refs/karr/x': Unable to
+# create '/srv/o.git/./refs/karr/x.lock': Permission denied". This clone's own
+# repository is not the remote's: a read-only .git makes the native guarded
+# push's fetch fail with libgit2's "failed open - '/home/u/a/.git/FETCH_HEAD'
+# is locked: Permission denied", and the CLI's fetch with "cannot open
+# '.git/FETCH_HEAD': Permission denied" -- 'other', because the remote never
+# said no. (The CLI push itself lands from a read-only clone.)
 my @PUSH_DENIED = (
     [ qr/marked as read only/i                    => 'the SSH key is read-only' ],
     [ qr/Write access to repository not granted/i => 'the credentials have no write access' ],
@@ -2162,9 +2231,15 @@ my @PUSH_DENIED = (
     [ qr/Authentication failed|authentication required|authentication replays|HTTP Basic: Access denied/i
         => 'authentication failed' ],
     [ qr/returned error: 403|status code: 403/i   => 'the remote answered 403 Forbidden' ],
-    [ qr/insufficient permission|unable to create temporary object directory|Read-only file system|: Permission denied/i
-        => "this user cannot write the remote repository's files" ],
 );
+
+# Matched line by line, and only on a line about the remote's files.
+my $PUSH_DENIED_FILES =
+    qr/insufficient permission|unable to create temporary object directory|Read-only file system|: Permission denied/i;
+use constant PUSH_DENIED_FILES_REASON => "this user cannot write the remote repository's files";
+
+my $PUSH_RATE_LIMITED = qr/rate[ -]?limit|Too Many Requests|(?:returned error|status code): 429\b/i;
+use constant PUSH_RATE_LIMITED_REASON => 'the remote is rate limiting requests';
 
 my @PUSH_UNREACHABLE = (
     [ qr/resolve host|resolve hostname|resolve address|Name or service not known|name resolution|nodename nor servname/i
@@ -2181,10 +2256,22 @@ my @PUSH_UNREACHABLE = (
 # words, whatever the message around it. The text decides everything else --
 # libgit2 reports a 403 or a refused connection as the generic GIT_ERROR, and
 # the CLI has no code to give at all.
+#
+# $ctx (optional, from _push_context): remote_paths, the forms of the remote's
+# repository path when it is a local one; rejected, the refs `--porcelain`
+# listed as refused. Without it a line counts as the remote's files only in
+# the remote's own words, and no refusal is known.
 sub _classify_push_error {
-    my ($err) = @_;
+    my ( $err, $ctx ) = @_;
+    $ctx ||= {};
     my $text = blessed($err) && $err->can('message') ? $err->message : $err;
     $text = defined $text ? "$text" : '';
+
+    return ( other => PUSH_RATE_LIMITED_REASON ) if $text =~ $PUSH_RATE_LIMITED;
+
+    # The remote answered ref by ref: that is the answer (see above).
+    return ( other => _first_line($text) )
+        if grep { !_push_reason_is_collateral( $_->{reason} ) } @{ $ctx->{rejected} || [] };
 
     for my $rule (@PUSH_DENIED) {
         next unless $text =~ $rule->[0];
@@ -2194,6 +2281,9 @@ sub _classify_push_error {
         $reason =~ s/HTTPS\z/HTTP/ if $text =~ m{for '?http://}i;
         return ( denied => $reason );
     }
+    return ( denied => PUSH_DENIED_FILES_REASON )
+        if grep { $_ =~ $PUSH_DENIED_FILES && _names_remote_files( $_, $ctx ) }
+            split /\n/, $text;
     return ( denied => 'authentication failed' )
         if blessed($err) && $err->can('is_auth') && $err->is_auth;
     for my $rule (@PUSH_UNREACHABLE) {
@@ -2201,6 +2291,62 @@ sub _classify_push_error {
     }
 
     return ( other => _first_line($text) );
+}
+
+# A per-ref reason that carries no answer of its own: the ref went down with
+# the unpack, or with the transaction, or its update (its lock) failed for
+# whatever the text around it says. Everything else -- a hook declining, a
+# protected ref, a non-fast-forward -- is the remote's answer about that ref.
+sub _push_reason_is_collateral {
+    my ($reason) = @_;
+    return 1 unless defined $reason && length $reason;
+    return $reason =~ /unpacker error|atomic|failed to update ref|cannot lock ref|failed to lock/i
+        ? 1 : 0;
+}
+
+# Whether one line of a push error is about the remote repository's files:
+# said by the remote itself, or naming its path. A hook's words are not
+# git's -- a hook that refuses is a rejection, answered per ref.
+sub _names_remote_files {
+    my ( $line, $ctx ) = @_;
+    my @paths = @{ $ctx->{remote_paths} || [] };
+    my $names_path = grep { $line =~ m{(?:\A|[\s'"`(])\Q$_\E(?=[/'"`\s:)]|\z)} } @paths;
+
+    # The words, not the path: a remote at /srv/webhooks.git is no hook.
+    my $words = $line;
+    $words =~ s/\Q$_\E//g for @paths;
+    return 0 if $words =~ /hook|pre-receive/i;
+
+    return 1 if $words =~ /\A\s*remote:|remote unpack failed/i;
+    return $names_path ? 1 : 0;
+}
+
+# The context _classify_push_error reads for a push to $remote: the local
+# path(s) its repository is at, when it is a local one -- the push URL's and
+# the fetch URL's, because libgit2's local transport writes to the latter
+# (#208), each as configured, absolute and with symlinks resolved -- plus
+# whatever %ctx the caller adds (rejected).
+sub _push_context {
+    my ( $self, $remote, %ctx ) = @_;
+    my $repo = $self->_repo or return \%ctx;
+    my @urls = try {
+        my $r = $repo->remote( $remote // 'origin' );
+        grep { defined && length } _remote_pushurl($r), from_octets( $r->url // '' );
+    } catch { () };
+
+    my %paths;
+    for my $url ( grep { _is_local_url($_) } @urls ) {
+        my $raw = $url =~ s{\Afile://}{}ir;
+        my $abs = path($raw);
+        $abs = $self->repo_root->child($raw) if $abs->is_relative && $self->repo_root;
+        my $real = try { $abs->realpath } catch { undef };
+        for my $form ( $raw, "$abs", ( defined $real ? "$real" : () ) ) {
+            ( my $p = $form ) =~ s{/+\z}{};
+            $paths{$p} = 1 if length $p;
+        }
+    }
+    $ctx{remote_paths} = [ sort keys %paths ];
+    return \%ctx;
 }
 
 # The first non-blank line of $text, without the colon that introduces a list
@@ -2217,11 +2363,15 @@ sub _first_line {
 # fails, so a later step overwrites an earlier one: the native attempt's
 # verdict stands only until the CLI fallback gives its own, which is the
 # answer the push actually ended on.
+#
+# The reason goes into git config and into every later "Last push:" line, and
+# an 'other' one is the transport's own first line, URLs and all: without
+# their userinfo (App::karr::Error/strip_userinfo).
 sub _note_push_failure {
     my ( $self, $remote, $class, $reason ) = @_;
     $self->{_push_failure} = {
         class  => $class,
-        reason => $reason,
+        reason => strip_userinfo($reason),
         remote => $remote,
     };
     return;
@@ -2230,15 +2380,17 @@ sub _note_push_failure {
 # The end of every public push: a push that landed has no failure to report,
 # and one that failed without any step naming a cause -- no repository, a
 # misdirected push URL under KARR_NO_CLI_FALLBACK -- is classified from
-# last_error, which is all there is.
+# last_error, which is all there is. Whatever last_error ended up as, every
+# step's text included, is printed by the caller: without userinfo.
 sub _settle_push {
     my ( $self, $remote, $ok ) = @_;
     if ($ok) {
         $self->{_push_failure} = undef;
         return 1;
     }
+    $self->{_last_error} = strip_userinfo( $self->{_last_error} );
     $self->_note_push_failure( $remote,
-        _classify_push_error( $self->{_last_error} ) )
+        _classify_push_error( $self->{_last_error}, $self->_push_context($remote) ) )
         unless $self->{_push_failure};
     return 0;
 }
@@ -2269,6 +2421,17 @@ cannot write. On the native transport L<Git::Native::Error>'s C<is_auth> decides
 where libgit2 raised C<GIT_EAUTH>; otherwise, and on the CLI, the
 transport's text does. Pushing again cannot help until the access is fixed.
 
+Three things are never C<denied>, because none of them says this clone cannot
+write: a rate limit (any 429 or C<Too Many Requests>, and a 403 whose text
+names a rate limit -- which libgit2 drops, so only the CLI can tell), which
+is C<other>; a ref the remote refused for a reason of its own -- a hook
+declining, whatever the hook printed -- which is C<rejected>; and a
+filesystem permission error about anything but the remote's files -- this
+clone's own F<.git>, a hook script -- which is C<other>. Such an error counts
+as the remote's only in the remote's own words (C<remote: ...>, C<remote
+unpack failed: ...>) or on a line naming the path of a remote that is a local
+repository.
+
 =item C<unreachable>
 
 The remote was not reached: the host name did not resolve, the connection was
@@ -2285,17 +2448,21 @@ The remote no longer holds what this clone last saw (L</push_stale>).
 
 =item C<other>
 
-Anything else; C<reason> is the first line of L</last_error>.
+Anything else; C<reason> is the first line of L</last_error>,
+or C<the remote is rate limiting requests> for a rate limit.
 
 =back
 
 C<reason> is a short phrase for the user (C<"the SSH key is read-only">,
-C<"the connection was refused">), C<remote> the remote's name. The class is
+C<"the connection was refused">), C<remote> the remote's name. The reason is
+without the userinfo of any URL in it (L<App::karr::Error/strip_userinfo>),
+and so is L</last_error> after a failed push. The class is
 the verdict of the transport the push ended on: when the native transport
 fails and the CLI fallback runs, the CLI's answer replaces the native one. A
 push denied over the CLI is reported as denied even when C<--porcelain> also
 listed its refs as refused -- a read-only local remote fails every ref with
-C<unpacker error> or C<atomic transaction failed> -- and fills neither
+C<unpacker error> or C<atomic transaction failed> (C<failed to update
+ref> without C<--atomic>) -- and fills neither
 L</push_rejections> nor L</push_stale>, because neither of those answers is
 what happened.
 
@@ -2349,12 +2516,13 @@ repository cannot be opened.
 
 =cut
 
+# One URL is text with one URL in it: the same cleanup, so there is one place
+# that decides where userinfo ends (it ran to the first "@" here, and
+# https://user:p@ss@host/x came out as https://ss@host/x).
 sub without_userinfo {
     my ($url) = @_;
     $url = $_[1] if @_ > 1;    # also callable as a class method
-    return $url unless defined $url;
-    $url =~ s{\A([A-Za-z][A-Za-z0-9+.\-]*://)[^/@]*@}{$1};
-    return $url;
+    return strip_userinfo($url);
 }
 
 =method without_userinfo
@@ -2362,9 +2530,12 @@ sub without_userinfo {
     my $shown = App::karr::Git->without_userinfo($url);
 
 C<$url> with the userinfo of a C<scheme://user:password@host/...> URL taken
-out -- the form every URL karr prints or stores is in. An scp-style
-C<user@host:path> is left as it is: there the user is the SSH login, part of
-the address, and carries no secret.
+out -- the form every URL karr prints or stores is in. The userinfo runs to
+the last C<@> before the host, so a password with a raw C<@> in it goes
+entirely: C<https://user:p@ss@host/x> becomes C<https://host/x>. An
+scp-style C<user@host:path> is left as it is: there the user is the SSH
+login, part of the address, and carries no secret. The same cleanup as
+L<App::karr::Error/strip_userinfo>, which does it for every URL in a text.
 
 =cut
 
@@ -2418,10 +2589,11 @@ sub probe_push_access {
 
     my $detail = $run->{err};
     $detail =~ s/\s+\z//;
-    $self->{_last_error} = "git push --dry-run failed: $detail";
+    $self->{_last_error} = strip_userinfo("git push --dry-run failed: $detail");
     my ( $class, $reason ) = $run->{failure} eq 'timeout'
         ? ( unreachable => "the push timed out after $run->{timeout}s" )
-        : _classify_push_error($detail);
+        : _classify_push_error( $detail, $self->_push_context( $remote,
+            rejected => _parse_push_porcelain( $run->{out} ) ) );
     $self->_note_push_failure( $remote, $class, $reason );
     return $class eq 'denied' ? 0 : undef;
 }
@@ -2650,7 +2822,8 @@ sub _push_refspecs {
         $self->{_last_error} = "$_";
         # Classified from the exception itself, which carries libgit2's code;
         # a CLI fallback that runs replaces this with its own verdict.
-        $self->_note_push_failure( $remote, _classify_push_error($_) );
+        $self->_note_push_failure( $remote,
+            _classify_push_error( $_, $self->_push_context($remote) ) );
         $fallback->();
     };
     return 0 unless $ok;
@@ -2909,23 +3082,27 @@ sub _push_guarded_cli {
     }
     if ( my $sig = $run->{status} & 127 ) {
         $self->{_last_error} = "git push was killed by signal $sig$suffix";
-        $self->_note_push_failure( $remote, _classify_push_error( $self->{_last_error} ) );
+        $self->_note_push_failure( $remote,
+            _classify_push_error( $self->{_last_error}, $self->_push_context($remote) ) );
         return 0;
     }
     return 1 unless $run->{status} >> 8;
 
-    # Denied before the porcelain is read: a remote this clone may not write
-    # still lists every ref as refused -- "unpacker error", or "atomic
+    # Denied before the refusals are settled: a remote this clone may not
+    # write still lists every ref as refused -- "unpacker error", or "atomic
     # transaction failed", which _settle_guarded_rejections would read as
-    # stale and answer with a pull and two more rounds (k333).
-    my ( $class, $reason ) = _classify_push_error($detail);
+    # stale and answer with a pull and two more rounds (k333). The porcelain
+    # goes into the verdict all the same: a ref refused for a reason of its
+    # own (a hook declining) makes it a rejection, whatever the hook printed.
+    my $rejected = _parse_push_porcelain( $run->{out} );
+    my ( $class, $reason ) = _classify_push_error( $detail,
+        $self->_push_context( $remote, rejected => $rejected ) );
     if ( $class eq 'denied' ) {
         $self->{_last_error} = "git push failed: $detail";
         $self->_note_push_failure( $remote, $class, $reason );
         return 0;
     }
 
-    my $rejected = _parse_push_porcelain( $run->{out} );
     unless (@$rejected) {
         # A server too old for atomic pushes says so before a single ref is
         # considered. The expectations still hold ref by ref without it.
@@ -4064,7 +4241,8 @@ sub _cli_transport {
         $self->{_last_error} =
           "git $verb (CLI fallback) was killed by signal $sig$suffix";
         $self->_note_push_failure( $remote,
-            _classify_push_error( $self->{_last_error} ) ) if $push;
+            _classify_push_error( $self->{_last_error}, $self->_push_context($remote) ) )
+            if $push;
         return 0;
     }
     return 1 unless $run->{status} >> 8;
@@ -4072,11 +4250,13 @@ sub _cli_transport {
     $self->{_last_error} = "git $verb (CLI fallback) failed: $detail";
     return 0 unless $push;
 
-    # The CLI's verdict replaces the native attempt's. Denied is read before
-    # the porcelain, for the reason _push_guarded_cli gives (k333).
-    my ( $class, $reason ) = _classify_push_error($detail);
+    # The CLI's verdict replaces the native attempt's. Denied is decided
+    # before the refusals are recorded, with the porcelain in the verdict, for
+    # the reasons _push_guarded_cli gives (k333).
+    my $rejected = _parse_push_porcelain( $run->{out} );
+    my ( $class, $reason ) = _classify_push_error( $detail,
+        $self->_push_context( $remote, rejected => $rejected ) );
     if ( $class ne 'denied' ) {
-        my $rejected = _parse_push_porcelain( $run->{out} );
         if (@$rejected) {
             $self->{_push_rejections} = $rejected;
             $self->{_last_error} =

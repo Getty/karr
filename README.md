@@ -1149,8 +1149,9 @@ Important refs:
 A push the remote denies write access (a public repository cloned over
 `https://` without credentials, a read-only deploy key) is not retried, and a
 change that could never be published must not stay in the clone either. The
-command's own change is taken back -- nothing was changed -- and the clone
-becomes **read-only for the board**. Every later command that writes board refs
+command's own change is taken back -- nothing was changed, unless the message
+names a card that could not be taken back and is still only in this clone -- and
+the clone becomes **read-only for the board**. Every later command that writes board refs
 is refused after its pull and before it writes, `--local-only` included; reads
 and the pull keep working, and every command warns on STDERR (stdout and
 `--json` stay clean) until the access is fixed. The state lives in the clone's
@@ -1167,7 +1168,9 @@ karr readonly on                                # a clone that is only for readi
 A remote that is merely unreachable keeps its three attempts and the change
 stays in the clone, marked `(saved in this clone, not on the remote)`; the
 warning on later commands names what is still missing there until `karr sync`
-lands it. karr-foundation skips a read-only board like a disabled one and marks
+lands it. A rate limit, a ref the remote refuses for a reason of its own (a
+hook, a protected ref) and a permission error in the clone's own repository
+do not make a clone read-only. karr-foundation skips a read-only board like a disabled one and marks
 it `read-only: denied` / `read-only: on` in its overview. The decision is in
 `docs/adr/0009-a-clone-that-cannot-write-the-board-is-read-only.md`.
 

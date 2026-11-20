@@ -360,7 +360,10 @@ activity log entry and the id counter alike
 board (L<App::karr::CloneState>), and the command ends with exit 1 on
 C<karr: write access to the remote 'origin' (URL) was denied: REASON.>,
 C<Nothing was changed: this command's change was taken back, ...> and the way
-to give this clone write access (L<App::karr::CloneState/denial_message>).
+to give this clone write access (L<App::karr::CloneState/denial_message>). A
+ref the take-back could not put back -- another process wrote it since, or
+the reset failed -- is named instead, as still in this clone and not on the
+remote; the clone becomes read-only all the same.
 
 Only a remote that could not be I<reached> -- the name did not resolve, the
 connection was refused or timed out -- and a failure of no recognised kind get
@@ -395,7 +398,9 @@ the card and the activity log entry alike, so neither goes out later), the
 other clone's version is pulled in, and then a command composing
 L<App::karr::Role::ReapplyOnStale> (C<create>, C<pick>) runs again from the
 top; every other command stops with exit 1, naming the card that changed and
-saying that nothing of it was published.
+saying that nothing of it was published -- and, when the take-back could not
+put a ref back and the pull did not replace it either, that this ref still
+holds this clone's version and would go out with the next push.
 
 =back
 
@@ -551,7 +556,7 @@ sub _pull_after_stale_push {
         return;
     }
 
-    $git->take_back_journal;
+    my $took = $git->take_back_journal;
     # What the guard would insure has just been withdrawn.
     $self->_release_guard;
     $self->sync_pull;
@@ -563,6 +568,23 @@ sub _pull_after_stale_push {
         $self->_stale_reapply(1);
         die "karr: $what changed on the remote while this command ran\n";
     }
+
+    # A ref the take-back could not put back (App::karr::Git/take_back_journal)
+    # still holds this clone's version unless the pull just brought the
+    # remote's in; only the ones it did not are worth naming.
+    my @left = @{ ( ref $took eq 'HASH' && $took->{left} ) || [] };
+    if ( @left && $git->can('unpublished_refs') ) {
+        my $remote = ( $git->can('push_failure') && $git->push_failure || {} )->{remote};
+        my $unpublished = $git->unpublished_refs( $remote // 'origin' ) || {};
+        @left = grep { $unpublished->{$_} } @left;
+    }
+    App::karr::Error::user_error(
+        "$what changed on the remote while this command ran.\n"
+      . "Nothing this command wrote was published, but not all of it could be "
+      . "taken back here: " . $self->_name_board_refs(@left) . " still "
+      . ( @left == 1 ? 'holds' : 'hold' ) . " this clone's version, not the "
+      . "remote's, and would go out with the next push.\n"
+      . "Run the command again if it still applies." ) if @left;
 
     App::karr::Error::user_error(
         "$what changed on the remote while this command ran.\n"

@@ -28,6 +28,20 @@
     - An unreachable remote keeps its retries, and the doubled
       "git push failed: git push failed:" prefix is gone.
 
+    - A denied push that cannot take back all of a command's writes no
+      longer says "Nothing was changed": it names the cards that are still
+      only in this clone and not on the remote. The refusal of a stale push
+      says the same.
+
+    - A rate limit (429), a push the remote refuses ref by ref (a
+      pre-receive hook, a protected ref) and a permission error in the
+      clone's own repository no longer make the clone read-only; only a
+      lack of write access to the remote does.
+
+    - Passwords and tokens in a remote URL are no longer shown in push
+      failure reasons, nor stored in them or in the `karr.readonly*` git
+      config.
+
     - The shipped karr skills (`karr skill install`) now say that the board
       is the exchange between agents: a card that is not on the remote does
       not exist for other agents, so board writes and their push are wanted

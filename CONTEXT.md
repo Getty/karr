@@ -122,7 +122,10 @@ write access (`denied`), or set by hand for a clone that is only for reading
 board, and applies only to the push URL it was recorded for. In it every command
 that writes board refs is refused after its pull and before its first write
 (`--local-only` included), and the command that hit the denial takes its own
-change back; reading and pulling keep working. It lifts when the push URL
+change back (what cannot be taken back is named in the message and stays here
+until `karr sync`); reading and pulling keep working. A rate limit, a ref the
+remote refuses for a reason of its own (a hook, a protected ref) and a
+permission error in the clone's own repository do not make a clone read-only. It lifts when the push URL
 changes, when `karr sync` lands a push, or with `karr readonly off`; `on` is the
 call of the clone's maintainer, never an agent's (ADR 0009). Not the same as a
 **Disabled board**, which is board state that opts out of automation for every
@@ -137,7 +140,7 @@ known state, tombstones included. It comes from an unreachable remote, from
 `--local-only`, or from a clone older than the read-only state, and every karr
 command warns about it on STDERR until `karr sync` lands it. A **Read-only
 clone** has none of its own: a denied push takes the command's change back
-instead of keeping it. A write in progress that died early is a different
+instead of keeping it (what it cannot take back is the one exception). A write in progress that died early is a different
 thing; the push insurance publishes that one.
 _Avoid_: "local refs are intact" (it reads as "all fine" and says nothing about
 what is missing), "dirty" or "pending" for the clone (those are git's words for

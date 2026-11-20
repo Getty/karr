@@ -77,7 +77,11 @@ All in the C<karr> section of the repository's git config:
     karr.lastPushReason    its short reason
     karr.lastPushAt        its time, UTC
 
-The C<lastPush*> keys are cleared by the next push that succeeds.
+The C<lastPush*> keys are cleared by the next push that succeeds. Every value
+is written, and read back, without the userinfo of any URL in it
+(L<App::karr::Error/strip_userinfo>): a reason is the transport's own text,
+and a token in an https URL is a secret -- also in a value written before
+that cleanup existed.
 
 =cut
 
@@ -131,17 +135,20 @@ sub _now {
     return POSIX::strftime( '%Y-%m-%dT%H:%M:%SZ', gmtime );
 }
 
+# Every value goes in and comes out without the userinfo of any URL in it
+# (App::karr::Error/strip_userinfo): a push reason is the transport's own text,
+# and one recorded before that cleanup existed must not print either.
 sub _get {
     my ( $self, $key ) = @_;
     my $val = $self->git->git_config_get($key);
-    return defined $val && length $val ? $val : undef;
+    return defined $val && length $val ? App::karr::Error::strip_userinfo($val) : undef;
 }
 
 sub _set {
     my ( $self, %kv ) = @_;
     my $git = $self->git;
     for my $key ( sort keys %kv ) {
-        $git->git_config_set( $key, $kv{$key} )
+        $git->git_config_set( $key, App::karr::Error::strip_userinfo( $kv{$key} ) )
             or die 'karr: could not record the read-only state in git config: '
                  . ( $git->last_error // 'unknown error' ) . "\n";
     }
@@ -483,7 +490,18 @@ sub denial_message {
     my $where   = defined $url ? "'$remote' ($url)" : "'$remote'";
 
     my @lines = ( "karr: write access to the remote $where was denied: $reason." );
-    if ( @{ $arg{taken_back} || [] } ) {
+    my @left = @{ $arg{left} || [] };
+    if (@left) {
+        # Some or all of it is still here (App::karr::Git/take_back_journal):
+        # "Nothing was changed" would be the one thing this must not say.
+        my $now = $arg{already} ? 'stays' : 'is now';
+        CORE::push @lines, ( @{ $arg{taken_back} || [] } ? 'Part of this' : 'This' )
+          . " command's change could not be taken back and is still in this clone, "
+          . 'not on the remote: ' . join( ', ', @left ) . ". This clone $now "
+          . 'read-only for the board; the change stays here until this clone can '
+          . "write, then 'karr sync' publishes it.";
+    }
+    elsif ( @{ $arg{taken_back} || [] } ) {
         CORE::push @lines, "Nothing was changed: this command's change was taken back, "
           . 'and this clone is now read-only for the board. Run the command again '
           . 'once this clone can write.';
@@ -496,8 +514,8 @@ sub denial_message {
           . 'for the board.';
     }
     if ( my @still = @{ $arg{unpublished} || [] } ) {
-        CORE::push @lines, 'Still only in this clone, not on the remote: '
-          . join( ', ', @still ) . '.';
+        CORE::push @lines, ( @left ? 'Also still' : 'Still' )
+          . ' only in this clone, not on the remote: ' . join( ', ', @still ) . '.';
     }
     CORE::push @lines, $class->fix_lines( remote => $remote, push_url => $url );
     return join "\n", @lines;
@@ -508,7 +526,8 @@ sub denial_message {
     my $text = App::karr::CloneState->denial_message(
         failure     => $git->push_failure,   # { class, reason, remote }
         push_url    => $git->push_url,
-        taken_back  => \@refs,               # what take_back_journal returned
+        taken_back  => $took->{back},        # what take_back_journal put back
+        left        => [ '#12', 'log' ],     # and what it could not, short names
         already     => 0,                    # the clone was read-only before
         unpublished => [ $state->unpublished ],
     );
@@ -523,7 +542,21 @@ The message at a denial, as one string without a trailing newline:
 then L</fix_lines>. (The second sentence is one line.) A push that took
 nothing of the command back -- C<karr sync> -- says C<Nothing was published>
 instead, and C<stays read-only> when the clone already was. Changes older than
-the command that are still only here are listed on a line of their own.
+the command that are still only here are listed on a line of their own
+(C<Still only in this clone, not on the remote: ...>).
+
+When the take-back left something behind (C<left>, by the short names of
+L</short_ref_names>), the second line says so instead of C<Nothing was
+changed>, and on one line:
+
+    Part of this command's change could not be taken back and is still in
+    this clone, not on the remote: #12, log. This clone is now read-only for
+    the board; the change stays here until this clone can write, then 'karr
+    sync' publishes it.
+
+beginning C<This command's change could not be taken back> when nothing was
+put back at all. The line about older changes then reads C<Also still only in
+this clone, ...>.
 
 =cut
 
@@ -704,9 +737,13 @@ sub denied_push {
     my $remote  = $failure->{remote} // 'origin';
 
     # First, so nothing of the command outlives the denial: the card, the log
-    # entry and the id counter alike (App::karr::Git/take_back_journal).
-    my @back = $opt{take_back} && $git->can('take_back_journal')
-        ? $git->take_back_journal( next_id => 1 ) : ();
+    # entry and the id counter alike (App::karr::Git/take_back_journal). What
+    # it could not put back is still here, and the message has to say so.
+    my $took = $opt{take_back} && $git->can('take_back_journal')
+        ? $git->take_back_journal( next_id => 1 ) : {};
+    my @left = short_ref_names( { map {
+        $_ => ( $git->can('ref_exists') && !$git->ref_exists($_) ? 'deleted' : 'changed' )
+    } @{ $took->{left} || [] } } );
 
     my $state = $class->for_git( $git, remote => $remote );
     my ( $already, $url, @still, $unrecorded );
@@ -715,14 +752,17 @@ sub denied_push {
         $already = $was->{applies} && $was->{mode} eq 'denied';
         $url     = $was->{current_push_url};
         eval { $state->learn_denied($failure); 1 } or $unrecorded = $@;
-        @still = $state->unpublished;
+        # Named once: what the take-back left is on the line before.
+        my %said = map { $_ => 1 } @left;
+        @still = grep { !$said{$_} } $state->unpublished;
     }
     $class->mark_reported;
     my $text = $class->denial_message(
         failure     => $failure,
         remote      => $remote,
         push_url    => $url,
-        taken_back  => \@back,
+        taken_back  => $took->{back} || [],
+        left        => \@left,
         already     => $already,
         unpublished => \@still,
     );
@@ -790,8 +830,10 @@ Everything that follows a push denied write access, in order: the command's
 own writes are taken back (C<take_back>, L<App::karr::Git/take_back_journal>
 with the id counter), the clone learns C<denied> (L</learn_denied>), and
 L</reported> is set. Returns the L</denial_message> for the caller to raise or
-warn. A C<$git> without git config (a test double) learns nothing and gets
-the message alone.
+warn -- naming, by their short names, the refs the take-back could not put
+back (another process wrote them since, or the reset failed) as still in this
+clone, the clone made read-only all the same. A C<$git> without git config (a
+test double) learns nothing and gets the message alone.
 
 =cut
 

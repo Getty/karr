@@ -51,7 +51,9 @@ karr handoff 12 --note "Done: <what changed, how verified>" -t   # to review
   brief says not to push (that means commits and tags). Do not add `--local-only`.
   If a write reports a failed push, say so at the top of your report. A
   "write access … was denied" or "this clone is read-only for the board" means
-  nothing was changed: fix the access if you may, otherwise report it and stop.
+  nothing was changed (unless the message names a card that "could not be taken
+  back" and is still only in this clone): fix the access if you may, otherwise
+  report it and stop.
   A "changes still not on the remote" warning is the cue to run `karr sync` once
   the remote answers. Never run `karr readonly on`: the clone's maintainer decides that.
 

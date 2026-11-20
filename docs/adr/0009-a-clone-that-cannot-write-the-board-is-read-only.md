@@ -35,21 +35,42 @@ and every later write is refused before anything is written.
   (`App::karr::Git::push_failure`) takes this command's own writes back -- the
   card, next-id and log entries included, with the mechanism the stale push
   uses (ADR 0008) -- records `denied`, and exits 1 with the denial message.
+  What a take-back cannot put back (another process wrote the ref since, a
+  reset failed) stays in the clone, and the denial message says so instead of
+  "Nothing was changed": which cards are still only here, that the clone is
+  read-only now, and that `karr sync` publishes them once it can write.
+- **What counts as denied.** Only what says that this clone may not write: no
+  credentials, a read-only key, a refused HTTP 401/403, a permission error on
+  the remote repository's files (in the remote's own words, or on a line
+  naming a local remote's path). Not denied, so the clone stays writable: a
+  rate limit (429, "rate limit" -- class `other`, a 403 that names one too), a
+  push the remote refuses ref by ref for a reason of its own (a pre-receive
+  hook, a protected ref -- `rejected`), and a permission error about anything
+  but the remote's files, this clone's own `.git` for one (`other`).
+  Userinfo (tokens, passwords) is stripped from every push reason karr stores
+  or prints.
   Unreachable keeps its three attempts and the change stays in the clone; only a
   denial changes the clone's mode.
 - **Refusing before writing.** In `denied` or `on`, every command that writes
   board refs is refused after its pull and before its first ref write, exit 1.
-  No push is attempted, so the cost beyond the pull is nil. `--local-only` is
-  refused too: in a read-only clone a local-only change could never be
-  published. Reading and pulling keep working in every state.
+  No push is attempted, so the cost beyond the pull is nil. `karr destroy` is
+  refused as well, on purpose: it writes the board, deleting `refs/karr/*`
+  locally and on the remote, which a clone that cannot publish must not do.
+  `--local-only` is refused too: in a read-only clone a local-only change could
+  never be published. Reading and pulling keep working in every state.
 - **How it lifts.** Three ways. (1) The remote's effective push URL (`pushurl`,
   else `url`) no longer equals the recorded one: the state stops applying, and
-  the stale keys are dropped after the next push that lands. (2) `karr sync`
-  pulls and tries the push in `denied`; a push that lands -- or its dry-run
+  the stale keys are dropped after the next push that lands. The state is tied
+  to the push URL it was learned for, so a URL that goes A -> B -> A with no
+  push landing or denied in between makes the state for A apply again. (2)
+  `karr sync` pulls and tries the push in `denied`; a push that lands -- or its dry-run
   probe succeeding -- clears the state, which covers a credential added without
   the URL changing. A denied push leaves it as it is. (3) `karr readonly off`
   clears it by hand; the next write tries again and learns `denied` again if
   writing is still not allowed.
+  A token or user added to the URL lifts nothing: the stored and the compared
+  URL are without userinfo, so it is the same URL. `karr sync` (a push, or its
+  dry-run probe) or `karr readonly off` is the way out.
 - **`karr readonly on`** is for a clone that is only for reading, say a
   checkout for browsing the board: it is refused to write from the start, and
   `karr sync` only pulls. It is the call of the clone's maintainer; an agent
@@ -75,6 +96,8 @@ it is worse than no change: it looks done, it is invisible to everyone else, and
 it reserves a card number the board does not know about. Taking it back leaves
 the clone exactly as it was, so the message can say the one true thing -- nothing
 was changed -- and the agent can run the command again once the access is fixed.
+(When a ref cannot be taken back, the message names it instead and says it is
+still only in this clone; see "Learning".)
 This is the opposite of an unreachable remote, where the push may succeed a
 minute later: that change stays, is reported as "saved in this clone, not on the
 remote", and `karr sync` publishes it.

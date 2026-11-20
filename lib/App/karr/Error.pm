@@ -9,7 +9,7 @@ use Exporter qw( import );
 
 our @EXPORT_OK = qw( user_error clean_error is_usage_error command_hint
   original_argv set_original_argv require_claim_message mandatory_claim_message
-  held_back_claim_message );
+  held_back_claim_message strip_userinfo );
 
 =head1 SYNOPSIS
 
@@ -183,6 +183,38 @@ A suggestion block written by L</command_hint> is the exception to "one line":
 those trailing lines are lifted off before the reduction and appended again
 afterwards, so a message that ends in the command that would have worked keeps
 it -- and keeps it last.
+
+=cut
+
+# The userinfo of every URL in a piece of text (k333): what a push failure is
+# stored and printed as. A token in an https URL is a secret, and a push error
+# carries URLs in free text -- the CLI's "unable to access '...'", a libgit2
+# message, a hook's chatter -- which then goes into git config and into every
+# later "Last push:" line. The userinfo runs to the LAST "@" before the host
+# ends (a host cannot contain one, a password typed raw can), so the match is
+# greedy up to the first character that cannot be inside an authority. An
+# scp-style git@host:path has no "://" and is left alone: there the user is the
+# SSH login, part of the address, and carries no secret.
+sub strip_userinfo {
+  my ($text) = @_;
+  return $text unless defined $text;
+  $text =~ s{([A-Za-z][A-Za-z0-9+.\-]*://)[^/\s'"<>]*\@}{$1}g;
+  return $text;
+}
+
+=method strip_userinfo
+
+    my $shown = strip_userinfo(q{fatal: unable to access 'https://tok@github.com/x/'});
+    # fatal: unable to access 'https://github.com/x/'
+
+C<$text> with the userinfo taken out of every C<scheme://user:password@host>
+URL in it, wherever in the text it stands -- C<https://user:p@ss@host/x>
+becomes C<https://host/x>, the userinfo running to the last C<@> before the
+host. An scp-style C<user@host:path> is left as it is. Every push reason and
+push error karr records or prints passes through here
+(L<App::karr::Git/push_failure>, L<App::karr::Git/last_error>,
+L<App::karr::CloneState>), and so does L<App::karr::Git/without_userinfo>.
+C<undef> stays C<undef>.
 
 =cut
 
