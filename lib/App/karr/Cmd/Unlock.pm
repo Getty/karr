@@ -97,8 +97,11 @@ sub execute {
 
   # Pull first: a lock pushed by a command that died before it could release
   # one is on the remote, and this is the command for exactly that mess. The
-  # guard is disarmed on the reporting path below, which writes nothing.
-  my $guard = $self->sync_before;
+  # guard is disarmed on the reporting path below, which writes nothing -- and
+  # which a read-only clone is therefore not refused (k333).
+  my @pos = $self->positional_args($args_ref);
+  my $guard = $self->sync_before(
+    writes => ( $self->all || defined $pos[0] ) ? 1 : 0 );
 
   my $ec = $self->store->effective_config;
   my $lock = App::karr::Lock->new(
@@ -107,7 +110,6 @@ sub execute {
                                  App::karr::Lock->DEFAULT_TTL),
   );
 
-  my @pos = $self->positional_args($args_ref);
   my @held = $lock->locks;
 
   # No target: report only. Clearing a lock is destructive to whoever holds it,
@@ -126,7 +128,9 @@ sub execute {
     ? grep { !$seen{$_}++ } map { $_->{task_id} } @held
     : $self->parse_ids($pos[0]);
 
-  my @results;
+  # Said once the push is through, as every writing command does (k333). The
+  # lines carry no "saved in this clone" note: a lock is this clone's own.
+  my ( @results, @said );
   for my $id (@ids) {
     my ($ok, $owner) = $lock->break_lock($id);
     push @results, {
@@ -135,13 +139,15 @@ sub execute {
       ( $ok ? ( owner => $owner ) : () ),
     };
     next if $self->json;
-    if ($ok) { printf "Broke lock on task %d (was held by %s)\n", $id, $owner }
-    else     { printf "Task %d is not locked\n", $id }
+    push @said, $ok
+      ? sprintf( "Broke lock on task %d (was held by %s)", $id, $owner )
+      : sprintf( "Task %d is not locked", $id );
   }
 
-  $self->sync_after;
-
-  $self->print_json_results(@results);
+  $self->sync_after_and_report( sub {
+    $self->print_outcome( $_[0], @said );
+    $self->print_json_results(@results);
+  } );
 }
 
 sub _report {

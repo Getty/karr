@@ -425,8 +425,9 @@ subtest 'end to end: a failed push leaves work that the next sync keeps' => sub 
     break_push("$work/a");
 
     my $created = $karr->( 'create', 'UNPUSHED WORK' );
-    like $created->{stderr}, qr/Local refs are intact/,
-        'karr says the local refs are intact';
+    like $created->{stderr}, qr/Saved in this clone, not on the remote: .*#2/,
+        'karr says the card is saved in this clone, not on the remote';
+    unlike $created->{stderr}, qr/Local refs are intact/, 'and no longer reassures';
 
     my $before = $karr->( 'list', '--compact' );
     like $before->{stdout}, qr/UNPUSHED WORK/, 'the work is on the board';

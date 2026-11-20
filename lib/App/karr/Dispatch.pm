@@ -8,12 +8,15 @@ use Exporter qw( import );
 use Scalar::Util qw( blessed );
 use Module::Runtime qw( use_module );
 use App::karr;
+use App::karr::CloneState;
+use App::karr::Git;
 use App::karr::SyncGuard;
 use App::karr::Encoding qw( decode_argv enable_std_utf8 );
 use App::karr::Error qw( is_usage_error set_original_argv );
+use App::karr::Role::BoardDiscovery;
 use App::karr::Role::CliArgs;
 
-our @EXPORT_OK = qw( dispatch );
+our @EXPORT_OK = qw( dispatch lasting_warnings );
 
 =head1 SYNOPSIS
 
@@ -166,6 +169,12 @@ sub dispatch {
     # bin/karr pass its own @ARGV in unchanged.
     local @ARGV = @argv;
 
+    # One run, one account of the push state (k333): nothing this process
+    # printed or discovered for an earlier run counts for this one. A no-op
+    # under bin/karr, which dispatches once; the in-process host runs many.
+    App::karr::CloneState->reset_reported;
+    $App::karr::Role::BoardDiscovery::DISCOVERED_ROOT = undef;
+
     # The character/octet boundary (ticket #53). Everything the OS hands in is
     # bytes; everything a command body sees is Perl characters. @ARGV comes in
     # decoded, STDOUT and STDERR encode on the way out, and no command body
@@ -227,6 +236,13 @@ sub dispatch {
         # exits bypass this eval.
         my $is_usage = is_usage_error($err);
 
+        # The lasting warnings (k333) go in front of the error, so the error
+        # stays the last thing printed: its last line is often the invocation
+        # that would have worked (k263). Only when this run wrote nothing --
+        # otherwise the push insurance still to come in bin/karr's END block
+        # may publish what they would name, and they wait for it there.
+        lasting_warnings( $is_usage ? 2 : 1 ) unless App::karr::Git->pending_writes;
+
         print STDERR $err if defined $err && length $err;
         exit( $is_usage ? 2 : 1 );
     }
@@ -245,6 +261,81 @@ exit-code handler (ADR 0002). Operates on a localised C<@ARGV>. Returns nothing
 on success; on failure it prints the message to C<STDERR> and C<exit>s C<1> or
 C<2> -- which, under an embedding host that overrides C<exit> (see
 L</EMBEDDING>), becomes the host's exit-signal instead.
+
+=cut
+
+sub lasting_warnings {
+    my ($exit) = @_;
+
+    # A usage error ends on its answer, after the usage block (ADR 0002,
+    # k263): an agent reads it through `tail -n`, and a warning after it would
+    # be what it reads instead. The command did not run; the next one warns.
+    return if defined $exit && $exit == 2;
+
+    # A denial, a refusal or a failed push printed in this run has said it
+    # all already (App::karr::CloneState/reported).
+    return if App::karr::CloneState->reported;
+
+    # Only a command that found a repository has a clone to speak of: board-less
+    # commands never discover one, and neither does a run that failed first.
+    my $root = $App::karr::Role::BoardDiscovery::DISCOVERED_ROOT;
+    return unless defined $root;
+
+    # Never dies and never touches the network: the lines come from git config
+    # and the remote's last known state. A clone that cannot be read here has
+    # nothing to add to whatever the command already said.
+    my @lines = do {
+        local $@;
+        eval {
+            my $state = App::karr::CloneState->for_git(
+                App::karr::Git->new( dir => $root ) );
+            $state ? $state->warning_lines : ();
+        };
+    };
+    return unless @lines;
+
+    App::karr::CloneState->mark_reported;
+    print STDERR "$_\n" for @lines;
+    return;
+}
+
+=func lasting_warnings
+
+    lasting_warnings($exit_code);
+
+Prints the lasting warnings about this clone's push state
+(L<App::karr::CloneState/warning_lines>) to C<STDERR>, once a command is
+through: that this clone cannot write the board because the remote denied it
+write access, and which board changes are still not on the remote. Every
+command that found a repository (L<App::karr::Role::BoardDiscovery>) gets
+them, read commands and bare C<karr> included, whether it succeeded or failed,
+C<--quiet> or not; C<STDOUT> stays untouched, so C<--json> output stays
+parseable. Nothing is printed
+
+=over 4
+
+=item * after a usage error (C<$exit_code> C<2>), which ends on its answer;
+
+=item * when this run already printed a denial, a refusal or a failed push
+(L<App::karr::CloneState/reported>) -- it has said all of this;
+
+=item * for a command that never found a repository: C<--version>, C<--help>,
+C<agent-name>, C<skill>, C<completion>, C<dashboard>, C<get-refs>,
+C<set-refs>, or one that failed before discovery;
+
+=item * a second time in the same run.
+
+=back
+
+It is called once a command is through, after the push insurance
+(L<App::karr::SyncGuard/flush_armed>), so the changes it names are the ones
+still not on the remote after that last push: from F<bin/karr>'s C<END> block,
+which also covers a command that called C<exit> itself, and by the in-process
+test runner after each L</dispatch>. A command that failed without writing
+anything -- no insurance push to wait for -- gets them earlier, from
+L</dispatch>'s handler, in front of its error: the error stays the last thing
+printed, and its last line is often the invocation that would have worked.
+It never dies and never changes the exit code.
 
 =cut
 

@@ -72,7 +72,10 @@ sub execute {
 
   # This loop was already the shape ADR 0002 asks for -- warn on a bad id, keep
   # going, report failure at the end -- and is now the shared one, so move, edit
-  # and delete behave the same way (ticket #61).
+  # and delete behave the same way (ticket #61). What it did is said once the
+  # push is through, not per id as it goes (k333): a denied push takes every
+  # archive of the batch back.
+  my @said;
   my ($results, $failed) = $self->run_batch(\@ids, sub {
     my ($id) = @_;
 
@@ -89,7 +92,8 @@ sub execute {
     die $self->task_not_found($id) unless $found;
 
     if ($found->status eq 'archived') {
-      printf "Task %d is already archived: %s\n", $found->id, $found->title
+      push @said, sprintf( "Task %d is already archived: %s",
+        $found->id, $found->title )
         unless $self->json;
       return {
         id     => $found->id,
@@ -120,24 +124,29 @@ sub execute {
       $old_status = $self->apply_status_change($task, 'archived', undef);
     });
 
-    printf "Archived task %d: %s\n", $task->id, $task->title unless $self->json;
     # The claimant passed above is the caller's --claim, so a claimed card
     # reaches here either because the claim expired (reported below, #177) or
     # because the caller named the holder. The claim itself is not re-stamped:
     # the name on an archived card is provenance, and kanban-md's Archive
-    # leaves it the same way.
+    # leaves it the same way. On STDERR the report follows the outcome line,
+    # once the push is through (k333).
+    my $tid     = $task->id;
+    my $reports = sub { $self->expired_claim_report($tid) };
+    push @said, [ "Archived task $tid", ': ' . $task->title, $reports ]
+      unless $self->json;
     return {
-      id         => $task->id,
+      id         => $tid,
       title      => $task->title,
       status     => 'archived',
       old_status => $old_status,
-      $self->expired_claim_report( $task->id ),
+      ( $self->json ? $reports->() : () ),
     };
   });
 
-  $self->sync_after;
-
-  $self->print_json_results(@$results);
+  $self->sync_after_and_report( sub {
+    $self->print_outcome( $_[0], @said );
+    $self->print_json_results(@$results);
+  } );
 
   $self->report_batch_failure($failed, scalar @ids);
 }

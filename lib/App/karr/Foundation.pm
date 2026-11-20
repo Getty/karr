@@ -23,6 +23,7 @@ use Time::Piece;
 use Digest::MD5 qw( md5_hex );
 use Try::Tiny;
 use App::karr::Git;
+use App::karr::CloneState;
 use App::karr::BoardStore;
 use App::karr::ActivityLog;
 use App::karr::Foundation::Runner;
@@ -890,6 +891,34 @@ repository whose backlog is parked (an abandoned project kept for reference)
 that a globally configured C<default_command> would otherwise drain. C<--status>
 shows such a board with a C<disabled> flag and its reason.
 
+B<Read-only clone.> A clone whose remote denied it write access, or that was
+set read-only by hand with C<karr readonly on>, is read-only for its board
+(L<App::karr::CloneState>): every karr command that writes the board is
+refused there. Foundation writes nothing to such a board either, and runs
+nothing on it. Unlike the disable flag this is a fact about B<this clone>,
+kept in its git config, so it is checked locally and costs no network. The
+board is skipped whole, at the same point the disable flag is checked: no
+pull, no drain, no agent run, no auto-block, no C<on_drained> hook, no lock
+and no cooldown bookkeeping. C<--force> does not override it. A chain step on
+such a board is left for a machine that can write it, as one on a repository
+this machine does not have is: nothing is claimed and nothing is logged.
+C<--status> marks the board C<read-only: denied> or C<read-only: on>.
+
+The state can also be learned in the middle of a drain: the agent's own karr
+write meets the denial, takes itself back and puts the clone into C<denied>.
+The drain then ends without judging that run -- a card that did not move
+because its move was taken back is no stall -- and returns C<skipped>, which
+a chain step reads as "try again", not as a failure. An auto-block whose push
+is denied is taken back the same way, and the clone learns C<denied>.
+
+The hub follows the same rule. In a hub clone that is read-only, C<ask>,
+C<answer>, C<plan> and C<chain> write nothing: they pull, then refuse with
+exit 1 (C<plan --dry-run> and C<chain --dry-run> write nothing anyway and
+still work). A push of C<refs/karr-foundation/*> that is denied takes back
+what the command wrote since its pull or its last push that landed, puts the
+hub clone into C<denied> and ends on the denial message (exit 1); C<chain>
+stops its tick there.
+
 B<The domain hook.> When a board has drained, C<on_drained> runs a configured
 command in it. B<karr does not know what that command does, and must not.> In
 the fleet this design came from it starts a release gate that builds a
@@ -1118,7 +1147,9 @@ sub run {
   # board has an agent configured, the default action is the overview — a human
   # can use foundation purely to see what is happening across boards. A board
   # disabled in its own karr state never counts as an agent board here either,
-  # so a config of nothing but disabled boards falls back to the overview.
+  # so a config of nothing but disabled boards falls back to the overview --
+  # and neither does a board this clone is read-only for (k333), which the
+  # overview then marks.
   # _plan_repos answers that per board, and the answer is kept: the concurrent
   # runner needs the agent name out of the same resolution to bucket its
   # per-agent limits, and resolving twice would be two chances to disagree.
@@ -1126,8 +1157,8 @@ sub run {
   unless ( grep { $_->{runs_agent} } @plan ) {
     print "No agent will run on any board. Showing overview "
         . "(set 'command:', 'agent:' or 'claude: true' in a .karr file to "
-        . "enable agents; a board disabled with 'karr disable' never runs "
-        . "one).\n\n";
+        . "enable agents; a board disabled with 'karr disable', or one this "
+        . "clone is read-only for, never runs one).\n\n";
     $self->_print_overview( \@repos );
     # And still the one call the tick may make (#210): a fleet whose boards
     # are routed by an assignment that does not exist yet reaches exactly this
@@ -1204,9 +1235,20 @@ sub _mailbox {
 # question because the network is down. `chain` is the one command that
 # refuses instead, because the fallback there is running a step another
 # machine is already running.
+#
+# A push the remote denied write access is not a transport failure and not a
+# warning (k333): what was written can never be published, so it is taken back
+# (_begin_hub_write journalled it), the hub clone becomes read-only, and the
+# command ends on the denial (exit 1) instead of reporting a question asked or
+# a chain written that nobody else will ever see.
 sub _namespace_sync {
   my ( $self, $verb ) = @_;
   my $git = $self->_hub_git or return;
+  if ( $verb eq 'push' ) {
+    my ( undef, $denial ) = $self->_push_hub( $git );
+    user_error( $denial ) if defined $denial;
+    return;
+  }
   my $method = "${verb}_foundation";
   try {
     $git->$method;
@@ -1215,6 +1257,79 @@ sub _namespace_sync {
        . clean_error($_) . "\n";
   };
   return;
+}
+
+# The door every write to the hub's refs/karr-foundation/* passes, after the
+# pull and before the first ref write (k333) -- the same place karr's own
+# writing commands are refused (App::karr::Role::SyncLifecycle/sync_before). A
+# hub clone that is read-only writes nothing that could never be published:
+# the command refuses, exit 1. Otherwise what follows is journalled, so that a
+# push denied write access can take it back.
+sub _begin_hub_write {
+  my ( $self ) = @_;
+  my $git = $self->_hub_git or return;
+  my $refusal = $self->_read_only_hub_refusal;
+  user_error( $refusal ) if defined $refusal;
+  $self->_start_hub_journal;
+  return;
+}
+
+# The refusal for a hub clone that is read-only, or undef when it may write.
+# The executor raises it as a warning, the mailbox commands as an error.
+sub _read_only_hub_refusal {
+  my ( $self ) = @_;
+  my $git = $self->_hub_git or return undef;
+  my $text = try {
+    my $state = App::karr::CloneState->for_git( $git );
+    $state ? $state->refusal_message : undef;
+  } catch { undef };
+  return undef unless defined $text;
+  return 'karr-foundation: the hub ' . $git->dir . " is read-only in this "
+       . "clone, so nothing is written to its refs/karr-foundation/.\n" . $text;
+}
+
+# Records the hub's own refs/karr-foundation/* writes from here on, and forgets
+# what was recorded so far -- called after the pull (whose writes are the
+# remote's, and untracked anyway) and after every push that landed, so the
+# journal holds exactly what a denied push would leave unpublished.
+sub _start_hub_journal {
+  my ( $self ) = @_;
+  my $git = $self->_hub_git or return;
+  $git->start_journal( root => App::karr::Git->FOUNDATION_ROOT );
+  return;
+}
+
+# Pushes the hub's refs/karr-foundation/*. Returns ( $ok, $denial ): $ok as
+# push_foundation answers, and on a push denied write access the denial
+# message, after the journalled writes were taken back and the hub clone
+# learned it is read-only (App::karr::CloneState/denied_push). A push that
+# landed tells the clone state so -- which forgets an earlier failure and, when
+# the push really sent something, drops a state recorded for an older push URL
+# (App::karr::CloneState/note_push_landed) -- and starts the journal afresh,
+# because what it held is published now. Any other
+# failure is the warning it always was: the refs are written locally and a
+# later sync publishes them.
+sub _push_hub {
+  my ( $self, $git ) = @_;
+  my $ok = try {
+    $git->push_foundation;
+  } catch {
+    warn 'karr-foundation: push of refs/karr-foundation/ failed: '
+       . clean_error($_) . "\n";
+    0;
+  };
+  if ( $ok ) {
+    try {
+      my $state = App::karr::CloneState->for_git( $git );
+      $state->note_push_landed( sent => $git->push_sent ) if $state;
+    };
+    $git->start_journal( root => App::karr::Git->FOUNDATION_ROOT );
+    return ( 1 );
+  }
+  my $failure = $git->push_failure;
+  return ( 0 ) unless $failure && ( $failure->{class} // '' ) eq 'denied';
+  return ( 0, 'karr-foundation: the hub ' . $git->dir . " could not be pushed.\n"
+    . App::karr::CloneState->denied_push( $git, take_back => 1 ) );
 }
 
 # --options a,b, the same comma-separated spelling `karr create --tags` uses,
@@ -1237,6 +1352,7 @@ sub _run_ask {
 
   my $mailbox = $self->_mailbox;
   $self->_namespace_sync('pull');
+  $self->_begin_hub_write;
 
   my $id = $mailbox->ask(
     question => $argv[0],
@@ -1341,6 +1457,7 @@ sub _run_plan {
     return 0;
   }
 
+  $self->_begin_hub_write;
   my $chain_id = $store->write_chain( $steps, %header, force => $force );
   $self->_namespace_sync('push');
 
@@ -1432,6 +1549,7 @@ sub _run_answer {
 
   my $mailbox = $self->_mailbox;
   $self->_namespace_sync('pull');
+  $self->_begin_hub_write;
 
   my $a = $mailbox->settle( $argv[0], $argv[1],
     ( defined $self->note ? ( note => $self->note ) : () ),
@@ -1457,6 +1575,9 @@ sub _plan_repos {
   for my $repo ( @repos ) {
     my %p = ( repo => $repo );
     push( @plan, \%p ), next if $self->_board_disabled( $repo );
+    # A board this clone is read-only for (k333) runs no agent either, and,
+    # unlike a board in cooldown, the state does not end by itself.
+    push( @plan, \%p ), next if $self->_board_read_only( $repo );
     try {
       my ( $cmd, $inv, $wait ) = $self->_resolve_agent( $repo, $self->_load_karr( $repo ) );
       if ( defined $wait ) {
@@ -1738,11 +1859,13 @@ rest of the run.
 With C<--status> it prints L<App::karr::Foundation::Overview>'s read-only
 overview and returns without touching any board. Without it, C<run> first
 checks whether B<any> repo has an agent configured at all (per repo,
-C<_agent_command>, excluding boards disabled via C<karr disable>); if none
+C<_agent_command>, excluding boards disabled via C<karr disable> and boards
+this clone is read-only for); if none
 do, it falls back to the same overview instead of doing nothing, since
 agent execution is opt-in and a config with no agents configured is a
 legitimate way to use foundation purely as a status board. Otherwise it calls
 C<_process_repo> for each repo, which is what applies the disable flag, the
+read-only state, the
 lock, the cooldown, the change/actionability check, and finally the drain loop
 described under "Drain semantics" above.
 
@@ -1832,7 +1955,9 @@ sub _is_karr_board_root {
 # { outcome => 'skipped', reason => ... } for a repo this tick did not take up
 # at all -- a shape the serial and concurrent runners ignore and the chain
 # executor (#202) reads: a step whose board was locked, disabled, in cooldown or
-# on a failing agent is a step to try again, not a step that failed.
+# on a failing agent is a step to try again, not a step that failed. A drain
+# whose clone became read-only for the board during a run (k333) hands back
+# the same shape, for the same reason.
 #
 # %opt is the chain's half of the contract, and only the chain passes it:
 # `ticket` names the card this run is about (which forces ticket mode -- the
@@ -1860,6 +1985,16 @@ sub _process_repo {
   # deliberately absolute: --force does not override it.
   return { outcome => 'skipped', reason => 'the board is disabled' }
     if $self->_skip_disabled( $repo );
+
+  # A clone that cannot write the board (k333) is skipped just as whole, right
+  # behind the disable flag and before anything else: an agent started here
+  # would be refused at its first board write, and so would every auto-block.
+  # Clone state in git config, so asked once and before the pull -- no pull
+  # can change it, and a board foundation will not act on costs no network.
+  if ( my $ro = $self->_skip_read_only( $repo ) ) {
+    return { outcome => 'skipped',
+      reason => "this clone is read-only for the board ($ro->{mode})" };
+  }
 
   my $karr = $self->_load_karr( $repo );
 
@@ -2091,6 +2226,10 @@ sub _run_on_drained {
   # believe this run -- so neither does the hook.
   my $outcome = $result->{outcome} // '';
   return if $outcome eq 'common-error' || $outcome eq 'error';
+  # Nor does a drain that ended unjudged because this clone became read-only
+  # for the board during it (k333): the board it left is the one the denial
+  # took the run's writes back from, and a skipped board runs no hook.
+  return if $outcome eq 'skipped';
   return if $self->_has_actionable_tasks( $repo );
 
   my $hash   = $self->_ref_hash( $repo ) // '';
@@ -2250,6 +2389,44 @@ sub _skip_disabled {
   $self->_say_verbose(
     "skip $repo -- board disabled" . ( defined $reason ? ": $reason" : '' ) );
   return 1;
+}
+
+# ---------------------------------------------------------------------------
+# Read-only clone (k333: App::karr::CloneState, in the clone's git config)
+# ---------------------------------------------------------------------------
+
+# Whether this clone may write its board. Clone state, not board state: it
+# lives in the repository's own git config and says nothing about any other
+# clone of the same board, which is why a chain step on such a board is left
+# for another machine rather than requeued for everyone. Returns the
+# CloneState read_only record -- { mode => 'denied' | 'on', remote, push_url,
+# since, reason } -- while a mode applies, and undef when this clone may write
+# (or its git config cannot be read: the agent's own karr would still refuse
+# itself, which is the safe direction). No network.
+sub _board_read_only {
+  my ( $self, $repo ) = @_;
+  my $git = App::karr::Git->new( dir => "$repo" );
+  return undef unless $git->is_repo;
+  return $self->_clone_read_only( $git );
+}
+
+sub _clone_read_only {
+  my ( $self, $git ) = @_;
+  my $ro = try {
+    my $state = App::karr::CloneState->for_git( $git );
+    $state ? $state->read_only : undef;
+  } catch { undef };
+  return $ro && $ro->{applies} ? $ro : undef;
+}
+
+# Skip predicate for _process_repo, the read-only twin of _skip_disabled: the
+# record (and a verbose note) when this clone is read-only for the board.
+sub _skip_read_only {
+  my ( $self, $repo ) = @_;
+  my $ro = $self->_board_read_only( $repo ) or return undef;
+  $self->_say_verbose(
+    "skip $repo -- this clone is read-only for the board ($ro->{mode})" );
+  return $ro;
 }
 
 # ---------------------------------------------------------------------------
@@ -2509,6 +2686,25 @@ sub _drain_repo {
       $self->_append_log( $repo, $self->_result_line( $report, $ended ) );
     }
 
+    # The run's own karr writes may have met a remote that denies this clone
+    # write access (k333): that write was taken back, the clone learned it is
+    # read-only, and every further board write would be refused -- the next
+    # iteration's agent's and the auto-block's alike. So nothing this run left
+    # is judged (a card that did not move because its move was taken back is
+    # not a stall, and counting it would auto-block it), and the drain ends
+    # skipped, the shape a chain step reads as "try again".
+    if ( my $ro = $self->_board_read_only( $repo ) ) {
+      $self->_append_log( $repo, "READ-ONLY $ro->{mode} -- this clone is now "
+        . 'read-only for the board; the run is not judged' );
+      return {
+        outcome => 'skipped',
+        reason  => "this clone is read-only for the board ($ro->{mode})",
+        exit    => $last_exit,
+        ticket  => $ticket,
+        report  => $last_report,
+      };
+    }
+
     # Common error we can observe (bad exit, timeout, a report that says so, or
     # a known output pattern): don't penalize any task — leave the board
     # untouched and back off. What the run *did* is asked before what it
@@ -2725,11 +2921,22 @@ sub _select_ticket {
 # somebody's card and pushes it, the board may have changed since the snapshot
 # the caller decided on, and any future caller inherits the guarantee instead
 # of having to remember it (#158).
+#
+# The read-only state (k333) is asked here too, for the same reason: a block
+# this clone could never publish is not written at all. And the push is
+# journalled, so that a push denied write access -- the first one, in a clone
+# that did not know yet -- takes the block back and teaches the clone, as every
+# karr command's denied push does (App::karr::CloneState/denied_push).
 sub _autoblock_task {
   my ( $self, $repo, $id, $reason, $claims ) = @_;
   return if $self->dry_run;
   my $git = App::karr::Git->new( dir => "$repo" );
   return unless $git->is_repo;
+  if ( my $ro = $self->_clone_read_only( $git ) ) {
+    $self->_append_log( $repo, "AUTOBLOCK-SKIP task#$id: this clone is "
+      . "read-only for the board ($ro->{mode})" );
+    return 0;
+  }
   my $store = App::karr::BoardStore->new( git => $git );
   my $task  = $store->find_task( $id ) or return;
   unless ( $self->_agent_holds(
@@ -2740,8 +2947,22 @@ sub _autoblock_task {
     return 0;
   }
   $task->block( $reason );
+  $git->start_journal;
   $store->save_task( $task );
-  $git->push;   # best-effort propagate to remote
+  # Best-effort propagate to remote -- except a denial, which leaves nothing.
+  if ( $git->push ) {
+    try {
+      my $state = App::karr::CloneState->for_git( $git );
+      $state->note_push_landed( sent => $git->push_sent ) if $state;
+    };
+  }
+  elsif ( ( ( $git->push_failure || {} )->{class} // '' ) eq 'denied' ) {
+    warn "karr-foundation: the auto-block of task#$id in $repo was taken back.\n"
+       . App::karr::CloneState->denied_push( $git, take_back => 1 ) . "\n";
+    $self->_append_log( $repo, "AUTOBLOCK-SKIP task#$id: write access denied, "
+      . 'the block was taken back; this clone is now read-only for the board' );
+    return 0;
+  }
   $self->_append_log( $repo, "AUTOBLOCK task#$id: $reason" );
   return 1;
 }

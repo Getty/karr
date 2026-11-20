@@ -9,6 +9,7 @@ use MooX::Options (
 );
 use App::karr::Encoding qw( from_octets );
 use App::karr::Git;
+use App::karr::CloneState;
 use App::karr::Role::CliArgs;
 use App::karr::Role::ExitCodes;
 
@@ -62,6 +63,11 @@ runtime style described in the README.
 C<--dir> names the starting point for Git repository discovery and works both
 before the command (C<karr --dir PATH set-refs REF TEXT>) and after it.
 
+The helper ref is pushed to the same remote the board syncs with, so a clone
+that is read-only for the board (L<App::karr::CloneState>) refuses this too,
+before anything is written. A push denied write access takes the write back
+and makes the clone read-only, the way a denied board push does.
+
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::GetRefs>,
@@ -107,17 +113,25 @@ sub execute {
     ? join( ' ', @content_parts )
     : $self->_payload_from_stdin;
 
+  # A helper ref is not the board, but it goes to the same remote under the
+  # same push URL: a clone that cannot write that remote, or is read-only by
+  # hand, writes nothing that could not be published (k333).
+  my $state = App::karr::CloneState->for_git($git);
+  $state->refuse_writes if $state;
+
+  # Journalled, so a denied push can take the write back as the board's are.
+  $git->start_journal( root => $ref );
   $git->write_ref($ref, $content) or die "Failed to write $ref\n";
   unless ( $git->push_ref($ref) ) {
-    # A denial says so (k333): "failed" alone reads like something a second
-    # run could fix. Provisional wording, like the board push's.
     my $failure = $git->push_failure;
-    die "Failed to push $ref: the remote '$failure->{remote}' refused this "
-      . "clone write access ($failure->{reason}).\n"
-      . "Pushing again only helps once this clone can write.\n"
+    die App::karr::CloneState->denied_push( $git, take_back => 1 ) . "\n"
       if $failure && $failure->{class} eq 'denied';
-    die "Failed to push $ref\n";
+    my $why = $failure && length( $failure->{reason} // '' ) ? ": $failure->{reason}" : '';
+    die "Failed to push $ref$why.\n"
+      . "It is saved in this clone, not on the remote: run the command again "
+      . "once the remote takes it.\n";
   }
+  $state->note_push_landed( sent => $git->push_sent ) if $state;
 
   print STDERR "Stored $ref\n";
 }

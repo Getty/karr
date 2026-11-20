@@ -9,6 +9,7 @@ use MooX::Options (
     . '[--new-board]',
 );
 use App::karr::Error qw( user_error clean_error );
+use App::karr::CloneState;
 use App::karr::Config;
 use App::karr::Role::BoardDiscovery;
 use App::karr::Role::CliArgs;
@@ -134,6 +135,13 @@ sub execute {
   # repository already has a board is a question the remote answers too, not
   # the local refs alone (#182).
   $self->_refuse_if_remote_has_board unless $self->new_board;
+
+  # Init writes board refs without the sync lifecycle and its door, so it asks
+  # the door's question itself: a board born in a clone that cannot publish
+  # it could never reach the remote (k333).
+  if ( my $state = App::karr::CloneState->for_git( $store->git ) ) {
+    $state->refuse_writes;
+  }
 
   # Every file --claude-skill is going to install, looked up before anything
   # is written, the way `karr skill install` looks up the whole set before its

@@ -62,7 +62,11 @@ SKIP: {
         is $pushes_logged->(), 1, 'git push ran exactly once (the old loop ran it three times)';
         like $r->{stderr}, qr/denied/i, 'STDERR says denied';
         like $r->{stderr}, qr/cannot write the remote repository/, 'with the reason';
-        like $r->{stderr}, qr/tried once/, 'and that it was tried once';
+        like $r->{stderr}, qr/^karr: write access to the remote 'origin' \(\Q$work\E\/origin\.git\) was denied: /m,
+            'C1 names the remote and its push URL';
+        like $r->{stderr}, qr/Nothing was changed: this command's change was taken back, and this clone is now read-only for the board\./,
+            'and says the change was taken back';
+        like $r->{stderr}, qr/If this clone is only for reading: karr readonly on\./, 'and the read-only way out';
         unlike $r->{stderr}, qr/Push retry/, 'no retry banner';
         unlike $r->{stderr}, qr/Push failed after 3 attempts/, 'not the exhausted-retries verdict';
         unlike $r->{stderr}, qr/git push failed: git push failed:/, 'no doubled prefix';
@@ -70,15 +74,21 @@ SKIP: {
         is scalar @shown, 1, 'the git error appears once';
     };
 
-    subtest 'karr set-refs: denied dies with the denied line' => sub {
+    subtest 'karr set-refs after the denial: refused (C2) without a push' => sub {
+        # Was: set-refs pushed, was denied and said "Failed to push <ref>". The
+        # preceding create has put this clone into read-only, so set-refs is
+        # now refused before it writes (and before it pushes): the claim that
+        # it must not report success stays; the claim that it pushes is gone.
         $log->remove;
         my $r = run_karr_stdin( "$work/a", "hello\n", 'set-refs', 'refs/karr-probe/note' );
 
         is $r->{exit}, 1, 'exit 1';
-        like $r->{stderr}, qr/Failed to push refs\/karr-probe\/note/, 'names the ref it could not push';
-        like $r->{stderr}, qr/denied|refused this clone write access/, 'and says why: write access';
-        like $r->{stderr}, qr/cannot write the remote repository/, 'with the reason';
-        unlike $r->{stderr}, qr/Stored refs/, 'and does not claim success';
+        like $r->{stderr}, qr/^karr: this clone is read-only for the board: write access to 'origin' \(\Q$work\E\/origin\.git\) was denied on /m,
+            'refused with C2';
+        like $r->{stderr}, qr/Nothing was changed\./, 'and says nothing was changed';
+        like $r->{stderr}, qr/cannot write the remote repository/, 'with the recorded reason';
+        is $pushes_logged->(), 0, 'no push was attempted';
+        unlike $r->{stderr}, qr/Stored refs/, 'and it does not claim success';
     };
 }
 

@@ -224,8 +224,12 @@ sub execute {
     my $key = $pos[1];
     die "Usage: karr config set KEY VALUE\n" unless defined $key && length $key;
     my $val = $pos[2] // die "Usage: karr config set KEY VALUE\n";
-    $self->_set_key($config, $key, $val);
-    $self->sync_after;
+    $val = $self->_set_key($config, $key, $val);
+    # Said once the push is through (k333): a denied push takes the value back.
+    $self->sync_after_and_report( sub {
+      return $self->print_json({ key => $key, value => $val }) if $self->json;
+      printf "Set %s = %s%s\n", $key, $val, $_[0];
+    } );
   }
 }
 
@@ -369,11 +373,8 @@ sub _set_key {
 
   $self->store->save_config($d);
 
-  if ($self->json) {
-    $self->print_json({ key => $key, value => $val });
-  } else {
-    printf "Set %s = %s\n", $key, $val;
-  }
+  # The value as stored, for execute to report once it is pushed.
+  return $val;
 }
 
 sub _resolve_key {

@@ -168,8 +168,9 @@ sub execute {
 
   # A dry run still pulls (a legacy board may only exist on the remote), but it
   # must not push, so its guard is closed immediately. --yes takes the full
-  # lifecycle: pull, rewrite, push, with SyncGuard insurance on a crash.
-  my $guard = $self->sync_before;
+  # lifecycle: pull, rewrite, push, with SyncGuard insurance on a crash. Only
+  # --yes writes, so only --yes is refused in a read-only clone (k333).
+  my $guard = $self->sync_before( writes => $self->yes ? 1 : 0 );
   $guard->done unless $self->yes;
 
   # Same sentence as everywhere else, with the way out spelled as the command

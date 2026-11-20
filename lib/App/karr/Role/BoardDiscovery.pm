@@ -115,6 +115,13 @@ sub _effective_dir {
     return undef;
 }
 
+# The repository the first board discovery of this process found (k333).
+# Process-global for the reason $App::karr::Git::WRITES is: the reader,
+# App::karr::Dispatch/lasting_warnings, runs once the command is through --
+# from bin/karr's END block when the command called exit() -- and by then the
+# command object may be gone. App::karr::Dispatch/dispatch resets it per run.
+our $DISCOVERED_ROOT;
+
 sub _build_git_root {
     my ($self) = @_;
 
@@ -126,7 +133,13 @@ sub _build_git_root {
     while (1) {
         my $git = App::karr::Git->new( dir => $start->stringify );
         my $root = $git->repo_root;
-        return $root if $root;
+        if ($root) {
+            # The clone this command works in, for the lasting warnings
+            # (App::karr::Dispatch/lasting_warnings). The first one wins: the
+            # root and a subcommand discover the same repository.
+            $DISCOVERED_ROOT //= $root->stringify;
+            return $root;
+        }
         last if $start->is_rootdir;
         $start = $start->parent;
     }

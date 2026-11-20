@@ -165,7 +165,17 @@ subtest 'the states that must not change: no remote, no board on the remote' => 
     $rv = _run_karr( $boardless, 'init', '--name', 'First' );
     is( $rv->{exit}, 0, 'a remote without a board initializes as before' )
         or diag $rv->{stderr};
-    is( $rv->{stderr}, '', 'the probe answered, so there is nothing to report' );
+    # Was: STDERR empty. The claim it carried -- the probe answered, so init
+    # has no probe message to print -- stays. What changed is that init does not
+    # push, so the board is in this clone and not on the remote, and the lasting
+    # warning (k333, C3) says so truthfully on every command, init included.
+    unlike( $rv->{stderr}, qr/could not ask the remote/,
+        'the probe answered, so there is no probe message' );
+    like( $rv->{stderr},
+        qr/^karr: changes still not on the remote 'origin': board-id, config, encoding, next-id\. Run 'karr sync' to publish them\.$/m,
+        'only the true line that init pushed nothing: the board is not on the remote yet' );
+    is( scalar( grep { /\S/ } split /\n/, $rv->{stderr} ), 1,
+        'and that is the only line' );
     cmp_ok( scalar _karr_refs($boardless), '>', 0, 'the board is here' );
 };
 
@@ -185,8 +195,16 @@ subtest 'a probe that gets no answer does not block init' => sub {
     cmp_ok( scalar _karr_refs($repo), '>', 0, 'and the board is here' );
     like( $rv->{stderr}, qr{could not ask the remote whether it already has a board},
         'with one line saying what could not be established' );
-    is( scalar( grep { /\S/ } split /\n/, $rv->{stderr} ), 1,
-        'exactly one line, and nothing else' );
+    # Was: exactly one STDERR line (the probe's). That claim narrows to "exactly
+    # one probe line": init does not push, so the C3 line that the board is not
+    # on the remote follows it, and is asserted explicitly.
+    is( scalar( grep { /could not ask the remote/ } split /\n/, $rv->{stderr} ), 1,
+        'exactly one probe line' );
+    like( $rv->{stderr},
+        qr/^karr: changes still not on the remote 'origin': board-id, config, encoding, next-id\./m,
+        'followed by the line that the new board is not on the remote' );
+    is( scalar( grep { /\S/ } split /\n/, $rv->{stderr} ), 2,
+        'and nothing else: the probe line and that one' );
 };
 
 subtest 'a half-board in a clone is not completed into a rival board' => sub {

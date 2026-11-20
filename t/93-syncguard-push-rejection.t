@@ -104,8 +104,9 @@ subtest 'it says what the remote refused instead of advising a retry' => sub {
         'the failure is named for what it is';
     like $stderr, qr{refs/karr/tasks/1/data: pre-receive hook declined},
         'the per-ref reason reaches the user';
-    like $stderr, qr/Local refs are intact/,
-        'karr still makes its promise about local state';
+    like $stderr, qr/Saved in this clone, not on the remote/,
+        'karr still says where the change is, and where it is not';
+    unlike $stderr, qr/Local refs are intact/, 'without the reassurance that hid the missing remote copy';
     like $stderr, qr/would only be refused again/,
         'and says why retrying is not the answer';
     unlike $stderr, qr/Run 'karr sync' to retry/,

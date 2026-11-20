@@ -282,8 +282,9 @@ subtest 'sync_after: a rejected push is reported once, not retried three times' 
 
     is $git->pushes, 1, 'the refusal is taken as the answer it is';
     like $err, qr/Push rejected by the remote/, 'and the command fails loudly';
-    like $err, qr/Local refs are intact/,
-        'with the promise karr makes about local state';
+    like $err, qr/Saved in this clone, not on the remote/,
+        'and says where the change is, and where it is not';
+    unlike $err, qr/Local refs are intact/, 'without the reassurance that hid the missing remote copy';
     like $stderr, qr{refs/karr/tasks/1/data: pre-receive hook declined},
         'the per-ref reason reaches the user, not just a generic failure';
     unlike $stderr, qr/Push retry/, 'no pointless retry announcements';

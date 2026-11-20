@@ -2,13 +2,31 @@
 
     - A push the remote refuses for lack of write access (no credentials
       for an HTTPS remote, no SSH key the remote accepts, a read-only key
-      or token, a local remote this user cannot write) is now tried once
-      and reported as "Push denied", with the remote and the reason,
-      instead of being retried like a flaky network. This holds for the
-      board push, `karr set-refs`, the karr-foundation refs and the
-      insurance push on a dying command. An unreachable remote keeps its
-      retries, and the doubled "git push failed: git push failed:" prefix
-      is gone.
+      or token, a local remote this user cannot write) is no longer retried
+      like a flaky network. The first denied push takes the command's
+      writes back and makes the clone read-only: the state lives in git
+      config (`karr.readonly*`, tied to the push URL, so a new remote
+      starts clean). Every writing command is then refused up front,
+      `--local-only` included, with the reason and the fix; reading
+      commands keep working and print a lasting warning on STDERR only, so
+      `--json` output stays clean. The clone is writable again once a push
+      lands: `karr sync` lifts it (probing with a dry-run push when there
+      is nothing to send). New `karr readonly` (with `on`, `off` and
+      `--json`) shows or sets the state by hand. The same holds for
+      `karr set-refs`, the karr-foundation refs and the insurance push on a
+      dying command.
+
+    - Writing commands print their success line only after the push, and
+      say "(saved in this clone, not on the remote)" when the push failed
+      but the change stayed. "Local refs are intact" is gone from the push
+      messages; they now say what is saved in this clone and not yet on the
+      remote.
+
+    - karr-foundation skips boards whose clone is read-only and marks them
+      in its overview; a read-only hub refuses ask, answer, plan and chain.
+
+    - An unreachable remote keeps its retries, and the doubled
+      "git push failed: git push failed:" prefix is gone.
 
     - The shipped karr skills (`karr skill install`) now say that the board
       is the exchange between agents: a card that is not on the remote does

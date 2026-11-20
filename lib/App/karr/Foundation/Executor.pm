@@ -206,7 +206,29 @@ which of those it was.
 untouched and unclaimed. The chain is shared and the machines are not, so this
 is the ordinary case in a fleet, not a broken plan.
 
+=item * A step naming a repository whose clone here is B<read-only for its
+board> (L<App::karr::CloneState>: a push was denied write access, or
+C<karr readonly on>) is treated the same way: left untouched and unclaimed,
+for a machine whose clone can write it. That state belongs to this clone, not
+to the board, so another machine may well be able to run the step. A clone
+that becomes read-only during the step's own run hands back a skipped board,
+and the step is requeued.
+
 =back
+
+=head2 A hub this clone cannot write
+
+The executor writes the hub on every step, so a hub clone that is read-only
+for its board writes nothing at all: after the pull the tick refuses, with the
+refusal on STDERR and exit C<1>, before the run log is opened. A push of
+C<refs/karr-foundation/*> that the remote denies write access -- the first,
+in a clone that did not know yet -- takes back what the tick wrote since its
+last push that landed (L<App::karr::Git/take_back_journal>), puts the hub
+clone into C<denied> (L<App::karr::CloneState/denied_push>), warns with the
+denial message, and ends the tick with exit C<1>: no further step is claimed,
+and the run's closing entry is not written. The claim that push carried is
+taken back with it, so the step is C<pending> again, exactly as for a claim
+that could not be published for any other reason.
 
 =head2 A question step resolves a question, it does not ask one
 
@@ -339,9 +361,11 @@ sub _say { my ( $self, $msg ) = @_; print "$msg\n"; return }
 
 One tick of the VM: pull the fleet namespace, take every step the chain says is
 ready, and work through them. Returns a process exit code -- C<1> only when the
-tick refused to start (the fleet namespace could not be pulled), C<0> otherwise,
-including when steps failed. A failed step is a statement about the plan, not
-about F<karr-foundation>.
+tick refused to start (the fleet namespace could not be pulled, or the hub
+clone is read-only for its board) or was ended by a push the hub denied write
+access (L</A hub this clone cannot write>), C<0> otherwise, including when
+steps failed. A failed step is a statement about the plan, not about
+F<karr-foundation>.
 
 Steps that become ready B<because> of this tick's own work are picked up in a
 further round, each round preceded by a fresh pull, so a linear chain does not
@@ -364,6 +388,18 @@ sub run {
   # already worked through.
   return 1 unless $self->_pull;
 
+  # A hub this clone cannot write (k333) gets nothing written: every step
+  # writes the hub and pushes it, and none of that could ever be published.
+  # After the pull, as every writing karr command refuses after its own.
+  my $f = $self->foundation;
+  if ( defined( my $refusal = $f->_read_only_hub_refusal ) ) {
+    warn "$refusal\n";
+    return 1;
+  }
+  # From here on the tick's writes are journalled, so that a denied push can
+  # take them back (_push).
+  $f->_start_hub_journal;
+
   my $header = $store->header;
   my $chain  = $header->{id};
   unless ( defined $chain ) {
@@ -377,24 +413,32 @@ sub run {
     host => Sys::Hostname::hostname(), pid => $$ );
 
   my ( %seen, %tally, @planner );
-  while ( 1 ) {
+  ROUND: while ( 1 ) {
     my @ready = grep { !$seen{ $self->_key($_) } } $store->ready_steps;
     last unless @ready;
     for my $step ( @ready ) {
+      # A push the hub denied (k333) made this clone read-only for it: what
+      # the tick wrote was taken back, and nothing more is written.
+      last ROUND if $self->_hub_denied;
       $seen{ $self->_key($step) } = 1;
       my $verdict = $self->_do_step( $run, $step );
       $tally{ $verdict->{state} }++;
       push @planner, [ $step->{id}, $verdict->{planner} ] if $verdict->{planner};
     }
+    last if $self->_hub_denied;
     # A fresh view before the next round, for the same reason as the first
     # pull: the steps this round unblocked are ready for every machine, not
     # only for this one.
     last unless $self->_pull;
   }
 
-  $store->log_run( $run, event => 'end', chain => $chain,
-    map { ( $_ => $tally{$_} ) } sort keys %tally );
-  $self->_push;
+  my $denied = $self->_hub_denied;
+  unless ( $denied ) {
+    $store->log_run( $run, event => 'end', chain => $chain,
+      map { ( $_ => $tally{$_} ) } sort keys %tally );
+    $self->_push;
+    $denied = $self->_hub_denied;
+  }
 
   # The one place the three chain-side deviations meet (#210). A kind: plan
   # step, an escalate_to_ai question and a step gone stale each record that the
@@ -408,7 +452,7 @@ sub run {
     for @planner;
 
   $self->_report( $chain, \%tally, \@planner );
-  return 0;
+  return $denied ? 1 : 0;
 }
 
 # One step is identified by the chain it belongs to as well as by its id: a
@@ -541,6 +585,18 @@ sub _do_step {
   unless ( $repo && $repo->is_dir ) {
     $self->foundation->_say_verbose( $self->_describe($step)
       . ": not on this machine -- left for one that has it" );
+    return { state => 'skipped' };
+  }
+
+  # A board this clone is read-only for (k333) is, for this machine, one it
+  # cannot act on: the step's karr writes would be refused there. The state is
+  # this clone's and not the board's, so the step is left exactly as for a
+  # repository this machine does not have -- nothing pulled, claimed or logged
+  # -- for a machine whose clone can write it.
+  if ( my $ro = $self->foundation->_board_read_only( $repo ) ) {
+    $self->foundation->_say_verbose( $self->_describe($step)
+      . ": this clone is read-only for the board ($ro->{mode}) -- left for a "
+      . 'machine that can write it' );
     return { state => 'skipped' };
   }
 
@@ -1130,17 +1186,25 @@ sub _pull {
   return $ok ? 1 : 0;
 }
 
-# The fleet namespace, out.
+# The fleet namespace, out. A push the hub denied write access (k333) took back
+# what the tick wrote since its last push that landed and made the hub clone
+# read-only: the denial is said once here, and the tick stops writing
+# (_hub_denied).
 sub _push {
   my ( $self ) = @_;
-  my $ok = try {
-    $self->store->git->push_foundation;
-  } catch {
-    warn 'karr-foundation: push of refs/karr-foundation/ failed: '
-       . clean_error($_) . "\n";
-    0;
-  };
+  my ( $ok, $denial ) = $self->foundation->_push_hub( $self->store->git );
+  warn "$denial\n" if defined $denial;
   return $ok ? 1 : 0;
+}
+
+# True once this hub clone is read-only for its board -- within a tick only
+# after a push the hub denied, because a hub that was read-only before was
+# refused at the start of the tick. Read back from the clone state rather than
+# kept, so that there is one answer and it is the one every later karr command
+# in that clone gets too.
+sub _hub_denied {
+  my ( $self ) = @_;
+  return defined $self->foundation->_read_only_hub_refusal ? 1 : 0;
 }
 
 # The step's own board, so its precheck is measured against the fleet's view of

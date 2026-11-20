@@ -93,7 +93,9 @@ subtest 'sync_after: a denied push is attempted once and says denied' => sub {
     is $git->pushes, 1, 'exactly one transport attempt (the old loop made three)';
     like $err, qr/denied/i, 'the command fails with a denial';
     like $err, qr/no credentials for HTTPS/, 'and names the reason';
-    like $err, qr/tried once/, 'and says it was not repeated';
+    like $err, qr/this clone is now read-only for the board/,
+        'and says what the denial did to this clone (not "tried once": one attempt is the pushes count above)';
+    like $err, qr/karr readonly on/, 'and names the way out for a read-only clone';
     unlike $stderr . $err, qr/Push retry/, 'no retry banner was printed';
     unlike $err, qr/Push failed after 3 attempts/, 'and not the exhausted-retries verdict';
     my @shown = $stderr =~ /(could not read Username)/g;
@@ -184,7 +186,8 @@ subtest 'SyncGuard: a denied insurance push is attempted once and warns denied' 
     unlike $stderr, qr/Push retry/, 'no retry banner';
     like $warned, qr/denied/i, 'the warning says denied';
     like $warned, qr/no credentials for HTTPS/, 'with the reason';
-    like $warned, qr/tried once/, 'and that it was not repeated';
+    like $warned, qr/this clone is now read-only for the board/,
+        'and that the clone is read-only now (one attempt is the pushes count above)';
     unlike $warned, qr/Push failed after 3 attempts/, 'not the exhausted-retries guidance';
 };
 
@@ -237,7 +240,10 @@ SKIP: {
         is $pushes, 1, 'one push attempt';
         like $r->{stderr}, qr/denied/i, 'STDERR says denied';
         like $r->{stderr}, qr/cannot write the remote repository/, 'with the reason';
-        like $r->{stderr}, qr/tried once/, 'and that it was tried once';
+        like $r->{stderr}, qr/^karr: write access to the remote 'origin' \(\Q$work\E\/origin\.git\) was denied: /m,
+            'C1 names the remote and its push URL';
+        like $r->{stderr}, qr/Nothing was changed: this command's change was taken back, and this clone is now read-only for the board\./,
+            'and says the change was taken back';
         unlike $r->{stderr}, qr/Push retry/, 'no retry banner';
         unlike $r->{stderr}, qr/git push failed: git push failed:/, 'no doubled prefix';
         my @shown = $r->{stderr} =~ /(failed to create temporary file)/g;

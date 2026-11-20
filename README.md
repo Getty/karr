@@ -1144,6 +1144,33 @@ Important refs:
   by a role-qualified identity (role `user` or `agent`) so a human and an AI
   sharing one Git config stay distinct
 
+### A clone that cannot write the board
+
+A push the remote denies write access (a public repository cloned over
+`https://` without credentials, a read-only deploy key) is not retried, and a
+change that could never be published must not stay in the clone either. The
+command's own change is taken back -- nothing was changed -- and the clone
+becomes **read-only for the board**. Every later command that writes board refs
+is refused after its pull and before it writes, `--local-only` included; reads
+and the pull keep working, and every command warns on STDERR (stdout and
+`--json` stay clean) until the access is fixed. The state lives in the clone's
+git config, never on the board, and applies to the push URL it was learned for:
+
+```bash
+karr readonly                                   # show it: off, denied or on
+git remote set-url --push origin git@github.com:owner/repo.git   # fetch stays https
+karr sync                                       # a push that lands lifts it by itself
+karr readonly off                               # or clear it by hand
+karr readonly on                                # a clone that is only for reading
+```
+
+A remote that is merely unreachable keeps its three attempts and the change
+stays in the clone, marked `(saved in this clone, not on the remote)`; the
+warning on later commands names what is still missing there until `karr sync`
+lands it. karr-foundation skips a read-only board like a disabled one and marks
+it `read-only: denied` / `read-only: on` in its overview. The decision is in
+`docs/adr/0009-a-clone-that-cannot-write-the-board-is-read-only.md`.
+
 ## Command map
 
 ### Board lifecycle
@@ -1155,7 +1182,8 @@ Important refs:
 | `karr backup` | export the whole board as YAML |
 | `karr restore --yes` | replace the board from a YAML snapshot |
 | `karr destroy --yes` | remove the board completely |
-| `karr sync` | explicitly pull/push board refs |
+| `karr sync` | explicitly pull/push board refs (in a read-only clone: the retry that lifts it, or pull only) |
+| `karr readonly` | show, set (`on`) or clear (`off`) whether this clone may write the board |
 | `karr materialize` | write the `tasks/` file view from the refs |
 | `karr import --yes` | read the file view back into the refs |
 | `karr repair` | migrate a 0.402-or-earlier board off double-encoded UTF-8 |
@@ -1227,7 +1255,7 @@ scripting the CLI (`docs/adr/0002-exit-code-contract.md`):
 | Code | Meaning |
 |---|---|
 | `0` | success, including no-op successes such as re-archiving an archived task |
-| `1` | runtime failure — task id not found, board missing, Git or sync failed, a destructive command refused for want of `--yes`, or a batch that committed partial work with at least one item failing |
+| `1` | runtime failure — task id not found, board missing, Git or sync failed (a push the remote denied, and a write refused because the clone is read-only, included), a destructive command refused for want of `--yes`, or a batch that committed partial work with at least one item failing |
 | `2` | usage error — unknown command or option, invalid option value, surplus or missing positional argument |
 
 Per-command options are not listed here. `karr <cmd> --help` (and `karr <cmd>

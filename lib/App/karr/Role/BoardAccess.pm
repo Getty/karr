@@ -331,6 +331,92 @@ sub log_task_write {
     );
 }
 
+=head2 Saying what was done, once the push is through
+
+A writing command says what it did only after L</sync_after_and_report> has
+pushed it, never before: said earlier, C<Updated task 1> would stand above a
+denial that has just taken the edit back. The outcome follows the push:
+
+=over 4
+
+=item * The push landed (or C<--local-only> skipped it): the outcome as always.
+
+=item * The push failed and the change stays in this clone -- the remote
+could not be reached, rejected it, or kept moving: the outcome all the same,
+each changed card marked C<(saved in this clone, not on the remote)>, before
+the push failure ends the command with exit C<1>. C<--json> prints its payload
+too: the change exists, in this clone, and the exit code says the rest.
+
+=item * The push took the change back -- write access denied, or another
+clone changed the same refs first: no outcome at all, because there is none;
+the push failure is all that is said.
+
+=back
+
+=cut
+
+sub sync_after_and_report {
+    my ( $self, $report ) = @_;
+
+    # What this command wrote, before the push decides about it. A push that
+    # takes the writes back closes the journal (App::karr::Git/take_back_journal),
+    # so they are gone from it afterwards; a push that merely failed leaves it.
+    my $git  = $self->git;
+    my @mine = $git->can('journal_refs') ? $git->journal_refs : ();
+
+    my $pushed = eval { $self->sync_after; 1 };
+    my $err    = $@;
+    if ($pushed) {
+        $report->('');
+        return;
+    }
+
+    my $taken_back = @mine && !$git->journal_refs;
+    $report->(' (saved in this clone, not on the remote)') unless $taken_back;
+    die $err;
+}
+
+=method sync_after_and_report
+
+    $self->sync_after_and_report( sub {
+        my ($note) = @_;
+        return $self->print_json( $task->to_json_hash ) if $self->json;
+        printf "Created task %d%s: %s\n", $task->id, $note, $task->title;
+    } );
+
+L<App::karr::Role::SyncLifecycle/sync_after>, then the command's outcome
+(see above). The callback prints it and is handed the note to put after each
+changed card: C<''> after a push that landed, C<' (saved in this clone, not on
+the remote)'> after one that failed with the change kept here. It is not
+called when the push took the change back. A failed push is re-raised after
+the callback, so the exit code and the push failure stay what
+C<sync_after> made them.
+
+=method print_outcome
+
+    my @said = ( [ 'Moved task 3', ': todo -> in-progress', $warn ],  # a change
+                 'Task 4 is already at todo: Docs' );                 # no change
+    $self->sync_after_and_report( sub { $self->print_outcome( $_[0], @said ) } );
+
+For a command that collects its outcome card by card (a batch): prints each
+line, a change as C<HEAD NOTE TAIL> and a plain string as it is. A change may
+carry a third element, a code ref run right after its line: the warnings about
+that card (L<App::karr::Role::DependencyCheck/dependency_report>,
+L<App::karr::Role::ClaimTimeout/expired_claim_report>), so that they follow
+the outcome they are about, and are not printed for a change the push took
+back.
+
+=cut
+
+sub print_outcome {
+    my ( $self, $note, @lines ) = @_;
+    for my $line (@lines) {
+        print( ( ref $line ? $line->[0] . $note . $line->[1] : $line ), "\n" );
+        $line->[2]->() if ref $line && $line->[2];
+    }
+    return;
+}
+
 =head2 Writing the config
 
 There is deliberately no C<save_config> on this role. Config writes go to

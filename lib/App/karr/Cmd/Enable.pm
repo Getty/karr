@@ -52,14 +52,12 @@ sub execute {
   $self->sync_before;
   $self->require_board;
   $self->store->set_foundation_enabled(1);
-  $self->sync_after;
 
-  if ($self->json) {
-    $self->print_json({ foundation => { enabled => 1 } });
-    return;
-  }
-
-  print "Board enabled for automated agent runs (karr-foundation).\n";
+  # Said once the push is through (k333), as every writing command does.
+  $self->sync_after_and_report( sub {
+    return $self->print_json({ foundation => { enabled => 1 } }) if $self->json;
+    print "Board enabled$_[0] for automated agent runs (karr-foundation).\n";
+  } );
 }
 
 1;

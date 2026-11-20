@@ -117,6 +117,27 @@ new id into the next step.
 
 =back
 
+=head1 WHEN THE PUSH FAILS
+
+The card is written to this clone first and pushed after. When the push does
+not land -- the remote cannot be reached, rejects the card, or keeps changing
+underneath it -- the card stays in this clone, and C<create> still prints its
+number before it ends with exit C<1> and the push failure on STDERR:
+
+    Created task 12 (saved in this clone, not on the remote): Fix login bug
+
+With C<--json> the card is printed as usual: it exists, in this clone, and the
+exit code says that it is not on the remote. C<karr sync> publishes it once
+the remote takes it, and until then every karr command in this clone says
+that it is still not on the remote (L<App::karr::CloneState/warning_lines>).
+
+A push the remote I<denied> leaves no card to number: the card is taken back
+and the clone becomes read-only for the board (L<App::karr::Cmd::Readonly>).
+Nor does a push that found another clone had changed what this create wrote
+in the meantime, most often by taking the same id: the card is taken back and
+C<create> runs again on top of that board, printing the card that lands
+(L<App::karr::Role::ReapplyOnStale>).
+
 =head1 SEE ALSO
 
 L<karr>, L<App::karr>, L<App::karr::Cmd::List>, L<App::karr::Cmd::Show>,
@@ -366,16 +387,17 @@ sub execute {
     . " attempts; nothing was created\n"
     unless $task;
 
-  $self->sync_after;
-
   # --json emits the card in the same shape `karr show --json` uses and nothing
   # else on stdout, so a caller can pipe the new id into the next step (ticket
   # #268). Sync progress already goes to STDERR, so the JSON stream stays clean.
-  if ($self->json) {
-    $self->print_json( $task->to_json_hash );
-  } else {
-    printf "Created task %d: %s\n", $task->id, $task->title;
-  }
+  # Printed only once the push decided about the card (k333): a push that did
+  # not land leaves it in this clone and the caller still gets its number, a
+  # denied or stale one took it back and leaves none (BoardAccess).
+  $self->sync_after_and_report( sub {
+    my ($note) = @_;
+    return $self->print_json( $task->to_json_hash ) if $self->json;
+    printf "Created task %d%s: %s\n", $task->id, $note, $task->title;
+  } );
 }
 
 1;

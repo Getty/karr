@@ -77,22 +77,25 @@ sub execute {
   $self->sync_before;
   $self->require_board;
   $self->store->set_foundation_enabled( 0, $self->reason );
-  $self->sync_after;
 
-  my $reason = $self->store->foundation_reason;
+  # Said once the push is through (k333), as every writing command does.
+  $self->sync_after_and_report( sub {
+    my ($note) = @_;
+    my $reason = $self->store->foundation_reason;
 
-  if ($self->json) {
-    $self->print_json({
-      foundation => {
-        enabled => 0,
-        ( defined $reason ? ( reason => $reason ) : () ),
-      },
-    });
-    return;
-  }
+    if ($self->json) {
+      $self->print_json({
+        foundation => {
+          enabled => 0,
+          ( defined $reason ? ( reason => $reason ) : () ),
+        },
+      });
+      return;
+    }
 
-  print "Board disabled for automated agent runs (karr-foundation).\n";
-  printf "  Reason: %s\n", $reason if defined $reason;
+    print "Board disabled$note for automated agent runs (karr-foundation).\n";
+    printf "  Reason: %s\n", $reason if defined $reason;
+  } );
 }
 
 1;

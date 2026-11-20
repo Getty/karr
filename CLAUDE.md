@@ -67,6 +67,7 @@ counterpart and no parity obligation.
 - `lib/App/karr/SyncGuard.pm` — Push insurance on die/croak
 - `lib/App/karr/Git.pm` — Low-level Git operations; local ops native via Git::Native (libgit2), with a git-CLI fallback for remote transport (ssh-config/ProxyCommand)
 - `lib/App/karr/BoardStore.pm` — Ref-backed board storage (load_tasks, save_task, effective_config)
+- `lib/App/karr/CloneState.pm` — What this clone knows about its own push access, kept in git config (`karr.readonly*`): the read-only door behind `karr readonly`, the denial/refusal messages, the lasting warnings
 - `lib/App/karr/Lock.pm` — Advisory task locking via refs
 - `lib/App/karr/ActivityLog.pm` — Activity log writer; role-qualified identities under `refs/karr/log/*`
 - `lib/App/karr/CrossBoard.pm` — Cross-board dependencies: a link from a card here to a card on another board (`BOARD#ID`)
@@ -125,6 +126,7 @@ storage backend.
 | `import` | implemented | — (files→refs bridge) |
 | `repair` | implemented | — (migrates a 0.402-or-earlier board off double-encoded UTF-8) |
 | `sync` | implemented | — (explicit refs pull/push) |
+| `readonly` | implemented | — (show/set/clear: this clone may not write the board) |
 | `backup` | implemented | — (board snapshot to YAML) |
 | `restore` | implemented | — (snapshot→refs, destructive) |
 | `destroy` | implemented | — (remove `refs/karr/*` incl. remote) |

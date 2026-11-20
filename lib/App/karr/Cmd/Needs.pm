@@ -182,12 +182,17 @@ sub execute {
     };
   }
 
-  $self->_resolve_cards( \@report ) if $self->resolve;
+  my $say = sub {
+    my ($note) = @_;
+    return $self->print_json( \@report ) if $self->json;
+    $self->_print_report( \@report, $note );
+  };
+  return $say->('') unless $self->resolve;
 
-  $self->sync_after if $self->resolve;
-
-  return $self->print_json( \@report ) if $self->json;
-  $self->_print_report( \@report );
+  # Said once the push is through (k333): a denied push takes the resolution
+  # back, and a push that failed keeps it in this clone and says so.
+  $self->_resolve_cards( \@report );
+  $self->sync_after_and_report($say);
 }
 
 # One guarded write per card, and only for cards with something to settle. The
@@ -229,8 +234,9 @@ sub _resolve_cards {
   return;
 }
 
+# $note goes after the cards --resolve changed (BoardAccess/sync_after_and_report).
 sub _print_report {
-  my ( $self, $report ) = @_;
+  my ( $self, $report, $note ) = @_;
 
   unless (@$report) {
     print "No cross-board dependencies.\n";
@@ -238,7 +244,8 @@ sub _print_report {
   }
 
   for my $entry (@$report) {
-    printf "Task #%d: %s\n", $entry->{id}, $entry->{title};
+    printf "Task #%d%s: %s\n", $entry->{id},
+      ( $entry->{resolved} ? $note // '' : '' ), $entry->{title};
     for my $link ( @{ $entry->{needs} } ) {
       printf "  %s %s -- %s%s\n",
         ( $link->{state} eq 'resolved' ? 'resolved' : 'needs' ),

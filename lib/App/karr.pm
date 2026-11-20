@@ -255,6 +255,7 @@ my @COMMANDS = (
   [ import    => 'Import a tasks/ file view into refs/karr/*' ],
   [ repair    => 'Migrate a 0.402-or-earlier board off double-encoded UTF-8' ],
   [ sync      => 'Sync board with remote' ],
+  [ readonly  => 'Show, set or clear whether this clone may write the board' ],
   [ 'agent-name' => 'Print the claim name for this checkout' ],
   [ skill     => 'Install/update agent skills' ],
   [ 'set-refs' => 'Store helper payloads in a Git ref' ],

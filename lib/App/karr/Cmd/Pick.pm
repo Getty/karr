@@ -303,7 +303,15 @@ sub execute {
     detail  => $picked->status,
   );
 
-  $self->sync_after;
+  # Said once the push is through (k333): a denied push or a stale one takes
+  # the pick back (the stale one picks again, ReapplyOnStale), and a push that
+  # failed keeps it in this clone and says so.
+  $self->sync_after_and_report(
+    sub { $self->_report_pick( $picked, $claim, $_[0] ) } );
+}
+
+sub _report_pick {
+  my ($self, $picked, $claim, $note) = @_;
 
   my %dependency = $self->dependency_report( $picked->id );
 
@@ -312,7 +320,8 @@ sub execute {
     return;
   }
 
-  printf "Picked task %d: %s (claimed by %s)\n", $picked->id, $picked->title, $claim;
+  printf "Picked task %d%s: %s (claimed by %s)\n", $picked->id, $note,
+    $picked->title, $claim;
 
   # Everything below is the detail block, and --compact is the instruction not
   # to print it. Until #251 this command composed App::karr::Role::Output, took

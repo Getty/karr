@@ -7,6 +7,7 @@ use strict;
 use warnings;
 use Scalar::Util qw( refaddr weaken );
 use App::karr::Git;
+use App::karr::CloneState;
 
 =head1 SYNOPSIS
 
@@ -50,8 +51,9 @@ Both the DESTRUCT report and L</flush_armed> gate on
 C<$App::karr::Git::WRITES>, so a command that died before writing any ref
 neither pushes nor advises a sync. DESTROY reads that package scalar rather
 than the C<git> attribute because blessed objects are destroyed in undefined
-order in this phase. Local refs are untouched either way, so C<karr sync>
-always completes the push.
+order in this phase. What the command wrote stays saved in this clone, not on
+the remote, until C<karr sync> completes the push -- except after a denied
+push, which takes it back (L</flush_armed>).
 
 =cut
 
@@ -149,9 +151,16 @@ advise one: the far side already gave its answer, so it names what was refused
 instead of pointing at a C<karr sync> that would be refused identically. A
 rejection that is only contention (L<App::karr::Git/push_contention>) is
 retried and, if it still stands after three attempts, reported as the ordinary
-failure it is. A push denied write access (L<App::karr::Git/push_failure>) is
-not retried either, and the warning says it was denied and tried once:
-pushing again only helps once this clone can write.
+failure it is. Every one of those warnings ends on what is saved in this clone
+and not on the remote (L<App::karr::CloneState/saved_here_line>), and the
+failure is remembered for the lasting warning later commands print.
+
+A push denied write access (L<App::karr::Git/push_failure>) is not retried
+either. The dead command's writes are taken back
+(L<App::karr::Git/take_back_journal>, the id counter included), the clone
+becomes read-only for the board (L<App::karr::CloneState>), and the warning
+is the denial message every denied push ends on
+(L<App::karr::CloneState/denial_message>).
 
 =cut
 
@@ -214,7 +223,8 @@ sub DESTROY {
         return if $self->{_done};
         return unless $App::karr::Git::WRITES;
         warn "Push skipped: karr exited before the board was pushed.\n"
-          . "Local refs are intact. Run 'karr sync' to push them.\n";
+          . "The change is saved in this clone, not on the remote. "
+          . "Run 'karr sync' to push it.\n";
         return;
     }
 
@@ -242,6 +252,9 @@ sub _insurance_push {
         $ok = $git->push;
         if ($ok) {
             $self->{_done} = 1;
+            if ( my $state = App::karr::CloneState->for_git($git) ) {
+                $state->note_push_landed( sent => $git->push_sent );
+            }
             return 1;
         }
         # Native Git::Native/libgit2 ops set no shell exit code; the failure
@@ -296,25 +309,25 @@ sub _insurance_push {
     # thing they need to know -- that the remote, not the network, said no. The
     # per-ref reasons are in the error printed just above.
     #
-    # The denied verdict is provisional (k333): what the push left behind and
-    # how to give this clone write access are still to be said here.
-    my $failure = $self->_denied && $git->push_failure;
-    warn $failure
-      ? "Push denied: the remote '" . ( $failure->{remote} // 'origin' )
-        . "' refused this clone write access ("
-        . ( $failure->{reason} // 'write access denied' ) . ").\n"
-        . "It was tried once and not repeated: pushing again only helps once "
-        . "this clone can write.\n"
-      : $self->_rejected
-      ? "Push rejected by the remote. Local refs are intact.\n"
+    # Denied (k333) is the one answer that leaves nothing behind: the dead
+    # command's writes are taken back, as sync_after takes a live one's, and
+    # the clone becomes read-only. Everything else stays here, and says what
+    # is in this clone and not on the remote.
+    if ( $self->_denied ) {
+        warn App::karr::CloneState->denied_push( $git, take_back => 1 ) . "\n";
+        return 0;
+    }
+    my $saved = App::karr::CloneState->failed_push($git);
+    warn $self->_rejected
+      ? "Push rejected by the remote.\n$saved\n"
         . "The refs above were refused, not lost in transit, so pushing again "
         . "would only be refused again.\n"
       : ( $git->can('push_stale') && @{ $git->push_stale } )
-      ? "Push not sent: the remote changed refs this clone had changed too. "
-        . "Local refs are intact.\n"
+      ? "Push not sent: the remote changed refs this clone had changed too.\n"
+        . "$saved\n"
         . "Run 'karr sync' to pull the other clone's version in and push "
         . "again.\n"
-      : "Push failed after 3 attempts. Local refs are intact.\n"
+      : "Push failed after 3 attempts.\n$saved\n"
         . "Run 'karr sync' to retry.\n"
         . "Errors: " . join( ', ', $self->errs ) . "\n";
     return 0;

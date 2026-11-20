@@ -12,6 +12,7 @@ use Scalar::Util qw( blessed );
 use Time::HiRes ();
 use Git::Libgit2 qw(
     GIT_ELOCKED
+    GIT_ENOTFOUND
     GIT_OPT_SET_SERVER_CONNECT_TIMEOUT
     GIT_OPT_SET_SERVER_TIMEOUT
 );
@@ -663,6 +664,102 @@ sub git_user_identity {
 Returns C<"$name E<lt>emailE<gt>"> when both L</git_user_name> and
 L</git_user_email> are set, otherwise whichever one is non-empty, or the
 empty string when neither is. Never C<undef>.
+
+=cut
+
+# ----- This clone's own settings, in git config (k333) -----
+#
+# Some state belongs to one clone and to no board: whether this clone may
+# write the board at all (App::karr::CloneState), and why its last push
+# failed. The board config is shared by every clone, so it is the wrong place;
+# the repository's git config is the clone's own.
+#
+# Read and written through libgit2. Git::Native binds no way to remove a key
+# (0.006, and none in 0.007 either), so the removal reaches
+# git_config_delete_entry through Git::Libgit2's FFI instance -- a function
+# object, for the reason _remote_pushurl gives -- and falls back to
+# `git config --unset-all` where the symbol cannot be reached.
+
+sub git_config_get {
+    my ( $self, $key ) = @_;
+    my $repo = $self->_repo or return undef;
+    my $val = try { $repo->config_string($key) } catch { undef };
+    return defined $val ? from_octets($val) : undef;
+}
+
+=method git_config_get
+
+    my $value = $git->git_config_get('karr.readonly');
+
+The value of C<$key> in this repository's git config (every level, the way
+C<git config> reads it), as a character string; C<undef> when it is unset or
+the repository cannot be opened.
+
+=cut
+
+sub git_config_set {
+    my ( $self, $key, $value ) = @_;
+    my $repo = $self->_repo or return 0;
+    return try {
+        $repo->config->set_string( $key, to_octets($value) );
+        1;
+    } catch {
+        $self->{_last_error} = "could not set $key in git config: " . clean_error($_);
+        0;
+    };
+}
+
+=method git_config_set
+
+    $git->git_config_set( 'karr.readonly', 'on' ) or die $git->last_error;
+
+Writes C<$key> into the repository's own git config (F<.git/config>, the
+highest level libgit2 writes to). Returns C<1> on success and C<0> otherwise,
+with L</last_error> saying why.
+
+=cut
+
+my $CONFIG_DELETE_FN;
+
+sub git_config_unset {
+    my ( $self, $key ) = @_;
+    my $repo = $self->_repo or return 0;
+    return 1 unless defined $self->git_config_get($key);
+
+    unless ( defined $CONFIG_DELETE_FN ) {
+        $CONFIG_DELETE_FN = try {
+            Git::Libgit2::FFI::ffi->function(
+                git_config_delete_entry => [ 'opaque', 'string' ] => 'int' );
+        } catch { 0 };
+    }
+    if ($CONFIG_DELETE_FN) {
+        my $rc = try {
+            my $config = $repo->config;
+            $CONFIG_DELETE_FN->call( $config->_handle, $key );
+        } catch { undef };
+        return 1 if defined $rc && ( $rc == 0 || $rc == GIT_ENOTFOUND );
+    }
+
+    my $run  = $self->_run_git( 'config', '--local', '--unset-all', $key );
+    my $code = $run->{status} >> 8;
+    # 5: the key was not set at that level, which is this call's goal state.
+    return 1 if $run->{failure} eq '' && ( $code == 0 || $code == 5 );
+    my $why = $run->{err};
+    $why =~ s/\s+\z//;
+    $self->{_last_error} = "could not unset $key in git config"
+      . ( length $why ? ": $why" : '' );
+    return 0;
+}
+
+=method git_config_unset
+
+    $git->git_config_unset('karr.readonly');
+
+Removes C<$key> from the repository's own git config. Returns C<1> when the
+key is gone afterwards -- including when it was never set -- and C<0>
+otherwise, with L</last_error> saying why. L<Git::Native> has no call for this
+yet; it goes to libgit2's C<git_config_delete_entry> directly, and to
+C<git config --unset-all> where that cannot be reached.
 
 =cut
 
@@ -1344,9 +1441,9 @@ use constant NEXT_ID_REF => 'refs/karr/meta/next-id';
 # situations and the ref alone cannot tell them apart: the remote deleted a
 # task (prune is right -- #49), or the ref is local work that has not been
 # pushed yet (prune destroys it). karr promises exactly the latter after a
-# failed push -- "Local refs are intact. Run 'karr sync' to retry." -- so
-# pruning on that signal alone broke the promise the sync guard and the END
-# flush (#37) exist to keep.
+# failed push -- "Saved in this clone, not on the remote. ... Run 'karr sync'
+# to retry." -- so pruning on that signal alone broke the promise the sync
+# guard and the END flush (#37) exist to keep.
 #
 # The mirror makes the four cases decidable. See _reconcile_with_mirror.
 use constant MIRROR_ROOT => 'refs/karr-remote';
@@ -1494,17 +1591,24 @@ sub _ref_oid {
     } catch { undef };
 }
 
+# A pull's own writes are the remote's state arriving, not the command's: the
+# counter a pull adopts or raises (_adopt_next_id_ref, _raise_next_id_to_floor)
+# goes through the tracked CAS like any write, and a take-back that included
+# the counter (a denied push) would otherwise walk an adopted counter back
+# below the remote's (#172). So pull keeps the journal paused while it runs.
 sub _journal_wants {
     my ( $self, $ref ) = @_;
     my $journal = $self->{_journal} or return 0;
-    return 0 unless index( $ref, BOARD_ROOT ) == 0;
+    return 0 if $self->{_journal_paused};
+    return 0 unless index( $ref, $self->{_journal_root} // BOARD_ROOT ) == 0;
     return exists $journal->{$ref} ? 0 : 1;
 }
 
 sub _journal {
     my ( $self, $ref, $before, $after ) = @_;
     my $journal = $self->{_journal} or return;
-    return unless index( $ref, BOARD_ROOT ) == 0;
+    return if $self->{_journal_paused};
+    return unless index( $ref, $self->{_journal_root} // BOARD_ROOT ) == 0;
     if ( exists $journal->{$ref} ) {
         $journal->{$ref}[1] = $after;
     }
@@ -1515,14 +1619,16 @@ sub _journal {
 }
 
 sub start_journal {
-    my ($self) = @_;
-    $self->{_journal} = {};
+    my ( $self, %opt ) = @_;
+    $self->{_journal}      = {};
+    $self->{_journal_root} = $opt{root};
     return;
 }
 
 =method start_journal
 
     $git->start_journal;
+    $git->start_journal( root => $helper_ref );   # karr set-refs
 
 Starts recording the board refs (C<refs/karr/*>) this object writes or
 deletes: for each one, what it held before the first write and what it holds
@@ -1530,7 +1636,11 @@ now. Starting again forgets what was recorded so far.
 L<App::karr::Role::SyncLifecycle/sync_before> calls it once its pull is
 through, so the journal holds exactly the command's own writes -- the ones
 L</take_back_journal> undoes when the push finds that the remote moved
-underneath them.
+underneath them, or that this clone may not write it at all.
+
+C<root> records the refs under that prefix instead of the board's:
+C<karr set-refs> journals the one helper ref it writes, so a push denied
+write access can take that write back too.
 
 =cut
 
@@ -1567,13 +1677,14 @@ the command's own writes were made against a board the remote has moved past.
 =cut
 
 sub take_back_journal {
-    my ($self) = @_;
+    my ( $self, %opt ) = @_;
     my $journal = delete $self->{_journal} or return ();
+    delete $self->{_journal_root};
     my $repo = $self->_repo or return ();
 
     my @back;
     for my $ref ( sort keys %$journal ) {
-        next if $ref eq NEXT_ID_REF;
+        next if $ref eq NEXT_ID_REF && !$opt{next_id};
         my ( $before, $ours ) = @{ $journal->{$ref} };
         next if _same_oid( $before, $ours );
         next unless _same_oid( $self->_ref_oid($ref), $ours );
@@ -1604,6 +1715,7 @@ sub take_back_journal {
 =method take_back_journal
 
     my @refs = $git->take_back_journal;
+    my @refs = $git->take_back_journal( next_id => 1 );   # a denied push
 
 Undoes what the journal (L</start_journal>) recorded and closes it: every
 board ref this object changed is put back to what it held before, and a
@@ -1619,6 +1731,12 @@ a board that no longer exists, and L<App::karr::Role::SyncLifecycle/sync_after>
 takes them back before it pulls in what the other clone published. The ref
 writes are bookkeeping, not board edits: they do not count towards
 L</pending_writes> and they record no tombstone.
+
+C<< next_id => 1 >> takes the counter back as well, on the same terms as
+every other ref (only while it still holds this object's write). That is the
+denied push (L</push_failure>): nothing of the command may stay in a clone
+that cannot publish it (L<App::karr::CloneState>), and an id burnt in a clone
+whose writes never leave it protects nobody.
 
 =cut
 
@@ -2183,6 +2301,195 @@ what happened.
 
 =cut
 
+sub push_sent {
+    my ($self) = @_;
+    return $self->{_push_sent} // 0;
+}
+
+=method push_sent
+
+    my $n = $git->push_sent;
+
+How many refs the most recent L</push>, L</push_ref> or L</push_foundation>
+put on the remote, counting deletions. C<0> after a push that failed, and
+after one that succeeded without sending anything -- no remote configured, or
+nothing this clone has that the remote's last known state lacks. Only a push
+with a count here proved that this clone can write the remote, which is what
+lifts a denied read-only state (L<App::karr::CloneState/note_push_landed>).
+
+=cut
+
+# The URL a push to $remote goes to, the way the transports pick it: an
+# explicit remote.<name>.pushurl (or pushInsteadOf applied to the fetch URL),
+# else the fetch URL. Without userinfo, because this is the form karr prints
+# and stores, and a token in an https URL is a secret.
+sub push_url {
+    my ( $self, $remote ) = @_;
+    $remote //= 'origin';
+    my $repo = $self->_repo or return undef;
+    return undef unless $repo->has_remote($remote);
+    my $url = try {
+        my $r = $repo->remote($remote);
+        _remote_pushurl($r) // from_octets( $r->url // '' );
+    } catch { undef };
+    return undef unless defined $url && length $url;
+    return without_userinfo($url);
+}
+
+=method push_url
+
+    my $url = $git->push_url;            # remote 'origin'
+    my $url = $git->push_url($remote);
+
+The effective push URL of C<$remote>: its C<pushurl> (or C<pushInsteadOf>
+applied to its fetch URL) where one is configured, its C<url> otherwise --
+the URL a push actually goes to. Returned without userinfo
+(L</without_userinfo>). C<undef> when the remote is not configured or the
+repository cannot be opened.
+
+=cut
+
+sub without_userinfo {
+    my ($url) = @_;
+    $url = $_[1] if @_ > 1;    # also callable as a class method
+    return $url unless defined $url;
+    $url =~ s{\A([A-Za-z][A-Za-z0-9+.\-]*://)[^/@]*@}{$1};
+    return $url;
+}
+
+=method without_userinfo
+
+    my $shown = App::karr::Git->without_userinfo($url);
+
+C<$url> with the userinfo of a C<scheme://user:password@host/...> URL taken
+out -- the form every URL karr prints or stores is in. An scp-style
+C<user@host:path> is left as it is: there the user is the SSH login, part of
+the address, and carries no secret.
+
+=cut
+
+# Can this clone write $remote? Asked by `karr sync` in a clone whose read-only
+# state was learned from a denied push, when the board has nothing to send:
+# an empty push lands without proving anything, and lifting the state on it
+# would only send the next write into the same denial (k333).
+#
+# A real transport checks write access when the push connects -- an https
+# remote asks for credentials before it advertises receive-pack, an ssh one
+# refuses a read-only key there -- so a dry run asks the question without
+# changing anything. A repository on a local path does not: the dry run reads
+# it and is happy, and only the write that never comes would fail. There the
+# directories a push writes into are asked instead.
+sub probe_push_access {
+    my ( $self, $remote ) = @_;
+    $remote //= 'origin';
+    $self->{_push_failure} = undef;
+    my $repo = $self->_repo or return undef;
+    return 1 unless $repo->has_remote($remote);
+
+    my $raw = try {
+        my $r = $repo->remote($remote);
+        _remote_pushurl($r) // from_octets( $r->url // '' );
+    } catch { '' };
+    return undef unless length $raw;
+
+    if ( _is_local_url($raw) ) {
+        my $dir = $raw =~ s{\Afile://}{}ir;
+        $dir = path($dir);
+        $dir = $self->repo_root->child($dir) if $dir->is_relative && $self->repo_root;
+        $dir = $dir->child('.git') if $dir->child('.git')->is_dir;
+        return undef unless $dir->is_dir;
+        return 1 unless grep { !-w $_ } ( $dir, $dir->child('objects'), $dir->child('refs') );
+        $self->{_last_error} = "this user cannot write $dir";
+        $self->_note_push_failure( $remote,
+            denied => "this user cannot write the remote repository's files" );
+        return 0;
+    }
+
+    return undef if $ENV{KARR_NO_CLI_FALLBACK};
+    my @refs = $self->list_refs(BOARD_ROOT);
+    my ($ref) = $self->ref_exists(BOARD_ID_REF) ? BOARD_ID_REF : sort @refs;
+    return undef unless defined $ref;
+
+    # Forced, so a ref the remote holds differently is no non-fast-forward
+    # refusal standing in for the answer; a dry run sends nothing either way.
+    my $run = $self->_run_git( 'push', '--dry-run', '--porcelain', $remote, "+$ref:$ref" );
+    return undef if $run->{failure} eq 'start';
+    return 1 if $run->{failure} eq '' && !( $run->{status} >> 8 ) && !( $run->{status} & 127 );
+
+    my $detail = $run->{err};
+    $detail =~ s/\s+\z//;
+    $self->{_last_error} = "git push --dry-run failed: $detail";
+    my ( $class, $reason ) = $run->{failure} eq 'timeout'
+        ? ( unreachable => "the push timed out after $run->{timeout}s" )
+        : _classify_push_error($detail);
+    $self->_note_push_failure( $remote, $class, $reason );
+    return $class eq 'denied' ? 0 : undef;
+}
+
+=method probe_push_access
+
+    my $can = $git->probe_push_access;   # 1, 0 or undef
+
+Asks whether this clone may write C<$remote> (default C<origin>) without
+changing anything there. C<1>: it may (or no such remote is configured). C<0>:
+write access is denied, with L</push_failure> saying why, exactly as a denied
+push would. C<undef>: it could not be told -- the remote was not reached, the
+git CLI is not available or C<KARR_NO_CLI_FALLBACK> forbids it, or the board
+has no ref to ask about -- with L</push_failure> saying why where there is a
+reason.
+
+A remote on a real transport is asked with C<git push --dry-run>: https and ssh
+remotes check write access when the push connects. A repository on a local
+path checks nothing until it is written, so there the repository's own
+directories are asked whether this user can write them.
+C<karr sync> uses this in a clone that learned it cannot write
+(L<App::karr::CloneState>) when it has nothing to push, because a push that
+sends nothing succeeds without proving anything.
+
+=cut
+
+sub unpublished_refs {
+    my ( $self, $remote ) = @_;
+    $remote //= 'origin';
+    my $repo = $self->_repo or return {};
+    return {} unless $repo->has_remote($remote);
+
+    my %out;
+    for my $ns ( [ BOARD_ROOT, MIRROR_ROOT ], [ FOUNDATION_ROOT, FOUNDATION_MIRROR_ROOT ] ) {
+        my ( $root, $mirror_root ) = @$ns;
+        my $local   = $self->ref_oids($root) || {};
+        my $prefix  = $self->_mirror_prefix( $remote, $mirror_root );
+        my $tracked = $self->ref_oids($prefix) || {};
+        my $seen = sub { $tracked->{ $prefix . substr( $_[0], length $root ) } };
+        for my $ref ( keys %$local ) {
+            $out{$ref} = 'changed' unless _same_oid( $local->{$ref}, $seen->($ref) );
+        }
+        my $tombstones = $self->_pending_deletes($root);
+        for my $ref ( keys %$tombstones ) {
+            next if exists $local->{$ref};
+            # Never on the remote as far as this clone knows: no deletion to
+            # publish (see _push_board_guarded).
+            next unless defined $seen->($ref);
+            $out{$ref} = 'deleted';
+        }
+    }
+    return \%out;
+}
+
+=method unpublished_refs
+
+    my $refs = $git->unpublished_refs;   # { 'refs/karr/tasks/12/data' => 'changed', ... }
+
+The board (C<refs/karr/*>) and fleet (C<refs/karr-foundation/*>) refs this
+clone holds differently from the remote's last known state -- the
+C<refs/karr-remote/> and C<refs/karr-local/foundation-remote/> mirrors -- as
+C<< { ref => 'changed' | 'deleted' } >>. C<deleted> is a deletion recorded here
+(a tombstone) of a ref the mirror still has. Exactly what the next push would
+send; no network round trip, because the mirror is what the last pull or push
+left. Empty when C<$remote> (default C<origin>) is not configured.
+
+=cut
+
 # libgit2 returns 0 from git_remote_push even when the server refused every
 # single ref -- a pre-receive hook, a protected ref, a non-ff on a non-forced
 # refspec. The per-ref status only exists in the Result Git::Native 0.004
@@ -2377,6 +2684,7 @@ sub push {
     my ( $self, $remote, $refspec, %opt ) = @_;
     $remote //= 'origin';
     $self->{_push_failure} = undef;
+    $self->{_push_sent}    = 0;
     my $repo = $self->_repo or return $self->_settle_push( $remote, 0 );
     $refspec //= BOARD_REFSPEC;
     my $board = $refspec eq BOARD_REFSPEC;
@@ -2410,6 +2718,8 @@ sub push {
     my $ok = !$board     ? $self->_push_refspecs( $remote, [$refspec] )
            : $opt{force} ? $self->_push_board_forced($remote)
            :               $self->_push_board_guarded($remote);
+    # A custom refspec is sent as given and nobody counts what it expanded to.
+    $self->{_push_sent} = 1 if $ok && !$board;
     return $self->_settle_push( $remote, $ok );
 }
 
@@ -2449,6 +2759,9 @@ sub _push_board_forced {
 
     return 0 unless $self->_push_refspecs( $remote, \@refspecs );
 
+    $self->{_push_sent} =
+        $self->_count_unmirrored( $remote, $local, BOARD_ROOT ) + @deletes;
+
     # A push that went through put the local refs on the remote and took the
     # published deletions off it, so the mirror follows both. Without this
     # every ref this clone ever pushed would still look "changed locally" on
@@ -2457,6 +2770,19 @@ sub _push_board_forced {
     $self->_mirror_local_state( $remote, $local, \@deletes );
     $self->_clear_pending_deletes( $tombstones, \@deletes );
     return 1;
+}
+
+# How many of %$local the mirror of $root does not hold as they are: what a
+# forced push of that snapshot actually changed on the remote, as far as this
+# clone knows. Read before the mirror is moved to match.
+sub _count_unmirrored {
+    my ( $self, $remote, $local, $root ) = @_;
+    my $mirror_root = $root eq BOARD_ROOT ? MIRROR_ROOT : FOUNDATION_MIRROR_ROOT;
+    my $prefix  = $self->_mirror_prefix( $remote, $mirror_root );
+    my $tracked = $self->ref_oids($prefix) || {};
+    return scalar grep {
+        !_same_oid( $local->{$_}, $tracked->{ $prefix . substr( $_, length $root ) } )
+    } keys %$local;
 }
 
 # The board push (k322). It sends exactly the refs this clone changed since it
@@ -2515,6 +2841,7 @@ sub _push_board_guarded {
     }
 
     return 0 unless $self->_push_guarded( $remote, \%send, \%expect );
+    $self->{_push_sent} = scalar keys %send;
 
     my @deletes = grep { !defined $send{$_} } sort keys %send;
     $self->_mirror_local_state( $remote,
@@ -2789,6 +3116,8 @@ sub pull {
     $remote //= 'origin';
     my $repo = $self->_repo or return 0;
     return 1 unless $repo->has_remote($remote);
+    # What the pull writes is the remote's, not the command's (_journal_wants).
+    local $self->{_journal_paused} = 1;
 
     my $refspec = $self->_fetch_refspec($remote);
 
@@ -3473,11 +3802,13 @@ sub push_ref {
     my ( $self, $ref, $remote ) = @_;
     $remote //= 'origin';
     $self->{_push_failure} = undef;
+    $self->{_push_sent}    = 0;
     $ref = $self->validate_helper_ref($ref);
     my $repo = $self->_repo or return $self->_settle_push( $remote, 0 );
     return 1 unless $repo->has_remote($remote);
-    return $self->_settle_push( $remote,
-        $self->_push_refspecs( $remote, ["+$ref:$ref"] ) );
+    my $ok = $self->_push_refspecs( $remote, ["+$ref:$ref"] );
+    $self->{_push_sent} = 1 if $ok;
+    return $self->_settle_push( $remote, $ok );
 }
 
 =method push_ref
@@ -3567,6 +3898,7 @@ sub push_foundation {
     my ( $self, $remote ) = @_;
     $remote //= 'origin';
     $self->{_push_failure} = undef;
+    $self->{_push_sent}    = 0;
     my $repo = $self->_repo or return $self->_settle_push( $remote, 0 );
 
     # Same as L</push>, one namespace over: with no remote the tombstones have
@@ -3596,6 +3928,8 @@ sub push_foundation {
     return $self->_settle_push( $remote, 0 )
         unless $self->_push_refspecs( $remote, \@refspecs );
 
+    $self->{_push_sent} =
+        $self->_count_unmirrored( $remote, $local, FOUNDATION_ROOT ) + @deletes;
     $self->_mirror_local_state( $remote, $local, \@deletes,
         FOUNDATION_ROOT, FOUNDATION_MIRROR_ROOT );
     $self->_clear_pending_deletes( $tombstones, \@deletes );

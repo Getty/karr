@@ -430,6 +430,11 @@ sub execute {
   # die from inside this loop and take the rest of the batch with it (ticket
   # #61). The option-value checks above stay outside it, because they condemn
   # the whole invocation rather than one id.
+  #
+  # What it did is said once the push is through, not per id as it goes
+  # (k333): a denied push takes every edit of the batch back, and an
+  # "Updated task" line above that denial was false.
+  my @said;
   my ($results, $failed) = $self->run_batch(\@ids, sub {
     my ($id) = @_;
 
@@ -558,7 +563,6 @@ sub execute {
       }
     });
 
-    printf "Updated task %d: %s\n", $task->id, $task->title unless $self->json;
     # --status goes through apply_status_change, so an edit that takes a card
     # up gets the same dependency warning `karr move` does, for free and by
     # construction -- the #55 point again (ticket #123). An edit that changes
@@ -567,14 +571,20 @@ sub execute {
     # purpose records nothing and adds no key here either: it is not an override
     # that went unnoticed, it is the one command whose whole job is saying so
     # (App::karr::Role::ClaimTimeout/expired_claim_report, #177).
-    return { id => $task->id, title => $task->title,
-             $self->expired_claim_report( $task->id ),
-             $self->dependency_report( $task->id ) };
+    # On STDERR both follow the outcome line, once the push is through (k333).
+    my $tid     = $task->id;
+    my $reports = sub {
+      ( $self->expired_claim_report($tid), $self->dependency_report($tid) ) };
+    push @said, [ "Updated task $tid", ': ' . $task->title, $reports ]
+      unless $self->json;
+    return { id => $tid, title => $task->title,
+             ( $self->json ? $reports->() : () ) };
   });
 
-  $self->sync_after;
-
-  $self->print_json_results(@$results);
+  $self->sync_after_and_report( sub {
+    $self->print_outcome( $_[0], @said );
+    $self->print_json_results(@$results);
+  } );
 
   $self->report_batch_failure($failed, scalar @ids);
 }

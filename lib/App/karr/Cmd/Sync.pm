@@ -9,6 +9,7 @@ use MooX::Options (
     usage_string => 'USAGE: karr sync [--push [--force]] [--pull] [--prune] [--accept-foreign-board]',
 );
 use App::karr::Role::BoardAccess;
+use App::karr::CloneState;
 
 with 'App::karr::Role::BoardAccess';
 
@@ -53,6 +54,22 @@ contention, two pushes racing for the same ref, which the next attempt wins
 missing a second later. This is the command karr points every
 failed sync at, and until #183 it was the only one that pushed once and gave
 up.
+
+In a clone that is read-only for the board (L<App::karr::CloneState>) it is
+the one command that still pushes, or decides not to:
+
+=over 4
+
+=item * Read-only since a denied push (C<denied>): it pulls and tries the
+push. A push that lands -- or, with nothing to send, a remote that now accepts
+this clone's writes (L<App::karr::Git/probe_push_access>) -- lifts the state,
+and says so. A push denied again leaves it as it is and ends on the denial
+message.
+
+=item * Read-only by hand (C<karr readonly on>): it pulls only, and says in one
+line that the push was skipped.
+
+=back
 
 =head1 OPTIONS
 
@@ -147,6 +164,14 @@ sub execute {
     my $push_only = $self->push && !$self->pull;
     my $pull_only = $self->pull && !$self->push;
 
+    # A clone read-only by hand (App::karr::CloneState, `karr readonly on`)
+    # pulls and publishes nothing. One that learned from a denied push that it
+    # cannot write takes the full sync: this is the command that finds out
+    # whether it can again, and SyncLifecycle/sync_after lifts the state when
+    # a push lands (k333).
+    my $state   = App::karr::CloneState->for_git($git);
+    my $by_hand = $state && ( $state->read_only_mode // '' ) eq 'on';
+
     # A forced push after a pull would overwrite whatever another clone
     # published between the two, which is all --force can add there; the
     # situations it exists for are the ones where the pull refuses anyway.
@@ -177,8 +202,18 @@ sub execute {
         );
         # sync_before is sync_pull plus a SyncGuard, and a guard left armed is
         # a push at process teardown -- exactly what --pull says not to do. So
-        # the pull-only form takes the pull without the insurance.
-        $pull_only ? $self->sync_pull(@accept) : $self->sync_before(@accept);
+        # the pull-only form takes the pull without the insurance, and so does
+        # a clone that is read-only by hand. writes => 0: the door in
+        # sync_before is for commands that write, and this one decides above.
+        $pull_only || $by_hand
+            ? $self->sync_pull(@accept)
+            : $self->sync_before( @accept, writes => 0 );
+    }
+
+    if ( $by_hand && !$pull_only ) {
+        print STDERR "Push skipped: this clone is read-only for the board "
+          . "(karr readonly on).\n";
+        $pull_only = 1;
     }
 
     unless ($pull_only) {

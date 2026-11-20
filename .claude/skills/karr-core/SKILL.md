@@ -85,7 +85,24 @@ bin/karr  →  App::karr (MooX::Cmd-Wurzel)  →  Cmd/*.pm  →  Role/BoardAcces
 - **`Role/SyncLifecycle`** — der Schreibweg: pull, dann push, mit bis zu drei Versuchen (der
   erste still, die Wiederholungen ab dem zweiten angesagt). Ein Ref, den die Gegenseite
   zurückwies, wird **nicht** wiederholt — die Gegenseite hat geantwortet; nur eine Kontention
-  (zwei Pushes auf dieselbe Ref) gewinnt der nächste Versuch.
+  (zwei Pushes auf dieselbe Ref) gewinnt der nächste Versuch. Ebenso wenig wird ein Push
+  wiederholt, dem die Gegenseite das Schreiben verweigert (`denied`: keine Zugangsdaten, ein
+  Read-only-Key — `Git->push_failure` sortiert jeden Fehlschlag in `denied` / `unreachable` /
+  `rejected` / `stale` / `other`); nur `unreachable` behält die drei Versuche, und seine
+  Änderung bleibt im Clone („Saved in this clone, not on the remote“).
+- **`CloneState` und die Read-only-Tür** — was dieser Clone über sein eigenes Schreibrecht
+  weiß, in `.git/config` (`karr.readonly` = `denied`|`on`, `karr.readonlyPushUrl`, …), nie auf
+  dem Board: die Board-Config gehört allen Clones zugleich. Der erste `denied`-Push nimmt die
+  Schreibvorgänge des Kommandos zurück (`take_back_journal`, `next-id` eingeschlossen) und setzt
+  den Zustand; danach lehnt `sync_before` jedes schreibende Kommando **nach dem Pull und vor dem
+  ersten Ref-Write** ab, `--local-only` eingeschlossen — Lesen und Pull gehen weiter. Der Zustand
+  gilt nur für die Push-URL, für die er notiert wurde; er endet bei neuer Push-URL, mit einem
+  `karr sync`, dessen Push landet (oder dessen Dry-Run-Probe durchgeht), oder mit `karr readonly
+  off`. `karr readonly on` setzt ihn von Hand für einen reinen Lese-Clone — Entscheidung des
+  Clone-Maintainers, nie eines Agenten. Aus der URL erraten wird er nicht (https-Fetch plus
+  SSH-`pushurl` schreibt problemlos). `Dispatch::lasting_warnings` druckt auf STDERR die
+  Dauerwarnung (Zustand `denied`; Änderungen, die noch nicht auf der Remote sind) nach jedem
+  Kommando, das ein Repository gefunden hat — STDOUT bleibt unberührt. ADR 0009.
 - **`Role/SyncGuard`** — die Versicherung: endet ein Schreibkommando mit einem Fehler, wird der
   lokale Stand trotzdem gepusht, damit kein Board-Stand verloren geht.
 - **`BoardStore`** — die Ref-Persistenz: `load_tasks`, `save_task`, `effective_config`,
@@ -104,7 +121,7 @@ bin/karr  →  App::karr (MooX::Cmd-Wurzel)  →  Cmd/*.pm  →  Role/BoardAcces
 `init`, `create`, `list`, `show`, `board`, `dashboard`, `move`, `edit`, `delete`, `pick`,
 `unlock`, `archive`, `handoff`, `needs`, `destroy`, `config`, `disable`, `enable`, `context`,
 `log`, `metrics`, `backup`, `restore`, `materialize`, `import`, `repair`, `sync`, `agent-name`,
-`skill`, `set-refs`, `get-refs`, `completion`.
+`skill`, `readonly`, `set-refs`, `get-refs`, `completion`.
 
 Jedes mutierende Kommando zieht vorher und schiebt danach. `create` landet in `backlog`,
 unbeansprucht; `backlog` wird weder von `pick` noch von karr-foundation herausgegeben, und die
@@ -129,6 +146,10 @@ abgeschnitten, und karrs Hauptleser sind Agenten.
   `Host`-Alias oder `ProxyCommand` erreicht libgit2 nicht, dafür gibt es den CLI-Fallback.
   `BatchMode=yes` heißt: keine interaktive Passphrase — ein Agent ohne Key bekommt einen Fehler,
   keine Nachfrage.
+- **Ein verweigerter Push hinterlässt keine Karte.** Er nimmt die Änderung zurück und macht den
+  Clone read-only; wer danach „Local refs are intact“ sucht, findet es nicht mehr. `karr
+  readonly` zeigt den Zustand; ihn ohne Auftrag des Clone-Maintainers auf `on` zu setzen, ist ein
+  Fehler.
 - **Der Push prunt nicht.** Eine Remote-Ref, die der Clone nie gesehen hat, ist die Karte eines
   anderen Agenten; sie zu löschen, verliert sie ganz.
 - **Board-Mutationen bei Fächer-Ausgabe serialisieren.** Jedes schreibende Kommando zieht und

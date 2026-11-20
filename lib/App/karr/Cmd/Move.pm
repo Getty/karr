@@ -202,6 +202,9 @@ sub execute {
   # Every id is attempted, whatever the ones before it did: a missing id used to
   # die from inside this loop and take the rest of the batch with it, so the
   # result depended on where the bad id sat in the list (ticket #61).
+  # What it did is said once the push is through, not per id as it goes
+  # (k333): a denied push takes every move of the batch back.
+  my @said;
   my ($results, $failed) = $self->run_batch(\@ids, sub {
     my ($id) = @_;
 
@@ -291,7 +294,8 @@ sub execute {
       # The wording `karr archive` already uses for the same answer, and ADR
       # 0002's exit 0: the card is where it was asked to be, which is success
       # and not a failure to report.
-      printf "Task %d is already at %s: %s\n", $task->id, $task->status, $task->title
+      push @said, sprintf( "Task %d is already at %s: %s",
+        $task->id, $task->status, $task->title )
         unless $self->json;
       # `changed` is the field a --json reader keys on, and it is on both
       # answers rather than only on this one: a key that appears only when
@@ -308,22 +312,27 @@ sub execute {
                new_status => $task->status, changed => JSON::MaybeXS::false() };
     }
 
-    printf "Moved task %d: %s -> %s\n", $task->id, $old_status, $task->status unless $self->json;
     # After the write, not inside the guarded callback that decided it: see
     # App::karr::Role::DependencyCheck/dependency_report. Under --json the pair
     # it returns lands in this hash instead of on STDERR. Same for the expired
     # claim this move may have stepped over
     # (App::karr::Role::ClaimTimeout/expired_claim_report, #177), which is
     # reported first because it is about who held the card, not about the work.
-    return { id => $task->id, title => $task->title, old_status => $old_status,
+    # On STDERR both follow the outcome line, once the push is through (k333).
+    my $tid     = $task->id;
+    my $reports = sub {
+      ( $self->expired_claim_report($tid), $self->dependency_report($tid) ) };
+    push @said, [ "Moved task $tid", ": $old_status -> " . $task->status, $reports ]
+      unless $self->json;
+    return { id => $tid, title => $task->title, old_status => $old_status,
              new_status => $task->status, changed => JSON::MaybeXS::true(),
-             $self->expired_claim_report( $task->id ),
-             $self->dependency_report( $task->id ) };
+             ( $self->json ? $reports->() : () ) };
   });
 
-  $self->sync_after;
-
-  $self->print_json_results(@$results);
+  $self->sync_after_and_report( sub {
+    $self->print_outcome( $_[0], @said );
+    $self->print_json_results(@$results);
+  } );
 
   $self->report_batch_failure($failed, scalar @ids);
 }

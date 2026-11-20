@@ -165,7 +165,9 @@ sub execute {
   # die from inside this loop, which on delete was the worst version of the bug
   # in ticket #61: the ids already removed locally never reached sync_after, so
   # the batch reported failure with the remote still holding cards karr had
-  # deleted.
+  # deleted. What it did is said once the push is through, not per id as it
+  # goes (k333): a denied push takes every delete of the batch back.
+  my @said;
   my ($results, $failed) = $self->run_batch(\@ids, sub {
     my ($id) = @_;
 
@@ -298,7 +300,8 @@ sub execute {
       unless ($answer =~ /^y/i) {
         # Answering "n" is an answer, not a failure: the batch carries on and
         # the command still exits 0 if nothing else went wrong.
-        printf "Skipped task %d: %s\n", $task->id, $task->title unless $self->json;
+        push @said, sprintf( "Skipped task %d: %s", $task->id, $task->title )
+          unless $self->json;
         # The warnings ride along on a card that was kept, too. Under --json
         # the pair is their only channel, and this is the case they were for:
         # `deleted => false` sits beside them and says plainly that the delete
@@ -309,21 +312,26 @@ sub execute {
     }
 
     $self->delete_task_guarded($task->id, $self->claim);
-    printf "Deleted task %d: %s\n", $task->id, $task->title unless $self->json;
     # Reported here and not before the prompt, because a card the operator
     # answered "n" for had its claim examined but not overridden. The two
     # check_claim calls on this path -- the one above and the one inside
     # delete_task_guarded -- record into the same slot, so this is still one
     # line (#177). Deleting the card is also the one case where nothing survives
     # to be read afterwards, which is what makes the trace matter most here.
-    return { id => $task->id, title => $task->title, deleted => \1,
+    # On STDERR it follows the outcome line, once the push is through (k333).
+    my $tid     = $task->id;
+    my $reports = sub { $self->expired_claim_report($tid) };
+    push @said, [ "Deleted task $tid", ': ' . $task->title, $reports ]
+      unless $self->json;
+    return { id => $tid, title => $task->title, deleted => \1,
              @warning_report,
-             $self->expired_claim_report( $task->id ) };
+             ( $self->json ? $reports->() : () ) };
   });
 
-  $self->sync_after;
-
-  $self->print_json_results(@$results);
+  $self->sync_after_and_report( sub {
+    $self->print_outcome( $_[0], @said );
+    $self->print_json_results(@$results);
+  } );
 
   $self->report_batch_failure($failed, scalar @ids);
 }

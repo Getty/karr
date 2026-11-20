@@ -9,6 +9,7 @@ use MooX::Options;
 # so an imported user_error would become a method on every syncing command
 # (#38). App::karr::Role::Output and App::karr::Role::TaskMutation say the same.
 use App::karr::Error ();
+use App::karr::CloneState;
 use App::karr::SyncGuard;
 
 option quiet => (
@@ -84,6 +85,16 @@ it removes from the command's critical path. The default is unchanged: without
 the option the fetch and push run exactly as before. The refs written under
 C<--local-only> are canonical local board state; C<karr sync> publishes them
 once the remote is reachable again.
+
+=head2 Read-only clone
+
+A clone whose remote denied it write access is read-only for the board
+(L<App::karr::CloneState>): the first denied push takes the command's own
+writes back, records the state in git config and ends on the denial message;
+from then on L</sync_before> refuses every writing command after its pull and
+before its first ref write, C<--local-only> included, so nothing is written
+that could never be published. The same holds for a clone set read-only by
+hand (C<karr readonly on>). Reading, and the pull, keep working.
 
 =cut
 
@@ -246,23 +257,29 @@ sub _push_denied {
     return ( $failure->{class} // '' ) eq 'denied' ? 1 : 0;
 }
 
-# The verdict for a denied push. Provisional (k333): what the push left
-# behind and how to give this clone write access are still to be said here.
-sub _push_denied_message {
-    my ( $self, $git, $what ) = @_;
-    my $failure = $git->push_failure;
-    my $remote  = $failure->{remote} // 'origin';
-    my $reason  = $failure->{reason} // 'write access denied';
-    return "$what denied: the remote '$remote' refused this clone write "
-      . "access ($reason).\n"
-      . "It was tried once and not repeated: pushing again only helps once "
-      . "this clone can write.";
+=method refuse_if_read_only
+
+    $self->refuse_if_read_only;
+
+Dies with the refusal (L<App::karr::CloneState/refuse_writes>, exit 1) when
+this clone is read-only for the board, and returns true otherwise.
+L</sync_before> calls it for every writing command; a command that writes
+board refs without going through L</sync_before> calls it before its first
+ref write.
+
+=cut
+
+sub refuse_if_read_only {
+    my ($self) = @_;
+    my $state = App::karr::CloneState->for_git( $self->_sync_git ) or return 1;
+    return $state->refuse_writes;
 }
 
 =method sync_before
 
     $self->sync_before;
     $self->sync_before( accept_wipe => 1 );   # options reach Git::pull
+    $self->sync_before( writes => 0 );        # a reader: never refused
 
 L</sync_pull> plus the insurance: it runs the same retrying pull, forwarding
 any named arguments to L<App::karr::Git/pull>, and then creates a
@@ -270,14 +287,25 @@ L<App::karr::SyncGuard>, retains it on the object (so it outlives the call and
 covers the command body), and also returns it for callers that want to manage
 it explicitly. C<sync_after> clears it on a successful push.
 
+Between the pull and the guard it is the door every board write passes: in a
+read-only clone (L</Read-only clone>) it refuses the command there, after the
+pull and before anything is written, with exit 1 and the refusal
+(L<App::karr::CloneState/refusal_message>). No push is attempted.
+C<< writes => 0 >> is for the callers that take this lifecycle without
+writing -- C<karr backup>, the dry run of C<karr repair>, the report of
+C<karr unlock>, and C<karr sync>, which handles a read-only clone itself.
+
 Under C<--local-only> (see L</Local-only mode>) the pull is skipped and the
 returned guard is handed back already spent, so the callers that call
 C<< $guard->done >> on it still get an object and no push can fire at teardown.
+A read-only clone refuses it all the same: a change written there could never
+be published.
 
 =cut
 
 sub sync_before {
     my ( $self, %opt ) = @_;
+    my $writes = exists $opt{writes} ? delete $opt{writes} : 1;
 
     # --local-only writes to the board's local refs and never reaches the
     # remote, so the fetch is skipped. The command still writes, so a guard is
@@ -286,6 +314,11 @@ sub sync_before {
     # neither the guard's DESTROY nor bin/karr's END-block flush may turn that
     # skip into a push at process teardown.
     $self->sync_pull(%opt) unless $self->local_only;
+
+    # The door (k333): a clone that cannot publish a board change refuses it
+    # here, after the pull -- reading keeps working -- and before the first
+    # ref write, so there is nothing to take back and nothing to push.
+    $self->refuse_if_read_only if $writes;
 
     # Stash the guard on the object so it outlives sync_before's return and
     # covers the whole command body; sync_after neutralises it on success.
@@ -320,13 +353,29 @@ which the error message carries ref by ref.
 
 A push that was I<denied> write access (L<App::karr::Git/push_failure>: no
 credentials for HTTPS, no SSH key the remote accepts, a read-only key, a
-local repository this user cannot write) is not retried either. The git error
-is shown once and the command ends with exit 1 on
-C<Push denied: the remote 'origin' refused this clone write access (REASON).>,
-followed by the note that it was tried once and that pushing again only helps
-once this clone can write. Only a remote that could not be I<reached> -- the
-name did not resolve, the connection was refused or timed out -- and a failure
-of no recognised kind get all three attempts.
+local repository this user cannot write) is not retried either: the git error
+is shown once. Then the command's own writes are taken back -- the card, the
+activity log entry and the id counter alike
+(L<App::karr::Git/take_back_journal>) -- the clone becomes read-only for the
+board (L<App::karr::CloneState>), and the command ends with exit 1 on
+C<karr: write access to the remote 'origin' (URL) was denied: REASON.>,
+C<Nothing was changed: this command's change was taken back, ...> and the way
+to give this clone write access (L<App::karr::CloneState/denial_message>).
+
+Only a remote that could not be I<reached> -- the name did not resolve, the
+connection was refused or timed out -- and a failure of no recognised kind get
+all three attempts. Every failure but a denial ends on what is saved in this
+clone and not on the remote (C<Saved in this clone, not on the remote: #12,
+log, next-id.>, L<App::karr::CloneState/saved_here_line>) and is remembered in
+git config, for the lasting warning later commands print
+(L<App::karr::CloneState/warning_lines>).
+
+A push that lands forgets that failure. One that really sent refs
+(L<App::karr::Git/push_sent>) also lifts a C<denied> read-only state, which is
+how C<karr sync> -- the one command that pushes in a denied clone -- finds out
+that the clone can write again. When it has nothing to send, it asks the
+remote instead (L<App::karr::Git/probe_push_access>): an empty push proves
+nothing.
 
 The board push is guarded (L<App::karr::Git/push>): each ref goes out
 only while the remote still holds what this clone last saw there. When
@@ -398,24 +447,78 @@ sub sync_after {
     # a denial (k333) for the same reason.
     $self->_release_guard;
 
-    return if $ok;
+    return $self->_push_landed($git) if $ok;
 
-    App::karr::Error::user_error( $self->_push_denied_message( $git, 'Push' ) )
-      if $denied;
+    # Write access denied (k333): nothing of this command may stay in a clone
+    # that cannot publish it, and the clone is read-only from here on.
+    App::karr::Error::user_error(
+        App::karr::CloneState->denied_push( $git, take_back => 1 ) ) if $denied;
+
+    my $saved = App::karr::CloneState->failed_push($git);
 
     App::karr::Error::user_error(
-        "Push rejected by the remote. Local refs are intact.\n"
+        "Push rejected by the remote.\n$saved\n"
       . "The refs above were refused, not lost in transit, so pushing again "
       . "would only be refused again." ) if $rejected;
 
     App::karr::Error::user_error(
         "The remote kept changing underneath this push: "
       . $self->_name_board_refs( @{ $git->push_stale } ) . ".\n"
-      . "Local refs are intact. Run 'karr sync' to retry." ) if $stale;
+      . "$saved\nRun 'karr sync' to retry." ) if $stale;
 
-    App::karr::Error::user_error(
-        "Push failed after 3 attempts. Local refs are intact.\n"
-      . "Run 'karr sync' to retry." );
+    App::karr::Error::user_error( $self->_push_failed_message( $git, 'Push', $saved ) );
+}
+
+# "Push failed after 3 attempts", and for an unreachable remote which remote
+# and why, so the advice to wait for it is not a guess.
+sub _push_failed_message {
+    my ( $self, $git, $what, $saved ) = @_;
+    my $failure = $git->can('push_failure') ? $git->push_failure : undef;
+    unless ( $failure && ( $failure->{class} // '' ) eq 'unreachable' ) {
+        return "$what failed after 3 attempts.\n$saved\nRun 'karr sync' to retry.";
+    }
+    my $remote = $failure->{remote} // 'origin';
+    my $url    = $git->can('push_url') ? $git->push_url($remote) : undef;
+    my $where  = defined $url ? "'$remote' ($url)" : "'$remote'";
+    my $reason = defined $failure->{reason} ? " ($failure->{reason})" : '';
+    return "$what failed after 3 attempts: the remote $where could not be "
+      . "reached$reason.\n$saved\n"
+      . "Run 'karr sync' to retry once the remote can be reached.";
+}
+
+# A push that went through: the failure remembered from an earlier one is
+# history, and a clone read-only since a denied push may write again -- when
+# this push sent something, or, with nothing to send, the remote says so
+# (App::karr::Git/probe_push_access). Only `karr sync` gets here in a denied
+# clone; every other writing command was refused at the door.
+sub _push_landed {
+    my ( $self, $git ) = @_;
+    my $state = App::karr::CloneState->for_git($git) or return;
+    my $ro    = $state->read_only;
+    my $sent  = $git->can('push_sent') ? $git->push_sent : 0;
+
+    my $denied = $ro->{applies} && $ro->{mode} eq 'denied';
+    if ( $denied && !$sent ) {
+        my $can = $git->can('probe_push_access') ? $git->probe_push_access : undef;
+        App::karr::Error::user_error(
+            App::karr::CloneState->denied_push( $git, take_back => 1 ) )
+          if defined $can && !$can;
+        unless ($can) {
+            App::karr::CloneState->mark_reported;
+            my $failure = $git->push_failure;
+            my $why = $failure && defined $failure->{reason} ? " ($failure->{reason})" : '';
+            App::karr::Error::user_error(
+                "karr: could not tell whether this clone can write '$ro->{remote}' "
+              . "again$why: it stays read-only for the board.\n"
+              . "Run 'karr sync' again once the remote can be reached." );
+        }
+        $sent = 1;
+    }
+
+    print STDERR "Write access to '$ro->{remote}' works again: this clone is no "
+      . "longer read-only for the board.\n"
+      if $state->note_push_landed( sent => $sent );
+    return;
 }
 
 # A guarded push came back stale (k322): another clone published refs this
@@ -523,8 +626,10 @@ L</sync_after> for C<refs/karr-foundation/*>, minus the
 L<App::karr::SyncGuard>: the guard insures a command body that wrote board refs
 and died, and nothing in a command body writes this namespace. The rejection
 and denial verdicts are the same ones L</sync_after> uses, contention
-included, since it is the same remote answering; a denial ends on
-C<Push of refs/karr-foundation/ denied: ...>.
+included, since it is the same remote answering. A denial takes nothing back
+-- C<karr sync> wrote nothing of its own -- but the clone learns it all the
+same (L<App::karr::CloneState>) and the message is the same one: the remote
+denies this clone write access, whichever namespace asked.
 
 =cut
 
@@ -534,22 +639,24 @@ sub sync_push_foundation {
 
     my ( $ok, $rejected, undef, $denied ) = $self->_sync_attempts( 'Push', $git,
         sub { $git->push_foundation }, check_rejection => 1 );
-    return if $ok;
+    if ($ok) {
+        my $state = App::karr::CloneState->for_git($git);
+        $state->note_push_landed( sent => $git->push_sent ) if $state;
+        return;
+    }
 
-    App::karr::Error::user_error(
-        $self->_push_denied_message( $git, 'Push of refs/karr-foundation/' ) )
+    App::karr::Error::user_error( App::karr::CloneState->denied_push($git) )
       if $denied;
 
+    my $saved = App::karr::CloneState->failed_push($git);
+
     App::karr::Error::user_error(
-        "Push of refs/karr-foundation/ was rejected by the remote. Local refs "
-      . "are intact.\n"
+        "Push of refs/karr-foundation/ was rejected by the remote.\n$saved\n"
       . "The refs above were refused, not lost in transit, so pushing again "
       . "would only be refused again." ) if $rejected;
 
     App::karr::Error::user_error(
-        "Push of refs/karr-foundation/ failed after 3 attempts. Local refs "
-      . "are intact.\n"
-      . "Run 'karr sync' to retry." );
+        $self->_push_failed_message( $git, 'Push of refs/karr-foundation/', $saved ) );
 }
 
 sub _release_guard {

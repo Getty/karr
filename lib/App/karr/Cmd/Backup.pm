@@ -61,7 +61,8 @@ sub execute {
 
   # Backup is read-only: take the retrying pull half of the sync lifecycle,
   # then mark the guard done so this read path never pushes on exit or on die.
-  my $guard = $self->sync_before;
+  # writes => 0: a reader, so a read-only clone is not refused (k333).
+  my $guard = $self->sync_before( writes => 0 );
   $guard->done;
 
   # The one spelling of this sentence, shared with require_board and with

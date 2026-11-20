@@ -162,6 +162,10 @@ sub _run_inprocess {
         # in the capture exactly as it does in a subprocess run.
         eval { App::karr::SyncGuard->flush_armed };
 
+        # And the lasting warnings bin/karr prints from the same END block,
+        # after the flush (k333). dispatch() resets what they depend on per run.
+        App::karr::Dispatch::lasting_warnings($exit);
+
         if (@files) {
             close STDOUT;
             close STDERR;

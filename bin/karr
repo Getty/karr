@@ -48,9 +48,17 @@ use App::karr::Dispatch qw( dispatch );
 # path, whose open3/waitpid would otherwise overwrite it. flush_armed is
 # documented never to die, which is the other half of protecting that contract:
 # an exception here would abort perl's END queue and set its own exit status.
+#
+# The lasting warnings about this clone's push state (k333) come last, here,
+# for the same two reasons: they must name what is still not on the remote
+# AFTER the insurance push, and they must also follow a command that called
+# exit() itself. $? is read before it is localized: it is the exit code the
+# warnings skip a usage error on.
 END {
+    my $exit = $?;
     local $?;
     App::karr::SyncGuard->flush_armed;
+    App::karr::Dispatch::lasting_warnings($exit);
 }
 
 # Everything between program start and App::karr->new_with_cmd -- the
@@ -239,6 +247,13 @@ tells apart several agents started in one directory.
 Explicitly pulls or pushes C<refs/karr/*> when you want to inspect or control
 sync separately.
 
+=item * L<App::karr::Cmd::Readonly>
+
+Shows whether this clone is read-only for the board -- because the remote
+denied it write access, or set by hand for a clone that is only for reading --
+and sets or clears that state. It lives in the clone's git config, never on
+the board.
+
 =back
 
 =head2 Snapshot And Recovery
@@ -304,7 +319,9 @@ F<docs/adr/0002-exit-code-contract.md>):
 that is already archived.
 
 =item * B<1> -- runtime failure: a task id was not found, the board is missing,
-a Git or sync operation failed, a destructive command was refused for want of
+a Git or sync operation failed (a push the remote denied write access
+included, and a write refused because this clone is read-only for the board:
+nothing was changed then), a destructive command was refused for want of
 C<--yes>, or a batch committed partial work but at least one item failed.
 
 =item * B<2> -- usage error: an unknown command, an unknown option, an invalid

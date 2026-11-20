@@ -115,6 +115,34 @@ decision, so it wins over `--command`, `default_command`, the `.karr` `command`
 and `claude: true`, and `--force` does not override it. A parked backlog stays
 fully usable by hand; only automation is switched off.
 
+**Read-only clone**:
+A clone that may not write the **Board** -- learned from a push the remote denied
+write access (`denied`), or set by hand for a clone that is only for reading
+(`karr readonly on`). The state lives in that clone's git config, never on the
+board, and applies only to the push URL it was recorded for. In it every command
+that writes board refs is refused after its pull and before its first write
+(`--local-only` included), and the command that hit the denial takes its own
+change back; reading and pulling keep working. It lifts when the push URL
+changes, when `karr sync` lands a push, or with `karr readonly off`; `on` is the
+call of the clone's maintainer, never an agent's (ADR 0009). Not the same as a
+**Disabled board**, which is board state that opts out of automation for every
+clone; both are skipped by karr-foundation.
+_Avoid_: "locked" (a **Lock** is the advisory pick ref), "disabled" (that is the
+board's own opt-out), "offline" (the remote may answer; it just refuses writes).
+
+**Unpublished change**:
+A board change in this clone that the remote does not have: local
+`refs/karr/*` or `refs/karr-foundation/*` that differ from the remote's last
+known state, tombstones included. It comes from an unreachable remote, from
+`--local-only`, or from a clone older than the read-only state, and every karr
+command warns about it on STDERR until `karr sync` lands it. A **Read-only
+clone** has none of its own: a denied push takes the command's change back
+instead of keeping it. A write in progress that died early is a different
+thing; the push insurance publishes that one.
+_Avoid_: "local refs are intact" (it reads as "all fine" and says nothing about
+what is missing), "dirty" or "pending" for the clone (those are git's words for
+the working tree).
+
 **Overview**:
 Foundation's read-only dashboard (`--status`, or the default when no agent is
 configured) — per board: status counts and what is
@@ -165,6 +193,9 @@ _Avoid_: "parent"/"subtask" as karr vocabulary.
   expires if not refreshed.
 - A **Task** has at most one **Assignee** (intent) and at most one **Claim**
   (active lease) — these may name different agents.
+- A **Read-only clone** refuses every write to the board before it happens, so
+  it holds no **Unpublished change** of its own; an unreachable remote is the
+  case that leaves one.
 - Every state change to a **Task** appends to the **Activity log** under the
   acting **Identity**.
 - One **Identity** (`<role>/<email>`) may use many **Claim names** over time;

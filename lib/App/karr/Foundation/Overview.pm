@@ -19,6 +19,14 @@ remaining wait and the error that caused it (C<cooldown 240s (rate limit)>),
 since a parked board is a board doing nothing. A weak back-reference to the
 owning foundation supplies the board data and state helpers.
 
+A board whose clone here is read-only for it (L<App::karr::CloneState>) is
+marked C<read-only: denied> -- a push was denied write access -- or
+C<read-only: on> -- set by hand with C<karr readonly on>. Its C<agent> flag is
+suppressed as a disabled board's is, because foundation runs nothing there.
+C<denied> also gets a C<read-only:> line saying which remote and push URL
+denied it, when and why, since that is a state somebody has to fix. Both come
+from the clone's git config: no network.
+
 Where the local config defines named agents (L<App::karr::Foundation::Agents>)
 the boards are followed by one C<Agents> block: per agent C<ok>, or C<failing
 since X, next attempt at Y> with the error that caused it. That block is the
@@ -67,8 +75,14 @@ sub _print_overview {
     # the 'agent' flag, because that agent will never run here.
     my $disabled = $self->foundation->_board_disabled($repo);
 
+    # This clone's own write access to the board (k333): git config, so no
+    # network. Next to the disable flag and with the same effect on the agent
+    # flag, because foundation runs nothing on a board it cannot write.
+    my $read_only = $self->foundation->_board_read_only($repo);
+
     my @flags;
     push @flags, 'disabled' if $disabled;
+    push @flags, "read-only: $read_only->{mode}" if $read_only;
     push @flags, 'agent-running' if $self->foundation->_lock_held($repo);
     if ( $self->foundation->_cooldown_active($repo) ) {
       my $until = $self->foundation->_state_get( $repo, 'cooldown_until' ) // 0;
@@ -86,7 +100,7 @@ sub _print_overview {
     # currently available says so here too, because from the outside that board
     # and a board in cooldown are doing the same nothing.
     my ( $agent_error, $waiting );
-    unless ( $disabled ) {
+    unless ( $disabled || $read_only ) {
       my ( $cmd, $agent, $wait );
       try { ( $cmd, $agent, $wait ) = $self->foundation->_resolve_agent( $repo, $karr ) }
       catch { $agent_error = "$_"; chomp $agent_error };
@@ -123,6 +137,8 @@ sub _print_overview {
     }
     printf "  disabled:    %s\n", $disabled->{reason} // 'no reason given'
       if $disabled;
+    printf "  read-only:   %s\n", _denied_line($read_only)
+      if $read_only && $read_only->{mode} eq 'denied';
     printf "  agent-error: %s\n", $agent_error if defined $agent_error;
     printf "  waiting:     %s\n", $waiting          if defined $waiting;
     printf "  in-progress: %s\n", join( ', ', map { "#$_" } @in_progress ) if @in_progress;
@@ -209,6 +225,18 @@ sub _print_questions {
   }
   print "\n";
   return;
+}
+
+# What a denied read-only state says about itself, in the words of the refusal
+# every karr write in that clone prints (App::karr::CloneState/refusal_message):
+# which remote and push URL, when, and why.
+sub _denied_line {
+  my ( $ro ) = @_;
+  my $url = defined $ro->{push_url} && length $ro->{push_url}
+    ? " ($ro->{push_url})" : '';
+  return "write access to '" . ( $ro->{remote} // 'origin' ) . "'$url was "
+       . 'denied on ' . ( $ro->{since} // 'an unknown time' )
+       . ' (' . ( $ro->{reason} // 'write access denied' ) . ')';
 }
 
 # ok / failing since X / next attempt at Y -- the three states karr keeps, said

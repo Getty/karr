@@ -179,7 +179,14 @@ sub execute {
     }
   });
 
-  $self->sync_after;
+  # Said once the push is through (k333): a denied push takes the handoff
+  # back, and a push that failed keeps it in this clone and says so.
+  $self->sync_after_and_report(
+    sub { $self->_report_handoff( $task, $target, $_[0] ) } );
+}
+
+sub _report_handoff {
+  my ($self, $task, $target, $note) = @_;
 
   # A handoff re-stamps claimed_by, so it is the command that most thoroughly
   # erases whoever held the card before -- and the one #176's agent, having lost
@@ -196,7 +203,7 @@ sub execute {
     return;
   }
 
-  my $msg = sprintf "Handed off task %d -> %s", $task->id, $target;
+  my $msg = sprintf "Handed off task %d%s -> %s", $task->id, $note, $target;
   # length, not truth on this side too: the guard above blocks the card for
   # --block 0, so the line reporting the handoff has to say so -- it read
   # `if $self->block` and denied a block that had just happened (ticket #230,
