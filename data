@@ -1,0 +1,16 @@
+---
+class: standard
+created: 2026-11-21T05:31:04Z
+id: 349
+priority: low
+status: backlog
+tags:
+- tests
+- sync
+title: 'Test runner: in-process run_karr loses a git CLI child''s stdout'
+updated: 2026-11-21T05:31:04Z
+---
+
+Found while fixing k335. In t/lib/TestKarr.pm in-process mode STDOUT is still `local *STDOUT` reopened onto an in-memory scalar, so it owns no descriptor 1. When karr spawns git through IPC::Open3 (the CLI route), the child reopens its STDOUT glob onto the capture file, which does not land on descriptor 1, so git writes to the real fd 1: the TAP stream. run_git then sees an empty `out`, so anything parsed from git stdout (e.g. `push --porcelain` rejections) is invisible to in-process tests. bin/karr is not affected. k335 fixed the same defect for stderr (the real glob reopened onto a File::Temp, descriptor kept, restored by a guard).
+
+Done looks like: the in-process runner gives STDOUT a real descriptor 1 the same way, with captured strings unchanged; a red-first test shows git stdout from a CLI-route command reaches run_git in-process and nothing lands in the TAP stream. Then t/329 can drop its KARR_TEST_SUBPROC=1 workaround.
