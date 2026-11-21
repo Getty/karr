@@ -35,7 +35,12 @@
     - A denied push that cannot take back all of a command's writes no
       longer says "Nothing was changed": it names the cards that are still
       only in this clone and not on the remote. The refusal of a stale push
-      says the same.
+      lists those changes itself, and no warning after it repeats them.
+
+    - karr unlock, when its push is denied write access, now names every lock
+      it broke in this clone and no longer says "Nothing was changed": a lock
+      outside the board stays broken, and only a stray lock from an older karr
+      is put back along with the rest of the command's board change.
 
     - karr-foundation ask, answer, plan and the chain executor now report
       a failed push of the foundation refs on STDERR, saying what is saved
@@ -159,15 +164,6 @@
       perl's process handling there, and the tests that need a drain, a POSIX
       shell or a symlink skip.
     - Requires Git::Native 0.007, Git::Libgit2 0.008 and Alien::Libgit2 0.003.
-
-    - When a command stops because another clone changed its card during the
-      push, it now lists the changes still only in this clone and not on the
-      remote itself, and no warning after it repeats that.
-
-    - karr unlock, when its push is denied write access, now names every lock
-      it broke in this clone and no longer says "Nothing was changed": a lock
-      outside the board stays broken, and only a stray lock from an older karr
-      is put back along with the rest of the command's board change.
 
 0.602     2026-09-30 05:24:57Z
 
