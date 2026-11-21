@@ -12,7 +12,6 @@ use Scalar::Util qw( blessed );
 use Time::HiRes ();
 use Git::Libgit2 qw(
     GIT_ELOCKED
-    GIT_ENOTFOUND
     GIT_OPT_SET_SERVER_CONNECT_TIMEOUT
     GIT_OPT_SET_SERVER_TIMEOUT
 );
@@ -687,11 +686,9 @@ empty string when neither is. Never C<undef>.
 # failed. The board config is shared by every clone, so it is the wrong place;
 # the repository's git config is the clone's own.
 #
-# Read and written through libgit2. Git::Native binds no way to remove a key
-# (0.006, and none in 0.007 either), so the removal reaches
-# git_config_delete_entry through Git::Libgit2's FFI instance -- a function
-# object, for the reason _remote_pushurl gives -- and falls back to
-# `git config --unset-all` where the symbol cannot be reached.
+# Read, written and removed through libgit2: Git::Native::Config->delete
+# removes a key (refreshing the cached config first); a multivar key, which
+# libgit2 refuses to delete, falls back to `git config --unset-all`.
 
 sub git_config_get {
     my ( $self, $key ) = @_;
@@ -732,26 +729,12 @@ with L</last_error> saying why.
 
 =cut
 
-my $CONFIG_DELETE_FN;
-
 sub git_config_unset {
     my ( $self, $key ) = @_;
     my $repo = $self->_repo or return 0;
-    return 1 unless defined $self->git_config_get($key);
-
-    unless ( defined $CONFIG_DELETE_FN ) {
-        $CONFIG_DELETE_FN = try {
-            Git::Libgit2::FFI::ffi->function(
-                git_config_delete_entry => [ 'opaque', 'string' ] => 'int' );
-        } catch { 0 };
-    }
-    if ($CONFIG_DELETE_FN) {
-        my $rc = try {
-            my $config = $repo->config;
-            $CONFIG_DELETE_FN->call( $config->_handle, $key );
-        } catch { undef };
-        return 1 if defined $rc && ( $rc == 0 || $rc == GIT_ENOTFOUND );
-    }
+    # delete answers 1 for a key that is not set; it throws for a multivar key,
+    # which only the CLI can remove.
+    return 1 if try { $repo->config->delete($key) } catch { 0 };
 
     my $run  = $self->_run_git( 'config', '--local', '--unset-all', $key );
     my $code = $run->{status} >> 8;
@@ -770,9 +753,9 @@ sub git_config_unset {
 
 Removes C<$key> from the repository's own git config. Returns C<1> when the
 key is gone afterwards -- including when it was never set -- and C<0>
-otherwise, with L</last_error> saying why. L<Git::Native> has no call for this
-yet; it goes to libgit2's C<git_config_delete_entry> directly, and to
-C<git config --unset-all> where that cannot be reached.
+otherwise, with L</last_error> saying why. It goes through
+L<Git::Native::Config>'s C<delete>, and to C<git config --unset-all> where that
+throws (a key with several values).
 
 =cut
 
