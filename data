@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-11-21T05:07:56Z
+created: 2026-11-20T19:49:07Z
+id: 338
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- foundation
+- sync
+title: 'karr-foundation: report a failed push_foundation in ask/answer/plan and the
+  executor'
+updated: 2026-11-21T05:08:01Z
+---
+
+Found while working k333 (foundation worker). A push_foundation that fails without dying -- unreachable remote, rejected refs -- stays silent in `karr-foundation ask`, `answer`, `plan` and in the executor's push, although the code comment there promises a warning. Predates k333; the denied case is handled there now (k333 takes the writes back and makes the clone read-only).
+
+Done looks like: those paths print the same push-failure text the board commands print (what is saved in this clone, not on the remote, and to run karr sync), on STDERR, exit code unchanged from today unless ADR 0002 says otherwise; a test per path with an unreachable push URL.
+
+push_hub now warns on STDERR on non-denied failure (failed_push saved-here line + karr sync hint), exit 0, no die. t/346 red 4/4 -> green; narrow foundation tests pass.
+
+Committed 556326d
