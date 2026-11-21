@@ -1,0 +1,22 @@
+---
+class: standard
+completed: 2026-11-21T05:45:52Z
+created: 2026-11-20T16:27:33Z
+id: 335
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- tests
+- sync
+title: 'Test runner: in-process run_karr cannot see the git CLI child''s stderr'
+updated: 2026-11-21T05:45:59Z
+---
+
+Found while writing the k333 tests. Under `t/lib/TestKarr.pm` in-process mode, STDERR is an in-memory handle with no file descriptor, so `App::karr::Git::_run_git` (open3) cannot capture the git child's stderr: it goes to the terminal, last_error is empty, and anything that classifies or reports git's message (push failure classes, rejection text) sees nothing. In-process CLI-route tests are therefore blind to git's stderr; t/329 works around it by forcing KARR_TEST_SUBPROC=1. The real bin/karr is not affected.
+
+Done looks like: either the in-process runner gives the child a real stderr (temp file or pipe) so CLI-route output is captured the way bin/karr captures it, or the limitation is documented in TestKarr.pm and tests that need git stderr declare subprocess mode. A test shows which.
+
+TestKarr in-process run now captures STDERR into a File::Temp with fd 2 itself pointed at it (dup/restore, no close); new t/348 red before, green after; narrow runs green. Stdout of git children still leaks to real fd 1 in-process (follow-up).
+
+Committed 92a0eb3
