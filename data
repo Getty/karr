@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-11-21T06:39:05Z
+created: 2026-11-20T20:15:20Z
+id: 341
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- cli
+- batch
+title: 'Batch commands: keep the lines of ids already done when a usage error stops
+  the batch'
+updated: 2026-11-21T06:39:05Z
+---
+
+Found while working k333 (board worker). Since k333 the batch commands (move, edit, delete, archive) collect their success lines and print them after the push, so a success line is never printed for a change that was taken back. Side effect: when a usage error stops a batch halfway, the ids already done no longer get their line, although partial success is committed and reported by the exit code (ADR 0002).
+
+Done looks like: a batch stopped by a usage error still prints the lines of the ids it did (after the insurance push, or with the saved-in-this-clone note when that push fails), before the usage answer; a test in the style of t/100-batch-partial-failure.t.
+
+Not reproducible today, left in todo (k333 follow-up round, test writer + orchestrator code read). No batch command can end on a usage error after doing at least one id: run_batch (Role/TaskMutation) rethrows only is_usage_error messages, and the only per-id source of one is Config->validate_status / handoff_status via apply_status_change, which depends on the board config only and so fails on the first id before anything is written. Every other per-id refusal (not found, claim held, --next/--prev at the edge, self-dependency, archive/delete refusals) is a plain die -> exit 1, collected, and its siblings' lines still print. Edit's flag validators run before the loop. The issue is latent: it becomes real only if a per-id check starts raising 'Usage error:' mid-batch. Pinning it now would need a monkeypatched validator (a synthetic state). Maintainer's call: close it, or keep it as a guard for that future case.
+
+Closed without a change, at the end of the k333 follow-up round on the maintainer's word: dead cards are closed. Not reproducible (see the note above); reopen it if a per-id check ever raises a usage error mid-batch.
