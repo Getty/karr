@@ -1,0 +1,8 @@
+{"action":"move","agent":"k333-followups","detail":"in-progress","task_id":346,"ts":"2026-11-21T06:06:30Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"done","task_id":336,"ts":"2026-11-21T06:06:33Z"}
+{"action":"handoff","agent":"k333-followups","detail":"review","task_id":346,"ts":"2026-11-21T06:12:03Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"review","task_id":346,"ts":"2026-11-21T06:24:34Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"done","task_id":346,"ts":"2026-11-21T06:24:39Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"done","task_id":346,"ts":"2026-11-21T06:24:45Z"}
+{"action":"edit","agent":"Torsten Raudssus","detail":"todo","task_id":341,"ts":"2026-11-21T06:38:58Z"}
+{"action":"move","agent":"Torsten Raudssus","detail":"done","task_id":341,"ts":"2026-11-21T06:39:05Z"}
