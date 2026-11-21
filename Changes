@@ -79,6 +79,11 @@
       The ticket skill says the worker's notes and handoff push the board
       on purpose.
 
+    - karr-foundation no longer starts the coordination agent when the hub
+      clone is read-only for its board: nothing it planned could be
+      published. It says so in one line on STDERR, naming the agent and
+      the hub; the exit code is unchanged.
+
     - `ex/setup.sh` and the demo agents under `ex/bin/` run the checkout with
       the perl named by the `PERL` environment variable (default: the first
       `perl` on `PATH`), and the sandbox test passes the perl that runs it,

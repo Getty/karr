@@ -408,10 +408,13 @@ sub _line {
 
 The one call a tick may make. Returns true when the coordination agent ran.
 
-Nothing happens without a deviation, without a coordinator, or without a hub:
-the agent's outputs -- a chain, a question -- live in
-C<refs/karr-foundation/*>, so a fleet with no hub has nowhere to put them, and
-that is said once rather than worked around.
+Nothing happens without a deviation, without a coordinator, without a hub, or
+with a hub this clone is read-only for: the agent's outputs -- a chain, a
+question -- live in C<refs/karr-foundation/*>, so a fleet with no hub has
+nowhere to put them, and that is said once rather than worked around. A
+read-only hub could not publish them either, and the read-only door would take
+them back, so the agent is not started and the wanted deviations wait for the
+next run.
 
 The run happens B<in the hub> and B<under the hub's own> F<.karr.lock>, which
 is the same rule every other run here obeys: one agent per repository, however
@@ -455,6 +458,18 @@ sub dispatch {
     return 0;
   }
   my $hub = $git->dir;
+
+  # A hub clone that is read-only for its board (karr readonly on, or a push
+  # that was denied) could publish nothing the agent plans or answers, and the
+  # read-only door would take it back: do not start it. The wanted deviations
+  # are recorded again by the next tick once the hub can write.
+  if ( defined $f->_read_only_hub_refusal ) {
+    warn "karr-foundation: the coordination agent '$name' is wanted ($why) "
+       . "but not called: the hub $hub is read-only in this clone, so nothing "
+       . "it plans could be published -- 'karr readonly' in the hub says why; "
+       . "the next run calls it once the hub can write.\n";
+    return 0;
+  }
 
   # An agent like any other, including this: while it is failing, it is not
   # run. The place that wanted it waits, which is the behaviour F<karr-foundation>
