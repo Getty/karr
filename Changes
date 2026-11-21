@@ -38,6 +38,14 @@
       clone's own repository no longer make the clone read-only; only a
       lack of write access to the remote does.
 
+    - A push the native transport sees answered with a bare 403
+      (`KARR_NO_CLI_FALLBACK`, or no git CLI) no longer makes the clone
+      read-only: without an authentication error beside it, it cannot be
+      told from a rate limit. It is retried like any other failure, and
+      the "Last push:" line says why: "the remote answered 403 Forbidden --
+      no write access or a rate limit, the native transport cannot tell
+      which".
+
     - Passwords and tokens in a remote URL are no longer shown in push
       failure reasons, nor stored in them or in the `karr.readonly*` git
       config. Pull and fetch failures (`karr sync`, `karr create` and

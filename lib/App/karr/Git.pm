@@ -2200,7 +2200,12 @@ instead of overwriting it.
 # "unexpected http status code: 429" -- and for the 403 only "unexpected http
 # status code: 403", the body dropped, so on the native route alone a
 # rate-limit 403 cannot be told from any other. The CLI, which every https push
-# reaches first or falls back to, can.
+# reaches first or falls back to, can. Where it does not -- KARR_NO_CLI_FALLBACK,
+# no git binary -- that bare native 403 is 'other' too (k345), with a reason
+# that names the 403 and says it is ambiguous; only an authentication error
+# beside it (GIT_EAUTH, or denial wording in the text) makes it denied. The
+# CLI's "returned error: 403" stays denied: the CLI prints the rate-limit body,
+# and the rate-limit rule has had its look first.
 #
 # A per-ref refusal. When the remote lists refs as refused for a reason of
 # their own -- "pre-receive hook declined", a protected ref -- the push reached
@@ -2243,8 +2248,14 @@ my @PUSH_DENIED = (
         => 'no SSH key the remote accepts' ],
     [ qr/Authentication failed|authentication required|authentication replays|HTTP Basic: Access denied/i
         => 'authentication failed' ],
-    [ qr/returned error: 403|status code: 403/i   => 'the remote answered 403 Forbidden' ],
+    [ qr/returned error: 403/i                    => 'the remote answered 403 Forbidden' ],
 );
+
+# libgit2's 403, which carries no body to tell a denial from a rate limit
+# (see above): 'other', unless something else in the error says denied.
+my $PUSH_NATIVE_403 = qr/status code: 403\b/i;
+use constant PUSH_NATIVE_403_REASON =>
+    'the remote answered 403 Forbidden -- no write access or a rate limit, the native transport cannot tell which';
 
 # Matched line by line, and only on a line about the remote's files.
 my $PUSH_DENIED_FILES =
@@ -2299,6 +2310,8 @@ sub _classify_push_error {
             split /\n/, $text;
     return ( denied => 'authentication failed' )
         if blessed($err) && $err->can('is_auth') && $err->is_auth;
+    # The remote was reached and answered: never unreachable.
+    return ( other => PUSH_NATIVE_403_REASON ) if $text =~ $PUSH_NATIVE_403;
     for my $rule (@PUSH_UNREACHABLE) {
         return ( unreachable => $rule->[1] ) if $text =~ $rule->[0];
     }
@@ -2437,8 +2450,10 @@ transport's text does. Pushing again cannot help until the access is fixed.
 Three things are never C<denied>, because none of them says this clone cannot
 write: a rate limit (any 429 or C<Too Many Requests>, and a 403 whose text
 names a rate limit -- which libgit2 drops, so only the CLI can tell), which
-is C<other>; a ref the remote refused for a reason of its own -- a hook
-declining, whatever the hook printed -- which is C<rejected>; and a
+is C<other>, and so is a 403 libgit2 reports without an authentication error
+beside it, because there a rate limit cannot be ruled out; a ref the remote
+refused for a reason of its own -- a hook declining, whatever the hook
+printed -- which is C<rejected>; and a
 filesystem permission error about anything but the remote's files -- this
 clone's own F<.git>, a hook script -- which is C<other>. Such an error counts
 as the remote's only in the remote's own words (C<remote: ...>, C<remote
@@ -2462,7 +2477,9 @@ The remote no longer holds what this clone last saw (L</push_stale>).
 =item C<other>
 
 Anything else; C<reason> is the first line of L</last_error>,
-or C<the remote is rate limiting requests> for a rate limit.
+C<the remote is rate limiting requests> for a rate limit, or for the 403
+libgit2 cannot explain C<the remote answered 403 Forbidden -- no write access
+or a rate limit, the native transport cannot tell which>.
 
 =back
 

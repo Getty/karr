@@ -124,8 +124,10 @@ subtest 'Git::Native::Error: is_auth alone gives denied' => sub {
     is $class, 'unreachable', 'a generic GIT_ERROR is classified from its text';
 
     my $text403 = Git::Native::Error->new( code => -1, message => 'unexpected http status code: 403' );
-    ( $class ) = classify($text403);
-    is $class, 'denied', 'libgit2 reports 403 as the generic error; the text decides';
+    ( $class, $reason ) = classify($text403);
+    is $class, 'other',
+        'libgit2 reports 403 as the generic error, body dropped: no auth error beside it, so other';
+    like $reason, qr/403 Forbidden.*rate limit/, 'and the reason names the 403 and the rate limit it may be';
 };
 
 # ---------------------------------------------------------------------
