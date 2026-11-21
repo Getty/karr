@@ -38,6 +38,13 @@ BEGIN {
     sub __karr_dispatch_exit { 1 }
 }
 
+# Runs a callback when it goes out of scope; puts the real STDERR back.
+BEGIN {
+    package TestKarr::Restore;
+    sub new     { my ( $class, $cb ) = @_; bless { cb => $cb }, $class }
+    sub DESTROY { $_[0]{cb}->() }
+}
+
 # Install a permanent CORE::GLOBAL::exit override BEFORE App::karr and its
 # modules compile, so their bare exit() calls bind to it rather than the real
 # builtin. karr reaches exit() from three places -- App::karr::Dispatch's
@@ -110,17 +117,29 @@ sub _run_inprocess {
     my $exit;
     {
         local *STDOUT;
-        local *STDERR;
-        # Files rather than in-memory handles on MSWin32 (k328): karr runs git
+        # STDERR is captured in a file on every platform, and descriptor 2
+        # itself is pointed at it (k335). A git child spawned by karr (the
+        # CLI transport route) inherits descriptor 2, not the Perl handle: an
+        # in-memory STDERR, or a `local *STDERR` reopened onto a file, gets
+        # some other descriptor, and git's message went to the real stderr --
+        # invisible to the test, and to whatever classifies it. Reopening the
+        # real STDERR glob (no `local`) keeps descriptor 2; the original is
+        # dup'ed first and put back by the guard, even if the run dies.
+        my $err_file = File::Temp->new;
+        open( my $saved_err, '>&', \*STDERR ) or die "save STDERR: $!";
+        my $restore = TestKarr::Restore->new( sub {
+            open( STDERR, ">&", $saved_err ) or die "restore STDERR: $!";
+        } );
+        open( STDERR, '>', $err_file->filename ) or die "capture STDERR: $!";
+        binmode STDERR;
+
+        # STDOUT stays in memory except on MSWin32 (k328): karr runs git
         # through IPC::Open3, which there saves and restores the standard
-        # handles by descriptor. An in-memory STDERR has none, and whatever
-        # karr printed after its first git run went to the real stderr.
-        @files = map { File::Temp->new } 1, 2 if $^O eq 'MSWin32';
+        # handles by descriptor. An in-memory handle has none.
+        @files = ( File::Temp->new ) if $^O eq 'MSWin32';
         open( STDOUT, '>', @files ? $files[0]->filename : \$out )
             or die "capture STDOUT: $!";
-        open( STDERR, '>', @files ? $files[1]->filename : \$err )
-            or die "capture STDERR: $!";
-        if (@files) { binmode STDOUT; binmode STDERR }
+        binmode STDOUT if @files;
 
         # Opened even when nothing was asked to be fed in: open3's parent
         # closes an unused stdin pipe without writing to it, so the child sees
@@ -166,15 +185,21 @@ sub _run_inprocess {
         # after the flush (k333). dispatch() resets what they depend on per run.
         App::karr::Dispatch::lasting_warnings($exit);
 
+        STDERR->flush;   # not closed: reopening a closed STDERR would not land on descriptor 2
+        $err = do {
+            open my $fh, '<:raw', $err_file->filename or die "read capture: $!";
+            local $/;
+            my $text = <$fh>;
+            defined $text ? $text : '';
+        };
         if (@files) {
             close STDOUT;
-            close STDERR;
-            ( $out, $err ) = map {
-                open my $fh, '<:raw', $_->filename or die "read capture: $!";
+            $out = do {
+                open my $fh, '<:raw', $files[0]->filename or die "read capture: $!";
                 local $/;
                 my $text = <$fh>;
                 defined $text ? $text : '';
-            } @files;
+            };
         }
     }
 
