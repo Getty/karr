@@ -40,7 +40,10 @@
 
     - Passwords and tokens in a remote URL are no longer shown in push
       failure reasons, nor stored in them or in the `karr.readonly*` git
-      config.
+      config. Pull and fetch failures (`karr sync`, `karr create` and
+      every other command that pulls) are cleaned the same way, including
+      a password containing a raw "@", whose tail git itself leaves in
+      its message.
 
     - The shipped karr skills (`karr skill install`) now say that the board
       is the exchange between agents: a card that is not on the remote does

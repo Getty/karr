@@ -210,9 +210,16 @@ actual repository root is what's needed.
 # (fetch/push/pull). Native operations have no shell exit code, so callers
 # report this instead of $?. When the git-CLI transport fallback ran (see
 # _cli_transport below), this instead carries the real git-CLI stderr.
+#
+# Handed out without the userinfo of any URL in it (k342): every reader prints
+# or stores it, and a pull's "unable to access 'https://user:TOKEN@host/'" is
+# the same secret a push's is. git cuts the userinfo at the first "@", so a
+# password with a raw one in it left its tail behind. Stripped here, on the
+# way out, so no record site can forget it; the classifiers inside this file
+# read the raw $self->{_last_error} and are unchanged.
 sub last_error {
     my ($self) = @_;
-    return $self->{_last_error};
+    return strip_userinfo( $self->{_last_error} );
 }
 
 =method last_error
@@ -231,6 +238,12 @@ CLI stderr from the transport fallback, when a network operation
 L</is_tracked_under> sets this when the index cannot be read natively, before
 it falls back to C<git ls-files> through the CLI. Both are free-form prose
 meant for a log line or an error message, not a code a caller branches on.
+
+The text comes without the userinfo of any URL in it
+(L<App::karr::Error/strip_userinfo>), whichever operation failed -- a pull, a
+fetch, a push, the probe of L</remote_has_board> -- and whichever transport
+wrote it: a token or password in the remote URL is a secret, and every caller
+prints or stores what it gets here.
 
 L<App::karr::Cmd::Sync>, L<App::karr::SyncGuard> and
 L<App::karr::Role::SyncLifecycle> all read this after a failed C<pull> or
@@ -2456,7 +2469,7 @@ or C<the remote is rate limiting requests> for a rate limit.
 C<reason> is a short phrase for the user (C<"the SSH key is read-only">,
 C<"the connection was refused">), C<remote> the remote's name. The reason is
 without the userinfo of any URL in it (L<App::karr::Error/strip_userinfo>),
-and so is L</last_error> after a failed push. The class is
+and so is L</last_error>. The class is
 the verdict of the transport the push ended on: when the native transport
 fails and the CLI fallback runs, the CLI's answer replaces the native one. A
 push denied over the CLI is reported as denied even when C<--porcelain> also
