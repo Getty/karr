@@ -37,6 +37,11 @@
       only in this clone and not on the remote. The refusal of a stale push
       says the same.
 
+    - karr-foundation ask, answer, plan and the chain executor now report
+      a failed push of the foundation refs on STDERR, saying what is saved
+      in this clone and not on the remote and to run `karr sync`, instead
+      of dropping it silently; the exit code is unchanged.
+
     - A rate limit (429), a push the remote refuses ref by ref (a
       pre-receive hook, a protected ref) and a permission error in the
       clone's own repository no longer make the clone read-only; only a

@@ -1307,13 +1307,16 @@ sub _start_hub_journal {
 # the push really sent something, drops a state recorded for an older push URL
 # (App::karr::CloneState/note_push_landed) -- and starts the journal afresh,
 # because what it held is published now. Any other
-# failure is the warning it always was: the refs are written locally and a
-# later sync publishes them.
+# failure is a warning on STDERR (never a die, never an exit code): the refs are
+# written locally, App::karr::CloneState/failed_push names what is saved here
+# and not on the remote, and a later `karr sync` publishes them.
 sub _push_hub {
   my ( $self, $git ) = @_;
+  my $died;
   my $ok = try {
     $git->push_foundation;
   } catch {
+    $died = 1;
     warn 'karr-foundation: push of refs/karr-foundation/ failed: '
        . clean_error($_) . "\n";
     0;
@@ -1327,7 +1330,15 @@ sub _push_hub {
     return ( 1 );
   }
   my $failure = $git->push_failure;
-  return ( 0 ) unless $failure && ( $failure->{class} // '' ) eq 'denied';
+  unless ( $failure && ( $failure->{class} // '' ) eq 'denied' ) {
+    my $saved = try { App::karr::CloneState->failed_push( $git ) } catch { undef };
+    my $retry = ( $failure && ( $failure->{class} // '' ) eq 'unreachable' )
+      ? "Run 'karr sync' to retry once the remote can be reached."
+      : "Run 'karr sync' to retry.";
+    my $head = $died ? '' : "karr-foundation: push of refs/karr-foundation/ failed.\n";
+    warn $head . ( defined $saved ? "$saved\n" : '' ) . "$retry\n";
+    return ( 0 );
+  }
   return ( 0, 'karr-foundation: the hub ' . $git->dir . " could not be pushed.\n"
     . App::karr::CloneState->denied_push( $git, take_back => 1 ) );
 }
