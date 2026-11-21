@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-11-21T04:53:17Z
+created: 2026-11-20T16:27:28Z
+id: 334
+priority: medium
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- git
+- ux
+title: Strip the Throwable stack trace from native push/pull errors
+updated: 2026-11-21T04:53:24Z
+---
+
+Found while working k333. On the native route, `App::karr::Git::_push_refspecs` and `_fetch_refspecs` store the caught Git::Native::Error as `"$_"`. That string includes the whole Throwable stack trace ("Trace begun at ... Git/Native/Error.pm", about 30 lines), and it reaches STDERR as the "git push failed: ..." line on every failed push or pull that ends on the native route (KARR_NO_CLI_FALLBACK=1, or no git binary).
+
+Done looks like: last_error carries the error message only (e.g. `$err->message` when it is a Git::Native::Error), no trace; the classification added in k333 keeps working off the exception object; a test pins that a failed native push shows no "Trace begun" line.
+
+Native push/pull/fetch errors now stored as message only via new Git.pm _error_text (Git::Native::Error->message, else plain string); classification untouched (it already reads the exception object). t/345 red->green; t/327,339,340,341,342,343,00-load green.
+
+Committed 06ea7e7
