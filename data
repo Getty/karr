@@ -1,0 +1,24 @@
+---
+claimed_at: 2026-11-21T03:41:29Z
+claimed_by: k333-followups
+class: standard
+completed: 2026-11-21T03:41:29Z
+created: 2026-11-20T21:28:36Z
+id: 344
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- cli
+title: Stale-push refusal does not mark the push state reported
+updated: 2026-11-21T03:41:36Z
+---
+
+Found in the k333 review round; already so in ed56794. Role::SyncLifecycle _pull_after_stale_push ends with App::karr::Error::user_error("... changed on the remote while this command ran ...") but does not call App::karr::CloneState->mark_reported, so the lasting warning (Dispatch::lasting_warnings) can print right after it and repeat what it just said (e.g. "changes still not on the remote" when a ref could not be taken back). Every other push-failure message marks reported. Decide whether this one should too, and pin it.
+
+Decision (orchestrator): yes. The stale-push refusal (non-reapplying command) marks the push state reported like every other push-failure message, so no lasting warning repeats it. To lose nothing by that: when refs other than the ones the refusal already names are still only in this clone, the refusal names them with the saved-here line, the way failed_push and denied_push do.
+
+Done, uncommitted, worktree k333-followups. Role::SyncLifecycle _pull_after_stale_push: both user_error branches now call CloneState->mark_reported, so Dispatch::lasting_warnings no longer repeats the refusal. Before that, it works out what is still unpublished (unpublished_refs, read once now, not only when the take-back left something), drops the refs the take-back line already names (ref-level %said, the same idea as denied_push but on full ref names, since the refusal names @left with _name_board_refs), and puts saved_here_line between the refusal sentence and 'Run the command again if it still applies.' No line when nothing else is unpublished. Exit 1 unchanged; git_config_unset not touched. sync_after POD updated. t/342: 3 of 10 red before, 2/2 subtests green after. Green, run one at a time: t/335, t/336, t/333-unpublished-changes-and-outcome, t/322 (the k322 stale test: the grep for the full phrase misses it), t/328, t/331, t/332, plus t/181 and t/183. Full suite not run (orchestrator runs it). t/343-t/347 not touched.
+
+Committed as 737a1dd
