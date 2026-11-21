@@ -2044,9 +2044,10 @@ sub push_rejections {
     my $rejected = $git->push_rejections;
     # [ { ref => 'refs/karr/tasks/12/data', reason => 'stale info' }, ... ]
 
-Returns the per-ref rejections from the most recent C<push> or C<push_ref>,
-as an array reference of C<< { ref => $name, reason => $text } >> hashes.
-Empty when the last push succeeded, and empty when it failed as a whole --
+Returns the per-ref rejections from the most recent C<push>, C<push_ref> or
+C<push_foundation>, as an array reference of
+C<< { ref => $name, reason => $text } >> hashes. Empty when the last push
+succeeded, and empty when it failed as a whole --
 no connection, a killed transport -- rather than ref by ref: a rejection is
 the server's final answer, not a transport failure, and the two are kept
 apart. Empty, too, when the push was denied write access (L</push_failure>),
@@ -4072,8 +4073,10 @@ one by fetching back exactly what was just destroyed.
 sub push_ref {
     my ( $self, $ref, $remote ) = @_;
     $remote //= 'origin';
-    $self->{_push_failure} = undef;
-    $self->{_push_sent}    = 0;
+    $self->{_push_failure}    = undef;
+    $self->{_push_sent}       = 0;
+    $self->{_push_stale}      = [];
+    $self->{_push_rejections} = [];
     $ref = $self->validate_helper_ref($ref);
     my $repo = $self->_repo or return $self->_settle_push( $remote, 0 );
     return 1 unless $repo->has_remote($remote);
@@ -4168,8 +4171,10 @@ would force the older version over the newer one (#154).
 sub push_foundation {
     my ( $self, $remote ) = @_;
     $remote //= 'origin';
-    $self->{_push_failure} = undef;
-    $self->{_push_sent}    = 0;
+    $self->{_push_failure}    = undef;
+    $self->{_push_sent}       = 0;
+    $self->{_push_stale}      = [];
+    $self->{_push_rejections} = [];
     my $repo = $self->_repo or return $self->_settle_push( $remote, 0 );
 
     # Same as L</push>, one namespace over: with no remote the tombstones have
