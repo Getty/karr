@@ -1,0 +1,21 @@
+---
+class: standard
+completed: 2026-11-21T06:24:39Z
+created: 2026-11-21T02:07:45Z
+id: 346
+priority: medium
+started: 2026-11-21T06:24:39Z
+status: done
+tags:
+- git
+- config
+title: 'git_config_unset: use Git::Native::Config->delete, drop the private _handle
+  FFI call'
+updated: 2026-11-21T06:24:45Z
+---
+
+p5-git-native k36 (main fd4d0bc, Git::Native 0.007 as in cpanfile) adds a public Git::Native::Config->delete($key): removes the entry from the repository's own config file, returns 1 also when it was not set there, leaves global/system alone, throws Git::Native::Error for a multivar, an invalid name or a snapshot, and sees writes by other processes since open. App::karr::Git::git_config_unset still reaches git_config_delete_entry through Git::Libgit2::FFI and the private $config->_handle. Switch it to $repo->config->delete and remove the FFI path; keep the git config --unset-all fallback for multivars (if karr has any) and the existing return contract (1 on success or not set, 0 with last_error). Done looks like: the private _handle call and the Git::Libgit2::FFI function lookup are gone, a test pins unset of a set key, of an unset key, and that the CLI fallback still covers a multivar.
+
+git_config_unset now uses Git::Native::Config->delete in a try, CLI --unset-all fallback kept for multivar; dropped CONFIG_DELETE_FN, GIT_ENOTFOUND import and the redundant git_config_get pre-check; POD updated. New t/350. Narrow runs green: 350, 330-332, 334, 341, 344, 00-load.
+
+Committed 3f40216
