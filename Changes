@@ -28,6 +28,10 @@
     - An unreachable remote keeps its retries, and the doubled
       "git push failed: git push failed:" prefix is gone.
 
+    - A failed push, pull or fetch over the native transport no longer
+      prints the libgit2 error's stack trace after "git push failed:" or
+      "git pull failed:"; only the message is kept.
+
     - A denied push that cannot take back all of a command's writes no
       longer says "Nothing was changed": it names the cards that are still
       only in this clone and not on the remote. The refusal of a stale push

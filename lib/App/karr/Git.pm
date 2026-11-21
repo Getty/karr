@@ -453,7 +453,7 @@ sub is_repo {
         # open_ext walks up to find a .git; throws on miss.
         Git::Native->open_ext( $self->dir->stringify );
         1;
-    } catch { $self->{_last_error} = "$_"; 0 };
+    } catch { $self->{_last_error} = _error_text($_); 0 };
     return $ok;
 }
 
@@ -588,7 +588,7 @@ sub is_tracked_under {
         my $index = $repo->index;
         return $index->entrycount ? 1 : 0 if $rel eq '.';
         $index->is_tracked_under($rel) ? 1 : 0;
-    } catch { $self->{_last_error} = "$_"; undef };
+    } catch { $self->{_last_error} = _error_text($_); undef };
     return $native if defined $native;
 
     # Reached only when libgit2 could not answer -- an index it refuses to
@@ -2288,6 +2288,13 @@ my @PUSH_UNREACHABLE = (
     [ qr/timed out/i => 'the connection timed out' ],
 );
 
+# The message of a caught exception, without the Throwable stack trace that
+# stringifying a Git::Native::Error appends. Anything else is its own string.
+sub _error_text {
+    my ($err) = @_;
+    return blessed($err) && $err->can(q{message}) ? "${\($err->message)}" : "$err";
+}
+
 # ( $class, $reason ) for a failed push, from the transport's text and, where
 # the native transport threw one, its Git::Native::Error. The error's own
 # verdict comes first: GIT_EAUTH is libgit2 saying "authentication" in so many
@@ -2914,7 +2921,7 @@ sub _push_refspecs {
         );
         1;
     } catch {
-        $self->{_last_error} = "$_";
+        $self->{_last_error} = _error_text($_);
         # Classified from the exception itself, which carries libgit2's code;
         # a CLI fallback that runs replaces this with its own verdict.
         $self->_note_push_failure( $remote,
@@ -2943,7 +2950,7 @@ sub _fetch_refspecs {
         );
         1;
     } catch {
-        $self->{_last_error} = "$_";
+        $self->{_last_error} = _error_text($_);
         $native_only ? 0 : $self->_cli_transport( 'fetch', $remote, $refspecs, %opt );
     };
 }
@@ -3806,7 +3813,7 @@ sub _adopt_next_id_ref {
         # Same contract as _write_ref_untracked: a refusal is the caller's to
         # interpret, so it comes back as a false answer with the reason parked
         # in last_error, not as an exception out of the middle of a pull.
-        $why = "$_";
+        $why = _error_text($_);
         0;
     };
     $self->{_last_error} = $why if !$ok && defined $why;
