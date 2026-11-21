@@ -1,0 +1,15 @@
+---
+class: standard
+created: 2026-11-21T03:00:30Z
+id: 347
+priority: low
+status: backlog
+tags:
+- sync
+- git
+title: 'CLI push: ''unable to create directory for ./refs/...'' is read as a stale
+  board'
+updated: 2026-11-21T03:00:30Z
+---
+
+Found by karr-ref-worker on k343 (git 2.47). Against a local remote where a ref directory must be created and cannot be (refs/karr absent with refs/ read-only, or a new card under a read-only refs/karr/tasks/), the CLI push prints only "remote: error: cannot lock ref ...: unable to create directory for ./refs/karr/..." (no denial word) with porcelain "atomic transaction failed". _settle_guarded_rejections reads that as stale: karr create re-runs 3 times, ends "board kept changing ... published nothing", leaves next-id unpublished, and the clone is not made read-only. Not a plain denial either: git drops errno for that message (EACCES, EROFS, ENOSPC read the same) and the line starts with "remote:", so classing it denied would make an ssh clone read-only when the server disk is full. Needs a decision: e.g. class it other (not stale, not denied) so the push is not retried as a race and the user sees git's line; or denied only for a local remote whose directory is visibly unwritable to this user.
