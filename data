@@ -1,0 +1,15 @@
+---
+class: standard
+created: 2026-11-21T03:00:37Z
+id: 348
+priority: low
+status: backlog
+tags:
+- sync
+- git
+title: 'Native guarded push: refs that landed before a refused one are reported as
+  only in this clone'
+updated: 2026-11-21T03:00:38Z
+---
+
+Found by karr-ref-worker on k343 (libgit2 1.9). The native guarded board push sends ref by ref, not atomically: with only refs/karr/tasks/ unwritable on a local remote, next-id and the log entry land and the card ref does not. _push_guarded_native mirrors nothing into the remote-tracking refs on any failure, so the saved-here line ("Saved in this clone, not on the remote: #2, log, next-id") names refs the remote already holds, and the activity log on the remote mentions a card it never got (the next pull adopts both without conflict). The CLI route pushes --atomic and does not split. Done looks like: after a partly landed native push, the tracking refs of the refs that landed are updated and only the refused ones are named as not on the remote (or the native push is made all-or-nothing), pinned by a test with a local remote whose refs/karr/tasks/ is read-only.
