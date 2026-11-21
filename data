@@ -1,0 +1,30 @@
+---
+claimed_at: 2026-11-21T03:18:44Z
+claimed_by: k333-followups
+class: standard
+completed: 2026-11-21T03:18:44Z
+created: 2026-11-20T21:28:31Z
+id: 343
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- git
+title: Local remote with unwritable refs/ over the native route is not classed denied
+updated: 2026-11-21T03:18:50Z
+---
+
+Found in the k333 review round (measured by karr-ref-worker, libgit2 1.9). A local bare remote whose objects/ is unwritable is classed denied on both routes. One whose refs/ is unwritable is not, on the native route: libgit2 reports a per-ref "failed to create locked file '<remote>/refs/...lock': Permission denied", which lands in push_rejections as rejected and never reaches _classify_push_error; and "unable to create directory for ./refs/karr/x" (no denial word) stays stale/collateral, so the guarded push pulls and tries again. Expected: the same denied verdict as the CLI route (which says "cannot lock ref ... Permission denied" and is classed denied since k333). Decide whether native per-ref lock failures naming the remote path should go through the remote-files check.
+
+Decision (orchestrator): yes. A native per-ref failure that is about the remote's own files (it names the remote repository's path and carries a file-permission wording, e.g. libgit2's "failed to create locked file '<remote>/refs/...lock': Permission denied") is not the remote's answer about that ref; it goes through the remote-files check and yields the same denied verdict the CLI route gives since k333. A per-ref reason that is a remote's real answer (hook, protected ref) stays rejected.
+
+Findings beyond the fix (measured libgit2 1.9 / git 2.47, for the dispatcher to file): (1) The card's 'unable to create directory for ./refs/karr/x' is NOT libgit2 wording - it is git receive-pack's, i.e. the CLI route. Reproduced: CLI route against a local remote where a ref directory must be created and cannot (refs/karr absent with refs/ read-only, or a new card under a read-only refs/karr/tasks/) prints only 'remote: error: cannot lock ref ...: unable to create directory for ./refs/karr/...' (no denial word) with porcelain 'atomic transaction failed', so _settle_guarded_rejections reads it as stale: create re-runs 3 times, ends 'board kept changing ... published nothing', next-id left unpublished, no read-only state. Not fixed here: git drops errno for that message (EACCES, EROFS, ENOSPC all read the same) and the line starts with 'remote:', so treating it as denied would make an ssh clone read-only on a full server disk - needs a decision. Proposed ticket on this board. (2) Native guarded push is ref by ref, not atomic: with only refs/karr/tasks/ read-only, next-id and the log entry land and the card does not. Now classed denied (per decision), the message says 'Nothing was changed: this command's change was taken back', which is untrue for the remote (it holds the advanced counter and a log entry for a card it never got; the next pull adopts both, no conflict). Before the fix the same push said 'Saved in this clone, not on the remote: #2, log, next-id', equally untrue for log/next-id. Pre-existing class (_push_guarded_native mirrors nothing on any failure); alternative if wanted: class denied only when no ref landed. (3) The native objects-unwritable case still prints a Git::Native stack trace into stderr - that is t/345's card, untouched.
+
+Fixed in lib/App/karr/Git.pm (uncommitted, worktree k333-followups). A per-ref reason that is a file-permission error naming the local remote's path ($PUSH_DENIED_FILES + _names_remote_files, new _push_reason_is_remote_files) no longer counts as the remote's answer in _classify_push_error; _accept_push_result (every native push: guarded, forced, push_ref, push_foundation) now classifies the refused refs' reasons and, on denied, notes denied, leaves push_rejections empty (as a denied CLI push does) and heads last_error 'the remote X could not store N refs' instead of 'rejected'. $PUSH_DENIED_FILES needed no extension (': Permission denied' matches both libgit2 wordings). Real per-ref answers (hook, protected, non-ff, contention) stay rejected. Exit code unchanged (1). t/341: before 3/5 subtests (native locked + mkdir 5/9 each), after 5/5. Narrow tests all PASS, none skipped: t/327 t/337 t/328 t/329 t/336 t/335 t/78 t/93 t/208 t/340. Full suite not run (dispatcher runs it). Comment block above @PUSH_DENIED, push_rejections and push_failure POD updated. See previous note for the CLI 'unable to create directory' finding and the partial-landing caveat.
+
+Orchestrator, after review: denied only when NO ref of the push landed. A partly landed native push (only refs/karr/tasks/ unwritable: next-id and log land, the card does not) stays rejected, so a clone that could write some refs is not made read-only and the message does not say 'Nothing was changed' about a remote that changed. Filed from the findings: k347 (CLI 'unable to create directory' read as stale, needs a decision) and k348 (native partial push: landed refs reported as only in this clone, pre-existing). Back to in-progress for that restriction.
+
+Decision on partial landing applied (lib/App/karr/Git.pm, uncommitted): _accept_push_result now asks the remote-files check only when the native push landed no ref (Result->updated empty). A push where some refs landed and the rest were refused for remote-file permission stays rejected exactly as before k343: push_rejections filled, 'rejected N of M refs', no read-only state, no take-back, exit 1. Comment block above @PUSH_DENIED, the _accept_push_result comment, and push_rejections/push_failure POD state the all-refused condition. t/341: before 5/6 (new partial subtest 5 of 8 red), after 6/6. Narrow tests all PASS, none skipped: t/327 t/337 t/328 t/329 t/336 t/335 t/78 t/93 t/208 t/340. Full suite not run.
+
+Committed as 14fd1d2
