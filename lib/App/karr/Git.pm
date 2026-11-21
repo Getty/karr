@@ -2049,8 +2049,12 @@ as an array reference of C<< { ref => $name, reason => $text } >> hashes.
 Empty when the last push succeeded, and empty when it failed as a whole --
 no connection, a killed transport -- rather than ref by ref: a rejection is
 the server's final answer, not a transport failure, and the two are kept
-apart. Reset to empty at the start of every push attempt, so a rejection from
-an earlier call never lingers into the read after a later one succeeds.
+apart. Empty, too, when the push was denied write access (L</push_failure>),
+even where the transport listed its refs as refused -- which on the native
+transport needs every ref of the push refused; one that landed leaves the
+others here as rejections. Reset to empty at the
+start of every push attempt, so a rejection from an earlier call never
+lingers into the read after a later one succeeds.
 
 libgit2's C<git_remote_push> returns success even when the far side refused
 every single ref -- a pre-receive hook, a protected ref, a non-fast-forward on
@@ -2219,9 +2223,18 @@ instead of overwriting it.
 # too, but for no reason of its own -- "unpacker error" when objects/ is
 # unwritable, "atomic transaction failed" (with --atomic) or "failed to update
 # ref" (without) when refs/ is -- which is what _push_reason_is_collateral
-# recognises; those leave the verdict to the text. (A hook the remote ignores
-# because it is not executable fails nothing: git 2.47 prints a hint and the
-# push lands.)
+# recognises; those leave the verdict to the text. Over libgit2's local
+# transport the same remote lists its refs as refused with the file error
+# itself as the reason -- "failed to create locked file
+# '/srv/o.git/refs/karr/x.lock': Permission denied", or "failed to make
+# directory '/srv/o.git/refs/karr': Permission denied" when the directory is
+# missing too -- an error about the remote's files, not an answer about the
+# ref (_push_reason_is_remote_files, k343), so those leave the verdict to the
+# text as well. That is asked only of a native push that landed no ref at all
+# (_accept_push_result): libgit2 pushes ref by ref, and a remote that took
+# some of them was written by this clone, so the refs it refused are a
+# rejection. (A hook the remote ignores because it is not executable fails
+# nothing: git 2.47 prints a hint and the push lands.)
 #
 # A file permission error about something else. "Permission denied",
 # "Read-only file system", "insufficient permission", "unable to create
@@ -2295,7 +2308,10 @@ sub _classify_push_error {
 
     # The remote answered ref by ref: that is the answer (see above).
     return ( other => _first_line($text) )
-        if grep { !_push_reason_is_collateral( $_->{reason} ) } @{ $ctx->{rejected} || [] };
+        if grep {
+            !_push_reason_is_collateral( $_->{reason} )
+              && !_push_reason_is_remote_files( $_->{reason}, $ctx )
+        } @{ $ctx->{rejected} || [] };
 
     for my $rule (@PUSH_DENIED) {
         next unless $text =~ $rule->[0];
@@ -2328,6 +2344,16 @@ sub _push_reason_is_collateral {
     return 1 unless defined $reason && length $reason;
     return $reason =~ /unpacker error|atomic|failed to update ref|cannot lock ref|failed to lock/i
         ? 1 : 0;
+}
+
+# A per-ref reason that is a file permission error about the remote's own
+# files, the way libgit2's local transport words a ref it could not write
+# (k343): "failed to create locked file '<remote>/refs/karr/x.lock':
+# Permission denied". No answer about the ref either; the files rule decides.
+sub _push_reason_is_remote_files {
+    my ( $reason, $ctx ) = @_;
+    return 0 unless defined $reason && length $reason;
+    return $reason =~ $PUSH_DENIED_FILES && _names_remote_files( $reason, $ctx ) ? 1 : 0;
 }
 
 # Whether one line of a push error is about the remote repository's files:
@@ -2494,7 +2520,14 @@ listed its refs as refused -- a read-only local remote fails every ref with
 C<unpacker error> or C<atomic transaction failed> (C<failed to update
 ref> without C<--atomic>) -- and fills neither
 L</push_rejections> nor L</push_stale>, because neither of those answers is
-what happened.
+what happened. The same goes for the native transport, whose local transport
+lists a ref it cannot write into a local remote as refused with the file error
+as its reason (C<failed to create locked file '/srv/o.git/refs/karr/x.lock':
+Permission denied>, C<failed to make directory '/srv/o.git/refs/karr':
+Permission denied>): when every ref of the push was refused that way, that is
+denied, not rejected. A push where any ref was refused for a reason of its own
+stays C<rejected>, and so does one where some refs landed: libgit2 pushes ref
+by ref, and a clone that could write part of the push can write.
 
 =cut
 
@@ -2702,14 +2735,43 @@ left. Empty when C<$remote> (default C<origin>) is not configured.
 # side said no. So this does not fall through to the CLI fallback -- that
 # would just collect the same refusal a second time, and hide the reason
 # behind a generic exit code.
+#
+# Not every ref libgit2 lists as refused was refused, though. Its local
+# transport writes the remote repository itself, and a ref it cannot write
+# there comes back with the file error as its reason -- "failed to create
+# locked file '<remote>/refs/karr/x.lock': Permission denied", "failed to make
+# directory '<remote>/refs/karr': Permission denied" (libgit2 1.9). That is
+# this user being unable to write the remote's files, the verdict the CLI gets
+# for the same remote (k343): denied, and like a denied CLI push it fills
+# neither push_rejections nor push_stale. Asked through _classify_push_error,
+# so a ref refused for a reason of its own still makes it a rejection.
+#
+# Only when the push landed nothing, though. libgit2 pushes ref by ref, so a
+# remote with only refs/karr/tasks/ unwritable takes the counter and the log
+# entry and refuses the card: a clone that could write part of the push can
+# write, and "nothing was changed" would be untrue about the remote. That push
+# stays the rejection of the refs that did not land.
 sub _accept_push_result {
     my ( $self, $remote, $result ) = @_;
     return 1 unless $result;                    # CLI fallback ran instead
     my $rejected = $result->rejected;
     return 1 unless $rejected && @$rejected;
+    my $accepted = scalar @{ $result->updated };
+
+    unless ($accepted) {
+        my ( $class, $reason ) = _classify_push_error(
+            join( "\n", map { $_->{reason} // '' } @$rejected ),
+            $self->_push_context( $remote, rejected => $rejected ) );
+        if ( $class eq 'denied' ) {
+            $self->{_last_error} =
+                _push_rejection_error( $remote, $rejected, 0, 'could not store' );
+            $self->_note_push_failure( $remote, $class, $reason );
+            return 0;
+        }
+    }
+
     $self->{_push_rejections} = $rejected;
-    $self->{_last_error} =
-        _push_rejection_error( $remote, $rejected, scalar @{ $result->updated } );
+    $self->{_last_error} = _push_rejection_error( $remote, $rejected, $accepted );
     $self->_note_push_failure( $remote,
         rejected => _first_line( $self->{_last_error} ) );
     return 0;
@@ -2717,15 +2779,17 @@ sub _accept_push_result {
 
 # One line per refused ref, with the reason the far side gave, because "the
 # push failed" without naming the ref is not actionable on a board where one
-# protected ref among fifty is the normal case.
+# protected ref among fifty is the normal case. $verb is what the remote did
+# with them, 'rejected' unless the push was denied.
 sub _push_rejection_error {
-    my ( $remote, $rejected, $accepted ) = @_;
+    my ( $remote, $rejected, $accepted, $verb ) = @_;
+    $verb //= 'rejected';
     my $total = @$rejected + ( $accepted // 0 );
     my $head  = @$rejected == $total
-        ? sprintf( "the remote '%s' rejected all %d ref%s",
-            $remote, $total, $total == 1 ? '' : 's' )
-        : sprintf( "the remote '%s' rejected %d of %d refs",
-            $remote, scalar @$rejected, $total );
+        ? sprintf( "the remote '%s' %s all %d ref%s",
+            $remote, $verb, $total, $total == 1 ? '' : 's' )
+        : sprintf( "the remote '%s' %s %d of %d refs",
+            $remote, $verb, scalar @$rejected, $total );
     return join "\n", "$head:", map {
         '    '
           . $_->{ref} . ': '

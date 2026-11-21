@@ -46,6 +46,13 @@
       no write access or a rate limit, the native transport cannot tell
       which".
 
+    - A push over the native transport (`KARR_NO_CLI_FALLBACK`, or no git
+      CLI) into a local remote whose refs/ this user cannot write is now
+      reported as denied write access, as over the git CLI: the change is
+      taken back and the clone becomes read-only for the board, instead of
+      "Push rejected by the remote". A push of which some refs landed is
+      still reported as rejected.
+
     - Passwords and tokens in a remote URL are no longer shown in push
       failure reasons, nor stored in them or in the `karr.readonly*` git
       config. Pull and fetch failures (`karr sync`, `karr create` and
