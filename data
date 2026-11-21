@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-11-21T04:13:49Z
+claimed_by: k333-followups
+class: standard
+completed: 2026-11-21T04:13:49Z
+created: 2026-11-20T16:27:44Z
+id: 337
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- git
+title: Reset push_stale in push_ref and push_foundation
+updated: 2026-11-21T04:13:49Z
+---
+
+Found while working k333. `App::karr::Git::push` resets `_push_stale` (and `_push_rejections`) at its start; `push_ref` and `push_foundation` do not reset `_push_stale`, although the push_stale POD says it is empty after any push that is not the board push. Harmless today because no caller asks push_stale after those two, but a caller that does would read the previous board push's answer.
+
+Done looks like: both reset it at the start, like push does; a test pins push_stale empty after a push_ref / push_foundation that follows a stale board push.
+
+push_ref and push_foundation now reset _push_stale and _push_rejections at their start, next to _push_failure/_push_sent, as push does (lib/App/karr/Git.pm only). POD check: push_failure already reset at start in both, consistent. push_stale: POD says reset at start of every push -- was missing in both, fixed. push_rejections: POD says reset at start of every push attempt; both only reset inside _push_refspecs, so the early returns (no remote; push_foundation's nothing-to-push) left an earlier push's rejections standing after a call returning 1 -- fixed by the same reset. Not changed: push itself resets stale/rejections after the _repo check, reachable only in global destruction. Drift for the main agent: (1) doc -- push_rejections POD says 'most recent push or push_ref' but push_foundation fills it too and sync_push_foundation reads it (karr-doc-writer). (2) test -- t/343 pins push_rejections only after a push that runs _push_refspecs, which reset it already; nothing pins the no-op path (karr-test-writer). Latent today: karr sync dies on a final stale board push before push_foundation runs, and set-refs reads only push_failure. t/343 red (2/2) -> green; t/322 t/335 t/336 t/342 t/190 t/189 t/21 t/61 t/91 t/136 t/191 t/247 t/327 t/329 t/47 t/76 t/view-alias green. Full suite not run (orchestrator runs it). t/345 skipped (red test of another card).
+
+doc-writer: push_rejections POD now names push_foundation among the pushes it reflects; push_stale/push_failure already correct (push_failure lists all three, push_stale is board-push only and says reset at start of every push). podcheck OK.
+
+Committed as d7ed1ad
