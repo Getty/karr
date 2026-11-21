@@ -3,6 +3,19 @@ use strict;
 use warnings;
 use TestEnv; # k288: scrub KARR_CLAIM before any dispatch() call below runs
 
+# k336: make every relative @INC entry absolute now, before any chdir. A
+# relative `lib` (perl -Ilib, prove -Ilib) would otherwise resolve against the
+# repository run_karr chdirs into; a command class MooX::Cmd loads lazily then
+# misses the tree under test and falls through to an installed App::karr, so
+# the test runs old code without a sign. Order is kept, code-ref hooks left
+# alone. Runs before the Dispatch `use` below, which compiles App::karr.
+BEGIN {
+    require File::Spec;
+    @INC = map {
+        ref $_ || File::Spec->file_name_is_absolute($_) ? $_ : File::Spec->rel2abs($_)
+    } @INC;
+}
+
 # In-process karr runner: dispatch the command classes many times in one
 # interpreter instead of paying ~0.3s of Perl startup per `karr` subprocess.
 # It goes through the SAME dispatch path as bin/karr -- App::karr::Dispatch --
