@@ -58,6 +58,16 @@ C<[stray: pushed by an older karr, safe to break]>, and breaking a lock clears
 the old address along with the current one. That is how a board that was
 published with locks in it gets clean again.
 
+Clearing the old address is a board change, and a board change goes out with
+the push. When the remote denies this clone write access, the command's board
+change is taken back (L<App::karr::Role::SyncLifecycle/sync_after>) and the old
+address holds its lock again; the current one stays broken, since it was never
+going to be published. The output follows what is gone afterwards: a task whose
+current lock was broken is reported broken, with C<the stray copy an older karr
+pushed was put back> when it had one; a task that held the old lock alone is
+not reported at all, and the denial says that the command's change was taken
+back.
+
 Breaking a lock is safe by construction: it is not what makes a pick exclusive.
 The claim is written under a compare-and-swap on the card itself
 (L<App::karr::Cmd::Pick/EXCLUSIVITY>), so an agent whose lock is broken out from
@@ -128,26 +138,56 @@ sub execute {
     ? grep { !$seen{$_}++ } map { $_->{task_id} } @held
     : $self->parse_ids($pos[0]);
 
-  # Said once the push is through, as every writing command does (k333). The
-  # lines carry no "saved in this clone" note: a lock is this clone's own.
-  my ( @results, @said );
+  # Which address held a lock is noted before it is broken: only the pre-#93
+  # one inside refs/karr/* is a board change, and a denied push takes that
+  # back (k340). The current one is this clone's own, never published, and
+  # stays broken whatever the push does -- which the denial is told, so it
+  # does not say "Nothing was changed".
+  my $git = $self->git;
+  my @broke;
   for my $id (@ids) {
-    my ($ok, $owner) = $lock->break_lock($id);
-    push @results, {
-      id      => 0 + $id,
-      broken  => $ok ? \1 : \0,
-      ( $ok ? ( owner => $owner ) : () ),
-    };
-    next if $self->json;
-    push @said, $ok
-      ? sprintf( "Broke lock on task %d (was held by %s)", $id, $owner )
-      : sprintf( "Task %d is not locked", $id );
+    my $current = $git->ref_exists( $lock->ref_name($id) );
+    my $legacy  = $git->ref_exists( $lock->legacy_ref_name($id) );
+    my ( $ok, $owner ) = $lock->break_lock($id);
+    push @broke, { id => 0 + $id, ok => $ok, owner => $owner,
+                   current => $current, legacy => $legacy };
   }
+  my $kept_here = grep { $_->{ok} && $_->{current} } @broke;
 
-  $self->sync_after_and_report( sub {
-    $self->print_outcome( $_[0], @said );
-    $self->print_json_results(@results);
-  } );
+  # Said once the push is decided, as every writing command does (k333), and
+  # from what is gone from this clone then: not through sync_after_and_report,
+  # which says nothing once the journal is taken back -- here that is the
+  # pre-#93 lock alone. No "saved in this clone" note: a lock is this clone's
+  # own.
+  my $pushed = eval { $self->sync_after( kept_here => $kept_here ); 1 };
+  my $err    = $@;
+  $self->_say_broken( $lock, @broke );
+  die $err unless $pushed;
+}
+
+sub _say_broken {
+  my ( $self, $lock, @broke ) = @_;
+  my ( @results, @said );
+  for my $one (@broke) {
+    unless ( $one->{ok} ) {
+      push @results, { id => $one->{id}, broken => \0 };
+      push @said, sprintf( "Task %d is not locked", $one->{id} );
+      next;
+    }
+    my $back = $one->{legacy}
+      && $self->git->ref_exists( $lock->legacy_ref_name( $one->{id} ) );
+    my $gone = $one->{current} || !$back;
+    push @results, { id => $one->{id}, broken => $gone ? \1 : \0,
+                     ( $gone ? ( owner => $one->{owner} ) : () ) };
+    # A pre-#93 lock alone, put back: nothing of it is broken, and the denial
+    # says that the command's change was taken back.
+    next unless $gone;
+    push @said, sprintf( "Broke lock on task %d (was held by %s)", $one->{id}, $one->{owner} )
+      . ( $back ? '; the stray copy an older karr pushed was put back' : '' );
+  }
+  return $self->print_json_results(@results) if $self->json;
+  print "$_\n" for @said;
+  return;
 }
 
 sub _report {

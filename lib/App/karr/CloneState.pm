@@ -501,6 +501,15 @@ sub denial_message {
           . 'read-only for the board; the change stays here until this clone can '
           . "write, then 'karr sync' publishes it.";
     }
+    elsif ( @{ $arg{taken_back} || [] } && $arg{kept_here} ) {
+        # The take-back covers the board; the rest of the command's change
+        # never was going out, and stays (karr unlock: a lock under
+        # refs/karr-local/). "Nothing was changed" would deny it.
+        CORE::push @lines, "Nothing was published: this command's change to the board was "
+          . 'taken back, what it changed in this clone alone stays, and this clone '
+          . 'is now read-only for the board. Run the command again once this clone '
+          . 'can write.';
+    }
     elsif ( @{ $arg{taken_back} || [] } ) {
         CORE::push @lines, "Nothing was changed: this command's change was taken back, "
           . 'and this clone is now read-only for the board. Run the command again '
@@ -530,6 +539,7 @@ sub denial_message {
         left        => [ '#12', 'log' ],     # and what it could not, short names
         already     => 0,                    # the clone was read-only before
         unpublished => [ $state->unpublished ],
+        kept_here   => 0,                    # the command changed more than the board
     );
 
 The message at a denial, as one string without a trailing newline:
@@ -544,6 +554,18 @@ nothing of the command back -- C<karr sync> -- says C<Nothing was published>
 instead, and C<stays read-only> when the clone already was. Changes older than
 the command that are still only here are listed on a line of their own
 (C<Still only in this clone, not on the remote: ...>).
+
+C<kept_here> says the command also changed this clone where no push goes --
+C<karr unlock> breaking a lock under C<refs/karr-local/> -- so a take-back that
+put the board back has not undone all of it. The second line then reads, on one
+line:
+
+    Nothing was published: this command's change to the board was taken back,
+    what it changed in this clone alone stays, and this clone is now read-only
+    for the board. Run the command again once this clone can write.
+
+It changes nothing when the take-back had nothing to put back (C<Nothing was
+published> is said then anyway) or could not put all of it back.
 
 When the take-back left something behind (C<left>, by the short names of
 L</short_ref_names>), the second line says so instead of C<Nothing was
@@ -765,6 +787,7 @@ sub denied_push {
         left        => \@left,
         already     => $already,
         unpublished => \@still,
+        kept_here   => $opt{kept_here},
     );
     if ( defined $unrecorded ) {
         $unrecorded =~ s/\s+\z//;
@@ -825,6 +848,8 @@ risks.
 =method denied_push
 
     my $text = App::karr::CloneState->denied_push( $git, take_back => 1 );
+    my $text = App::karr::CloneState->denied_push( $git, take_back => 1,
+                                                   kept_here => 1 );  # karr unlock
 
 Everything that follows a push denied write access, in order: the command's
 own writes are taken back (C<take_back>, L<App::karr::Git/take_back_journal>
@@ -832,8 +857,10 @@ with the id counter), the clone learns C<denied> (L</learn_denied>), and
 L</reported> is set. Returns the L</denial_message> for the caller to raise or
 warn -- naming, by their short names, the refs the take-back could not put
 back (another process wrote them since, or the reset failed) as still in this
-clone, the clone made read-only all the same. A C<$git> without git config (a
-test double) learns nothing and gets the message alone.
+clone, the clone made read-only all the same. C<kept_here> is handed to
+L</denial_message> as it is: the command changed this clone outside the board
+too, and that stays. A C<$git> without git config (a test double) learns
+nothing and gets the message alone.
 
 =cut
 

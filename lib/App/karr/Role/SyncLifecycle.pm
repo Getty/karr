@@ -338,6 +338,7 @@ sub sync_before {
 
     $self->sync_after;                 # push with up to 3 attempts
     $self->sync_after( force => 1 );   # karr sync --push --force
+    $self->sync_after( kept_here => 1 );   # karr unlock, after breaking a lock
 
 Pushes refs to remote with up to 3 attempts, using the same retry-only output
 convention as L</sync_before> (silent first attempt, retries announced from
@@ -413,6 +414,11 @@ lasting warning repeats it.
 C<< force => 1 >> is handed to L<App::karr::Git/push>: the unguarded push of
 every local board ref, for C<karr sync --push --force> alone.
 
+C<< kept_here => 1 >> is for a command that also changed this clone where no
+push goes, and the take-back does not reach: C<karr unlock>, which breaks a
+lock under C<refs/karr-local/>. A denial then does not say C<Nothing was
+changed> about it (L<App::karr::CloneState/denial_message>).
+
 Under C<--local-only> (see L</Local-only mode>) this returns immediately without
 pushing: the fetch was skipped and the guard already spent in L</sync_before>,
 so the local refs stay put until C<karr sync>.
@@ -427,6 +433,8 @@ use constant STALE_ROUNDS => 3;
 
 sub sync_after {
     my ( $self, %opt ) = @_;
+    # For the denial below, not for the push.
+    my $kept_here = delete $opt{kept_here};
 
     # --local-only skipped the fetch and spent the guard in sync_before; skip
     # the push to match, so nothing here reaches the remote. The refs are on the
@@ -462,8 +470,8 @@ sub sync_after {
 
     # Write access denied (k333): nothing of this command may stay in a clone
     # that cannot publish it, and the clone is read-only from here on.
-    App::karr::Error::user_error(
-        App::karr::CloneState->denied_push( $git, take_back => 1 ) ) if $denied;
+    App::karr::Error::user_error( App::karr::CloneState->denied_push(
+        $git, take_back => 1, kept_here => $kept_here ) ) if $denied;
 
     my $saved = App::karr::CloneState->failed_push($git);
 
