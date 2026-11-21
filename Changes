@@ -146,6 +146,10 @@
       shell or a symlink skip.
     - Requires Git::Native 0.007, Git::Libgit2 0.008 and Alien::Libgit2 0.003.
 
+    - When a command stops because another clone changed its card during the
+      push, it now lists the changes still only in this clone and not on the
+      remote itself, and no warning after it repeats that.
+
 0.602     2026-09-30 05:24:57Z
 
     - `backlog` is now held back. `karr pick` and `karr-foundation` never take

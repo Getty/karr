@@ -400,7 +400,13 @@ L<App::karr::Role::ReapplyOnStale> (C<create>, C<pick>) runs again from the
 top; every other command stops with exit 1, naming the card that changed and
 saying that nothing of it was published -- and, when the take-back could not
 put a ref back and the pull did not replace it either, that this ref still
-holds this clone's version and would go out with the next push.
+holds this clone's version and would go out with the next push. Whatever else
+is only in this clone and not on the remote -- older C<--local-only> work, the
+id counter, the log -- follows on the saved-here line
+(L<App::karr::CloneState/saved_here_line>), each ref named once, before
+C<Run the command again if it still applies.> Like every other push-failure
+message this one counts as reported (L<App::karr::CloneState/reported>), so no
+lasting warning repeats it.
 
 =back
 
@@ -573,23 +579,37 @@ sub _pull_after_stale_push {
     # still holds this clone's version unless the pull just brought the
     # remote's in; only the ones it did not are worth naming.
     my @left = @{ ( ref $took eq 'HASH' && $took->{left} ) || [] };
-    if ( @left && $git->can('unpublished_refs') ) {
+    my $unpublished;
+    if ( $git->can('unpublished_refs') ) {
         my $remote = ( $git->can('push_failure') && $git->push_failure || {} )->{remote};
-        my $unpublished = $git->unpublished_refs( $remote // 'origin' ) || {};
+        $unpublished = $git->unpublished_refs( $remote // 'origin' ) || {};
         @left = grep { $unpublished->{$_} } @left;
     }
+
+    # This refusal is the report on the push (App::karr::CloneState/reported),
+    # so no lasting warning follows it; whatever else is only in this clone --
+    # older --local-only work, the id counter, the log -- it names itself.
+    # Named once: what the take-back left is on the line before.
+    my %said = map { $_ => 1 } @left;
+    my @still = App::karr::CloneState->short_ref_names(
+        { map { $_ => $unpublished->{$_} } grep { !$said{$_} } keys %{ $unpublished || {} } } );
+    my $saved = @still ? App::karr::CloneState->saved_here_line(@still) . "\n" : '';
+    App::karr::CloneState->mark_reported;
+
     App::karr::Error::user_error(
         "$what changed on the remote while this command ran.\n"
       . "Nothing this command wrote was published, but not all of it could be "
       . "taken back here: " . $self->_name_board_refs(@left) . " still "
       . ( @left == 1 ? 'holds' : 'hold' ) . " this clone's version, not the "
       . "remote's, and would go out with the next push.\n"
+      . $saved
       . "Run the command again if it still applies." ) if @left;
 
     App::karr::Error::user_error(
         "$what changed on the remote while this command ran.\n"
       . "Nothing this command wrote was published, and it was taken back here: "
       . "this clone now holds the remote's version.\n"
+      . $saved
       . "Run the command again if it still applies." );
 }
 
