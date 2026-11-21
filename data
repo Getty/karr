@@ -1,0 +1,26 @@
+---
+class: standard
+completed: 2026-11-21T04:36:05Z
+created: 2026-11-20T20:15:14Z
+id: 340
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- locks
+title: 'unlock: take back the broken lock too when its push is denied'
+updated: 2026-11-21T04:36:10Z
+---
+
+Found while working k333 (board worker). When the first push of a clone is denied write access, k333 takes back the command's own writes and says "Nothing was changed". `karr unlock ID` / `--all` deletes lock refs under refs/karr-local/ (local, not journaled) and writes an activity log entry; on a denial the log entry is taken back but the lock stays broken, so the message is not quite true for unlock. Only the first denial is affected: afterwards the read-only door refuses unlock before it writes.
+
+Done looks like: either the lock deletion is journaled and restored by the take-back, or unlock's denial message says the lock was broken locally; a test with a denying remote pins which.
+
+Decision (orchestrator): the message, not a restore. A lock under refs/karr-local/ is this clone's own and never published, so a denied push has nothing to do with it; restoring it would re-create the lock the user asked to break. On a denial, unlock's message says which locks were broken in this clone all the same, and that only what would have been published (the activity log entry; a pre-#93 lock inside refs/karr/*, if its deletion is taken back) was taken back. Exit code stays 1 (ADR 0002).
+
+Premise corrected by the red test (t/344): unlock writes NO activity log entry, so with nothing else unpublished it pushes nothing and meets no denial (exit 0, lock broken - fine). A denial happens only when the clone already holds unpublished work. Then 'unlock ID' is already truthful (stdout 'Broke lock on task 1 (was held by ...)', stderr 'Nothing was published ...'). The real defect is 'unlock --all': stderr says 'Nothing was changed: this command's change was taken back' and no Broke-lock line is printed although the locks are gone - something was journaled and taken back there; find what. A pre-#93 lock inside refs/karr/* is restored by the take-back (so 'Nothing was changed' is true for it alone).
+
+Fixed, tree commit-ready (not committed). Cause: on a denied push the pre-#93 lock's deletion (journaled, refs/karr/*) is taken back, the current-layout lock (refs/karr-local/) stays broken; sync_after_and_report then skipped the outcome because the journal was empty, and denial_message said 'Nothing was changed'. Change: Cmd/Unlock.pm notes which address held a lock before breaking it, calls sync_after itself and decides its lines after the push from what is gone (ref_exists): current lock broken -> 'Broke lock on task N (was held by X)', plus '; the stray copy an older karr pushed was put back' when the legacy one came back; legacy-only restored -> no line. New opt-in kept_here flag: sync_after(kept_here => 1) -> CloneState::denied_push -> denial_message, which then says 'Nothing was published: this command's change to the board was taken back, what it changed in this clone alone stays, ...' instead of 'Nothing was changed'. sync_after_and_report untouched; every other command's output unchanged (flag absent). Exit stays 1. POD updated in all three files. Tests: t/344 red (subtest 5) -> 5/5 green; t/91, t/83, t/162, t/254, t/30, t/330, t/333, t/335, t/336, t/00-load green, run one at a time. Residual for the dispatcher (no ticket filed): the SyncGuard insurance push (SyncGuard.pm denied_push without kept_here) can still say 'Nothing was changed' if a batch unlock dies mid-way (refused delete) after breaking a current lock and a journaled legacy one, then meets a first denial - very narrow.
+
+Committed 80070da
