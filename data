@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-11-21T05:24:24Z
+created: 2026-11-20T19:49:12Z
+id: 339
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- foundation
+title: 'karr-foundation: do not start the coordination agent in a read-only hub'
+updated: 2026-11-21T05:24:32Z
+---
+
+Found while working k333 (foundation worker). In a hub clone that is read-only for the board (a denied push or karr readonly on), karr-foundation skips read-only boards but still starts the coordination agent. Its `plan` call is then refused by the read-only door (exit 1); the assignment file it writes is local and still works, so the run is mostly wasted.
+
+Done looks like: decide whether a read-only hub runs the coordination agent at all (e.g. skip it with a clear line in the overview/log, like a read-only board), and pin the decision in a test.
+
+Decision (orchestrator): a hub clone that is read-only for its board does not start the coordination agent at all. Its plan/answer calls would be refused at the read-only door, and an agent run is the expensive part of a tick; a read-only hub is a fault to fix (the denial message says how), not an operating mode. Instead foundation prints one clear line naming the read-only hub and the deviations that are waiting, the same way a read-only board is skipped (k333). The wanted deviations are not lost: they are recorded again by the next tick once the hub can write. An assignment.yml written by hand still routes. Exit code of the tick unchanged (ADR 0002).
+
+Coordinator::dispatch now checks Foundation::_read_only_hub_refusal after the hub lookup and, when read-only (readonly on or denied), prints one line naming the coordination agent and the hub path and returns 0 without starting it; covers all three dispatch sites. t/347 red (4/6) -> green (6/6); coordinat-grep set, t/346, t/00-load green.
+
+Committed ba46a0c
