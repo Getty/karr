@@ -1,0 +1,26 @@
+---
+claimed_at: 2026-11-21T02:46:14Z
+claimed_by: k333-followups
+class: standard
+completed: 2026-11-21T02:46:20Z
+created: 2026-11-20T21:28:42Z
+id: 345
+priority: low
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- git
+title: Rate-limit 403 on the native-only route makes a clone read-only
+updated: 2026-11-21T02:46:20Z
+---
+
+Found in the k333 review round. A rate limit is classed other (never denied) since k333: the CLI shows "remote: You have exceeded a secondary rate limit." / "returned error: 429". libgit2 drops the HTTP body and reports only "unexpected http status code: 403", which the 403 rule classes denied. https pushes reach the CLI first, so this bites only with KARR_NO_CLI_FALLBACK=1 or without a git CLI: a rate-limited push there turns the clone read-only (way out: karr sync / karr readonly off). Options: treat a bare native 403 as other unless an auth error accompanies it, or ask p5-git-native to expose the response body/headers (that would be a ticket on its board).
+
+Decision (orchestrator, not the maintainer's): option 1. A bare libgit2 'unexpected http status code: 403' with no auth error beside it (no GIT_EAUTH, no other denial wording) is classed other, not denied: on the native-only route a rate-limit 403 cannot be told from a write denial, and k333 keeps every ambiguous case out of denied so a clone that can write is never made read-only. The CLI 403 ('The requested URL returned error: 403') stays denied, since the CLI shows the rate-limit body and that rule runs first. Exposing the HTTP body from p5-git-native (option 2) is left as a possible follow-up ticket there.
+
+Done, tree commit-ready (not committed). Git.pm: CLI 'returned error: 403' stays in @PUSH_DENIED; libgit2 'status code: 403' moved out -- after the is_auth check and before the unreachable rules it is now other, reason 'the remote answered 403 Forbidden -- no write access or a rate limit, the native transport cannot tell which'. Rate-limit comment and push_failure POD updated. Replaced claim in t/327 (native 403 used to be denied, now other plus a reason check). Fixed one regex in t/340: unlike qr/^Read-only:/m can never pass because karr readonly always prints 'Read-only: MODE'; now like qr/^Read-only: off\b/m (as in t/331). Green: t/340, t/327, t/337, t/328, t/329, t/338, t/339, run one at a time; full suite not run. Exit codes unchanged (still exit 1). Possible follow-up for the p5-git-native board: expose the HTTP response body so a native 403 can be told apart.
+
+Option 2 filed on the p5-git-native board as its k39 (backlog): expose the HTTP status and body of a failed smart-HTTP push, so a native 403 could be told from a rate limit.
+
+Committed as dcb1d1f
