@@ -1,0 +1,23 @@
+---
+class: standard
+completed: 2026-11-21T06:06:27Z
+created: 2026-11-20T16:27:39Z
+id: 336
+priority: medium
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- tests
+title: 'Test runner: relative lib in @INC after chdir can load an installed App::karr'
+updated: 2026-11-21T06:06:33Z
+---
+
+Observed by the test writer on k333, not yet confirmed across the suite. `prove -l` puts the relative path `lib` into @INC; `run_karr` chdirs into the repository under test, and command classes that are loaded lazily after that chdir resolve against the new cwd, miss, and fall through to an installed App::karr (seen with `set-refs`: the installed Cmd/SetRefs.pm ran instead of the worktree's). A test can then pass or fail on old code without any sign of it. t/328 works around it with `use lib Cwd::abs_path("lib")`.
+
+Done looks like: TestKarr (or a shared test helper) makes the lib paths absolute before any chdir, or preloads every App::karr::Cmd class; a test proves a command class loaded after chdir comes from the tree under test (e.g. compare %INC to the worktree path).
+
+TestKarr makes relative @INC entries absolute in a BEGIN before any chdir/Dispatch load; new t/349 proves it (red on old TestKarr, green now). Narrow runs green. t/328 use lib abs_path can go.
+
+Premise corrected (orchestrator): prove -l from TAP::Harness 3.48 already hands lib over as an absolute path, so a normal prove -lr run is not affected. The defect bites a direct perl -Ilib t/X.t run, or an older prove. The fix (make @INC absolute in TestKarr before any chdir) is still right; t/349 reproduces it with a child perl started with a relative -Ilib.
+
+Committed 5a51d76
