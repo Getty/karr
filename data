@@ -1,0 +1,25 @@
+---
+claimed_at: 2026-11-21T02:13:04Z
+claimed_by: k333-followups
+class: standard
+completed: 2026-11-21T02:26:40Z
+created: 2026-11-20T21:28:15Z
+id: 342
+priority: high
+started: 2026-11-21T01:41:37Z
+status: done
+tags:
+- sync
+- security
+- cli
+title: Strip userinfo from pull and fetch error lines too
+updated: 2026-11-21T02:26:45Z
+---
+
+Found in the k333 review round. k333 now runs every push reason karr stores or prints through App::karr::Error::strip_userinfo (tokens/passwords in remote URLs, up to the last @). Pull and fetch failures were out of that scope: their error text (last_error, SyncLifecycle _sync_error_line, the CLI fallback "git fetch (CLI fallback) failed: ...") can still carry `https://user:TOKEN@host/...` from the remote URL onto STDERR. Apply the same cleanup where pull/fetch errors are recorded or printed (last_error, or _sync_error_line), and pin it with a test that a token in the fetch URL appears in no output of a failed `karr list`/`karr sync`.
+
+Reproduced: prove -l t/339-strip-userinfo-pull.t red before the fix, Failed 6/24 (tests 2-4, 18-20: http 500 and unreachable, raw @ in the password, CLI route, karr sync / sync --pull / create; leaking line 'git pull failed: git fetch (CLI fallback) failed: fatal: unable to access http://x@127.0.0.1:PORT/...'). Fix point chosen: the App::karr::Git last_error accessor.
+
+Fixed at one choke point: App::karr::Git::last_error now returns strip_userinfo($self->{_last_error}). Every printer/storer of a pull/fetch/push error reads the accessor (SyncLifecycle _sync_error_line, SyncGuard, BoardDiscovery autofetch + remote_has_board probe, Init, CloneState, Readonly, Git's own die messages); the classifiers inside Git.pm read the raw $self->{_last_error} or the exception and are unchanged. POD of last_error, push_failure and Error::strip_userinfo updated (ASCII). t/339-strip-userinfo-pull.t: before Failed 6/24 (2-4, 18-20), after All tests successful (24). Narrow: prove -l t/338 t/327 t/328 t/329 t/337 t/74 t/61 t/35 t/203 t/324 t/56 t/50 t/208 t/113 -> All tests successful, Files=14 Tests=170. Full suite not run (orchestrator runs it). Files: lib/App/karr/Git.pm, lib/App/karr/Error.pm; t/339 untracked, needs git add.
+
+Committed as 37115d5
