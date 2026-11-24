@@ -18,7 +18,7 @@ release specifics live in `.claude/rules/karr-rules.md` — all auto-loaded by C
 launch. Don't restate them here.
 
 **Delegate behavior-relevant code instead of editing it yourself** (the rule and rationale are in
-the shared rule `agent-delegation`). Agents in this repo (skills force-loaded via `briefing.skills`):
+the shared rule `agent-delegation`). Agents in this repo (skills force-loaded via `skills:`):
 
 | Task | Agent |
 |---|---|

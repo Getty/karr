@@ -3,12 +3,11 @@ name: karr-foundation-worker
 description: "karr-foundation worker — multi-board discovery, overview, agent command resolution, drain loops, per-repo locks/state, cooldown, stall detection, auto-blocking, and board enable/disable behavior. Leaves a commit-ready tree; never commits — commits belong to karr-release-manager."
 model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
-briefing:
-  skills:
-    - karr-core
-    - getty-perl-core
-    - getty-perl-moo
-    - karr-foundation-cli
+skills:
+  - karr-core
+  - getty-perl-core
+  - getty-perl-moo
+  - karr-foundation-cli
 ---
 
 You are the **karr-foundation** worker inside App::karr. You own the coordinator that discovers

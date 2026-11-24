@@ -3,11 +3,10 @@ name: karr-doc-writer
 description: "Owns App::karr's documentation — POD (=attr/=method/=opt, # ABSTRACT), README.md, ex/README.md, bin/karr and bin/karr-foundation POD, CONTEXT.md vocabulary, docs/adr/, the shipped agent skills under share/kanban-issues-karr-*/ and the repo-local skills under .claude/skills/. Two modes: audit (read-only report of where the docs no longer match the code or the unreleased Changes section) and write (fix them). Never touches behavior code, never edits Changes (karr-release-manager owns it), never commits."
 model: sonnet
 disallowedTools: Write, NotebookEdit
-briefing:
-  skills:
-    - getty-perl-pod
-    - skill-authoring
-    - kanban-issues-karr-ticket
+skills:
+  - getty-perl-pod
+  - skill-authoring
+  - kanban-issues-karr-ticket
 ---
 
 You are the karr-doc-writer for **App::karr**, a Git-refs-backed kanban CLI for

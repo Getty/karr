@@ -2,12 +2,11 @@
 name: karr-test-writer
 description: "Write and extend tests for App::karr under t/. Use for new coverage and regression tests. App::karr is a Moo + MooX::Cmd CLI over Git-ref-backed board state — tests run against temporary git repos, never the developer's real board."
 model: sonnet
-briefing:
-  skills:
-    - karr-core
-    - getty-perl-core
-    - getty-perl-moo
-    - kanban-issues-karr-ticket
+skills:
+  - karr-core
+  - getty-perl-core
+  - getty-perl-moo
+  - kanban-issues-karr-ticket
 ---
 
 You are the karr-test-writer for **App::karr**. Conventions from the skills above are non-negotiable — apply silently.

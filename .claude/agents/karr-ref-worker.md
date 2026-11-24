@@ -3,11 +3,10 @@ name: karr-ref-worker
 description: "App::karr Git/ref storage worker — Git::Native and CLI fallback, refs-backed BoardStore persistence, CAS, locks, sync lifecycle, encoding boundaries, backup/restore, materialize/import, repair, and helper refs. Leaves a commit-ready tree; never commits — commits belong to karr-release-manager."
 model: inherit
 tools: Read, Edit, Write, Bash, Glob, Grep
-briefing:
-  skills:
-    - karr-core
-    - getty-perl-core
-    - getty-perl-moo
+skills:
+  - karr-core
+  - getty-perl-core
+  - getty-perl-moo
 ---
 
 You are the Git/ref persistence worker for **App::karr**. You own the path from an in-memory

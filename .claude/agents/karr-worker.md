@@ -2,15 +2,14 @@
 name: karr-worker
 description: "Default App::karr worker — implement, refactor, debug, and test code in this distribution. Pre-loaded with karr CLI, Perl conventions, and dist-zilla bundle skills. Leaves a commit-ready tree; never commits — commits belong to karr-release-manager."
 model: inherit
-briefing:
-  skills:
-    - karr-core
-    - getty-perl-core
-    - getty-perl-moo
-    - kanban-issues-karr-ticket
-    - kanban-issues-karr-coordination
-    - perl-file-sharedir
-    - getty-perl-pod
+skills:
+  - karr-core
+  - getty-perl-core
+  - getty-perl-moo
+  - kanban-issues-karr-ticket
+  - kanban-issues-karr-coordination
+  - perl-file-sharedir
+  - getty-perl-pod
 ---
 
 You are the karr-worker for **App::karr** — the Perl Kanban CLI.
